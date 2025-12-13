@@ -111,8 +111,8 @@ serve(async (req) => {
           
           console.log(`[VEO-STATUS] UUID ${uuid} COMPLETED: ${videoStatus.video_url}`)
 
-          // Upload to Supabase Storage if requested and video URL exists
-          if (upload_to_storage !== false && videoStatus.video_url) {
+          // ALWAYS upload to Supabase Storage (VEO URLs may be CORS-blocked)
+          if (videoStatus.video_url) {
             try {
               const storageUrl = await uploadVideoToStorage(
                 supabase,
@@ -122,10 +122,28 @@ serve(async (req) => {
                 segmentNumber
               )
               videoStatus.storage_url = storageUrl
-              console.log(`[VEO-STATUS] Uploaded to storage: ${storageUrl}`)
+              // Replace video_url with storage_url for reliable playback
+              videoStatus.video_url = storageUrl
+              console.log(`[VEO-STATUS] ✅ Uploaded to storage: ${storageUrl}`)
             } catch (uploadError: any) {
               console.error(`[VEO-STATUS] Storage upload failed: ${uploadError.message}`)
-              // Continue without failing - video_url is still available
+              // Retry once with delay
+              try {
+                await new Promise(r => setTimeout(r, 2000))
+                const storageUrl = await uploadVideoToStorage(
+                  supabase,
+                  videoStatus.video_url,
+                  uuid,
+                  segmentType,
+                  segmentNumber
+                )
+                videoStatus.storage_url = storageUrl
+                videoStatus.video_url = storageUrl
+                console.log(`[VEO-STATUS] ✅ Retry upload success: ${storageUrl}`)
+              } catch (retryError: any) {
+                console.error(`[VEO-STATUS] Retry also failed: ${retryError.message}`)
+                // Keep original VEO URL as fallback
+              }
             }
           }
 

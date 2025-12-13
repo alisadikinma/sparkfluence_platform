@@ -337,6 +337,31 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     )
   }
 
+  // RATE LIMIT PROTECTION: Check if there's already a job being processed
+  if (session_id && user_id) {
+    const { data: processingJobs } = await supabase
+      .from('video_generation_jobs')
+      .select('id, segment_number, created_at')
+      .eq('session_id', session_id)
+      .eq('user_id', user_id)
+      .eq('status', JOB_STATUS.PROCESSING)
+    
+    if (processingJobs && processingJobs.length > 0) {
+      console.log(`[PROCESS_SINGLE] ⏳ Waiting - ${processingJobs.length} job(s) still processing`)
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          data: { 
+            waiting: true,
+            processing_count: processingJobs.length,
+            message: 'Another job is still processing. Wait for it to complete before submitting new job.'
+          } 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+  }
+
   // Find job to process
   let job: any = null
 

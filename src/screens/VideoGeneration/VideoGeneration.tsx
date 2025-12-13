@@ -390,29 +390,14 @@ export const VideoGeneration = (): JSX.Element => {
     const processNext = async () => {
       if (!user) return;
       if (isProcessing) {
-        console.log('[VideoGen] Skipping - previous job still processing');
+        console.log('[VideoGen] Skipping - previous request still in flight');
         return;
       }
       
       isProcessing = true;
       
       try {
-        // First check if there's already a job being processed by VEO
-        const { data: processingJobs } = await supabase
-          .from('video_generation_jobs')
-          .select('id')
-          .eq('session_id', sid)
-          .eq('user_id', user.id)
-          .eq('status', JOB_STATUS.PROCESSING);
-        
-        // If there's already a processing job, wait for it to complete first
-        if (processingJobs && processingJobs.length > 0) {
-          console.log('[VideoGen] Waiting for VEO to complete current job...');
-          isProcessing = false;
-          return;
-        }
-        
-        // Process single job
+        // Process single job - edge function will check if another job is processing
         const { data, error } = await supabase.functions.invoke('generate-videos', {
           body: {
             mode: 'process_single',
@@ -428,6 +413,13 @@ export const VideoGeneration = (): JSX.Element => {
         }
         
         const result = data?.data;
+        
+        // If server says waiting (another job processing), just wait
+        if (result?.waiting) {
+          console.log(`[VideoGen] Server says wait - ${result.processing_count} job(s) still processing`);
+          isProcessing = false;
+          return;
+        }
         
         // If job was submitted successfully, start polling for VEO status
         if (result?.job?.veo_uuid) {
@@ -488,9 +480,10 @@ export const VideoGeneration = (): JSX.Element => {
       }
     };
     
-    // Process first one immediately, then every 15 seconds (VEO rate limit protection)
+    // Process first one immediately, then every 30 seconds (VEO rate limit protection)
+    // VEO API has strict rate limits - 30 seconds is safer than 15
     processNext();
-    processingIntervalRef.current = setInterval(processNext, 15000);
+    processingIntervalRef.current = setInterval(processNext, 30000);
   }, [user]);
 
   // Poll VEO status and update completed videos
