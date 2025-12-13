@@ -129,9 +129,9 @@ serve(async (req) => {
     }
 
     // 6. Send OTP via Fonnte WhatsApp API
-    const fonnteApiKey = Deno.env.get("FONNTE_API_KEY");
+    const fonnteApiKey = Deno.env.get("FONNTE_API_TOKEN");
     if (!fonnteApiKey) {
-      console.error("FONNTE_API_KEY not configured");
+      console.error("FONNTE_API_TOKEN not configured");
       return new Response(
         JSON.stringify({
           success: false,
