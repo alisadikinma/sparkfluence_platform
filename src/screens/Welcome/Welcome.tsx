@@ -21,10 +21,10 @@ export const Welcome = (): JSX.Element => {
   
   // Phone verification state
   const [phoneInput, setPhoneInput] = useState("");
-  const [dialCode, setDialCode] = useState("62");
-  const [fullPhoneNumber, setFullPhoneNumber] = useState("");
+  const [dialCode, setDialCode] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [phoneMasked, setPhoneMasked] = useState("");
+  const [sentPhoneNumber, setSentPhoneNumber] = useState(""); // Store the number that OTP was sent to
   
   // Loading states
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -34,6 +34,12 @@ export const Welcome = (): JSX.Element => {
   const [error, setError] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const [attemptsLeft, setAttemptsLeft] = useState(3);
+
+  // Helper to build full phone number
+  const buildFullPhoneNumber = (): string => {
+    const cleanPhone = phoneInput.replace(/\D/g, "").replace(/^0+/, "");
+    return dialCode + cleanPhone;
+  };
 
   // Check phone verification status on mount
   useEffect(() => {
@@ -79,6 +85,13 @@ export const Welcome = (): JSX.Element => {
   const sendOtp = async () => {
     setError("");
 
+    // Build full phone number using current dialCode and phoneInput
+    const fullPhoneNumber = buildFullPhoneNumber();
+    
+    console.log("[SendOTP] dialCode:", dialCode);
+    console.log("[SendOTP] phoneInput:", phoneInput);
+    console.log("[SendOTP] fullPhoneNumber:", fullPhoneNumber);
+
     if (!fullPhoneNumber || fullPhoneNumber.length < 10) {
       setError(language === 'id' ? "Format nomor WhatsApp tidak valid" : "Invalid WhatsApp number format");
       return;
@@ -95,6 +108,7 @@ export const Welcome = (): JSX.Element => {
 
       if (data.success) {
         setPhoneMasked(data.data.phone_masked);
+        setSentPhoneNumber(fullPhoneNumber); // Store for verification
         setCooldown(60);
         setAttemptsLeft(3);
         setStep("otp");
@@ -125,7 +139,7 @@ export const Welcome = (): JSX.Element => {
     try {
       const { data, error: fnError } = await supabase.functions.invoke("verify-whatsapp-otp", {
         body: {
-          phone_number: fullPhoneNumber,
+          phone_number: sentPhoneNumber, // Use the number that OTP was sent to
           otp_code: otpCode,
           user_id: user?.id
         }
@@ -204,15 +218,26 @@ export const Welcome = (): JSX.Element => {
 
         <div className="w-full max-w-md relative z-10">
           <div className="bg-[#1a1a24]/80 backdrop-blur-2xl border border-[#2b2b38] rounded-2xl p-8 shadow-2xl">
-            {/* Header */}
+            {/* Header with Steps */}
             <div className="text-center mb-8">
               <div className="inline-flex items-center gap-3 mb-6">
                 <img className="w-10 h-10" alt="Logo" src="/logo.png" />
                 <h1 className="text-xl font-semibold text-white">SPARKFLUENCE</h1>
               </div>
               
-              <div className="w-16 h-16 bg-[#25D366]/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Shield className="w-8 h-8 text-[#25D366]" />
+              {/* Step Indicator */}
+              <div className="flex items-center justify-center gap-2 mb-6">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === "verify-phone" ? "bg-[#22c55e]" : "bg-[#22c55e]"}`}>
+                  <Check className="w-4 h-4 text-white" />
+                </div>
+                <div className={`w-12 h-0.5 ${step === "otp" ? "bg-[#22c55e]" : "bg-[#2b2b38]"}`} />
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === "otp" ? "bg-[#22c55e]" : "bg-[#7c3aed]"}`}>
+                  {step === "otp" ? <Check className="w-4 h-4 text-white" /> : <span className="text-white text-sm font-medium">2</span>}
+                </div>
+                <div className="w-12 h-0.5 bg-[#2b2b38]" />
+                <div className="w-8 h-8 rounded-full flex items-center justify-center bg-[#7c3aed]">
+                  <span className="text-white text-sm font-medium">3</span>
+                </div>
               </div>
               
               <h2 className="text-2xl font-bold text-white mb-2">
@@ -256,10 +281,9 @@ export const Welcome = (): JSX.Element => {
                   <label className="text-white text-sm font-medium">{language === 'id' ? 'Nomor WhatsApp' : 'WhatsApp Number'}</label>
                   <PhoneInput
                     value={phoneInput}
-                    onChange={(phone, dial, fullNum) => {
+                    onChange={(phone, dial) => {
                       setPhoneInput(phone);
                       setDialCode(dial);
-                      setFullPhoneNumber(fullNum);
                     }}
                     disabled={sendingOtp}
                     autoDetect={true}
@@ -268,7 +292,7 @@ export const Welcome = (): JSX.Element => {
 
                 <Button
                   onClick={sendOtp}
-                  disabled={sendingOtp || cooldown > 0 || !fullPhoneNumber || fullPhoneNumber.length < 10}
+                  disabled={sendingOtp || cooldown > 0 || !phoneInput || phoneInput.length < 6}
                   className="w-full h-12 bg-[#25D366] hover:bg-[#1ea952] text-white font-semibold rounded-xl disabled:opacity-50"
                 >
                   {sendingOtp ? (
@@ -343,7 +367,7 @@ export const Welcome = (): JSX.Element => {
                   ) : (
                     <>
                       <Check className="w-4 h-4 mr-2" />
-                      {language === 'id' ? 'Verifikasi' : 'Verify'}
+                      {language === 'id' ? 'Verifikasi & Daftar' : 'Verify & Register'}
                     </>
                   )}
                 </Button>

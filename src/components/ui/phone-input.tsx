@@ -5,7 +5,7 @@ import { countryCodes, CountryCode, detectCountryFromTimezone, formatPhoneForAPI
 
 interface PhoneInputProps {
   value: string;
-  onChange: (phone: string, dialCode: string, fullNumber: string) => void;
+  onChange: (phone: string, dialCode: string) => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -33,6 +33,16 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const hasInitialized = useRef(false);
+
+  // Initialize dial code on mount
+  useEffect(() => {
+    if (!hasInitialized.current) {
+      hasInitialized.current = true;
+      // Notify parent of initial dial code
+      onChange(value, selectedCountry.dialCode);
+    }
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -64,20 +74,19 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
     : countryCodes;
 
   const handleCountrySelect = (country: CountryCode) => {
+    console.log("[PhoneInput] Country selected:", country.name, "+"+country.dialCode);
     setSelectedCountry(country);
     setIsOpen(false);
     setSearchQuery("");
     // Notify parent with updated dial code
-    const fullNumber = formatPhoneForAPI(value, country.dialCode);
-    onChange(value, country.dialCode, fullNumber);
+    onChange(value, country.dialCode);
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputValue = e.target.value.replace(/\D/g, "");
     // Remove leading zero if user types it
     const cleanValue = inputValue.startsWith("0") ? inputValue.slice(1) : inputValue;
-    const fullNumber = formatPhoneForAPI(cleanValue, selectedCountry.dialCode);
-    onChange(cleanValue, selectedCountry.dialCode, fullNumber);
+    onChange(cleanValue, selectedCountry.dialCode);
   };
 
   return (
