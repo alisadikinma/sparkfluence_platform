@@ -1,0 +1,19 @@
+# FastAPI and ASGI server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+
+# HTTP client for downloading videos
+httpx==0.26.0
+
+# CORS middleware
+python-multipart==0.0.6
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Note: FFmpeg must be installed separately on the system
+# Installation:
+# - Ubuntu/Debian: sudo apt-get install ffmpeg
+# - macOS: brew install ffmpeg
+# - Windows: Download from https://ffmpeg.org/download.html

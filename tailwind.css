@@ -1,0 +1,496 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ========================================
+   THEME CSS VARIABLES
+   ======================================== */
+
+:root {
+  /* ----- LIGHT MODE (Default) ----- */
+  /* Best Practice: Use warm off-whites, not pure white */
+
+  /* Backgrounds - Layered for depth */
+  --bg-page: #F8FAFC;           /* Main page - cool gray */
+  --bg-card: #FFFFFF;           /* Cards - white with shadow for depth */
+  --bg-surface: #F1F5F9;        /* Elevated surfaces */
+  --bg-input: #F8FAFC;          /* Input fields - subtle gray */
+  --bg-glass: rgba(255, 255, 255, 0.85);
+
+  /* Text - Strong contrast hierarchy */
+  --text-primary: #1E293B;      /* Darker for better readability */
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --text-inverse: #FFFFFF;
+
+  /* Borders - Subtle but visible */
+  --border-default: #E2E8F0;
+  --border-active: #8B5CF6;
+
+  /* Brand */
+  --primary-main: #7C3AED;      /* Slightly darker purple for light mode */
+  --primary-hover: #6D28D9;
+  --secondary-accent: #D946EF;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #7C3AED 0%, #D946EF 100%);
+  --gradient-hero-bg: radial-gradient(ellipse at top, rgba(124, 58, 237, 0.08) 0%, transparent 50%);
+  --gradient-text: linear-gradient(135deg, #7C3AED 0%, #D946EF 50%, #0891B2 100%);
+
+  /* Shadows - Essential for light mode depth */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-card-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+
+  /* Glass Effect */
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(0, 0, 0, 0.08);
+
+  /* Legacy variables for backwards compatibility */
+  --body-l-medium-font-family: "Poppins", Helvetica;
+  --body-l-medium-font-size: 18px;
+  --body-l-medium-font-style: normal;
+  --body-l-medium-font-weight: 500;
+  --body-l-medium-letter-spacing: 0px;
+  --body-l-medium-line-height: 28px;
+  --body-m-medium-font-family: "Poppins", Helvetica;
+  --body-m-medium-font-size: 16px;
+  --body-m-medium-font-style: normal;
+  --body-m-medium-font-weight: 500;
+  --body-m-medium-letter-spacing: 0px;
+  --body-m-medium-line-height: 26px;
+  --body-m-regular-font-family: "Poppins", Helvetica;
+  --body-m-regular-font-size: 16px;
+  --body-m-regular-font-style: normal;
+  --body-m-regular-font-weight: 400;
+  --body-m-regular-letter-spacing: 0px;
+  --body-m-regular-line-height: 26px;
+  --brand-coreprimary-electric-purple: rgba(124, 58, 237, 1);
+  --h4-web-font-family: "Poppins", Helvetica;
+  --h4-web-font-size: 22px;
+  --h4-web-font-style: normal;
+  --h4-web-font-weight: 600;
+  --h4-web-letter-spacing: 0px;
+  --h4-web-line-height: 30px;
+  --neutralsbg-app-background: rgba(11, 11, 16, 1);
+  --neutralscharcoal-gray: rgba(78, 85, 98, 1);
+  --neutralselev-1-cards: rgba(26, 26, 36, 1);
+  --neutralselev-2-header-footer-overlay: rgba(32, 32, 43, 1);
+  --neutralsline-border: rgba(43, 43, 56, 1);
+  --neutralssurface-panel-utama: rgba(18, 18, 26, 1);
+  --neutralstext-primary: rgba(249, 250, 251, 1);
+  --neutralstext-secondary: rgba(199, 203, 209, 1);
+  --neutralstext-tertiary: rgba(154, 160, 166, 1);
+  --other-caption-medium-font-family: "Poppins", Helvetica;
+  --other-caption-medium-font-size: 14px;
+  --other-caption-medium-font-style: normal;
+  --other-caption-medium-font-weight: 500;
+  --other-caption-medium-letter-spacing: 0px;
+  --other-caption-medium-line-height: 22px;
+  --other-caption-regular-font-family: "Poppins", Helvetica;
+  --other-caption-regular-font-size: 14px;
+  --other-caption-regular-font-style: normal;
+  --other-caption-regular-font-weight: 400;
+  --other-caption-regular-letter-spacing: 0px;
+  --other-caption-regular-line-height: 22px;
+  --semanticsuccess: rgba(16, 185, 129, 1);
+
+  /* Shadcn UI variables - Light */
+  --background: 0 0% 100%;
+  --foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --card: transparent;
+  --card-foreground: 222.2 47.4% 11.2%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 100% 50%;
+  --destructive-foreground: 210 40% 98%;
+  --ring: 215 20.2% 65.1%;
+  --radius: 0.5rem;
+
+  --animate-spin: spin 1s linear infinite;
+}
+
+[data-theme="dark"],
+.dark {
+  /* ----- DARK MODE ----- */
+
+  /* Backgrounds */
+  --bg-page: #0B0B15;
+  --bg-card: #181824;
+  --bg-surface: #232334;
+  --bg-input: #13131F;
+  --bg-glass: rgba(24, 24, 36, 0.8);
+
+  /* Text */
+  --text-primary: #FFFFFF;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --text-inverse: #0F172A;
+
+  /* Borders */
+  --border-default: #2D2D3F;
+  --border-active: #8B5CF6;
+
+  /* Brand - Same in dark mode */
+  --primary-main: #8B5CF6;
+  --primary-hover: #7C3AED;
+  --secondary-accent: #D946EF;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #8B5CF6 0%, #D946EF 100%);
+  --gradient-hero-bg: radial-gradient(ellipse at top, rgba(139, 92, 246, 0.3) 0%, rgba(217, 70, 239, 0.1) 30%, transparent 60%);
+  --gradient-text: linear-gradient(135deg, #8B5CF6 0%, #D946EF 50%, #06B6D4 100%);
+
+  /* Shadows - Deeper for dark mode */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+
+  /* Glass Effect */
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+
+  /* Shadcn UI variables - Dark */
+  --background: 224 71% 4%;
+  --foreground: 213 31% 91%;
+  --muted: 223 47% 11%;
+  --muted-foreground: 215.4 16.3% 56.9%;
+  --accent: 216 34% 17%;
+  --accent-foreground: 210 40% 98%;
+  --popover: 224 71% 4%;
+  --popover-foreground: 215 20.2% 65.1%;
+  --border: 216 34% 17%;
+  --input: 216 34% 17%;
+  --card: transparent;
+  --card-foreground: 213 31% 91%;
+  --primary: 210 40% 98%;
+  --primary-foreground: 222.2 47.4% 1.2%;
+  --secondary: 222.2 47.4% 11.2%;
+  --secondary-foreground: 210 40% 98%;
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 210 40% 98%;
+  --ring: 216 34% 17%;
+  --radius: 0.5rem;
+}
+
+/* ========================================
+   BASE STYLES
+   ======================================== */
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ========================================
+   COMPONENT STYLES
+   ======================================== */
+
+@layer components {
+  .all-\[unset\] {
+    all: unset;
+  }
+  
+  /* Card with proper shadow for light mode */
+  .card-elevated {
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  
+  .card-elevated:hover {
+    box-shadow: var(--shadow-card-hover);
+  }
+}
+
+/* ========================================
+   UTILITY CLASSES
+   ======================================== */
+
+@layer utilities {
+  /* Gradient Text */
+  .text-gradient {
+    background: var(--gradient-text);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-animated {
+    background: var(--gradient-text);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: gradient-shift 8s ease infinite;
+  }
+
+  /* Glass Effect */
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-strong {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+  }
+
+  /* Gradient Border */
+  .gradient-border {
+    position: relative;
+    background: var(--bg-card);
+    border-radius: 16px;
+  }
+
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 17px;
+    padding: 1px;
+    background: var(--gradient-primary);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Glow Effects */
+  .glow-purple {
+    box-shadow: 0 0 60px rgba(139, 92, 246, 0.3);
+  }
+
+  .glow-purple-sm {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.2);
+  }
+
+  .hover-glow:hover {
+    box-shadow: 0 0 30px rgba(139, 92, 246, 0.4);
+  }
+
+  /* Card Hover Effect */
+  .card-hover {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-card-hover);
+  }
+
+  /* Button Gradient */
+  .btn-gradient {
+    background: var(--gradient-primary);
+    background-size: 200% 200%;
+    transition: all 0.3s ease;
+  }
+
+  .btn-gradient:hover {
+    background-position: 100% 0;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(139, 92, 246, 0.3);
+  }
+
+  /* Shimmer Effect */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.1) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Hide Scrollbar */
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Shadow utilities */
+  .shadow-theme-sm {
+    box-shadow: var(--shadow-sm);
+  }
+  
+  .shadow-theme {
+    box-shadow: var(--shadow-card);
+  }
+  
+  .shadow-theme-lg {
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* ========================================
+   SMOOTH SCROLL (Lenis Override)
+   ======================================== */
+
+html.lenis {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-scrolling iframe {
+  pointer-events: none;
+}
+
+/* ========================================
+   LEGACY ANIMATIONS
+   ======================================== */
+
+.animate-fade-in {
+  animation: fade-in 1s var(--animation-delay, 0s) ease forwards;
+}
+
+.animate-fade-up {
+  animation: fade-up 1s var(--animation-delay, 0s) ease forwards;
+}
+
+.animate-marquee {
+  animation: marquee var(--duration) infinite linear;
+}
+
+.animate-marquee-vertical {
+  animation: marquee-vertical var(--duration) linear infinite;
+}
+
+.animate-shimmer {
+  animation: shimmer 8s infinite;
+}
+
+.animate-spin {
+  animation: var(--animate-spin);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes image-glow {
+  0% {
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.74, 0.25, 0.76, 1);
+  }
+  10% {
+    opacity: 0.7;
+    animation-timing-function: cubic-bezier(0.12, 0.01, 0.08, 0.99);
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes gradient-shift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes shimmer {
+  0%,
+  90%,
+  to {
+    background-position: calc(-100% - var(--shimmer-width)) 0;
+  }
+  30%,
+  60% {
+    background-position: calc(100% + var(--shimmer-width)) 0;
+  }
+}
+
+@keyframes marquee {
+  0% {
+    transform: translate(0);
+  }
+  to {
+    transform: translateX(calc(-100% - var(--gap)));
+  }
+}
+
+@keyframes marquee-vertical {
+  0% {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(-100% - var(--gap)));
+  }
+}

@@ -1,0 +1,1 @@
+export { VideoGeneration } from './VideoGeneration';
