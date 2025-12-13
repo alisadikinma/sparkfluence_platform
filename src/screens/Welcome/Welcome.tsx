@@ -21,10 +21,10 @@ export const Welcome = (): JSX.Element => {
   
   // Phone verification state
   const [phoneInput, setPhoneInput] = useState("");
-  const [dialCode, setDialCode] = useState("");
+  const [fullPhoneNumber, setFullPhoneNumber] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [phoneMasked, setPhoneMasked] = useState("");
-  const [sentPhoneNumber, setSentPhoneNumber] = useState(""); // Store the number that OTP was sent to
+  const [sentPhoneNumber, setSentPhoneNumber] = useState("");
   
   // Loading states
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -34,12 +34,6 @@ export const Welcome = (): JSX.Element => {
   const [error, setError] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const [attemptsLeft, setAttemptsLeft] = useState(3);
-
-  // Helper to build full phone number
-  const buildFullPhoneNumber = (): string => {
-    const cleanPhone = phoneInput.replace(/\D/g, "").replace(/^0+/, "");
-    return dialCode + cleanPhone;
-  };
 
   // Check phone verification status on mount
   useEffect(() => {
@@ -57,15 +51,12 @@ export const Welcome = (): JSX.Element => {
           .maybeSingle();
 
         if (profile?.phone_verified) {
-          // Phone already verified, show welcome
           setStep("welcome");
         } else {
-          // Need to verify phone (likely Google OAuth user)
           setStep("verify-phone");
         }
       } catch (err) {
         console.error("Error checking phone verification:", err);
-        // Default to welcome if error
         setStep("welcome");
       }
     };
@@ -85,11 +76,6 @@ export const Welcome = (): JSX.Element => {
   const sendOtp = async () => {
     setError("");
 
-    // Build full phone number using current dialCode and phoneInput
-    const fullPhoneNumber = buildFullPhoneNumber();
-    
-    console.log("[SendOTP] dialCode:", dialCode);
-    console.log("[SendOTP] phoneInput:", phoneInput);
     console.log("[SendOTP] fullPhoneNumber:", fullPhoneNumber);
 
     if (!fullPhoneNumber || fullPhoneNumber.length < 10) {
@@ -108,7 +94,7 @@ export const Welcome = (): JSX.Element => {
 
       if (data.success) {
         setPhoneMasked(data.data.phone_masked);
-        setSentPhoneNumber(fullPhoneNumber); // Store for verification
+        setSentPhoneNumber(fullPhoneNumber);
         setCooldown(60);
         setAttemptsLeft(3);
         setStep("otp");
@@ -139,7 +125,7 @@ export const Welcome = (): JSX.Element => {
     try {
       const { data, error: fnError } = await supabase.functions.invoke("verify-whatsapp-otp", {
         body: {
-          phone_number: sentPhoneNumber, // Use the number that OTP was sent to
+          phone_number: sentPhoneNumber,
           otp_code: otpCode,
           user_id: user?.id
         }
@@ -148,7 +134,6 @@ export const Welcome = (): JSX.Element => {
       if (fnError) throw fnError;
 
       if (data.success) {
-        // Update profile with verified phone
         const detectedCountry = detectCountryFromTimezone();
         
         await supabase
@@ -161,7 +146,6 @@ export const Welcome = (): JSX.Element => {
             country: detectedCountry,
           }, { onConflict: 'user_id' });
 
-        // Check if onboarding already completed
         const { data: profile } = await supabase
           .from("user_profiles")
           .select("onboarding_completed")
@@ -169,10 +153,8 @@ export const Welcome = (): JSX.Element => {
           .maybeSingle();
 
         if (profile?.onboarding_completed) {
-          // Already completed onboarding, go to dashboard
           navigate("/dashboard");
         } else {
-          // Need to complete onboarding
           setStep("welcome");
         }
       } else {
@@ -188,12 +170,10 @@ export const Welcome = (): JSX.Element => {
     }
   };
 
-  // Skip verification (optional - for users who want to verify later)
   const skipVerification = () => {
     setStep("welcome");
   };
 
-  // Go back to phone input
   const goBack = () => {
     setOtpCode("");
     setError("");
@@ -281,9 +261,10 @@ export const Welcome = (): JSX.Element => {
                   <label className="text-white text-sm font-medium">{language === 'id' ? 'Nomor WhatsApp' : 'WhatsApp Number'}</label>
                   <PhoneInput
                     value={phoneInput}
-                    onChange={(phone, dial) => {
+                    onChange={(phone, dialCode, fullNum) => {
+                      console.log("[Welcome] PhoneInput onChange - phone:", phone, "dialCode:", dialCode, "fullNum:", fullNum);
                       setPhoneInput(phone);
-                      setDialCode(dial);
+                      setFullPhoneNumber(fullNum);
                     }}
                     disabled={sendingOtp}
                     autoDetect={true}
@@ -392,7 +373,7 @@ export const Welcome = (): JSX.Element => {
     );
   }
 
-  // Welcome step (original content)
+  // Welcome step
   return (
     <main className="w-full min-h-screen flex items-center justify-center bg-[#0a0a12] relative overflow-hidden px-6">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#7c3aed]/20 via-transparent to-transparent"></div>
@@ -401,11 +382,7 @@ export const Welcome = (): JSX.Element => {
       <div className="max-w-3xl mx-auto text-center relative z-10">
         <div className="mb-12">
           <div className="inline-flex items-center gap-3 mb-8">
-            <img
-              className="w-12 h-12"
-              alt="Logo"
-              src="/logo.png"
-            />
+            <img className="w-12 h-12" alt="Logo" src="/logo.png" />
             <h1 className="text-2xl font-bold text-white">SPARKFLUENCE</h1>
           </div>
 
