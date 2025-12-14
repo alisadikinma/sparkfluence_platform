@@ -52,11 +52,25 @@ export const FullVideo: React.FC = () => {
   useEffect(() => {
     console.log('[FullVideo] ========== INIT ==========');
     console.log('[FullVideo] location.state:', location.state);
-    console.log('[FullVideo] location.pathname:', location.pathname);
     console.log('[FullVideo] hasStartedCombine.current:', hasStartedCombine.current);
     
-    if (!location.state) {
-      console.log('[FullVideo] ERROR: No location.state! Navigation state was lost.');
+    // Try to get state from location.state first, then sessionStorage
+    let state = location.state;
+    if (!state) {
+      console.log('[FullVideo] No location.state, trying sessionStorage...');
+      const storedState = sessionStorage.getItem('fullVideoState');
+      if (storedState) {
+        try {
+          state = JSON.parse(storedState);
+          console.log('[FullVideo] Recovered state from sessionStorage');
+        } catch (e) {
+          console.log('[FullVideo] Failed to parse sessionStorage:', e);
+        }
+      }
+    }
+    
+    if (!state) {
+      console.log('[FullVideo] ERROR: No state available!');
       setCombineError('No video data received. Please go back and try again.');
       return;
     }
@@ -66,7 +80,6 @@ export const FullVideo: React.FC = () => {
       return;
     }
     
-    const state = location.state;
     const segments = state?.segments || state?.selectedSegments || [];
     console.log('[FullVideo] Segments received:', segments.length);
     if (segments.length > 0) {
@@ -78,8 +91,8 @@ export const FullVideo: React.FC = () => {
     // Set title and description
     const defaultTitle = state?.topic || "Generated Video Content";
     const defaultDescription = segments.length > 0
-      ? `This video contains ${segments.length} carefully selected segments. ` +
-        `Total duration: ${segments.reduce((sum: number, seg: any) => sum + (seg.durationSeconds || 8), 0)} seconds.`
+      ? "This video contains " + segments.length + " carefully selected segments. " +
+        "Total duration: " + segments.reduce((sum, seg) => sum + (seg.durationSeconds || 8), 0) + " seconds."
       : "AI-generated video content ready to be scheduled and published to your social media platforms.";
     
     setTitle(defaultTitle);
@@ -91,27 +104,27 @@ export const FullVideo: React.FC = () => {
       setFinalVideoUrl(state.finalVideoUrl);
     } else if (segments.length > 0) {
       // Check if segments have video URLs (support both videoUrl and video_url)
-      const hasVideos = segments.every((s: any) => s.videoUrl || s.video_url);
+      const hasVideos = segments.every((s) => s.videoUrl || s.video_url);
       console.log('[FullVideo] Checking videos - hasVideos:', hasVideos);
-      console.log('[FullVideo] Video URLs:', segments.map((s: any) => s.videoUrl || s.video_url || 'MISSING'));
+      console.log('[FullVideo] Video URLs:', segments.map((s) => s.videoUrl || s.video_url || 'MISSING'));
       
       if (hasVideos) {
         // All segments have videos, trigger combine
         hasStartedCombine.current = true;
-        console.log('[FullVideo] ✅ Starting combine process...');
+        console.log('[FullVideo] Starting combine process...');
         triggerCombineVideo(segments, state);
       } else {
-        console.log('[FullVideo] ❌ Missing video URLs in segments');
+        console.log('[FullVideo] Missing video URLs in segments');
         setCombineError('Some segments are missing video URLs. Please go back and generate videos first.');
       }
     } else {
-      console.log('[FullVideo] ❌ No segments found');
+      console.log('[FullVideo] No segments found');
       setCombineError('No video segments found. Please go back and create videos first.');
     }
   }, [location.state]);
 
   // Trigger combine video API (direct backend call)
-  const triggerCombineVideo = async (segments: any[], state: any) => {
+  const triggerCombineVideo = async (segments, state) => {
     console.log('[FullVideo] ========== TRIGGER COMBINE ==========');
     console.log('[FullVideo] Backend URL:', BACKEND_URL);
     console.log('[FullVideo] Segments to combine:', segments.length);
@@ -123,8 +136,8 @@ export const FullVideo: React.FC = () => {
 
     try {
       // Prepare segments data for backend
-      const videoSegments = segments.map((seg: any, index: number) => ({
-        type: seg.type || seg.element || `segment_${index + 1}`,
+      const videoSegments = segments.map((seg, index) => ({
+        type: seg.type || seg.element || "segment_" + (index + 1),
         video_url: seg.videoUrl || seg.video_url,
         duration_seconds: seg.durationSeconds || 8
       }));
@@ -132,19 +145,19 @@ export const FullVideo: React.FC = () => {
       console.log('[FullVideo] Prepared videoSegments:', JSON.stringify(videoSegments, null, 2));
       
       // Check if all segments have video URLs
-      const missingVideos = videoSegments.filter((s: any) => !s.video_url);
+      const missingVideos = videoSegments.filter((s) => !s.video_url);
       if (missingVideos.length > 0) {
         console.log('[FullVideo] ERROR: Missing video URLs:', missingVideos);
-        throw new Error(`${missingVideos.length} segments are missing video URLs`);
+        throw new Error(missingVideos.length + " segments are missing video URLs");
       }
 
-      console.log('[FullVideo] ✅ All segments have video URLs');
+      console.log('[FullVideo] All segments have video URLs');
       console.log('[FullVideo] Sending request to backend...');
       setCombineProgress("Connecting to video processor...");
       setProgressPercent(10);
       
       const requestBody = {
-        project_id: state.sessionId || `project_${Date.now()}`,
+        project_id: state.sessionId || "project_" + Date.now(),
         segments: videoSegments,
         options: {
           bgm_url: state.selectedMusic?.audioUrl || state.selectedMusic?.url || null,
@@ -154,7 +167,7 @@ export const FullVideo: React.FC = () => {
       console.log('[FullVideo] Request body:', JSON.stringify(requestBody, null, 2));
       
       // Direct backend call (same as Loading.tsx)
-      const response = await fetch(`${BACKEND_URL}/api/combine-final-video`, {
+      const response = await fetch(BACKEND_URL + "/api/combine-final-video", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -168,11 +181,11 @@ export const FullVideo: React.FC = () => {
       if (!response.ok) {
         const errorText = await response.text();
         console.log('[FullVideo] ERROR response:', errorText);
-        throw new Error(`Backend error: ${response.status} - ${errorText}`);
+        throw new Error("Backend error: " + response.status + " - " + errorText);
       }
 
       const data = await response.json();
-      console.log('[FullVideo] ✅ Job created:', data);
+      console.log('[FullVideo] Job created:', data);
 
       if (!data.success || !data.data?.job_id) {
         throw new Error("Failed to create job");
@@ -183,7 +196,7 @@ export const FullVideo: React.FC = () => {
       setProgressPercent(15);
       startPollingJobStatusDirect(data.data.job_id);
 
-    } catch (err: any) {
+    } catch (err) {
       console.error('[FullVideo] Combine error:', err);
       setCombineError(err.message || "Failed to combine video");
       setIsCombining(false);
@@ -193,7 +206,7 @@ export const FullVideo: React.FC = () => {
 
 
   // Poll job status directly from backend
-  const startPollingJobStatusDirect = (jid: string) => {
+  const startPollingJobStatusDirect = (jid) => {
     let attempts = 0;
     const maxAttempts = 120; // 10 minutes max (120 * 5s)
     
@@ -205,7 +218,7 @@ export const FullVideo: React.FC = () => {
       setProgressPercent(Math.round(progressFromAttempts));
       
       if (attempts > maxAttempts) {
-        clearInterval(pollIntervalRef.current!);
+        clearInterval(pollIntervalRef.current);
         setCombineError("Video processing timeout. Please try again.");
         setIsCombining(false);
         return;
@@ -215,9 +228,9 @@ export const FullVideo: React.FC = () => {
     }, 5000);
   };
 
-  const pollJobStatusDirect = async (jid: string, attempts: number = 0) => {
+  const pollJobStatusDirect = async (jid, attempts = 0) => {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/job-status/${jid}`, {
+      const response = await fetch(BACKEND_URL + "/api/job-status/" + jid, {
         headers: { 'x-api-key': BACKEND_API_KEY }
       });
       
@@ -274,7 +287,7 @@ export const FullVideo: React.FC = () => {
   };
 
   // Update planned_content with final video URL
-  const updatePlannedContentWithVideo = async (videoUrl: string) => {
+  const updatePlannedContentWithVideo = async (videoUrl) => {
     if (!user || !videoData?.sessionId) return;
     
     try {
@@ -311,7 +324,7 @@ export const FullVideo: React.FC = () => {
     { id: "instagram", name: "Instagram" },
   ];
 
-  const getPlatformIcon = (platformId: string) => {
+  const getPlatformIcon = (platformId) => {
     switch (platformId) {
       case "tiktok":
         return (
@@ -336,7 +349,7 @@ export const FullVideo: React.FC = () => {
     }
   };
 
-  const togglePlatform = (platformId: string) => {
+  const togglePlatform = (platformId) => {
     setSelectedPlatforms((prev) =>
       prev.includes(platformId)
         ? prev.filter((id) => id !== platformId)
@@ -479,7 +492,7 @@ export const FullVideo: React.FC = () => {
                               strokeWidth="6"
                               fill="none"
                               strokeLinecap="round"
-                              strokeDasharray={`${progressPercent * 2.51} 251`}
+                              strokeDasharray={progressPercent * 2.51 + " 251"}
                               className="transition-all duration-500"
                             />
                             <defs>
@@ -501,7 +514,7 @@ export const FullVideo: React.FC = () => {
                         <div className="w-full bg-white/20 rounded-full h-2 overflow-hidden">
                           <div 
                             className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
-                            style={{ width: `${progressPercent}%` }}
+                            style={{ width: progressPercent + "%" }}
                           />
                         </div>
                         <p className="text-white/50 text-xs mt-3">Please wait, this may take a minute...</p>
@@ -538,7 +551,7 @@ export const FullVideo: React.FC = () => {
             {finalVideoUrl && (
               <a
                 href={finalVideoUrl}
-                download={`${title || 'video'}.mp4`}
+                download={(title || 'video') + ".mp4"}
                 className="w-full flex items-center justify-center gap-2 bg-[#7c3aed] hover:bg-[#6d28d9] text-white py-3 rounded-lg transition-colors"
               >
                 <Download className="w-5 h-5" />
@@ -559,7 +572,7 @@ export const FullVideo: React.FC = () => {
                 <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
                   <div 
                     className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
+                    style={{ width: progressPercent + "%" }}
                   />
                 </div>
               </div>
@@ -608,14 +621,10 @@ export const FullVideo: React.FC = () => {
                   </div>
                   <button
                     onClick={() => setPublishToPublic(!publishToPublic)}
-                    className={`relative w-14 h-7 rounded-full transition-colors ${
-                      publishToPublic ? "bg-[#7c3aed]" : "bg-[#4e5562]"
-                    }`}
+                    className={"relative w-14 h-7 rounded-full transition-colors " + (publishToPublic ? "bg-[#7c3aed]" : "bg-[#4e5562]")}
                   >
                     <div
-                      className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full transition-transform ${
-                        publishToPublic ? "translate-x-7" : "translate-x-0"
-                      }`}
+                      className={"absolute top-1 left-1 w-5 h-5 bg-white rounded-full transition-transform " + (publishToPublic ? "translate-x-7" : "translate-x-0")}
                     />
                   </button>
                 </div>
@@ -629,11 +638,9 @@ export const FullVideo: React.FC = () => {
                       <button
                         key={platform.id}
                         onClick={() => togglePlatform(platform.id)}
-                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all ${
-                          selectedPlatforms.includes(platform.id)
-                            ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
-                            : "bg-[#2b2b38] text-white/60 border-2 border-[#2b2b38] hover:border-[#7c3aed]/50 hover:text-white/80"
-                        }`}
+                        className={"w-10 h-10 rounded-lg flex items-center justify-center transition-all " + (selectedPlatforms.includes(platform.id)
+                          ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
+                          : "bg-[#2b2b38] text-white/60 border-2 border-[#2b2b38] hover:border-[#7c3aed]/50 hover:text-white/80")}
                       >
                         {getPlatformIcon(platform.id)}
                       </button>

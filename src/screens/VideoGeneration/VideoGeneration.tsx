@@ -967,6 +967,10 @@ export const VideoGeneration = (): JSX.Element => {
     };
     console.log('[VideoGen] Navigating to /full-video with state:', navigationState);
     
+    // Save to sessionStorage as backup (in case location.state is lost)
+    sessionStorage.setItem('fullVideoState', JSON.stringify(navigationState));
+    console.log('[VideoGen] Saved state to sessionStorage');
+    
     navigate("/full-video", { state: navigationState });
   };
 
