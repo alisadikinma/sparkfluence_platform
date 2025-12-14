@@ -96,11 +96,16 @@ export const Register = (): JSX.Element => {
       // Extract error message from response or fnError context
       if (fnError) {
         // Try to get detailed error from context
-        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
-        if (errorBody?.error?.message) {
-          setError(errorBody.error.message);
-          setSendingOtp(false);
-          return;
+        try {
+          const body = fnError.context?.body;
+          const errorBody = typeof body === 'string' ? JSON.parse(body) : body;
+          if (errorBody?.error?.message) {
+            setError(errorBody.error.message);
+            setSendingOtp(false);
+            return;
+          }
+        } catch (parseErr) {
+          console.warn('[Register] Could not parse error body:', parseErr);
         }
         throw fnError;
       }
@@ -155,11 +160,16 @@ export const Register = (): JSX.Element => {
       // Extract error message from response or fnError context
       if (fnError) {
         // Try to get detailed error from context
-        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
-        if (errorBody?.error?.message) {
-          setError(errorBody.error.message);
-          setSendingOtp(false);
-          return;
+        try {
+          const body = fnError.context?.body;
+          const errorBody = typeof body === 'string' ? JSON.parse(body) : body;
+          if (errorBody?.error?.message) {
+            setError(errorBody.error.message);
+            setVerifyingOtp(false);
+            return;
+          }
+        } catch (parseErr) {
+          console.warn('[Register] Could not parse error body:', parseErr);
         }
         throw fnError;
       }
