@@ -173,7 +173,14 @@ export const Register = (): JSX.Element => {
       const { user, error: signUpError } = await signUp(email, password);
 
       if (signUpError) {
-        setError(signUpError.message);
+        // If user already exists, try to sign in instead
+        if (signUpError.message.includes('already registered')) {
+          setError(language === 'id' 
+            ? 'Email sudah terdaftar. Silakan login.' 
+            : 'Email already registered. Please login.');
+        } else {
+          setError(signUpError.message);
+        }
         setLoading(false);
         return;
       }
@@ -182,6 +189,19 @@ export const Register = (): JSX.Element => {
         // Auto-detect country from timezone
         const detectedCountry = detectCountryFromTimezone();
         console.log('[Register] Detected country:', detectedCountry);
+
+        // Sign in immediately after signup to get a valid session
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError) {
+          console.error('[Register] Auto sign-in error:', signInError);
+          // Continue anyway, user can login manually
+        } else {
+          console.log('[Register] Auto sign-in successful');
+        }
 
         // Wait a moment for the trigger to create the profile
         await new Promise(resolve => setTimeout(resolve, 500));
