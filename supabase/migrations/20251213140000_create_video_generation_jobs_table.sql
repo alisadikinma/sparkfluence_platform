@@ -30,39 +30,43 @@ CREATE TABLE IF NOT EXISTS video_generation_jobs (
 );
 
 -- Create indexes for efficient querying
-CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_user_id ON video_generation_jobs(user_id);
-CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_session_id ON video_generation_jobs(session_id);
-CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_status ON video_generation_jobs(status);
-CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_veo_uuid ON video_generation_jobs(veo_uuid);
-CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_user_session ON video_generation_jobs(user_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_video_jobs_user_id ON video_generation_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_video_jobs_session_id ON video_generation_jobs(session_id);
+CREATE INDEX IF NOT EXISTS idx_video_jobs_status ON video_generation_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_video_jobs_veo_uuid ON video_generation_jobs(veo_uuid);
+CREATE INDEX IF NOT EXISTS idx_video_jobs_user_session ON video_generation_jobs(user_id, session_id);
 
 -- Enable RLS
 ALTER TABLE video_generation_jobs ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies
+-- RLS Policies (drop first to avoid "already exists" error)
+DROP POLICY IF EXISTS "Users can view their own video jobs" ON video_generation_jobs;
 CREATE POLICY "Users can view their own video jobs"
     ON video_generation_jobs FOR SELECT
     USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own video jobs" ON video_generation_jobs;
 CREATE POLICY "Users can insert their own video jobs"
     ON video_generation_jobs FOR INSERT
     WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own video jobs" ON video_generation_jobs;
 CREATE POLICY "Users can update their own video jobs"
     ON video_generation_jobs FOR UPDATE
     USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own video jobs" ON video_generation_jobs;
 CREATE POLICY "Users can delete their own video jobs"
     ON video_generation_jobs FOR DELETE
     USING (auth.uid() = user_id);
 
--- Service role can do everything (for Edge Functions)
+DROP POLICY IF EXISTS "Service role has full access to video jobs" ON video_generation_jobs;
 CREATE POLICY "Service role has full access to video jobs"
     ON video_generation_jobs FOR ALL
     USING (auth.jwt() ->> 'role' = 'service_role');
 
 -- Add data column to notifications table if not exists
-DO $$
+DO $do_block$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
@@ -70,19 +74,22 @@ BEGIN
     ) THEN
         ALTER TABLE notifications ADD COLUMN data JSONB;
     END IF;
-END $$;
+END $do_block$;
 
--- Create trigger to auto-update updated_at
-CREATE OR REPLACE FUNCTION update_video_generation_jobs_updated_at()
-RETURNS TRIGGER AS $$
+-- Trigger function: auto-update updated_at on video_generation_jobs
+CREATE OR REPLACE FUNCTION trg_fn_video_jobs_set_updated_at()
+RETURNS TRIGGER AS $trg_fn$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$trg_fn$ LANGUAGE plpgsql;
 
+-- Trigger: call function before update on video_generation_jobs  
+-- Drop old trigger name if exists, then create with new name
 DROP TRIGGER IF EXISTS trigger_update_video_generation_jobs_updated_at ON video_generation_jobs;
-CREATE TRIGGER trigger_update_video_generation_jobs_updated_at
+DROP TRIGGER IF EXISTS trg_video_jobs_set_updated_at ON video_generation_jobs;
+CREATE TRIGGER trg_video_jobs_set_updated_at
     BEFORE UPDATE ON video_generation_jobs
     FOR EACH ROW
-    EXECUTE FUNCTION update_video_generation_jobs_updated_at();
+    EXECUTE FUNCTION trg_fn_video_jobs_set_updated_at();

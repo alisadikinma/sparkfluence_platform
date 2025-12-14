@@ -1195,6 +1195,11 @@ export const VideoGeneration = (): JSX.Element => {
                       {segment.videoUrl?.includes('supabase') ? '✓SB' : segment.videoUrl?.substring(0, 15)}
                     </span>
                   </div>
+                ) : segment.videoError ? (
+                  <div className="flex items-center gap-1 text-red-400 text-xs">
+                    <AlertCircle className="w-3 h-3" />
+                    Failed
+                  </div>
                 ) : segment.isGeneratingVideo ? (
                   <div className="flex items-center gap-1 text-amber-400 text-xs">
                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -1335,7 +1340,6 @@ export const VideoGeneration = (): JSX.Element => {
                             onClick={() => handleRegenerateVideo(segment.id)}
                             size="sm"
                             variant="outline"
-                            disabled={isBackgroundMode}
                             className="border-red-500/50 text-red-400 hover:bg-red-500/10"
                           >
                             <RefreshCw className="w-4 h-4 mr-1" />

@@ -13,15 +13,65 @@ import logging
 import tempfile
 import shutil
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+import threading
 
 # Load environment variables
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Sparkfluence Video Backend", version="1.1.0")
+# Import background worker
+from job_worker import BackgroundWorker
+
+# Global worker instance
+background_worker: Optional[BackgroundWorker] = None
+worker_task: Optional[asyncio.Task] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup/shutdown events."""
+    global background_worker, worker_task
+    
+    # Startup
+    logger.info("Starting Sparkfluence Video Backend...")
+    
+    # Start background worker if Supabase is configured
+    if os.getenv('SUPABASE_URL') and os.getenv('SUPABASE_SERVICE_ROLE_KEY'):
+        try:
+            background_worker = BackgroundWorker()
+            worker_task = asyncio.create_task(background_worker.start())
+            logger.info("Background job worker started")
+        except Exception as e:
+            logger.error(f"Failed to start background worker: {e}")
+    else:
+        logger.warning("Supabase not configured - background worker disabled")
+    
+    yield
+    
+    # Shutdown
+    if background_worker:
+        background_worker.stop()
+    if worker_task:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Backend shutdown complete")
+
+
+app = FastAPI(
+    title="Sparkfluence Video Backend", 
+    version="2.0.0",
+    lifespan=lifespan
+)
 
 # CORS middleware
 app.add_middleware(
@@ -37,6 +87,41 @@ jobs: Dict[str, Dict[str, Any]] = {}
 
 # Store completed video paths for serving
 completed_videos: Dict[str, str] = {}
+
+# Supabase client helper
+class SupabaseHelper:
+    def __init__(self):
+        self.url = os.getenv('SUPABASE_URL')
+        self.key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+        self.headers = {
+            'apikey': self.key,
+            'Authorization': f'Bearer {self.key}',
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+        }
+    
+    async def insert(self, table: str, data: List[Dict]) -> List[Dict]:
+        """Insert records into table."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.url}/rest/v1/{table}",
+                headers=self.headers,
+                json=data
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def select(self, table: str, filters: Dict = None) -> List[Dict]:
+        """Select records from table."""
+        async with httpx.AsyncClient() as client:
+            url = f"{self.url}/rest/v1/{table}"
+            params = {k: f"eq.{v}" for k, v in (filters or {}).items()}
+            response = await client.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()
+
+supabase = SupabaseHelper()
+
 
 # Models
 class VideoSegment(BaseModel):
@@ -62,6 +147,44 @@ class JobStatusResponse(BaseModel):
     error_message: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+# New models for async job creation
+class ImageSegment(BaseModel):
+    segment_id: str
+    segment_number: int
+    segment_type: Optional[str] = None
+    visual_prompt: str
+
+class CreateImageJobsRequest(BaseModel):
+    user_id: str
+    session_id: str
+    segments: List[ImageSegment]
+    style: str = 'cinematic'
+    aspect_ratio: str = '9:16'
+    provider: str = 'z-image'
+    topic: Optional[str] = None
+    language: str = 'indonesian'
+
+class VideoJobSegment(BaseModel):
+    segment_id: str
+    segment_number: int
+    segment_type: Optional[str] = None
+    shot_type: str = 'B-ROLL'
+    emotion: Optional[str] = None
+    script_text: Optional[str] = None
+    image_url: str
+    duration_seconds: int = 8
+    visual_direction: Optional[str] = None
+
+class CreateVideoJobsRequest(BaseModel):
+    user_id: str
+    session_id: str
+    segments: List[VideoJobSegment]
+    topic: Optional[str] = None
+    language: str = 'indonesian'
+    aspect_ratio: str = '9:16'
+    resolution: str = '1080p'
+
+
 # API Key authentication
 def verify_api_key(x_api_key: str = Header(...)):
     expected_key = os.getenv('BACKEND_API_KEY')
@@ -71,18 +194,184 @@ def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return x_api_key
 
+
 @app.get("/")
 async def root():
-    return {"message": "Sparkfluence Video Backend API", "version": "1.1.0"}
+    return {
+        "message": "Sparkfluence Video Backend API", 
+        "version": "2.0.0",
+        "features": ["video_combining", "background_jobs", "image_generation", "video_generation"]
+    }
+
 
 @app.get("/health")
 async def health_check():
     supabase_configured = bool(os.getenv('SUPABASE_URL') and os.getenv('SUPABASE_SERVICE_ROLE_KEY'))
+    worker_running = background_worker is not None and background_worker.running if background_worker else False
+    
     return {
         "status": "healthy",
         "ffmpeg_available": check_ffmpeg_available(),
-        "supabase_configured": supabase_configured
+        "supabase_configured": supabase_configured,
+        "background_worker": "running" if worker_running else "stopped"
     }
+
+
+@app.get("/api/worker/status")
+async def worker_status(api_key: str = Header(..., alias="x-api-key")):
+    """Get background worker status."""
+    verify_api_key(api_key)
+    
+    return {
+        "success": True,
+        "data": {
+            "running": background_worker.running if background_worker else False,
+            "image_rate_limited": background_worker.image_worker.is_rate_limited if background_worker else False,
+            "video_rate_limited": background_worker.video_worker.is_rate_limited if background_worker else False
+        }
+    }
+
+
+# ==================== NEW: Async Job Creation Endpoints ====================
+
+@app.post("/api/jobs/images")
+async def create_image_jobs(
+    request: CreateImageJobsRequest,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """Create image generation jobs (async). Worker will process them."""
+    verify_api_key(api_key)
+    
+    if not supabase.url or not supabase.key:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+    
+    # Prepare job records
+    jobs_data = []
+    for seg in request.segments:
+        jobs_data.append({
+            'user_id': request.user_id,
+            'session_id': request.session_id,
+            'segment_id': seg.segment_id,
+            'segment_number': seg.segment_number,
+            'segment_type': seg.segment_type,
+            'visual_prompt': seg.visual_prompt,
+            'style': request.style,
+            'aspect_ratio': request.aspect_ratio,
+            'provider': request.provider,
+            'topic': request.topic,
+            'language': request.language,
+            'status': 0  # PENDING
+        })
+    
+    try:
+        # Insert jobs into database
+        created = await supabase.insert('image_generation_jobs', jobs_data)
+        
+        return {
+            "success": True,
+            "data": {
+                "jobs_created": len(created),
+                "session_id": request.session_id,
+                "message": "Jobs queued for background processing"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to create image jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/jobs/videos")
+async def create_video_jobs(
+    request: CreateVideoJobsRequest,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """Create video generation jobs (async). Worker will process them."""
+    verify_api_key(api_key)
+    
+    if not supabase.url or not supabase.key:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+    
+    # Prepare job records
+    jobs_data = []
+    for seg in request.segments:
+        jobs_data.append({
+            'user_id': request.user_id,
+            'session_id': request.session_id,
+            'segment_id': seg.segment_id,
+            'segment_number': seg.segment_number,
+            'segment_type': seg.segment_type,
+            'shot_type': seg.shot_type,
+            'emotion': seg.emotion,
+            'script_text': seg.script_text,
+            'image_url': seg.image_url,
+            'duration_seconds': seg.duration_seconds,
+            'topic': request.topic,
+            'language': request.language,
+            'aspect_ratio': request.aspect_ratio,
+            'resolution': request.resolution,
+            'status': 0  # PENDING
+        })
+    
+    try:
+        created = await supabase.insert('video_generation_jobs', jobs_data)
+        
+        return {
+            "success": True,
+            "data": {
+                "jobs_created": len(created),
+                "session_id": request.session_id,
+                "message": "Jobs queued for background processing"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to create video jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/jobs/{job_type}/{session_id}")
+async def get_session_jobs(
+    job_type: str,
+    session_id: str,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """Get all jobs for a session."""
+    verify_api_key(api_key)
+    
+    if job_type not in ['images', 'videos']:
+        raise HTTPException(status_code=400, detail="job_type must be 'images' or 'videos'")
+    
+    table = 'image_generation_jobs' if job_type == 'images' else 'video_generation_jobs'
+    
+    try:
+        jobs = await supabase.select(table, {'session_id': session_id})
+        
+        # Calculate summary
+        total = len(jobs)
+        pending = sum(1 for j in jobs if j['status'] == 0)
+        processing = sum(1 for j in jobs if j['status'] == 1)
+        completed = sum(1 for j in jobs if j['status'] == 2)
+        failed = sum(1 for j in jobs if j['status'] == 3)
+        
+        return {
+            "success": True,
+            "data": {
+                "jobs": jobs,
+                "summary": {
+                    "total": total,
+                    "pending": pending,
+                    "processing": processing,
+                    "completed": completed,
+                    "failed": failed
+                },
+                "all_complete": pending == 0 and processing == 0
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Existing Video Combining Endpoints ====================
 
 @app.post("/api/combine-final-video")
 async def combine_final_video(
@@ -125,6 +414,7 @@ async def combine_final_video(
         }
     }
 
+
 @app.get("/api/job-status/{job_id}")
 async def get_job_status(
     job_id: str,
@@ -141,6 +431,7 @@ async def get_job_status(
         "success": True,
         "data": job
     }
+
 
 @app.get("/api/video/{video_id}")
 async def serve_video(video_id: str):
@@ -161,7 +452,9 @@ async def serve_video(video_id: str):
         }
     )
 
-# Background task: Process video combination
+
+# ==================== Background Tasks ====================
+
 async def process_video_combination(
     job_id: str,
     project_id: str,
@@ -222,14 +515,16 @@ async def process_video_combination(
         })
         cleanup_directory(work_dir)
 
-# Helper: Update job status
+
+# ==================== Helper Functions ====================
+
 def update_job_status(job_id: str, progress: int, step: str):
     if job_id in jobs:
         jobs[job_id]["progress_percentage"] = progress
         jobs[job_id]["current_step"] = step
         logger.info(f"Job {job_id}: {progress}% - {step}")
 
-# Helper: Download video segments
+
 async def download_segments(segments: List[VideoSegment], work_dir: Path) -> List[Path]:
     segment_files = []
 
@@ -253,7 +548,7 @@ async def download_segments(segments: List[VideoSegment], work_dir: Path) -> Lis
 
     return segment_files
 
-# Helper: Create concat file for FFmpeg
+
 def create_concat_file(segment_files: List[Path], work_dir: Path) -> Path:
     concat_file = work_dir / "concat.txt"
 
@@ -263,7 +558,7 @@ def create_concat_file(segment_files: List[Path], work_dir: Path) -> Path:
 
     return concat_file
 
-# Helper: Concatenate videos with FFmpeg
+
 def concatenate_videos(concat_file: Path, work_dir: Path) -> Path:
     output_file = work_dir / "final_video.mp4"
 
@@ -284,14 +579,13 @@ def concatenate_videos(concat_file: Path, work_dir: Path) -> Path:
     logger.info("Video concatenation successful")
     return output_file
 
-# Helper: Add background music
+
 async def add_background_music(
     video_file: Path,
     bgm_url: str,
     volume: float,
     work_dir: Path
 ) -> Path:
-    # Download BGM
     bgm_file = work_dir / "bgm.mp3"
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -301,7 +595,6 @@ async def add_background_music(
         with open(bgm_file, 'wb') as f:
             f.write(response.content)
 
-    # Mix audio with FFmpeg
     output_file = work_dir / "final_with_bgm.mp4"
 
     cmd = [
@@ -322,40 +615,33 @@ async def add_background_music(
     logger.info("Background music added successfully")
     return output_file
 
-# Helper: Upload to Supabase Storage bucket "final-videos"
+
 async def upload_to_storage(video_file: Path, project_id: str) -> str:
     supabase_url = os.getenv('SUPABASE_URL')
     supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
 
     if not supabase_url or not supabase_key:
-        # Fallback: serve via backend API for development
         logger.warning("Supabase not configured, using local storage fallback")
         video_id = f"{project_id}_{uuid.uuid4().hex[:8]}"
         
-        # Copy file to a persistent location
         persistent_dir = Path(tempfile.gettempdir()) / "sparkfluence_videos"
         persistent_dir.mkdir(parents=True, exist_ok=True)
         persistent_path = persistent_dir / f"{video_id}.mp4"
         
         shutil.copy(video_file, persistent_path)
-        
-        # Store path for serving
         completed_videos[video_id] = str(persistent_path)
         logger.info(f"Video stored locally: {video_id} -> {persistent_path}")
         
         return f"http://localhost:8000/api/video/{video_id}"
 
-    # Generate unique filename
     timestamp = int(asyncio.get_event_loop().time() * 1000)
     file_name = f"{project_id}_{timestamp}.mp4"
     
     logger.info(f"Uploading to Supabase Storage: final-videos/{file_name}")
 
-    # Read video file
     with open(video_file, 'rb') as f:
         video_data = f.read()
 
-    # Upload to Supabase Storage bucket "final-videos"
     async with httpx.AsyncClient(timeout=120.0) as client:
         upload_url = f"{supabase_url}/storage/v1/object/final-videos/{file_name}"
         
@@ -373,13 +659,12 @@ async def upload_to_storage(video_file: Path, project_id: str) -> str:
             logger.error(f"Upload failed: {response.status_code} - {response.text}")
             raise Exception(f"Upload failed: {response.text}")
 
-    # Return public URL
     public_url = f"{supabase_url}/storage/v1/object/public/final-videos/{file_name}"
     logger.info(f"Upload successful: {public_url}")
     
     return public_url
 
-# Helper: Get video metadata
+
 def get_video_metadata(video_file: Path) -> Dict[str, Any]:
     cmd = [
         'ffprobe',
@@ -424,22 +709,22 @@ def get_video_metadata(video_file: Path) -> Dict[str, Any]:
         "codec": codec
     }
 
-# Helper: Cleanup directory
+
 def cleanup_directory(directory: Path):
     try:
-        import shutil
         shutil.rmtree(directory)
         logger.info(f"Cleaned up directory: {directory}")
     except Exception as e:
         logger.warning(f"Cleanup failed: {str(e)}")
 
-# Helper: Check FFmpeg availability
+
 def check_ffmpeg_available() -> bool:
     try:
         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
         return True
     except Exception:
         return False
+
 
 if __name__ == "__main__":
     import uvicorn
