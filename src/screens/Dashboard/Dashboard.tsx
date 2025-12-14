@@ -171,8 +171,14 @@ export const Dashboard = (): JSX.Element => {
         const hasPendingOrProcessing = pending > 0 || processing > 0;
         const hasFailedNeedingRetry = failed > 0 && completed < jobs.length;
         
-        // Only show if active or recently updated
-        if (hasPendingOrProcessing || (isRecent && (completed > 0 || hasFailedNeedingRetry))) {
+        // Check if all jobs are fully completed successfully
+        const isFullyCompleted = completed === jobs.length && failed === 0;
+        
+        // Only show if:
+        // 1. Has pending/processing jobs (actively working)
+        // 2. Is recent AND has failed jobs needing retry
+        // 3. NOT if fully completed (all done, no errors)
+        if (hasPendingOrProcessing || (isRecent && hasFailedNeedingRetry && !isFullyCompleted)) {
           activeJobsList.push({
             session_id: sessionId,
             type: jobType,
