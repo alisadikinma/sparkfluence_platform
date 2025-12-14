@@ -505,7 +505,16 @@ export const Profile = (): JSX.Element => {
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
 
-      if (error) throw error;
+      // Extract detailed error message
+      if (error) {
+        const errorBody = error.context?.body ? JSON.parse(error.context.body) : null;
+        if (errorBody?.error?.message) {
+          setPhoneError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw error;
+      }
 
       await supabase.auth.updateUser({
         data: { full_name: profile.full_name }
@@ -544,7 +553,16 @@ export const Profile = (): JSX.Element => {
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
 
-      if (error) throw error;
+      // Extract detailed error message
+      if (error) {
+        const errorBody = error.context?.body ? JSON.parse(error.context.body) : null;
+        if (errorBody?.error?.message) {
+          setPhoneError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw error;
+      }
 
       const onboardingData = {
         interest: actualInterest,
@@ -639,7 +657,16 @@ export const Profile = (): JSX.Element => {
         }
       });
 
-      if (error) throw error;
+      // Extract detailed error message
+      if (error) {
+        const errorBody = error.context?.body ? JSON.parse(error.context.body) : null;
+        if (errorBody?.error?.message) {
+          setPhoneError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw error;
+      }
       
       if (data?.success && data?.niches) {
         setLlmNicheSuggestions(data.niches);
@@ -727,7 +754,16 @@ export const Profile = (): JSX.Element => {
         password: passwords.new
       });
 
-      if (error) throw error;
+      // Extract detailed error message
+      if (error) {
+        const errorBody = error.context?.body ? JSON.parse(error.context.body) : null;
+        if (errorBody?.error?.message) {
+          setPhoneError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw error;
+      }
 
       setPasswords({ current: "", new: "", confirm: "" });
       setPasswordSuccess(true);
@@ -756,7 +792,16 @@ export const Profile = (): JSX.Element => {
         body: { phone_number: fullPhoneNumber }
       });
 
-      if (error) throw error;
+      // Extract detailed error message
+      if (error) {
+        const errorBody = error.context?.body ? JSON.parse(error.context.body) : null;
+        if (errorBody?.error?.message) {
+          setPhoneError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw error;
+      }
 
       if (data.success) {
         setOtpSent(true);
@@ -796,7 +841,16 @@ export const Profile = (): JSX.Element => {
         }
       });
 
-      if (error) throw error;
+      // Extract detailed error message
+      if (error) {
+        const errorBody = error.context?.body ? JSON.parse(error.context.body) : null;
+        if (errorBody?.error?.message) {
+          setPhoneError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw error;
+      }
 
       if (data.success) {
         setPhoneSuccess(data.data.message);

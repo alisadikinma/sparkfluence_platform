@@ -93,17 +93,7 @@ export const Register = (): JSX.Element => {
         body: { phone_number: fullPhoneNumber }
       });
 
-      // Extract error message from response or fnError context
-      if (fnError) {
-        // Try to get detailed error from context
-        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
-        if (errorBody?.error?.message) {
-          setError(errorBody.error.message);
-          setSendingOtp(false);
-          return;
-        }
-        throw fnError;
-      }
+      if (fnError) throw fnError;
 
       if (data.success) {
         setPhoneMasked(data.data.phone_masked);
@@ -152,17 +142,7 @@ export const Register = (): JSX.Element => {
         }
       });
 
-      // Extract error message from response or fnError context
-      if (fnError) {
-        // Try to get detailed error from context
-        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
-        if (errorBody?.error?.message) {
-          setError(errorBody.error.message);
-          setSendingOtp(false);
-          return;
-        }
-        throw fnError;
-      }
+      if (fnError) throw fnError;
 
       if (data.success) {
         setPhoneVerified(true);

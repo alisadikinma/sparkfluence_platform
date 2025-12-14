@@ -100,7 +100,16 @@ export const Welcome = (): JSX.Element => {
         body: { phone_number: fullPhoneNumber }
       });
 
-      if (fnError) throw fnError;
+      // Extract detailed error message
+      if (fnError) {
+        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
+        if (errorBody?.error?.message) {
+          setError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw fnError;
+      }
 
       if (data.success) {
         setPhoneMasked(data.data.phone_masked);
@@ -141,7 +150,16 @@ export const Welcome = (): JSX.Element => {
         }
       });
 
-      if (fnError) throw fnError;
+      // Extract detailed error message
+      if (fnError) {
+        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
+        if (errorBody?.error?.message) {
+          setError(errorBody.error.message);
+          setSendingOtp(false);
+          return;
+        }
+        throw fnError;
+      }
 
       if (data.success) {
         const detectedCountry = detectCountryFromTimezone();
