@@ -217,14 +217,13 @@ export const Dashboard = (): JSX.Element => {
 
         // Show job if:
         // 1. Any stage has pending/processing
-        // 2. Images done but no video jobs yet (waiting for next stage)
-        // 3. Videos done but no final video (waiting for combine)
-        // 4. Has failures needing retry
-        const imagesReadyForVideo = imgAllDone && imgFailed === 0 && vidTotal === 0;
-        const videosReadyForCombine = vidAllDone && vidFailed === 0 && vidTotal > 0;
+        // 2. Images done but no video jobs yet (waiting for next stage) - only if recent (< 1 hour)
+        // 3. Has failures needing retry
+        // NOTE: Don't show "videos ready" jobs - user can combine from video-generation page
+        const imagesReadyForVideo = imgAllDone && imgFailed === 0 && vidTotal === 0 && isRecent;
         const needsRetry = hasAnyFailed && isRecent;
 
-        if (hasAnyPendingOrProcessing || imagesReadyForVideo || videosReadyForCombine || needsRetry) {
+        if (hasAnyPendingOrProcessing || imagesReadyForVideo || needsRetry) {
           activeJobsList.push({
             session_id: sessionId,
             stage,
