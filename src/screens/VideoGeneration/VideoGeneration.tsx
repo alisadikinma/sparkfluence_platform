@@ -823,7 +823,7 @@ export const VideoGeneration = (): JSX.Element => {
           }],
           language: 'indonesian',
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          resolution: videoSettings?.resolution || '720p',
+          resolution: videoSettings?.resolution || '1080p', // Default to 1080p Full HD
           session_id: sessionId,
           user_id: user.id
         }
