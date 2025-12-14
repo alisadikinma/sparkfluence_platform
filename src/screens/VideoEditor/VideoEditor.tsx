@@ -405,8 +405,12 @@ export const VideoEditor = (): JSX.Element => {
     setGenerationProgress({ current: 0, total: segmentsToGenerate.length, completed: 0, failed: 0 });
 
     try {
+      // Use character_ref_png if available, otherwise fallback to avatar_url
+      const referenceImage = characterRefPng || userAvatarUrl || '';
+      
       const segmentsData = segmentsToGenerate.map((seg, index) => {
         const originalIndex = segments.findIndex(s => s.id === seg.id);
+        const isCreatorShot = seg.shotType === 'CREATOR'; // Only shot_type matters
         return {
           segment_id: seg.segmentId,
           segment_number: originalIndex + 1,
@@ -415,13 +419,10 @@ export const VideoEditor = (): JSX.Element => {
           emotion: seg.emotion,
           visual_prompt: seg.visualDirection || seg.script,
           visual_direction: seg.visualDirection,
-          character_description: seg.shotType === 'CREATOR' ? characterDescription : null,
-          character_ref_png: seg.shotType === 'CREATOR' ? characterRefPng : null
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: isCreatorShot ? referenceImage : null
         };
       });
-
-      // Use character_ref_png if available, otherwise fallback to avatar_url
-      const referenceImage = characterRefPng || userAvatarUrl || '';
       
       const { data, error } = await supabase.functions.invoke('generate-images', {
         body: {
@@ -432,9 +433,9 @@ export const VideoEditor = (): JSX.Element => {
           topic: currentTopic,
           style: 'cinematic',
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          provider: 'gpt-image-1', // Use GPT-Image-1 for reference support
+          provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
           character_description: characterDescription,
-          character_ref_png: referenceImage // Avatar for face consistency
+          character_ref_png: referenceImage // Avatar for face consistency on CREATOR shots
         }
       });
 
@@ -502,17 +503,20 @@ export const VideoEditor = (): JSX.Element => {
       // Use character_ref_png if available, otherwise fallback to avatar_url
       const referenceImage = characterRefPng || userAvatarUrl || '';
       
-      const segmentsData = segments.map((seg, index) => ({
-        segment_id: seg.segmentId,
-        segment_number: index + 1,
-        segment_type: seg.type,
-        shot_type: seg.shotType,
-        emotion: seg.emotion,
-        visual_prompt: seg.visualDirection || seg.script,
-        visual_direction: seg.visualDirection,
-        character_description: seg.shotType === 'CREATOR' ? characterDescription : null,
-        character_ref_png: seg.shotType === 'CREATOR' ? referenceImage : null
-      }));
+      const segmentsData = segments.map((seg, index) => {
+        const isCreatorShot = seg.shotType === 'CREATOR'; // Only shot_type matters
+        return {
+          segment_id: seg.segmentId,
+          segment_number: index + 1,
+          segment_type: seg.type,
+          shot_type: seg.shotType,
+          emotion: seg.emotion,
+          visual_prompt: seg.visualDirection || seg.script,
+          visual_direction: seg.visualDirection,
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: isCreatorShot ? referenceImage : null
+        };
+      });
 
       const { data, error } = await supabase.functions.invoke('generate-images', {
         body: {
@@ -523,7 +527,7 @@ export const VideoEditor = (): JSX.Element => {
           topic: currentTopic,
           style: 'cinematic',
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          provider: 'gpt-image-1',
+          provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
           character_description: characterDescription,
           character_ref_png: referenceImage
         }
@@ -568,8 +572,8 @@ export const VideoEditor = (): JSX.Element => {
 
     try {
       const avatarUrl = segment.creatorAvatarUrl || userAvatarUrl || null;
-      const isCreatorShot = segment.shotType === 'CREATOR' || 
-        ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segment.type.toUpperCase());
+      // Only CREATOR shot_type needs face reference
+      const isCreatorShot = segment.shotType === 'CREATOR';
       const referenceImage = isCreatorShot ? (characterRefPng || avatarUrl) : null;
       
       const requestBody = {
@@ -585,8 +589,8 @@ export const VideoEditor = (): JSX.Element => {
         }],
         style: 'cinematic',
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
-        provider: 'gpt-image-1', // Use GPT-Image-1 for reference support
-        character_ref_png: referenceImage // Request-level reference
+        provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
+        character_ref_png: referenceImage // Request-level reference for CREATOR shots
       };
       
       const { data, error } = await supabase.functions.invoke('generate-images', {
@@ -757,53 +761,33 @@ export const VideoEditor = (): JSX.Element => {
               </p>
             </div>
             
-            <div className="flex gap-2">
-              {/* Regenerate All Button - only show when some images exist */}
-              {imagesGenerated > 0 && (
-                <Button
-                  onClick={() => handleRegenerateAll()}
-                  disabled={isGeneratingAll || isBackgroundMode}
-                  variant="outline"
-                  className="h-12 px-4 font-medium flex items-center gap-2 border-orange-500/50 text-orange-500 hover:bg-orange-500/10"
-                  title={language === 'id' ? 'Regenerate semua gambar' : 'Regenerate all images'}
-                >
+            {/* Generate All Images Button - always visible and clickable */}
+            <Button
+              onClick={allHaveImages ? handleRegenerateAll : handleGenerateAllBackground}
+              disabled={isGeneratingAll || isBackgroundMode}
+              className={`h-12 px-6 font-medium flex items-center gap-2 ${
+                isBackgroundMode
+                  ? "bg-blue-600 hover:bg-blue-700"
+                  : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
+              } text-white`}
+            >
+              {isBackgroundMode ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>{generationProgress.completed}/{generationProgress.total}</span>
+                </>
+              ) : allHaveImages ? (
+                <>
                   <RefreshCw className="w-5 h-5" />
-                  <span className="hidden sm:inline">
-                    {language === 'id' ? 'Regenerate Semua' : 'Regenerate All'}
-                  </span>
-                </Button>
+                  <span>{language === 'id' ? 'Regenerate Semua' : 'Regenerate All'} ({segments.length})</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
+                </>
               )}
-              
-              {/* Generate All Button */}
-              <Button
-                onClick={handleGenerateAllBackground}
-                disabled={isGeneratingAll || allHaveImages || isBackgroundMode}
-                className={`h-12 px-6 font-medium flex items-center gap-2 ${
-                  allHaveImages
-                    ? "bg-green-600 hover:bg-green-700"
-                    : isBackgroundMode
-                    ? "bg-blue-600 hover:bg-blue-700"
-                    : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
-                } text-white`}
-              >
-                {isBackgroundMode ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>{generationProgress.completed}/{generationProgress.total}</span>
-                  </>
-                ) : allHaveImages ? (
-                  <>
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span>{imagesGenerated}/{segments.length} ✓</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-5 h-5" />
-                    <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
-                  </>
-                )}
-              </Button>
-            </div>
+            </Button>
           </div>
         </div>
 

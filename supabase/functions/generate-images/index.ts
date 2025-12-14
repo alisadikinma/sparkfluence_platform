@@ -33,11 +33,12 @@ const FLUX_RESOLUTIONS: Record<string, { width: number; height: number }> = {
   '1:1': { width: 1024, height: 1024 }
 }
 
-// GPT-Image-1 sizes (similar to DALL-E 3)
+// GPT-Image-1 sizes (different from DALL-E 3)
+// Supported: '1024x1024', '1024x1536', '1536x1024', 'auto'
 const GPT_IMAGE_SIZES: Record<string, string> = {
-  '9:16': '1024x1792',
-  '16:9': '1792x1024',
-  '1:1': '1024x1024'
+  '9:16': '1024x1536',  // Portrait (closest to 9:16)
+  '16:9': '1536x1024',  // Landscape (closest to 16:9)
+  '1:1': '1024x1024'    // Square
 }
 
 // Job status constants
@@ -138,7 +139,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     topic, 
     style = 'cinematic', 
     aspect_ratio = '9:16',
-    provider = 'gpt-image-1', // Default to gpt-image-1 for reference support
+    provider: defaultProvider = 'auto', // 'auto' = hybrid mode (gpt-image-1 for CREATOR, huggingface for B-ROLL)
     character_description = '',
     character_ref_png = '' // Avatar URL for face consistency
   } = requestBody
@@ -151,6 +152,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   }
 
   console.log(`[CREATE_JOBS] Creating ${segments.length} jobs for session: ${session_id}`)
+  console.log(`[CREATE_JOBS] Provider mode: ${defaultProvider}`)
 
   // Get costume based on topic
   const costume = topic ? getCostumeForTopic(topic) : TOPIC_COSTUME_MAP.default
@@ -174,9 +176,18 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       emotion
     })
 
-    // Determine if this segment needs character reference (CREATOR shots)
-    const needsCharRef = shotType === 'CREATOR' || 
-      ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
+    // Determine if this segment needs character reference (CREATOR shots only)
+    const isCreatorShot = shotType === 'CREATOR'
+    
+    // HYBRID PROVIDER LOGIC:
+    // - CREATOR shots → gpt-image-1 (for face consistency with reference)
+    // - B-ROLL shots → huggingface (free, no face needed)
+    let segmentProvider = defaultProvider
+    if (defaultProvider === 'auto') {
+      segmentProvider = isCreatorShot ? 'gpt-image-1' : 'huggingface'
+    }
+    
+    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider}`)
     
     return {
       user_id,
@@ -189,10 +200,10 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       visual_prompt: imagePrompt,
       style,
       aspect_ratio,
-      provider,
+      provider: segmentProvider,
       topic,
       character_description: charDesc,
-      character_ref_png: needsCharRef ? (segment.character_ref_png || character_ref_png) : null,
+      character_ref_png: isCreatorShot ? (segment.character_ref_png || character_ref_png) : null,
       status: JOB_STATUS.PENDING,
       image_url: null,
       error_message: null
@@ -471,7 +482,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   const segments = requestBody.segments
   const style = requestBody.style || 'cinematic'
   const aspectRatio: '9:16' | '16:9' | '1:1' = requestBody.aspect_ratio || '9:16'
-  const provider = requestBody.provider || 'gpt-image-1' // Default to gpt-image-1 for reference support
+  const defaultProvider = requestBody.provider || 'auto' // 'auto' = hybrid mode
   const topic = requestBody.topic || ''
   const characterDescription = requestBody.character_description || ''
   const characterRefPng = requestBody.character_ref_png || '' // Avatar URL for face consistency
@@ -483,17 +494,10 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
     )
   }
 
-  // Check API keys based on provider
-  if ((provider === 'openai' || provider === 'gpt-image-1') && !openaiApiKey) {
+  // Check API keys - need at least one provider available
+  if (!openaiApiKey && !hfApiKey) {
     return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'OPENAI_API_KEY not configured' } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
-
-  if (provider === 'huggingface' && !hfApiKey) {
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'HUGGINGFACE_API_KEY not configured' } }),
+      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'No image generation API keys configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
@@ -502,13 +506,24 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   const costume = topic ? getCostumeForTopic(topic) : TOPIC_COSTUME_MAP.default
 
   console.log(`[LEGACY] Starting generation for ${segments.length} segments`)
-  console.log(`[LEGACY] Provider: ${provider}, Style: ${style}, Aspect: ${aspectRatio}`)
+  console.log(`[LEGACY] Provider mode: ${defaultProvider}, Style: ${style}, Aspect: ${aspectRatio}`)
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i]
     const segmentType = segment.segment_type || segment.type || `segment_${i}`
     const shotType = segment.shot_type || 'B-ROLL'
     const emotion = segment.emotion || 'authority'
+    
+    // Determine if this is a CREATOR shot (has face)
+    const isCreatorShot = shotType === 'CREATOR'
+    
+    // HYBRID PROVIDER LOGIC:
+    // - CREATOR shots → gpt-image-1 (for face consistency)
+    // - B-ROLL shots → huggingface (free, no face needed)
+    let segmentProvider = defaultProvider
+    if (defaultProvider === 'auto') {
+      segmentProvider = isCreatorShot ? 'gpt-image-1' : 'huggingface'
+    }
     
     const imagePrompt = buildCinematicPrompt({
       segment,
@@ -520,27 +535,27 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       emotion
     })
     
-    console.log(`[${provider.toUpperCase()}] Generating ${i + 1}/${segments.length}: ${segmentType} (${shotType})`)
+    console.log(`[${segmentProvider.toUpperCase()}] Generating ${i + 1}/${segments.length}: ${segmentType} (${shotType})`)
 
     try {
       let imageUrl: string | null = null
 
-      if (provider === 'openai') {
-        imageUrl = await generateWithDalle(openaiApiKey!, imagePrompt, aspectRatio, supabase)
-      } else if (provider === 'gpt-image-1') {
-        // Determine if this is a CREATOR shot that needs face reference
-        const isCreatorShot = shotType === 'CREATOR' || 
-          ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
+      if (segmentProvider === 'openai') {
+        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
+        imageUrl = await generateWithDalle(openaiApiKey, imagePrompt, aspectRatio, supabase)
+      } else if (segmentProvider === 'gpt-image-1') {
+        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
+        // Pass character reference for face consistency (only for CREATOR shots)
         const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng) : undefined
-        
-        imageUrl = await generateWithGptImage1(openaiApiKey!, imagePrompt, aspectRatio, supabase, refImage || undefined)
+        imageUrl = await generateWithGptImage1(openaiApiKey, imagePrompt, aspectRatio, supabase, refImage || undefined)
       } else {
-        imageUrl = await generateWithFlux(hfApiKey!, imagePrompt, aspectRatio, supabase)
+        if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
+        imageUrl = await generateWithFlux(hfApiKey, imagePrompt, aspectRatio, supabase)
       }
 
       // Determine provider string for response
-      const providerString = provider === 'openai' ? 'openai-dalle3' 
-        : provider === 'gpt-image-1' ? 'openai-gpt-image-1' 
+      const providerString = segmentProvider === 'openai' ? 'openai-dalle3' 
+        : segmentProvider === 'gpt-image-1' ? 'openai-gpt-image-1' 
         : 'huggingface-flux'
 
       images.push({
@@ -554,15 +569,15 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
         error: null
       })
 
-      console.log(`[${provider.toUpperCase()}] ✅ Success: ${segmentType}`)
+      console.log(`[${segmentProvider.toUpperCase()}] ✅ Success: ${segmentType}`)
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      console.error(`[${provider.toUpperCase()}] ❌ Failed: ${errorMessage}`)
+      console.error(`[${segmentProvider.toUpperCase()}] ❌ Failed: ${errorMessage}`)
       
       // Determine provider string for error response
-      const errorProviderString = provider === 'openai' ? 'openai-dalle3' 
-        : provider === 'gpt-image-1' ? 'openai-gpt-image-1' 
+      const errorProviderString = segmentProvider === 'openai' ? 'openai-dalle3' 
+        : segmentProvider === 'gpt-image-1' ? 'openai-gpt-image-1' 
         : 'huggingface-flux'
 
       images.push({
