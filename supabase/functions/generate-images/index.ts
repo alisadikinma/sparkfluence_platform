@@ -138,8 +138,9 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     topic, 
     style = 'cinematic', 
     aspect_ratio = '9:16',
-    provider = 'huggingface',
-    character_description = ''
+    provider = 'gpt-image-1', // Default to gpt-image-1 for reference support
+    character_description = '',
+    character_ref_png = '' // Avatar URL for face consistency
   } = requestBody
 
   if (!user_id || !session_id || !segments || !Array.isArray(segments)) {
@@ -173,6 +174,10 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       emotion
     })
 
+    // Determine if this segment needs character reference (CREATOR shots)
+    const needsCharRef = shotType === 'CREATOR' || 
+      ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
+    
     return {
       user_id,
       session_id,
@@ -187,6 +192,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       provider,
       topic,
       character_description: charDesc,
+      character_ref_png: needsCharRef ? (segment.character_ref_png || character_ref_png) : null,
       status: JOB_STATUS.PENDING,
       image_url: null,
       error_message: null
@@ -322,7 +328,14 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
     if (provider === 'openai') {
       imageUrl = await generateWithDalle(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
     } else if (provider === 'gpt-image-1') {
-      imageUrl = await generateWithGptImage1(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
+      // Pass character reference for face consistency if available
+      imageUrl = await generateWithGptImage1(
+        openaiApiKey!, 
+        job.visual_prompt, 
+        aspectRatio, 
+        supabase,
+        job.character_ref_png || undefined
+      )
     } else {
       imageUrl = await generateWithFlux(hfApiKey!, job.visual_prompt, aspectRatio, supabase)
     }
@@ -458,9 +471,10 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   const segments = requestBody.segments
   const style = requestBody.style || 'cinematic'
   const aspectRatio: '9:16' | '16:9' | '1:1' = requestBody.aspect_ratio || '9:16'
-  const provider = requestBody.provider || 'openai'
+  const provider = requestBody.provider || 'gpt-image-1' // Default to gpt-image-1 for reference support
   const topic = requestBody.topic || ''
   const characterDescription = requestBody.character_description || ''
+  const characterRefPng = requestBody.character_ref_png || '' // Avatar URL for face consistency
 
   if (!segments || !Array.isArray(segments) || segments.length === 0) {
     return new Response(
@@ -514,7 +528,12 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       if (provider === 'openai') {
         imageUrl = await generateWithDalle(openaiApiKey!, imagePrompt, aspectRatio, supabase)
       } else if (provider === 'gpt-image-1') {
-        imageUrl = await generateWithGptImage1(openaiApiKey!, imagePrompt, aspectRatio, supabase)
+        // Determine if this is a CREATOR shot that needs face reference
+        const isCreatorShot = shotType === 'CREATOR' || 
+          ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
+        const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng) : undefined
+        
+        imageUrl = await generateWithGptImage1(openaiApiKey!, imagePrompt, aspectRatio, supabase, refImage || undefined)
       } else {
         imageUrl = await generateWithFlux(hfApiKey!, imagePrompt, aspectRatio, supabase)
       }
@@ -878,16 +897,84 @@ async function generateWithFlux(
 
 // ============================================================================
 // GPT-Image-1 Generation (OpenAI - Premium, superior instruction following)
+// Supports character reference via Image Edit API for consistent faces
+// Based on OpenAI docs: https://platform.openai.com/docs/guides/image-generation
 // ============================================================================
 
 async function generateWithGptImage1(
   apiKey: string,
   prompt: string,
   aspectRatio: string,
-  supabase: any
+  supabase: any,
+  referenceImageUrl?: string // Avatar URL for character consistency
 ): Promise<string> {
   const size = GPT_IMAGE_SIZES[aspectRatio] || GPT_IMAGE_SIZES['9:16']
   
+  // If reference image provided, use Image Edit API for character consistency
+  if (referenceImageUrl) {
+    console.log(`[GPT-IMAGE-1] Using Image Edit API with reference image for face consistency`)
+    console.log(`[GPT-IMAGE-1] Reference: ${referenceImageUrl.substring(0, 80)}...`)
+    console.log(`[GPT-IMAGE-1] Size: ${size}, Prompt length: ${prompt.length} chars`)
+    
+    try {
+      // Fetch the reference image
+      const refResponse = await fetch(referenceImageUrl)
+      if (!refResponse.ok) {
+        throw new Error(`Failed to fetch reference image: ${refResponse.status}`)
+      }
+      const refBlob = await refResponse.blob()
+      
+      // Build FormData for multipart upload (OpenAI Image Edit API format)
+      // Per docs: image[] accepts multiple files, input_fidelity="high" for face preservation
+      const formData = new FormData()
+      formData.append('model', 'gpt-image-1')
+      formData.append('prompt', prompt)
+      formData.append('size', size)
+      formData.append('quality', 'high')
+      formData.append('input_fidelity', 'high') // Critical for face preservation
+      formData.append('image[]', refBlob, 'reference.png')
+      
+      const response = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+          // Note: Don't set Content-Type - fetch sets multipart/form-data with boundary
+        },
+        body: formData
+      })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`[GPT-IMAGE-1] Edit API error: ${errorText}`)
+        // Fallback to generation without reference
+        console.log(`[GPT-IMAGE-1] Falling back to generation without reference...`)
+        return await generateWithGptImage1WithoutRef(apiKey, prompt, size, supabase)
+      }
+      
+      const data = await response.json()
+      const imageBase64 = data.data[0].b64_json
+      
+      console.log(`[GPT-IMAGE-1] ✅ Generated with character reference`)
+      return await uploadBase64ToStorage(imageBase64, 'gpt-image-1-ref', supabase)
+      
+    } catch (refError) {
+      console.error(`[GPT-IMAGE-1] Reference image error: ${refError}`)
+      console.log(`[GPT-IMAGE-1] Falling back to generation without reference...`)
+      return await generateWithGptImage1WithoutRef(apiKey, prompt, size, supabase)
+    }
+  }
+  
+  // No reference image - use standard generation
+  return await generateWithGptImage1WithoutRef(apiKey, prompt, size, supabase)
+}
+
+// Helper: GPT-Image-1 generation without reference (standard)
+async function generateWithGptImage1WithoutRef(
+  apiKey: string,
+  prompt: string,
+  size: string,
+  supabase: any
+): Promise<string> {
   console.log(`[GPT-IMAGE-1] Size: ${size}, Prompt length: ${prompt.length} chars`)
   
   const response = await fetch('https://api.openai.com/v1/images/generations', {
@@ -901,8 +988,7 @@ async function generateWithGptImage1(
       prompt: prompt,
       n: 1,
       size: size,
-      quality: 'high' // High quality for cinematic production
-      // Note: gpt-image-1 returns b64_json by default
+      quality: 'high'
     })
   })
 
@@ -913,8 +999,16 @@ async function generateWithGptImage1(
 
   const data = await response.json()
   const imageBase64 = data.data[0].b64_json
+  
+  return await uploadBase64ToStorage(imageBase64, 'gpt-image-1', supabase)
+}
 
-  // Decode base64 to Uint8Array for Deno
+// Helper: Upload base64 image to Supabase storage
+async function uploadBase64ToStorage(
+  imageBase64: string,
+  prefix: string,
+  supabase: any
+): Promise<string> {
   const binaryString = atob(imageBase64)
   const bytes = new Uint8Array(binaryString.length)
   for (let i = 0; i < binaryString.length; i++) {
@@ -922,7 +1016,7 @@ async function generateWithGptImage1(
   }
   const imageBlob = new Blob([bytes], { type: 'image/png' })
   
-  const filename = `generated/gpt-image-1_${Date.now()}_${Math.random().toString(36).substring(7)}.png`
+  const filename = `generated/${prefix}_${Date.now()}_${Math.random().toString(36).substring(7)}.png`
   
   const { error: uploadError } = await supabase.storage
     .from('generated-images')

@@ -420,6 +420,9 @@ export const VideoEditor = (): JSX.Element => {
         };
       });
 
+      // Use character_ref_png if available, otherwise fallback to avatar_url
+      const referenceImage = characterRefPng || userAvatarUrl || '';
+      
       const { data, error } = await supabase.functions.invoke('generate-images', {
         body: {
           mode: 'create_jobs',
@@ -429,8 +432,9 @@ export const VideoEditor = (): JSX.Element => {
           topic: currentTopic,
           style: 'cinematic',
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          provider: 'huggingface',
-          character_description: characterDescription
+          provider: 'gpt-image-1', // Use GPT-Image-1 for reference support
+          character_description: characterDescription,
+          character_ref_png: referenceImage // Avatar for face consistency
         }
       });
 
@@ -459,6 +463,97 @@ export const VideoEditor = (): JSX.Element => {
     }
   };
 
+  const handleRegenerateAll = async () => {
+    if (!user || !sessionId) return;
+    
+    // Confirm before regenerating
+    const confirmMsg = language === 'id' 
+      ? `Regenerate semua ${segments.length} gambar? Gambar lama akan diganti.`
+      : `Regenerate all ${segments.length} images? Existing images will be replaced.`;
+    
+    if (!window.confirm(confirmMsg)) return;
+
+    // Clear all existing images first
+    setSegments(prev => prev.map(seg => ({
+      ...seg,
+      imageUrl: null,
+      imageError: null,
+      isGeneratingImage: false,
+      jobId: undefined
+    })));
+
+    // Delete existing jobs for this session
+    try {
+      await supabase
+        .from('image_generation_jobs')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('user_id', user.id);
+    } catch (err) {
+      console.error('Error deleting old jobs:', err);
+    }
+
+    setIsGeneratingAll(true);
+    setIsBackgroundMode(true);
+    setShowBackgroundToast(true);
+    setGenerationProgress({ current: 0, total: segments.length, completed: 0, failed: 0 });
+
+    try {
+      // Use character_ref_png if available, otherwise fallback to avatar_url
+      const referenceImage = characterRefPng || userAvatarUrl || '';
+      
+      const segmentsData = segments.map((seg, index) => ({
+        segment_id: seg.segmentId,
+        segment_number: index + 1,
+        segment_type: seg.type,
+        shot_type: seg.shotType,
+        emotion: seg.emotion,
+        visual_prompt: seg.visualDirection || seg.script,
+        visual_direction: seg.visualDirection,
+        character_description: seg.shotType === 'CREATOR' ? characterDescription : null,
+        character_ref_png: seg.shotType === 'CREATOR' ? referenceImage : null
+      }));
+
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: {
+          mode: 'create_jobs',
+          user_id: user.id,
+          session_id: sessionId,
+          segments: segmentsData,
+          topic: currentTopic,
+          style: 'cinematic',
+          aspect_ratio: videoSettings?.aspectRatio || '9:16',
+          provider: 'gpt-image-1',
+          character_description: characterDescription,
+          character_ref_png: referenceImage
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.data?.jobs) {
+        setSegments(prev => {
+          const updated = prev.map(seg => {
+            const job = data.data.jobs.find((j: any) => j.segment_number === parseInt(seg.id));
+            if (job) {
+              return { ...seg, jobId: job.id, isGeneratingImage: true };
+            }
+            return seg;
+          });
+          return updated;
+        });
+      }
+
+      startBackgroundProcessing(sessionId);
+
+    } catch (err: any) {
+      console.error('Error creating regenerate jobs:', err);
+      setIsGeneratingAll(false);
+      setIsBackgroundMode(false);
+      setShowBackgroundToast(false);
+    }
+  };
+
   const handleGenerateImage = useCallback(async (segmentId: string): Promise<boolean> => {
     const segment = segments.find(s => s.id === segmentId);
     if (!segment) return false;
@@ -473,6 +568,9 @@ export const VideoEditor = (): JSX.Element => {
 
     try {
       const avatarUrl = segment.creatorAvatarUrl || userAvatarUrl || null;
+      const isCreatorShot = segment.shotType === 'CREATOR' || 
+        ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segment.type.toUpperCase());
+      const referenceImage = isCreatorShot ? (characterRefPng || avatarUrl) : null;
       
       const requestBody = {
         segments: [{
@@ -482,12 +580,13 @@ export const VideoEditor = (): JSX.Element => {
           creator_avatar_url: avatarUrl,
           emotion: segment.emotion,
           segment_type: segment.type,
-          character_description: segment.shotType === 'CREATOR' ? characterDescription : null,
-          character_ref_png: segment.shotType === 'CREATOR' ? characterRefPng : null
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: referenceImage
         }],
         style: 'cinematic',
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
-        provider: 'openai'
+        provider: 'gpt-image-1', // Use GPT-Image-1 for reference support
+        character_ref_png: referenceImage // Request-level reference
       };
       
       const { data, error } = await supabase.functions.invoke('generate-images', {
@@ -658,34 +757,53 @@ export const VideoEditor = (): JSX.Element => {
               </p>
             </div>
             
-            <Button
-              onClick={handleGenerateAllBackground}
-              disabled={isGeneratingAll || allHaveImages || isBackgroundMode}
-              className={`h-12 px-6 font-medium flex items-center gap-2 ${
-                allHaveImages
-                  ? "bg-green-600 hover:bg-green-700"
-                  : isBackgroundMode
-                  ? "bg-blue-600 hover:bg-blue-700"
-                  : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
-              } text-white`}
-            >
-              {isBackgroundMode ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>{generationProgress.completed}/{generationProgress.total}</span>
-                </>
-              ) : allHaveImages ? (
-                <>
-                  <CheckCircle2 className="w-5 h-5" />
-                  <span>{imagesGenerated}/{segments.length} ✓</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
-                </>
+            <div className="flex gap-2">
+              {/* Regenerate All Button - only show when some images exist */}
+              {imagesGenerated > 0 && (
+                <Button
+                  onClick={() => handleRegenerateAll()}
+                  disabled={isGeneratingAll || isBackgroundMode}
+                  variant="outline"
+                  className="h-12 px-4 font-medium flex items-center gap-2 border-orange-500/50 text-orange-500 hover:bg-orange-500/10"
+                  title={language === 'id' ? 'Regenerate semua gambar' : 'Regenerate all images'}
+                >
+                  <RefreshCw className="w-5 h-5" />
+                  <span className="hidden sm:inline">
+                    {language === 'id' ? 'Regenerate Semua' : 'Regenerate All'}
+                  </span>
+                </Button>
               )}
-            </Button>
+              
+              {/* Generate All Button */}
+              <Button
+                onClick={handleGenerateAllBackground}
+                disabled={isGeneratingAll || allHaveImages || isBackgroundMode}
+                className={`h-12 px-6 font-medium flex items-center gap-2 ${
+                  allHaveImages
+                    ? "bg-green-600 hover:bg-green-700"
+                    : isBackgroundMode
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
+                } text-white`}
+              >
+                {isBackgroundMode ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>{generationProgress.completed}/{generationProgress.total}</span>
+                  </>
+                ) : allHaveImages ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>{imagesGenerated}/{segments.length} ✓</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
 
