@@ -138,7 +138,9 @@ export const Loading: React.FC = () => {
   };
 
   const handleBack = () => {
-    navigate("/music-selector", { state: location.state });
+    // If no music was selected, go back to video-generation, otherwise music-selector
+    const backPath = location.state?.selectedMusic ? "/music-selector" : "/video-generation";
+    navigate(backPath, { state: location.state });
   };
 
   return (

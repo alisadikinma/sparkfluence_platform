@@ -18,14 +18,23 @@ interface VideoJob {
   segment_id: string;
   segment_type: string;
   veo_uuid: string | null;
-  status: number;
+  status: number; // 0=pending, 1=processing, 2=completed, 3=failed
   video_url: string | null;
   image_url: string | null;
   script_text: string | null;
-  topic_title: string | null;
+  topic: string | null; // Topic is stored in 'topic' field
+  error_message: string | null;
   created_at: string;
   updated_at: string;
 }
+
+// Job status constants
+const JOB_STATUS = {
+  PENDING: 0,
+  PROCESSING: 1,
+  COMPLETED: 2,
+  FAILED: 3
+};
 
 interface ProjectGroup {
   session_id: string;
@@ -34,7 +43,11 @@ interface ProjectGroup {
   total_segments: number;
   images_ready: number;
   videos_ready: number;
+  videos_failed: number;
+  videos_processing: number;
   is_complete: boolean;
+  has_failed: boolean;
+  status_text: string; // Human readable status
   created_at: string;
   updated_at: string;
   planned_content_id?: string;
@@ -78,18 +91,41 @@ export const History = (): JSX.Element => {
     try {
       setLoading(true);
       
-      const { data: jobs, error } = await supabase
+      // Fetch video generation jobs
+      const { data: videoJobs, error: videoError } = await supabase
         .from("video_generation_jobs")
         .select("*")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false });
 
-      if (error) throw error;
+      if (videoError) throw videoError;
+
+      // Fetch image generation jobs for better status info
+      const { data: imageJobs } = await supabase
+        .from("image_generation_jobs")
+        .select("session_id, topic, status, image_url")
+        .eq("user_id", user.id);
+
+      // Create image jobs map by session_id
+      const imageJobsMap = new Map<string, { topic: string | null; hasImages: boolean }>();
+      if (imageJobs) {
+        imageJobs.forEach((job: any) => {
+          const existing = imageJobsMap.get(job.session_id);
+          if (!existing) {
+            imageJobsMap.set(job.session_id, { 
+              topic: job.topic, 
+              hasImages: !!job.image_url 
+            });
+          } else if (job.topic && !existing.topic) {
+            existing.topic = job.topic;
+          }
+        });
+      }
 
       // Fetch planned content to get final video URLs and other details
       const { data: plannedData } = await supabase
         .from("planned_content")
-        .select("id, video_data, final_video_url, thumbnail_url, scheduled_date, scheduled_time, platforms, description")
+        .select("id, title, video_data, final_video_url, thumbnail_url, scheduled_date, scheduled_time, platforms, description")
         .eq("user_id", user.id);
 
       // Map session IDs to planned content
@@ -102,10 +138,10 @@ export const History = (): JSX.Element => {
         });
       }
 
-      if (jobs && jobs.length > 0) {
+      if (videoJobs && videoJobs.length > 0) {
         // Group by session_id
         const sessionMap = new Map<string, VideoJob[]>();
-        jobs.forEach(job => {
+        videoJobs.forEach((job: any) => {
           const existing = sessionMap.get(job.session_id) || [];
           existing.push(job);
           sessionMap.set(job.session_id, existing);
@@ -114,18 +150,46 @@ export const History = (): JSX.Element => {
         const projectList: ProjectGroup[] = [];
         sessionMap.forEach((segments, sessionId) => {
           const imagesReady = segments.filter(s => s.image_url).length;
-          const videosReady = segments.filter(s => s.video_url || s.status === 2).length;
+          const videosReady = segments.filter(s => s.video_url || s.status === JOB_STATUS.COMPLETED).length;
+          const videosFailed = segments.filter(s => s.status === JOB_STATUS.FAILED).length;
+          const videosProcessing = segments.filter(s => s.status === JOB_STATUS.PROCESSING).length;
           const isComplete = videosReady === segments.length && segments.length > 0;
+          const hasFailed = videosFailed > 0;
           const planned = sessionToPlanned.get(sessionId);
+
+          // Get topic from multiple sources (priority order)
+          const topicFromJob = segments[0]?.topic;
+          const topicFromImageJob = imageJobsMap.get(sessionId)?.topic;
+          const topicFromPlannedData = planned?.video_data?.topic;
+          const topicFromPlannedTitle = planned?.title;
+          const topicTitle = topicFromJob || topicFromImageJob || topicFromPlannedData || topicFromPlannedTitle || `Video Project ${sessionId.slice(0, 8)}`;
+
+          // Calculate status text
+          let statusText = '';
+          if (isComplete) {
+            statusText = t.common.done || 'Complete';
+          } else if (hasFailed) {
+            statusText = `${videosFailed} ${t.common.failed || 'failed'}`;
+          } else if (videosProcessing > 0) {
+            statusText = `${t.videoEditor.status.processing || 'Processing'} ${videosProcessing}/${segments.length}`;
+          } else if (imagesReady < segments.length) {
+            statusText = `${t.videoEditor.status.images || 'Images'} ${imagesReady}/${segments.length}`;
+          } else {
+            statusText = `${t.videoEditor.status.videos || 'Videos'} ${videosReady}/${segments.length}`;
+          }
 
           projectList.push({
             session_id: sessionId,
-            topic_title: segments[0].topic_title || t.history.empty.title,
+            topic_title: topicTitle,
             segments: segments.sort((a, b) => parseInt(a.segment_id) - parseInt(b.segment_id)),
             total_segments: segments.length,
             images_ready: imagesReady,
             videos_ready: videosReady,
+            videos_failed: videosFailed,
+            videos_processing: videosProcessing,
             is_complete: isComplete,
+            has_failed: hasFailed,
+            status_text: statusText,
             created_at: segments[0].created_at,
             updated_at: segments[0].updated_at,
             planned_content_id: planned?.id,
@@ -296,6 +360,10 @@ export const History = (): JSX.Element => {
                   className={`bg-card border rounded-xl overflow-hidden transition-all cursor-pointer hover:scale-[1.02] hover:shadow-lg ${
                     project.is_complete
                       ? 'border-green-500/30 hover:border-green-500/50'
+                      : project.has_failed
+                      ? 'border-red-500/30 hover:border-red-500/50'
+                      : project.videos_processing > 0
+                      ? 'border-blue-500/30 hover:border-blue-500/50'
                       : 'border-amber-500/30 hover:border-amber-500/50'
                   }`}
                 >
@@ -316,13 +384,23 @@ export const History = (): JSX.Element => {
                     {/* Status Badge */}
                     <div className="absolute top-1.5 right-1.5">
                       {project.is_complete ? (
-                        <span className="flex items-center gap-0.5 text-[9px] text-green-500 bg-green-500/20 backdrop-blur-sm px-1 py-0.5 rounded-full">
-                          <CheckCircle className="w-2 h-2" />
+                        <span className="flex items-center gap-0.5 text-[9px] text-green-500 bg-green-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
+                          <CheckCircle className="w-2.5 h-2.5" />
                           {t.common.done}
                         </span>
+                      ) : project.has_failed ? (
+                        <span className="flex items-center gap-0.5 text-[9px] text-red-500 bg-red-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          {project.videos_failed} {t.common.failed || 'Failed'}
+                        </span>
+                      ) : project.videos_processing > 0 ? (
+                        <span className="flex items-center gap-0.5 text-[9px] text-blue-400 bg-blue-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          {t.videoEditor.status.processing || 'Processing'}
+                        </span>
                       ) : (
-                        <span className="flex items-center gap-0.5 text-[9px] text-amber-500 bg-amber-500/20 backdrop-blur-sm px-1 py-0.5 rounded-full">
-                          <AlertCircle className="w-2 h-2" />
+                        <span className="flex items-center gap-0.5 text-[9px] text-amber-500 bg-amber-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
+                          <AlertCircle className="w-2.5 h-2.5" />
                           {t.planner.draft}
                         </span>
                       )}
@@ -352,16 +430,26 @@ export const History = (): JSX.Element => {
 
                     {/* Progress Bar */}
                     <div className="mb-1.5">
-                      <div className="h-0.5 bg-surface rounded-full overflow-hidden">
+                      <div className="h-1 bg-surface rounded-full overflow-hidden">
                         <div 
                           className={`h-full transition-all ${
-                            project.is_complete ? 'bg-green-500' : 'bg-amber-500'
+                            project.is_complete 
+                              ? 'bg-green-500' 
+                              : project.has_failed
+                              ? 'bg-red-500'
+                              : project.videos_processing > 0
+                              ? 'bg-blue-500'
+                              : 'bg-amber-500'
                           }`}
                           style={{ 
                             width: `${(project.videos_ready / project.total_segments) * 100}%` 
                           }}
                         />
                       </div>
+                      {/* Status text under progress */}
+                      <p className="text-[8px] text-text-muted mt-0.5">
+                        {project.status_text}
+                      </p>
                     </div>
 
                     {/* Footer */}

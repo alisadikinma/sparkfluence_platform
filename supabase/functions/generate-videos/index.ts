@@ -1257,9 +1257,6 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // Pure visual motion based on image reference
   // ========================================================================
   
-  // Detect voice language for voiceover
-  const detectedLanguage = scriptText ? detectScriptLanguage(scriptText) : language.toLowerCase()
-  
   // Build B-roll specific prompt (voiceover narration + visual fokus topik)
   const brollPrompt = buildBrollVideoPrompt({
     segmentId,

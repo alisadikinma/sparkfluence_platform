@@ -1,12 +1,20 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "../../components/ui/button";
 import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { supabase } from "../../lib/supabase";
+import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock } from "lucide-react";
+
+// Backend API URL - adjust based on environment
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
+const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || 'sparkfluence_prod_key_2024';
 
 export const FullVideo: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const { addPlannedContent } = usePlanner();
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   const [publishDate, setPublishDate] = useState(() => {
@@ -20,21 +28,204 @@ export const FullVideo: React.FC = () => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [publishToPublic, setPublishToPublic] = useState(false);
+  
+  // Combine video states
+  const [isCombining, setIsCombining] = useState(false);
+  const [combineError, setCombineError] = useState<string | null>(null);
+  const [combineProgress, setCombineProgress] = useState<string>("Initializing...");
+  const [jobId, setJobId] = useState<string | null>(null);
+  
+  const hasStartedCombine = useRef(false);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Cleanup on unmount
   useEffect(() => {
-    if (location.state) {
-      setVideoData(location.state);
-      setFinalVideoUrl(location.state.finalVideoUrl || null);
-      const defaultTitle = location.state?.topic || "Generated Video Content";
-      const defaultDescription = location.state?.selectedSegments
-        ? `This video contains ${location.state.selectedSegments.length} carefully selected segments` +
-          (location.state.selectedMusic ? ` with "${location.state.selectedMusic.name}" as background music` : " without background music") +
-          `. Total duration: ${location.state.selectedSegments.reduce((sum: number, seg: any) => sum + (seg.durationSeconds || 8), 0)} seconds.`
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Initialize and trigger combine video
+  useEffect(() => {
+    if (location.state && !hasStartedCombine.current) {
+      const state = location.state;
+      setVideoData(state);
+      
+      // Set title and description
+      const defaultTitle = state?.topic || "Generated Video Content";
+      const segments = state?.segments || state?.selectedSegments || [];
+      const defaultDescription = segments.length > 0
+        ? `This video contains ${segments.length} carefully selected segments. ` +
+          `Total duration: ${segments.reduce((sum: number, seg: any) => sum + (seg.durationSeconds || 8), 0)} seconds.`
         : "AI-generated video content ready to be scheduled and published to your social media platforms.";
+      
       setTitle(defaultTitle);
       setDescription(defaultDescription);
+      
+      // Check if already have final video URL
+      if (state.finalVideoUrl) {
+        setFinalVideoUrl(state.finalVideoUrl);
+      } else if (segments.length > 0 && segments.every((s: any) => s.videoUrl)) {
+        // All segments have videos, trigger combine
+        hasStartedCombine.current = true;
+        triggerCombineVideo(segments, state);
+      }
     }
   }, [location.state]);
+
+  // Trigger combine video API (direct backend call)
+  const triggerCombineVideo = async (segments: any[], state: any) => {
+    setIsCombining(true);
+    setCombineError(null);
+    setCombineProgress("Preparing video segments...");
+
+    try {
+      // Prepare segments data for backend
+      const videoSegments = segments.map((seg: any, index: number) => ({
+        type: seg.type || seg.element || `segment_${index + 1}`,
+        video_url: seg.videoUrl || seg.video_url,
+        duration_seconds: seg.durationSeconds || 8
+      }));
+
+      // Check if all segments have video URLs
+      const missingVideos = videoSegments.filter((s: any) => !s.video_url);
+      if (missingVideos.length > 0) {
+        throw new Error(`${missingVideos.length} segments are missing video URLs`);
+      }
+
+      console.log('[FullVideo] Triggering combine with segments:', videoSegments.length);
+      setCombineProgress("Connecting to video processor...");
+      
+      // Direct backend call (same as Loading.tsx)
+      const response = await fetch(`${BACKEND_URL}/api/combine-final-video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': BACKEND_API_KEY
+        },
+        body: JSON.stringify({
+          project_id: state.sessionId || `project_${Date.now()}`,
+          segments: videoSegments,
+          options: {
+            bgm_url: state.selectedMusic?.audioUrl || state.selectedMusic?.url || null,
+            bgm_volume: state.selectedMusic ? 0.15 : 0
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Backend error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('[FullVideo] Job created:', data);
+
+      if (!data.success || !data.data?.job_id) {
+        throw new Error("Failed to create job");
+      }
+
+      setJobId(data.data.job_id);
+      setCombineProgress("Processing video...");
+      startPollingJobStatusDirect(data.data.job_id);
+
+    } catch (err: any) {
+      console.error('[FullVideo] Combine error:', err);
+      setCombineError(err.message || "Failed to combine video");
+      setIsCombining(false);
+    }
+  };
+
+
+
+  // Poll job status directly from backend
+  const startPollingJobStatusDirect = (jid: string) => {
+    let attempts = 0;
+    const maxAttempts = 60;
+    
+    pollIntervalRef.current = setInterval(async () => {
+      attempts++;
+      
+      if (attempts > maxAttempts) {
+        clearInterval(pollIntervalRef.current!);
+        setCombineError("Video processing timeout. Please try again.");
+        setIsCombining(false);
+        return;
+      }
+
+      await pollJobStatusDirect(jid);
+    }, 5000);
+  };
+
+  const pollJobStatusDirect = async (jid: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/job-status/${jid}`, {
+        headers: { 'x-api-key': BACKEND_API_KEY }
+      });
+      
+      if (!response.ok) {
+        return; // Continue polling
+      }
+
+      const data = await response.json();
+      const jobData = data?.data;
+
+      if (jobData?.status === 'completed' && jobData?.final_video_url) {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+        }
+        setFinalVideoUrl(jobData.final_video_url);
+        setIsCombining(false);
+        setCombineProgress("Complete!");
+        
+        if (videoData?.sessionId) {
+          await updatePlannedContentWithVideo(jobData.final_video_url);
+        }
+      } else if (jobData?.status === 'failed') {
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+        }
+        setCombineError(jobData?.error_message || "Video processing failed");
+        setIsCombining(false);
+      }
+    } catch (err) {
+      console.error('[FullVideo] Direct poll error:', err);
+    }
+  };
+
+  // Update planned_content with final video URL
+  const updatePlannedContentWithVideo = async (videoUrl: string) => {
+    if (!user || !videoData?.sessionId) return;
+    
+    try {
+      const { error } = await supabase
+        .from('planned_content')
+        .update({ final_video_url: videoUrl })
+        .eq('user_id', user.id)
+        .contains('video_data', { sessionId: videoData.sessionId });
+      
+      if (error) {
+        console.error('[FullVideo] Failed to update planned_content:', error);
+      }
+    } catch (err) {
+      console.error('[FullVideo] Update error:', err);
+    }
+  };
+
+  // Retry combine
+  const handleRetryCombine = () => {
+    hasStartedCombine.current = false;
+    setCombineError(null);
+    setIsCombining(false);
+    
+    const segments = videoData?.segments || videoData?.selectedSegments || [];
+    if (segments.length > 0) {
+      hasStartedCombine.current = true;
+      triggerCombineVideo(segments, videoData);
+    }
+  };
 
   const platforms = [
     { id: "tiktok", name: "TikTok" },
@@ -75,10 +266,6 @@ export const FullVideo: React.FC = () => {
     );
   };
 
-  const handleAddToGallery = () => {
-    navigate("/gallery");
-  };
-
   const handlePlanContent = async () => {
     if (selectedPlatforms.length === 0) {
       alert("Please select at least one platform");
@@ -98,19 +285,6 @@ export const FullVideo: React.FC = () => {
     setLoading(true);
 
     try {
-      console.log('Planning content with data:', {
-        title,
-        description,
-        content_type: "video",
-        platforms: selectedPlatforms,
-        scheduled_date: publishDate,
-        scheduled_time: publishTime,
-        status: "scheduled",
-        thumbnail_url: videoData?.selectedSegments?.[0]?.imageUrl || "/rectangle-11.png",
-        video_data: videoData,
-        is_public: publishToPublic,
-      });
-
       const result = await addPlannedContent({
         title: title,
         description: description,
@@ -119,7 +293,7 @@ export const FullVideo: React.FC = () => {
         scheduled_date: publishDate,
         scheduled_time: publishTime,
         status: "scheduled",
-        thumbnail_url: videoData?.selectedSegments?.[0]?.imageUrl || "/rectangle-11.png",
+        thumbnail_url: videoData?.segments?.[0]?.imageUrl || videoData?.selectedSegments?.[0]?.imageUrl || "/rectangle-11.png",
         video_data: {
           ...videoData,
           sessionId: videoData?.sessionId || null,
@@ -127,8 +301,6 @@ export const FullVideo: React.FC = () => {
         final_video_url: finalVideoUrl,
         is_public: publishToPublic,
       });
-
-      console.log('Add planned content result:', result);
 
       if (result) {
         alert("Content scheduled successfully!");
@@ -143,11 +315,16 @@ export const FullVideo: React.FC = () => {
       }
     } catch (error) {
       console.error("Error scheduling content:", error);
-      const errorMessage = error instanceof Error ? error.message : "An error occurred while scheduling. Please try again.";
-      alert(`Failed to schedule content: ${errorMessage}`);
+      alert("Failed to schedule content. Please try again.");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Get thumbnail from segments
+  const getThumbnail = () => {
+    const segments = videoData?.segments || videoData?.selectedSegments || [];
+    return segments[0]?.imageUrl || "/rectangle-11.png";
   };
 
   return (
@@ -166,7 +343,7 @@ export const FullVideo: React.FC = () => {
         </div>
         <div className="flex items-center justify-between mb-8">
           <Button
-            onClick={() => navigate("/video-editor")}
+            onClick={() => navigate(-1)}
             variant="secondary"
             className="bg-white/10 text-white hover:bg-white/20 border border-white/20"
           >
@@ -180,6 +357,7 @@ export const FullVideo: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[400px,1fr] gap-6">
+          {/* Video Preview Section */}
           <div className="bg-[#1a1a24] border-2 border-[#7c3aed] rounded-2xl p-4 h-fit">
             <div className="relative w-full aspect-[9/16] rounded-lg overflow-hidden mb-4 bg-black">
               {finalVideoUrl ? (
@@ -187,43 +365,85 @@ export const FullVideo: React.FC = () => {
                   src={finalVideoUrl}
                   controls
                   className="w-full h-full object-contain"
-                  poster={videoData?.selectedSegments?.[0]?.imageUrl}
+                  poster={getThumbnail()}
                 />
               ) : (
                 <>
                   <img
-                    src={videoData?.selectedSegments?.[0]?.imageUrl || "/rectangle-11.png"}
+                    src={getThumbnail()}
                     alt="Video preview"
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                    <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/40">
-                      <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="absolute bottom-4 left-4 right-4 text-center">
-                    <p className="text-white/60 text-sm">Video processing...</p>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-black/20" />
+                  
+                  {/* Processing Overlay */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    {isCombining ? (
+                      <>
+                        <Loader2 className="w-12 h-12 text-[#7c3aed] animate-spin mb-4" />
+                        <p className="text-white font-medium mb-2">Combining Video...</p>
+                        <p className="text-white/60 text-sm">{combineProgress}</p>
+                      </>
+                    ) : combineError ? (
+                      <>
+                        <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
+                        <p className="text-white font-medium mb-2">Processing Failed</p>
+                        <p className="text-red-400 text-sm text-center px-4 mb-4">{combineError}</p>
+                        <Button
+                          onClick={handleRetryCombine}
+                          className="bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                        >
+                          Retry
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/40 mb-4">
+                          <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </div>
+                        <p className="text-white/60 text-sm">Waiting for video segments...</p>
+                      </>
+                    )}
                   </div>
                 </>
               )}
             </div>
+            
+            {/* Download Button */}
             {finalVideoUrl && (
               <a
                 href={finalVideoUrl}
                 download={`${title || 'video'}.mp4`}
                 className="w-full flex items-center justify-center gap-2 bg-[#7c3aed] hover:bg-[#6d28d9] text-white py-3 rounded-lg transition-colors"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
+                <Download className="w-5 h-5" />
                 Download Video
               </a>
             )}
+            
+            {/* Processing Status */}
+            {isCombining && (
+              <div className="mt-4 bg-[#7c3aed]/10 border border-[#7c3aed]/30 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-[#7c3aed] text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>{combineProgress}</span>
+                </div>
+              </div>
+            )}
+            
+            {finalVideoUrl && (
+              <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-green-400 text-sm">
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Video ready!</span>
+                </div>
+              </div>
+            )}
           </div>
 
+          {/* Form Section */}
           <div className="bg-[#1a1a24]/50 border border-[#2b2b38] rounded-2xl p-6">
             <div className="space-y-6">
               <div>
@@ -308,10 +528,7 @@ export const FullVideo: React.FC = () => {
                         className="w-full bg-[#2b2b38] border border-[#2b2b38] rounded-lg px-4 py-2 text-white focus:outline-none focus:border-[#7c3aed] transition-colors"
                       />
                       <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                        <svg className="w-5 h-5 text-[#7c3aed]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <circle cx="12" cy="12" r="10" strokeWidth="2" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6l4 2" />
-                        </svg>
+                        <Clock className="w-5 h-5 text-[#7c3aed]" />
                       </div>
                     </div>
                   </div>
@@ -322,12 +539,10 @@ export const FullVideo: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <Button
                     onClick={handlePlanContent}
-                    disabled={loading}
+                    disabled={loading || isCombining}
                     className="bg-gradient-to-r from-[#7c3aed] to-[#ec4899] text-white hover:from-[#6d28d9] hover:to-[#db2777] h-12 font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
+                    <Calendar className="w-5 h-5" />
                     {loading ? "Planning..." : "Plan"}
                   </Button>
                   <Button
@@ -335,9 +550,7 @@ export const FullVideo: React.FC = () => {
                     disabled={loading}
                     className="bg-[#7c3aed] text-white hover:bg-[#6d28d9] h-12 font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+                    <Clock className="w-5 h-5" />
                     History
                   </Button>
                 </div>

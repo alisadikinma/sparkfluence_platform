@@ -953,12 +953,13 @@ export const VideoGeneration = (): JSX.Element => {
       return;
     }
 
-    // Go directly to full-video (skip music selector)
-    navigate("/full-video", {
+    // Go to loading screen for video combine (skip music selector)
+    navigate("/loading", {
       state: {
-        sessionId,
-        segments,
+        selectedSegments: segments,
+        selectedMusic: null, // No music selected
         topic: currentTopic,
+        sessionId,
         videoSettings
       }
     });
