@@ -16,6 +16,7 @@ export const supabase = createClient(
       storageKey: 'sparkfluence-auth',
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
     },
   }
 );
