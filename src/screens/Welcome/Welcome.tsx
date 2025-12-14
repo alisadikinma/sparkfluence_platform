@@ -75,6 +75,13 @@ export const Welcome = (): JSX.Element => {
     }
   }, [cooldown]);
 
+  // Auto-verify when 6 digits entered
+  useEffect(() => {
+    if (otpCode.length === 6 && !verifyingOtp && step === "otp") {
+      verifyOtp();
+    }
+  }, [otpCode]);
+
   // Send OTP
   const sendOtp = async () => {
     setError("");
@@ -317,12 +324,14 @@ export const Welcome = (): JSX.Element => {
                 <div className="space-y-2">
                   <label className="text-white text-sm font-medium">{language === 'id' ? 'Kode OTP' : 'OTP Code'}</label>
                   <Input
-                    type="text"
-                    placeholder="000000"
+                    type="password"
+                    inputMode="numeric"
+                    placeholder="••••••"
                     value={otpCode}
                     onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                     disabled={verifyingOtp}
                     maxLength={6}
+                    autoComplete="one-time-code"
                     className="bg-[#0a0a12] border-[#2b2b38] text-white h-14 rounded-xl text-center text-2xl tracking-[0.5em] font-mono focus:border-[#7c3aed]"
                   />
                   <p className="text-white/40 text-xs text-center">

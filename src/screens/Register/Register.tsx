@@ -116,6 +116,13 @@ export const Register = (): JSX.Element => {
     }
   };
 
+  // Auto-verify when 6 digits entered
+  useEffect(() => {
+    if (otpCode.length === 6 && !verifyingOtp && !loading) {
+      verifyOtp();
+    }
+  }, [otpCode]);
+
   // Step 3: Verify OTP
   const verifyOtp = async () => {
     setError(null);
@@ -172,54 +179,44 @@ export const Register = (): JSX.Element => {
       }
 
       if (user) {
-        // Check if user already has a profile (returning user with different auth method)
-        const { data: existingProfile } = await supabase
-          .from("user_profiles")
-          .select("onboarding_completed")
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        // Auto-detect country from timezone (no permission needed)
+        // Auto-detect country from timezone
         const detectedCountry = detectCountryFromTimezone();
         console.log('[Register] Detected country:', detectedCountry);
 
-        if (existingProfile) {
-          // Update existing profile with phone and country
-          await supabase
-            .from("user_profiles")
-            .update({
-              phone_number: verifiedPhone,
-              phone_verified: true,
-              phone_verified_at: new Date().toISOString(),
-              country: detectedCountry,
-            })
-            .eq("user_id", user.id);
+        // Wait a moment for the trigger to create the profile
+        await new Promise(resolve => setTimeout(resolve, 500));
 
-          // Redirect based on onboarding status
-          if (existingProfile.onboarding_completed) {
-            navigate("/dashboard");
-          } else {
-            navigate("/welcome");
-          }
-        } else {
-          // Create new profile for first-time user
-          const { error: profileError } = await supabase
+        // Update profile with phone verification data (trigger creates profile automatically)
+        const { error: updateError } = await supabase
+          .from("user_profiles")
+          .update({
+            phone_number: verifiedPhone,
+            phone_verified: true,
+            phone_verified_at: new Date().toISOString(),
+            country: detectedCountry,
+          })
+          .eq("user_id", user.id);
+
+        if (updateError) {
+          console.error("Profile update error:", updateError);
+          // If update fails, try upsert as fallback
+          const { error: upsertError } = await supabase
             .from("user_profiles")
-            .insert({
+            .upsert({
               user_id: user.id,
               phone_number: verifiedPhone,
               phone_verified: true,
               phone_verified_at: new Date().toISOString(),
               onboarding_completed: false,
               country: detectedCountry,
-            });
-
-          if (profileError) {
-            console.error("Profile creation error:", profileError);
+            }, { onConflict: 'user_id' });
+            
+          if (upsertError) {
+            console.error("Profile upsert error:", upsertError);
           }
-
-          navigate("/welcome");
         }
+
+        navigate("/welcome");
       }
     } catch (err: any) {
       setError(err.message || t.errors.general);
@@ -535,8 +532,9 @@ export const Register = (): JSX.Element => {
                 <div className="space-y-2">
                   <label className="text-white text-sm font-medium">{language === 'id' ? 'Kode OTP' : 'OTP Code'}</label>
                   <Input
-                    type="text"
-                    placeholder="000000"
+                    type="password"
+                    inputMode="numeric"
+                    placeholder="••••••"
                     value={otpCode}
                     onChange={(e) => {
                       const value = e.target.value.replace(/\D/g, "").slice(0, 6);
@@ -544,6 +542,7 @@ export const Register = (): JSX.Element => {
                     }}
                     disabled={verifyingOtp || loading}
                     maxLength={6}
+                    autoComplete="one-time-code"
                     className="bg-[#0a0a12] border-[#2b2b38] text-white h-14 rounded-xl text-center text-2xl tracking-[0.5em] font-mono focus:border-[#7c3aed]"
                   />
                   <p className="text-white/40 text-xs text-center">

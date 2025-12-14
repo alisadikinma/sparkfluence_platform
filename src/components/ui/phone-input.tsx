@@ -26,7 +26,8 @@ export const PhoneInput: React.FC<PhoneInputProps> = ({
     if (defaultCountry) {
       return countryCodes.find(c => c.code === defaultCountry) || countryCodes[0];
     }
-    return autoDetect ? detectCountryFromTimezone() : countryCodes[0];
+    // Always default to Indonesia (+62) as primary market
+    return countryCodes[0]; // Indonesia is first in the list
   });
   
   const [isOpen, setIsOpen] = useState(false);
