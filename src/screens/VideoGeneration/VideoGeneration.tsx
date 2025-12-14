@@ -953,11 +953,12 @@ export const VideoGeneration = (): JSX.Element => {
       return;
     }
 
-    // Go to loading screen for video combine (skip music selector)
-    navigate("/loading", {
+    // Go directly to full-video with combine process
+    navigate("/full-video", {
       state: {
-        selectedSegments: segments,
-        selectedMusic: null, // No music selected
+        segments,
+        selectedSegments: segments, // Also pass as selectedSegments for compatibility
+        selectedMusic: null,
         topic: currentTopic,
         sessionId,
         videoSettings

@@ -5,7 +5,7 @@ import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw } from "lucide-react";
 
 // Backend API URL - adjust based on environment
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
@@ -33,6 +33,7 @@ export const FullVideo: React.FC = () => {
   const [isCombining, setIsCombining] = useState(false);
   const [combineError, setCombineError] = useState<string | null>(null);
   const [combineProgress, setCombineProgress] = useState<string>("Initializing...");
+  const [progressPercent, setProgressPercent] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
   
   const hasStartedCombine = useRef(false);
@@ -67,10 +68,20 @@ export const FullVideo: React.FC = () => {
       // Check if already have final video URL
       if (state.finalVideoUrl) {
         setFinalVideoUrl(state.finalVideoUrl);
-      } else if (segments.length > 0 && segments.every((s: any) => s.videoUrl)) {
-        // All segments have videos, trigger combine
-        hasStartedCombine.current = true;
-        triggerCombineVideo(segments, state);
+      } else if (segments.length > 0) {
+        // Check if segments have video URLs (support both videoUrl and video_url)
+        const hasVideos = segments.every((s: any) => s.videoUrl || s.video_url);
+        console.log('[FullVideo] Segments:', segments.length, 'hasVideos:', hasVideos);
+        
+        if (hasVideos) {
+          // All segments have videos, trigger combine
+          hasStartedCombine.current = true;
+          console.log('[FullVideo] Starting combine process...');
+          triggerCombineVideo(segments, state);
+        } else {
+          console.log('[FullVideo] Missing video URLs in segments');
+          setCombineError('Some segments are missing video URLs. Please go back and generate videos first.');
+        }
       }
     }
   }, [location.state]);
@@ -80,6 +91,7 @@ export const FullVideo: React.FC = () => {
     setIsCombining(true);
     setCombineError(null);
     setCombineProgress("Preparing video segments...");
+    setProgressPercent(5);
 
     try {
       // Prepare segments data for backend
@@ -97,6 +109,7 @@ export const FullVideo: React.FC = () => {
 
       console.log('[FullVideo] Triggering combine with segments:', videoSegments.length);
       setCombineProgress("Connecting to video processor...");
+      setProgressPercent(10);
       
       // Direct backend call (same as Loading.tsx)
       const response = await fetch(`${BACKEND_URL}/api/combine-final-video`, {
@@ -128,7 +141,8 @@ export const FullVideo: React.FC = () => {
       }
 
       setJobId(data.data.job_id);
-      setCombineProgress("Processing video...");
+      setCombineProgress("Downloading video segments...");
+      setProgressPercent(15);
       startPollingJobStatusDirect(data.data.job_id);
 
     } catch (err: any) {
@@ -143,10 +157,14 @@ export const FullVideo: React.FC = () => {
   // Poll job status directly from backend
   const startPollingJobStatusDirect = (jid: string) => {
     let attempts = 0;
-    const maxAttempts = 60;
+    const maxAttempts = 120; // 10 minutes max (120 * 5s)
     
     pollIntervalRef.current = setInterval(async () => {
       attempts++;
+      
+      // Update progress based on attempts (15% -> 90%)
+      const progressFromAttempts = Math.min(15 + (attempts * 1.5), 90);
+      setProgressPercent(Math.round(progressFromAttempts));
       
       if (attempts > maxAttempts) {
         clearInterval(pollIntervalRef.current!);
@@ -155,27 +173,38 @@ export const FullVideo: React.FC = () => {
         return;
       }
 
-      await pollJobStatusDirect(jid);
+      await pollJobStatusDirect(jid, attempts);
     }, 5000);
   };
 
-  const pollJobStatusDirect = async (jid: string) => {
+  const pollJobStatusDirect = async (jid: string, attempts: number = 0) => {
     try {
       const response = await fetch(`${BACKEND_URL}/api/job-status/${jid}`, {
         headers: { 'x-api-key': BACKEND_API_KEY }
       });
       
       if (!response.ok) {
+        console.log('[FullVideo] Poll response not OK:', response.status);
         return; // Continue polling
       }
 
       const data = await response.json();
       const jobData = data?.data;
+      console.log('[FullVideo] Job status:', jobData?.status, 'Progress:', jobData?.progress_percentage);
+
+      // Update progress from backend if available
+      if (jobData?.progress_percentage) {
+        setProgressPercent(jobData.progress_percentage);
+      }
+      if (jobData?.current_step) {
+        setCombineProgress(jobData.current_step);
+      }
 
       if (jobData?.status === 'completed' && jobData?.final_video_url) {
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
         }
+        setProgressPercent(100);
         setFinalVideoUrl(jobData.final_video_url);
         setIsCombining(false);
         setCombineProgress("Complete!");
@@ -189,6 +218,17 @@ export const FullVideo: React.FC = () => {
         }
         setCombineError(jobData?.error_message || "Video processing failed");
         setIsCombining(false);
+      } else {
+        // Update progress text based on status
+        if (attempts < 5) {
+          setCombineProgress("Downloading video segments...");
+        } else if (attempts < 15) {
+          setCombineProgress("Concatenating videos with FFmpeg...");
+        } else if (attempts < 30) {
+          setCombineProgress("Encoding final video...");
+        } else {
+          setCombineProgress("Finalizing... (this may take a while)");
+        }
       }
     } catch (err) {
       console.error('[FullVideo] Direct poll error:', err);
@@ -377,34 +417,78 @@ export const FullVideo: React.FC = () => {
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-black/20" />
                   
                   {/* Processing Overlay */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
                     {isCombining ? (
-                      <>
-                        <Loader2 className="w-12 h-12 text-[#7c3aed] animate-spin mb-4" />
-                        <p className="text-white font-medium mb-2">Combining Video...</p>
-                        <p className="text-white/60 text-sm">{combineProgress}</p>
-                      </>
+                      <div className="text-center px-6 max-w-xs">
+                        {/* Circular Progress */}
+                        <div className="relative w-24 h-24 mx-auto mb-6">
+                          <svg className="w-24 h-24 transform -rotate-90">
+                            <circle
+                              cx="48"
+                              cy="48"
+                              r="40"
+                              stroke="currentColor"
+                              strokeWidth="6"
+                              fill="none"
+                              className="text-white/20"
+                            />
+                            <circle
+                              cx="48"
+                              cy="48"
+                              r="40"
+                              stroke="url(#gradient)"
+                              strokeWidth="6"
+                              fill="none"
+                              strokeLinecap="round"
+                              strokeDasharray={`${progressPercent * 2.51} 251`}
+                              className="transition-all duration-500"
+                            />
+                            <defs>
+                              <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stopColor="#7c3aed" />
+                                <stop offset="100%" stopColor="#ec4899" />
+                              </linearGradient>
+                            </defs>
+                          </svg>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-white font-bold text-xl">{progressPercent}%</span>
+                          </div>
+                        </div>
+                        
+                        <h3 className="text-white font-semibold text-lg mb-2">Combining Video</h3>
+                        <p className="text-white/70 text-sm mb-4">{combineProgress}</p>
+                        
+                        {/* Linear Progress Bar */}
+                        <div className="w-full bg-white/20 rounded-full h-2 overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
+                            style={{ width: `${progressPercent}%` }}
+                          />
+                        </div>
+                        <p className="text-white/50 text-xs mt-3">Please wait, this may take a minute...</p>
+                      </div>
                     ) : combineError ? (
-                      <>
-                        <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
-                        <p className="text-white font-medium mb-2">Processing Failed</p>
-                        <p className="text-red-400 text-sm text-center px-4 mb-4">{combineError}</p>
+                      <div className="text-center px-6">
+                        <AlertCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
+                        <p className="text-white font-semibold text-lg mb-2">Processing Failed</p>
+                        <p className="text-red-400 text-sm text-center px-4 mb-6 max-w-xs">{combineError}</p>
                         <Button
                           onClick={handleRetryCombine}
-                          className="bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                          className="bg-[#7c3aed] hover:bg-[#6d28d9] text-white px-8"
                         >
+                          <RefreshCw className="w-4 h-4 mr-2" />
                           Retry
                         </Button>
-                      </>
+                      </div>
                     ) : (
-                      <>
-                        <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/40 mb-4">
-                          <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24">
+                      <div className="text-center">
+                        <div className="w-20 h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/40 mb-4 mx-auto">
+                          <svg className="w-10 h-10 text-white/60" fill="currentColor" viewBox="0 0 24 24">
                             <path d="M8 5v14l11-7z" />
                           </svg>
                         </div>
                         <p className="text-white/60 text-sm">Waiting for video segments...</p>
-                      </>
+                      </div>
                     )}
                   </div>
                 </>
@@ -425,10 +509,19 @@ export const FullVideo: React.FC = () => {
             
             {/* Processing Status */}
             {isCombining && (
-              <div className="mt-4 bg-[#7c3aed]/10 border border-[#7c3aed]/30 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-[#7c3aed] text-sm">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>{combineProgress}</span>
+              <div className="mt-4 bg-gradient-to-r from-[#7c3aed]/20 to-[#ec4899]/20 border border-[#7c3aed]/30 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-[#7c3aed]">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm font-medium">{combineProgress}</span>
+                  </div>
+                  <span className="text-white font-bold">{progressPercent}%</span>
+                </div>
+                <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
+                    style={{ width: `${progressPercent}%` }}
+                  />
                 </div>
               </div>
             )}
