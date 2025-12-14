@@ -240,7 +240,8 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     aspect_ratio = '9:16',
     resolution = '1080p',
     environment = 'studio',
-    preferred_platform = 'auto' // 'auto' | 'sora2' | 'veo31'
+    preferred_platform = 'auto', // 'auto' | 'sora2' | 'veo31'
+    creator_appearance = '' // Optional: creator appearance for voice gender detection
   } = requestBody
 
   if (!user_id || !session_id || !segments || !Array.isArray(segments)) {
@@ -261,7 +262,33 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   }
   const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast'
 
-  // Create job records
+  // ========================================================================
+  // VOICE CHARACTER CONSISTENCY FIX:
+  // Generate voice character ONCE for entire session, store in all job records
+  // This ensures the same voice is used across HOOK, BODY, CTA segments
+  // ========================================================================
+  
+  // Try to detect language from first segment with script text
+  let detectedLanguage = language.toLowerCase()
+  const firstScriptSegment = segments.find((s: any) => s.script_text || s.script)
+  if (firstScriptSegment) {
+    const scriptText = firstScriptSegment.script_text || firstScriptSegment.script || ''
+    detectedLanguage = detectScriptLanguage(scriptText)
+  }
+  
+  // Try to get creator appearance from segments or request body
+  const creatorAppearanceStr = creator_appearance || 
+    segments.find((s: any) => s.creator_appearance || s.character_description)?.creator_appearance ||
+    segments.find((s: any) => s.creator_appearance || s.character_description)?.character_description ||
+    ''
+  
+  // Generate ONE voice character for entire session
+  const sessionVoiceCharacter = generateVoiceCharacter(detectedLanguage, creatorAppearanceStr)
+  const voiceCharacterJson = JSON.stringify(sessionVoiceCharacter)
+  
+  console.log(`[CREATE_JOBS] 🎤 Session voice character: ${sessionVoiceCharacter.gender}, ${sessionVoiceCharacter.age}, ${detectedLanguage}`)
+
+  // Create job records with SAME voice character for all
   const jobRecords = segments.map((segment: any, index: number) => {
     const segmentId = segment.segment_id || segment.id || String(index + 1)
     const segmentType = segment.type || segment.element || `SEGMENT_${index + 1}`
@@ -288,6 +315,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       environment,
       topic,
       preferred_platform: selectedPlatformForAll, // Store resolved platform (always VEO for auto)
+      voice_character: voiceCharacterJson, // SAME voice for ALL segments
       status: JOB_STATUS.PENDING,
       veo_uuid: null,
       video_url: null,
@@ -444,7 +472,7 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
-    // Build prompt
+    // Build prompt - USE STORED VOICE CHARACTER for consistency across all segments
     const videoPrompt = buildCinematicVideoPrompt({
       segment: job,
       segmentType,
@@ -454,7 +482,8 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       aspectRatio: job.aspect_ratio || '9:16',
       environment: job.environment || 'studio',
       platform: selectedPlatform,
-      duration: Math.min(duration, modelSpecs.maxDuration)
+      duration: Math.min(duration, modelSpecs.maxDuration),
+      voiceCharacter: job.voice_character // Use stored voice character from session
     })
 
     console.log(`[PROCESS_SINGLE] Platform: ${selectedPlatform}, Prompt length: ${videoPrompt.length}`)

@@ -131,8 +131,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
                 key={item.id}
                 onClick={() => !item.comingSoon && item.path && navigate(item.path)}
                 title={collapsed ? item.label : undefined}
-                className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors ${
-                  collapsed ? 'justify-center' : ''
+                className={`flex items-center w-full px-3 py-2.5 rounded-lg transition-colors ${
+                  collapsed ? 'justify-center' : 'justify-between'
                 } ${
                   item.comingSoon
                     ? 'hover:bg-surface text-text-muted cursor-not-allowed'
@@ -142,15 +142,15 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
                 }`}
                 disabled={item.comingSoon}
               >
-                <item.icon className="w-5 h-5 flex-shrink-0" />
-                {!collapsed && (
-                  <span className="text-sm font-semibold flex items-center gap-2">
-                    {item.label}
-                    {item.comingSoon && (
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/20 text-primary">
-                        {t.common.comingSoon}
-                      </span>
-                    )}
+                <div className="flex items-center gap-3">
+                  <item.icon className="w-5 h-5 flex-shrink-0" />
+                  {!collapsed && (
+                    <span className="text-sm font-semibold">{item.label}</span>
+                  )}
+                </div>
+                {!collapsed && item.comingSoon && (
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/20 text-primary whitespace-nowrap">
+                    {t.common.comingSoon}
                   </span>
                 )}
               </button>

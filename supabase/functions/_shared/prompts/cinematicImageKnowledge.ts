@@ -762,7 +762,13 @@ Atmosphere: atmospheric depth
 Style: Cinematic, Hollywood production value, professional photography.
 
 Technical: ${orientation} orientation (${resolution}), HD quality.
-Clean frame, no text, no watermarks, no human faces visible.`;
+Clean frame, sharp focus, pure product/concept visualization.
+
+IMPORTANT - VISUAL FOCUS:
+- Empty scene with ONLY objects, products, or environments
+- Isolated subject matter, uninhabited spaces
+- Pure concept visualization without people
+- Focus entirely on topic elements, textures, and atmosphere`;
 }
 
 /**
