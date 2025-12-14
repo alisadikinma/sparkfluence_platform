@@ -742,9 +742,34 @@ export const VideoGeneration = (): JSX.Element => {
     setIsGeneratingAll(true);
     setIsBackgroundMode(true);
     setShowBackgroundToast(true);
+    setRateLimitWarning(null); // Clear any previous warnings
     setGenerationProgress({ current: 0, total: segmentsToGenerate.length, completed: 0, failed: 0 });
 
     try {
+      // IMPORTANT: First reset any FAILED jobs back to PENDING so they get processed
+      // This handles the case where user clicks "Generate All" after some jobs failed
+      const { error: resetError } = await supabase
+        .from('video_generation_jobs')
+        .update({ 
+          status: JOB_STATUS.PENDING, 
+          error_message: null,
+          veo_uuid: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('session_id', sessionId)
+        .eq('user_id', user.id)
+        .eq('status', JOB_STATUS.FAILED);
+      
+      if (resetError) {
+        console.warn('[VideoGen] Failed to reset failed jobs:', resetError);
+      } else {
+        console.log('[VideoGen] Reset any failed jobs to pending');
+        // Update local state to clear errors
+        setSegments(prev => prev.map(seg => 
+          seg.videoError ? { ...seg, videoError: null, isGeneratingVideo: false, veoUuid: null } : seg
+        ));
+      }
+
       // Prepare segments data for job creation
       const segmentsData = segmentsToGenerate.map((seg, index) => {
         const originalIndex = segments.findIndex(s => s.id === seg.id);
