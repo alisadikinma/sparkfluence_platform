@@ -739,11 +739,27 @@ export const VideoGeneration = (): JSX.Element => {
     const segmentsToGenerate = segments.filter(s => !s.videoUrl && s.imageUrl);
     if (segmentsToGenerate.length === 0) return;
 
+    // CRITICAL: Stop any existing processing loop and reset refs
+    // This fixes the bug where loop stops after 1 video when retrying
+    console.log('[VideoGen] Stopping any existing processing loop...');
+    shouldStopProcessingRef.current = true;
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for loop to stop
+    isSequentialProcessingRef.current = false; // Reset ref to allow new loop
+    shouldStopProcessingRef.current = false; // Reset stop flag
+
     setIsGeneratingAll(true);
     setIsBackgroundMode(true);
     setShowBackgroundToast(true);
     setRateLimitWarning(null); // Clear any previous warnings
-    setGenerationProgress({ current: 0, total: segmentsToGenerate.length, completed: 0, failed: 0 });
+    
+    // Calculate initial progress based on already completed videos
+    const alreadyCompleted = segments.filter(s => s.videoUrl).length;
+    setGenerationProgress({ 
+      current: alreadyCompleted, 
+      total: segments.length, 
+      completed: alreadyCompleted, 
+      failed: 0 
+    });
 
     try {
       // IMPORTANT: First reset any FAILED jobs back to PENDING so they get processed
