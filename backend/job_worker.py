@@ -77,18 +77,44 @@ class SupabaseClient:
             return response.json()
     
     async def select_pending(self, table: str, limit: int = 1) -> List[Dict]:
-        """Select pending jobs (status=0) ordered by created_at."""
+        """Select pending jobs (status=0) ordered by segment_number.
+        Prioritizes completing one session before moving to another."""
         async with httpx.AsyncClient() as client:
             url = f"{self.url}/rest/v1/{table}"
+            
+            # First, check if there's an active session (has processing jobs)
+            # to continue that session first
+            processing_url = f"{self.url}/rest/v1/{table}"
+            processing_params = {
+                'status': 'eq.1',  # PROCESSING
+                'limit': '1',
+                'select': 'session_id'
+            }
+            proc_response = await client.get(processing_url, headers=self.headers, params=processing_params)
+            proc_jobs = proc_response.json() if proc_response.status_code == 200 else []
+            
             params = {
                 'status': 'eq.0',
-                'order': 'created_at.asc',
+                'order': 'segment_number.asc',  # CRITICAL: Process in segment order (HOOK→FORE→BODY→etc)
                 'limit': str(limit)
             }
             
+            # If there's an active session, prioritize jobs from that session
+            if proc_jobs and proc_jobs[0].get('session_id'):
+                active_session = proc_jobs[0]['session_id']
+                params['session_id'] = f'eq.{active_session}'
+            
             response = await client.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            return response.json()
+            
+            # If no jobs in active session, get any pending job
+            jobs = response.json() if response.status_code == 200 else []
+            if not jobs and proc_jobs:
+                # Remove session filter and try again
+                del params['session_id']
+                response = await client.get(url, headers=self.headers, params=params)
+                jobs = response.json() if response.status_code == 200 else []
+            
+            return jobs
     
     async def update(self, table: str, id: str, data: Dict) -> Dict:
         """Update a record by ID."""

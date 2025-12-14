@@ -421,6 +421,14 @@ export const VideoGeneration = (): JSX.Element => {
           
           const result = data?.data;
           
+          // Handle "waiting" response - another job is still processing
+          if (result?.waiting) {
+            console.log(`[VideoGen] ⏳ Waiting for ${result.processing_count} job(s) to complete...`);
+            // Wait 10 seconds before checking again
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            continue; // Continue loop to check again
+          }
+          
           // If no more pending jobs, we're done
           if (result?.summary?.pending === 0 && !result?.job?.veo_uuid) {
             console.log('[VideoGen] No more pending jobs - all done!');
@@ -596,6 +604,10 @@ export const VideoGeneration = (): JSX.Element => {
                 failed: prev.failed + 1
               }));
             }
+            
+            // Add small delay before processing next segment to prevent rapid-fire
+            console.log('[VideoGen] ⏳ Waiting 3s before next segment...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
           }
           
         } catch (err) {
