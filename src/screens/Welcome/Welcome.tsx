@@ -13,7 +13,7 @@ type WelcomeStep = "loading" | "verify-phone" | "otp" | "welcome";
 
 export const Welcome = (): JSX.Element => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { language } = useLanguage();
 
   // Step state
@@ -38,6 +38,9 @@ export const Welcome = (): JSX.Element => {
   // Check phone verification status on mount
   useEffect(() => {
     const checkPhoneVerification = async () => {
+      // Wait for auth to be determined
+      if (authLoading) return;
+      
       if (!user) {
         navigate('/login');
         return;
@@ -62,7 +65,7 @@ export const Welcome = (): JSX.Element => {
     };
 
     checkPhoneVerification();
-  }, [user, navigate]);
+  }, [user, authLoading, navigate]);
 
   // Cooldown timer
   useEffect(() => {

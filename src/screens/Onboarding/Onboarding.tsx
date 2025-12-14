@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
 import { Logo } from "../../components/ui/logo";
 import { useOnboarding } from "../../contexts/OnboardingContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2 } from "lucide-react";
+import { Loader2, Camera, User, ArrowRight, ArrowLeft, Check } from "lucide-react";
 
 interface LookupItem {
   id: string;
@@ -12,9 +15,24 @@ interface LookupItem {
   category: string;
 }
 
+type OnboardingStep = "profile" | "preferences";
+
 export const Onboarding = (): JSX.Element => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { language } = useLanguage();
   const { onboardingData, updateOnboardingData } = useOnboarding();
+  
+  // Current step
+  const [currentStep, setCurrentStep] = useState<OnboardingStep>("profile");
+  
+  // Profile step state
+  const [displayName, setDisplayName] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState("");
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Options from database
   const [interests, setInterests] = useState<LookupItem[]>([]);
@@ -23,7 +41,7 @@ export const Onboarding = (): JSX.Element => {
   const [objectives, setObjectives] = useState<LookupItem[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(true);
 
-  // User selections
+  // User selections (preferences step)
   const [selectedInterest, setSelectedInterest] = useState<string>("");
   const [customInterest, setCustomInterest] = useState("");
   const [profession, setProfession] = useState("");
@@ -32,20 +50,78 @@ export const Onboarding = (): JSX.Element => {
   const [selectedObjectives, setSelectedObjectives] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Check if form is valid for Next button
-  const isFormValid = (() => {
-    // Interest validation
+  // Text based on language
+  const text = {
+    step1Title: language === 'id' ? 'Siapkan Profil Kamu' : 'Set Up Your Profile',
+    step1Subtitle: language === 'id' ? 'Beri tahu kami siapa kamu untuk pengalaman yang lebih personal' : 'Let us know who you are for a more personal experience',
+    displayNameLabel: language === 'id' ? 'Nama Tampilan' : 'Display Name',
+    displayNamePlaceholder: language === 'id' ? 'Nama yang akan ditampilkan...' : 'Name to be displayed...',
+    displayNameHint: language === 'id' ? 'Ini akan digunakan untuk sapaan di dashboard' : 'This will be used for greetings on dashboard',
+    photoLabel: language === 'id' ? 'Foto Profil' : 'Profile Photo',
+    photoHint: language === 'id' ? 'Opsional - bisa diubah nanti di Settings' : 'Optional - can be changed later in Settings',
+    uploadPhoto: language === 'id' ? 'Upload Foto' : 'Upload Photo',
+    changePhoto: language === 'id' ? 'Ganti Foto' : 'Change Photo',
+    step2Title: language === 'id' ? 'Kenali Kamu Lebih Dekat' : 'Get to Know You Better',
+    step2Subtitle: language === 'id' ? 'Semakin detail, semakin akurat rekomendasi niche-nya ✨' : 'The more detailed, the more accurate the niche recommendations ✨',
+    interestLabel: language === 'id' ? 'Minat' : 'Interest',
+    interestHint: language === 'id' ? 'Pilih satu yang paling sesuai dengan minatmu.' : 'Select one option that best matches your interest.',
+    professionLabel: language === 'id' ? 'Profesi' : 'Profession',
+    professionPlaceholder: language === 'id' ? 'Pilih profesi' : 'Choose profession',
+    customInterestLabel: language === 'id' ? 'Minat Lainnya' : 'Your Other Interest',
+    customInterestPlaceholder: language === 'id' ? 'Masukkan minatmu...' : 'Enter your interest...',
+    customProfessionLabel: language === 'id' ? 'Profesi Lainnya' : 'Your Other Profession',
+    customProfessionPlaceholder: language === 'id' ? 'Masukkan profesimu...' : 'Enter your profession...',
+    platformLabel: language === 'id' ? 'Platform Utama' : 'Main Platform',
+    objectiveLabel: language === 'id' ? 'Tujuan' : 'Objective',
+    previous: language === 'id' ? 'Sebelumnya' : 'Previous',
+    next: language === 'id' ? 'Lanjut' : 'Next',
+    nameRequired: language === 'id' ? 'Nama tampilan wajib diisi' : 'Display name is required',
+  };
+
+  // Load user data on mount
+  useEffect(() => {
+    if (user) {
+      // Pre-fill name from user metadata if available
+      const existingName = user.user_metadata?.full_name || user.email?.split('@')[0] || "";
+      setDisplayName(existingName);
+      
+      // Check if user already has profile data
+      fetchExistingProfile();
+    }
+  }, [user]);
+
+  const fetchExistingProfile = async () => {
+    if (!user) return;
+    
+    try {
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("full_name, avatar_url")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      
+      if (profile) {
+        if (profile.full_name) setDisplayName(profile.full_name);
+        if (profile.avatar_url) {
+          setAvatarUrl(profile.avatar_url);
+          setAvatarPreview(profile.avatar_url);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching profile:", err);
+    }
+  };
+
+  // Check if profile step is valid
+  const isProfileValid = displayName.trim().length >= 2;
+
+  // Check if preferences step is valid
+  const isPreferencesValid = (() => {
     const hasValidInterest = selectedInterest && 
       (selectedInterest !== "Others" || customInterest.trim());
-    
-    // Profession validation
     const hasValidProfession = profession && 
       (profession !== "Other" || customProfession.trim());
-    
-    // Platform validation
     const hasValidPlatform = selectedPlatforms.length > 0;
-    
-    // Objective validation
     const hasValidObjective = selectedObjectives.length > 0;
     
     return hasValidInterest && hasValidProfession && hasValidPlatform && hasValidObjective;
@@ -87,7 +163,6 @@ export const Onboarding = (): JSX.Element => {
   const fetchOnboardingOptions = async () => {
     setLoadingOptions(true);
     try {
-      // Fetch all from lookup_master
       const { data, error } = await supabase
         .from("lookup_master")
         .select("id, name, category")
@@ -97,7 +172,6 @@ export const Onboarding = (): JSX.Element => {
       if (error) throw error;
 
       if (data) {
-        // Sort interests: Others always last
         const interestItems = data.filter(item => item.category === "interest");
         const sortedInterests = interestItems.sort((a, b) => {
           if (a.name === "Others") return 1;
@@ -106,7 +180,6 @@ export const Onboarding = (): JSX.Element => {
         });
         setInterests(sortedInterests);
         
-        // Sort professions: Other always last
         const professionItems = data.filter(item => item.category === "profession");
         const sortedProfessions = professionItems.sort((a, b) => {
           if (a.name === "Other") return 1;
@@ -120,7 +193,7 @@ export const Onboarding = (): JSX.Element => {
       }
     } catch (err) {
       console.error("Error fetching onboarding options:", err);
-      // Fallback to default options if database fetch fails
+      // Fallback to default options
       setInterests([
         { id: "1", name: "Entertainment", category: "interest" },
         { id: "2", name: "Travel", category: "interest" },
@@ -159,7 +232,50 @@ export const Onboarding = (): JSX.Element => {
     }
   };
 
-  // Platform icon component with inline SVGs
+  // Handle avatar file selection
+  const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError(language === 'id' ? "Ukuran file maksimal 5MB" : "Maximum file size is 5MB");
+      return;
+    }
+
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+    setError(null);
+  };
+
+  // Upload avatar to Supabase
+  const uploadAvatar = async (): Promise<string | null> => {
+    if (!avatarFile || !user) return avatarUrl || null;
+
+    setUploadingAvatar(true);
+    try {
+      const fileExt = avatarFile.name.split(".").pop();
+      const avatarFileName = `${user.id}-${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(avatarFileName, avatarFile, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(avatarFileName);
+
+      return urlData.publicUrl;
+    } catch (err) {
+      console.error("Error uploading avatar:", err);
+      return null;
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  // Platform icon component
   const PlatformIcon = ({ platformName }: { platformName: string }) => {
     switch (platformName.toLowerCase()) {
       case "tiktok":
@@ -213,10 +329,53 @@ export const Onboarding = (): JSX.Element => {
     );
   };
 
-  const handleNext = () => {
-    if (!isFormValid) return;
+  // Handle profile step completion
+  const handleProfileNext = async () => {
+    if (!isProfileValid) {
+      setError(text.nameRequired);
+      return;
+    }
 
-    // Determine final interest value
+    setError(null);
+
+    // Upload avatar if selected
+    let finalAvatarUrl = avatarUrl;
+    if (avatarFile) {
+      const uploadedUrl = await uploadAvatar();
+      if (uploadedUrl) {
+        finalAvatarUrl = uploadedUrl;
+      }
+    }
+
+    // Save profile to database
+    if (user) {
+      try {
+        await supabase
+          .from("user_profiles")
+          .upsert({
+            user_id: user.id,
+            full_name: displayName.trim(),
+            avatar_url: finalAvatarUrl,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id' });
+
+        // Also update auth user metadata
+        await supabase.auth.updateUser({
+          data: { full_name: displayName.trim() }
+        });
+      } catch (err) {
+        console.error("Error saving profile:", err);
+      }
+    }
+
+    // Move to preferences step
+    setCurrentStep("preferences");
+  };
+
+  // Handle preferences step completion (final)
+  const handlePreferencesNext = () => {
+    if (!isPreferencesValid) return;
+
     let finalInterest = selectedInterest;
     if (selectedInterest === "Others") {
       finalInterest = customInterest.trim();
@@ -235,7 +394,11 @@ export const Onboarding = (): JSX.Element => {
   };
 
   const handlePrevious = () => {
-    navigate("/welcome");
+    if (currentStep === "preferences") {
+      setCurrentStep("profile");
+    } else {
+      navigate("/welcome");
+    }
   };
 
   // Loading state
@@ -247,19 +410,24 @@ export const Onboarding = (): JSX.Element => {
     );
   }
 
+  const stepNumber = currentStep === "profile" ? 1 : 2;
+
   return (
     <div className="w-full min-h-screen bg-[#0a0a12] flex items-center justify-center px-4 py-8">
       <div className="w-full max-w-[600px]">
+        {/* Header */}
         <div className="mb-8">
           <div className="flex justify-center mb-6">
             <Logo />
           </div>
+          
+          {/* Step Progress */}
           <div className="flex gap-2 mb-8 max-w-md mx-auto">
             {[1, 2, 3, 4, 5, 6, 7].map((step) => (
               <div
                 key={step}
                 className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                  step === 1
+                  step <= stepNumber
                     ? "bg-[#7c3aed]"
                     : "bg-[#4e5562]"
                 }`}
@@ -268,188 +436,300 @@ export const Onboarding = (): JSX.Element => {
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2 flex items-center justify-center gap-2">
-              <span className="text-2xl">✨</span>
-              Get to Know You Better
-            </h1>
-            <p className="text-white/60 text-sm">
-              The more detailed, the more accurate the niche recommendations ✨
-            </p>
+        {/* Step 1: Profile Setup */}
+        {currentStep === "profile" && (
+          <div className="space-y-6">
+            <div className="text-center mb-8">
+              <h1 className="text-3xl font-bold text-white mb-2 flex items-center justify-center gap-2">
+                <span className="text-2xl">👋</span>
+                {text.step1Title}
+              </h1>
+              <p className="text-white/60 text-sm">
+                {text.step1Subtitle}
+              </p>
+            </div>
+
             {error && (
-              <div className="mt-4 bg-red-500/10 border border-red-500/50 rounded-xl p-3">
+              <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-3">
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
-          </div>
 
-          <div className="space-y-6">
-            {/* Interest Selection */}
-            <div>
-              <label className="text-sm font-medium text-white mb-3 block">
-                Interest
-              </label>
-              <p className="text-xs text-white/50 mb-3">
-                Select one option that best matches your interest.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {interests.map((interest) => (
-                  <button
-                    key={interest.id}
-                    onClick={() => toggleInterest(interest.name)}
-                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
-                      selectedInterest === interest.name
-                        ? "bg-[#7c3aed] text-white border border-[#7c3aed]"
-                        : "bg-transparent text-white/70 border border-[#4e5562] hover:border-[#7c3aed]/50"
-                    }`}
-                  >
-                    {interest.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom Interest - Only show when "Others" is selected */}
-            {selectedInterest === "Others" && (
-              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                <label className="text-sm font-medium text-white mb-3 block">
-                  Your Other Interest
-                </label>
-                <input
-                  type="text"
-                  value={customInterest}
-                  onChange={(e) => setCustomInterest(e.target.value)}
-                  placeholder="Enter your interest..."
-                  className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
-                  autoFocus
-                />
-              </div>
-            )}
-
-            {/* Profession Selection */}
-            <div>
-              <label className="text-sm font-medium text-white mb-3 block">
-                Profession
-              </label>
-              <div className="relative">
-                <select
-                  value={profession}
-                  onChange={(e) => {
-                    setProfession(e.target.value);
-                    if (e.target.value !== "Other") {
-                      setCustomProfession("");
-                    }
-                  }}
-                  className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
-                >
-                  <option value="">Choose profession</option>
-                  {professions.map((prof) => (
-                    <option key={prof.id} value={prof.name}>
-                      {prof.name}
-                    </option>
-                  ))}
-                </select>
-                <svg
-                  className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50 pointer-events-none"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 9l-7 7-7-7"
+            {/* Avatar Upload */}
+            <div className="flex flex-col items-center gap-4">
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="relative w-28 h-28 rounded-full bg-gradient-to-br from-[#7c3aed] to-[#ec4899] flex items-center justify-center cursor-pointer group overflow-hidden"
+              >
+                {avatarPreview ? (
+                  <img 
+                    src={avatarPreview} 
+                    alt="Avatar" 
+                    className="w-full h-full object-cover"
                   />
-                </svg>
+                ) : (
+                  <User className="w-12 h-12 text-white" />
+                )}
+                
+                {/* Hover overlay */}
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Camera className="w-8 h-8 text-white" />
+                </div>
+                
+                {uploadingAvatar && (
+                  <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                    <Loader2 className="w-8 h-8 text-white animate-spin" />
+                  </div>
+                )}
+              </div>
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarSelect}
+              />
+              
+              <div className="text-center">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-[#7c3aed] hover:text-[#6d28d9] text-sm font-medium transition-colors"
+                >
+                  {avatarPreview ? text.changePhoto : text.uploadPhoto}
+                </button>
+                <p className="text-white/40 text-xs mt-1">{text.photoHint}</p>
               </div>
             </div>
 
-            {/* Custom Profession - Only show when "Other" is selected */}
-            {profession === "Other" && (
-              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+            {/* Display Name Input */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-white block">
+                {text.displayNameLabel} <span className="text-red-400">*</span>
+              </label>
+              <Input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder={text.displayNamePlaceholder}
+                className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
+                maxLength={50}
+              />
+              <p className="text-white/40 text-xs">{text.displayNameHint}</p>
+            </div>
+
+            {/* Navigation */}
+            <div className="flex items-center justify-between pt-6">
+              <Button
+                onClick={handlePrevious}
+                variant="secondary"
+                className="bg-white text-[#0a0a12] hover:bg-white/90 h-12 px-8 font-medium"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                {text.previous}
+              </Button>
+              <Button
+                onClick={handleProfileNext}
+                disabled={!isProfileValid || uploadingAvatar}
+                className={`h-12 px-8 font-medium transition-all ${
+                  isProfileValid && !uploadingAvatar
+                    ? "bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                    : "bg-[#7c3aed]/50 text-white/50 cursor-not-allowed"
+                }`}
+              >
+                {uploadingAvatar ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                {text.next}
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Preferences */}
+        {currentStep === "preferences" && (
+          <div className="space-y-6">
+            <div className="text-center mb-8">
+              <h1 className="text-3xl font-bold text-white mb-2 flex items-center justify-center gap-2">
+                <span className="text-2xl">✨</span>
+                {text.step2Title}
+              </h1>
+              <p className="text-white/60 text-sm">
+                {text.step2Subtitle}
+              </p>
+              {error && (
+                <div className="mt-4 bg-red-500/10 border border-red-500/50 rounded-xl p-3">
+                  <p className="text-red-400 text-sm">{error}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-6">
+              {/* Interest Selection */}
+              <div>
                 <label className="text-sm font-medium text-white mb-3 block">
-                  Your Other Profession
+                  {text.interestLabel}
                 </label>
-                <input
-                  type="text"
-                  value={customProfession}
-                  onChange={(e) => setCustomProfession(e.target.value)}
-                  placeholder="Enter your profession..."
-                  className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
-                  autoFocus
-                />
+                <p className="text-xs text-white/50 mb-3">
+                  {text.interestHint}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {interests.map((interest) => (
+                    <button
+                      key={interest.id}
+                      onClick={() => toggleInterest(interest.name)}
+                      className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                        selectedInterest === interest.name
+                          ? "bg-[#7c3aed] text-white border border-[#7c3aed]"
+                          : "bg-transparent text-white/70 border border-[#4e5562] hover:border-[#7c3aed]/50"
+                      }`}
+                    >
+                      {interest.name}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
 
-            {/* Platform Selection */}
-            <div>
-              <label className="text-sm font-medium text-white mb-3 block">
-                Main Platform
-              </label>
-              <div className="flex gap-3">
-                {platforms.map((platform) => (
-                  <button
-                    key={platform.id}
-                    onClick={() => togglePlatform(platform.name)}
-                    className={`flex-1 h-12 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-all duration-200 ${
-                      selectedPlatforms.includes(platform.name)
-                        ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
-                        : "bg-[#1a1a24] text-white/70 border border-[#4e5562] hover:border-[#7c3aed]/50"
-                    }`}
+              {/* Custom Interest */}
+              {selectedInterest === "Others" && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-sm font-medium text-white mb-3 block">
+                    {text.customInterestLabel}
+                  </label>
+                  <input
+                    type="text"
+                    value={customInterest}
+                    onChange={(e) => setCustomInterest(e.target.value)}
+                    placeholder={text.customInterestPlaceholder}
+                    className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              {/* Profession Selection */}
+              <div>
+                <label className="text-sm font-medium text-white mb-3 block">
+                  {text.professionLabel}
+                </label>
+                <div className="relative">
+                  <select
+                    value={profession}
+                    onChange={(e) => {
+                      setProfession(e.target.value);
+                      if (e.target.value !== "Other") {
+                        setCustomProfession("");
+                      }
+                    }}
+                    className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
                   >
-                    <PlatformIcon platformName={platform.name} />
-                    <span>{platform.name}</span>
-                  </button>
-                ))}
+                    <option value="">{text.professionPlaceholder}</option>
+                    {professions.map((prof) => (
+                      <option key={prof.id} value={prof.name}>
+                        {prof.name}
+                      </option>
+                    ))}
+                  </select>
+                  <svg
+                    className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50 pointer-events-none"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Custom Profession */}
+              {profession === "Other" && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-sm font-medium text-white mb-3 block">
+                    {text.customProfessionLabel}
+                  </label>
+                  <input
+                    type="text"
+                    value={customProfession}
+                    onChange={(e) => setCustomProfession(e.target.value)}
+                    placeholder={text.customProfessionPlaceholder}
+                    className="w-full h-12 px-4 bg-[#1a1a24] border border-[#4e5562] rounded-lg text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent"
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              {/* Platform Selection */}
+              <div>
+                <label className="text-sm font-medium text-white mb-3 block">
+                  {text.platformLabel}
+                </label>
+                <div className="flex gap-3">
+                  {platforms.map((platform) => (
+                    <button
+                      key={platform.id}
+                      onClick={() => togglePlatform(platform.name)}
+                      className={`flex-1 h-12 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-all duration-200 ${
+                        selectedPlatforms.includes(platform.name)
+                          ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
+                          : "bg-[#1a1a24] text-white/70 border border-[#4e5562] hover:border-[#7c3aed]/50"
+                      }`}
+                    >
+                      <PlatformIcon platformName={platform.name} />
+                      <span>{platform.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Objective Selection */}
+              <div>
+                <label className="text-sm font-medium text-white mb-3 block">
+                  {text.objectiveLabel}
+                </label>
+                <div className="flex gap-3">
+                  {objectives.map((objective) => (
+                    <button
+                      key={objective.id}
+                      onClick={() => toggleObjective(objective.name)}
+                      className={`flex-1 h-12 rounded-lg text-sm font-medium transition-all duration-200 ${
+                        selectedObjectives.includes(objective.name)
+                          ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
+                          : "bg-[#1a1a24] text-white/70 border border-[#4e5562] hover:border-[#7c3aed]/50"
+                      }`}
+                    >
+                      {objective.name}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Objective Selection */}
-            <div>
-              <label className="text-sm font-medium text-white mb-3 block">
-                Objective
-              </label>
-              <div className="flex gap-3">
-                {objectives.map((objective) => (
-                  <button
-                    key={objective.id}
-                    onClick={() => toggleObjective(objective.name)}
-                    className={`flex-1 h-12 rounded-lg text-sm font-medium transition-all duration-200 ${
-                      selectedObjectives.includes(objective.name)
-                        ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
-                        : "bg-[#1a1a24] text-white/70 border border-[#4e5562] hover:border-[#7c3aed]/50"
-                    }`}
-                  >
-                    {objective.name}
-                  </button>
-                ))}
-              </div>
+            {/* Navigation */}
+            <div className="flex items-center justify-between pt-6">
+              <Button
+                onClick={handlePrevious}
+                variant="secondary"
+                className="bg-white text-[#0a0a12] hover:bg-white/90 h-12 px-8 font-medium"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                {text.previous}
+              </Button>
+              <Button
+                onClick={handlePreferencesNext}
+                disabled={!isPreferencesValid}
+                className={`h-12 px-8 font-medium transition-all ${
+                  isPreferencesValid
+                    ? "bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                    : "bg-[#7c3aed]/50 text-white/50 cursor-not-allowed"
+                }`}
+              >
+                {text.next}
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
             </div>
           </div>
-
-          <div className="flex items-center justify-between pt-6">
-            <Button
-              onClick={handlePrevious}
-              variant="secondary"
-              className="bg-white text-[#0a0a12] hover:bg-white/90 h-12 px-8 font-medium"
-            >
-              Previous
-            </Button>
-            <Button
-              onClick={handleNext}
-              disabled={!isFormValid}
-              className={`h-12 px-8 font-medium transition-all ${
-                isFormValid
-                  ? "bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
-                  : "bg-[#7c3aed]/50 text-white/50 cursor-not-allowed"
-              }`}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
