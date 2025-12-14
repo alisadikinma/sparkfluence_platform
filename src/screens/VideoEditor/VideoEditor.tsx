@@ -602,6 +602,41 @@ export const VideoEditor = (): JSX.Element => {
       const imageUrl = data?.data?.images?.[0]?.image_url;
       const imageError = data?.data?.images?.[0]?.error;
       
+      // Update job record in database if exists (sync status)
+      if (imageUrl && sessionId && user && segment.jobId) {
+        try {
+          await supabase
+            .from('image_generation_jobs')
+            .update({ 
+              status: JOB_STATUS.COMPLETED,
+              image_url: imageUrl,
+              error_message: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', segment.jobId)
+            .eq('user_id', user.id);
+        } catch (dbErr) {
+          console.error('Error updating job status:', dbErr);
+        }
+      } else if (imageUrl && sessionId && user) {
+        // Try to find and update by segment_number if no jobId
+        try {
+          await supabase
+            .from('image_generation_jobs')
+            .update({ 
+              status: JOB_STATUS.COMPLETED,
+              image_url: imageUrl,
+              error_message: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('session_id', sessionId)
+            .eq('segment_number', parseInt(segmentId))
+            .eq('user_id', user.id);
+        } catch (dbErr) {
+          console.error('Error updating job status by segment:', dbErr);
+        }
+      }
+      
       setSegments(prev => {
         const updated = prev.map(seg =>
           seg.id === segmentId
@@ -624,7 +659,7 @@ export const VideoEditor = (): JSX.Element => {
       );
       return false;
     }
-  }, [segments, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic]);
+  }, [segments, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic, sessionId, user]);
 
   const handlePrevious = () => {
     saveProgress(segments, currentTopic, videoSettings);
