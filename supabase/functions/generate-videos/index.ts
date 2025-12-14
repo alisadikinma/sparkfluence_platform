@@ -158,7 +158,7 @@ async function handlePreviewPrompts(requestBody: any) {
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i]
     const segmentId = segment.segment_id || segment.id || String(i + 1)
-    const segmentType = segment.type || segment.element || segment.segment_type || `SEGMENT_${i + 1}`
+    const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${i + 1}`
     const scriptText = segment.script_text || segment.script || ''
     const duration = segment.duration_seconds || 8
     const emotion = segment.emotion || 'authority'
@@ -291,7 +291,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   // Create job records with SAME voice character for all
   const jobRecords = segments.map((segment: any, index: number) => {
     const segmentId = segment.segment_id || segment.id || String(index + 1)
-    const segmentType = segment.type || segment.element || `SEGMENT_${index + 1}`
+    const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${index + 1}`
     const scriptText = segment.script_text || segment.script || ''
     const imageUrl = segment.image_url || segment.imageUrl
     const duration = segment.duration_seconds || 8
@@ -776,7 +776,7 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i]
     const segmentId = segment.segment_id || segment.id || String(i + 1)
-    const segmentType = segment.type || segment.element || `SEGMENT_${i + 1}`
+    const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${i + 1}`
     const emotion = segment.emotion || 'authority'
     const scriptText = segment.script_text || segment.script || ''
     const duration = segment.duration_seconds || 8

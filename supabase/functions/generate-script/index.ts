@@ -577,6 +577,32 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
           segment.transition = 'Cut'
         }
         
+        // ============================================================
+        // CRITICAL: Auto-assign shot_type based on segment type
+        // This ensures HOOK/CTA always get CREATOR, others get B-ROLL
+        // Even if LLM forgets to return shot_type field
+        // ============================================================
+        const segmentType = (segment.type || '').toUpperCase()
+        const CREATOR_SEGMENTS = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA', 'ENDING']
+        
+        // Auto-assign if missing OR if LLM returned wrong value
+        if (!segment.shot_type || segment.shot_type === '') {
+          segment.shot_type = CREATOR_SEGMENTS.includes(segmentType) ? 'CREATOR' : 'B-ROLL'
+          console.log(`[Parser] Auto-assigned shot_type: ${segment.type} → ${segment.shot_type}`)
+        } else {
+          // Validate LLM's shot_type - override if incorrect
+          const shouldBeCreator = CREATOR_SEGMENTS.includes(segmentType)
+          const isCreator = segment.shot_type.toUpperCase() === 'CREATOR'
+          
+          if (shouldBeCreator && !isCreator) {
+            console.log(`[Parser] Correcting shot_type: ${segment.type} was ${segment.shot_type} → CREATOR`)
+            segment.shot_type = 'CREATOR'
+          } else if (!shouldBeCreator && isCreator) {
+            console.log(`[Parser] Correcting shot_type: ${segment.type} was ${segment.shot_type} → B-ROLL`)
+            segment.shot_type = 'B-ROLL'
+          }
+        }
+        
         return segment
       })
 
