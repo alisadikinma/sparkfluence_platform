@@ -49,6 +49,80 @@ const JOB_STATUS = {
 };
 
 // ============================================================================
+// SESSION REFRESH & RETRY HELPER
+// Fixes ERR_CONNECTION_CLOSED during long polling operations
+// ============================================================================
+async function ensureValidSession(): Promise<boolean> {
+  try {
+    // Try to get current session
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error || !session) {
+      console.log('[VideoGen] Session invalid, attempting refresh...');
+      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+      
+      if (refreshError || !refreshData.session) {
+        console.error('[VideoGen] Session refresh failed:', refreshError);
+        return false;
+      }
+      console.log('[VideoGen] Session refreshed successfully');
+    }
+    return true;
+  } catch (err) {
+    console.error('[VideoGen] Session check error:', err);
+    return false;
+  }
+}
+
+async function invokeWithRetry(
+  functionName: string, 
+  body: any, 
+  maxRetries: number = 3
+): Promise<{ data: any; error: any }> {
+  let lastError: any = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Ensure valid session before each attempt
+      const sessionValid = await ensureValidSession();
+      if (!sessionValid && attempt === maxRetries) {
+        return { data: null, error: { message: 'Session expired. Please refresh the page.' } };
+      }
+      
+      const { data, error } = await supabase.functions.invoke(functionName, { body });
+      
+      if (error) {
+        // Check if it's a network/auth error that should be retried
+        const isRetryable = 
+          error.message?.includes('fetch') ||
+          error.message?.includes('network') ||
+          error.message?.includes('Failed to fetch') ||
+          error.message?.includes('CONNECTION');
+        
+        if (isRetryable && attempt < maxRetries) {
+          console.log(`[VideoGen] Retry ${attempt}/${maxRetries} for ${functionName}: ${error.message}`);
+          await new Promise(r => setTimeout(r, 2000 * attempt)); // Exponential backoff
+          continue;
+        }
+        return { data: null, error };
+      }
+      
+      return { data, error: null };
+    } catch (err: any) {
+      lastError = err;
+      console.error(`[VideoGen] Attempt ${attempt} failed:`, err.message);
+      
+      if (attempt < maxRetries) {
+        // Wait before retry with exponential backoff
+        await new Promise(r => setTimeout(r, 2000 * attempt));
+      }
+    }
+  }
+  
+  return { data: null, error: lastError || { message: 'Max retries exceeded' } };
+}
+
+// ============================================================================
 // SEGMENT TYPE MAPPING - Fixes SEGMENT_X to proper HOOK/BODY/CTA naming
 // ============================================================================
 const SEGMENT_TYPE_BY_POSITION: Record<number, Record<number, string>> = {
@@ -497,19 +571,28 @@ export const VideoGeneration = (): JSX.Element => {
         if (!user) break;
         
         try {
-          // Step 1: Submit single PENDING job to VEO
+          // Step 1: Submit single PENDING job to VEO (with retry)
           console.log('[VideoGen] Submitting next pending job...');
-          const { data, error } = await supabase.functions.invoke('generate-videos', {
-            body: {
-              mode: 'process_single',
-              session_id: sid,
-              user_id: user.id
-            }
+          const { data, error } = await invokeWithRetry('generate-videos', {
+            mode: 'process_single',
+            session_id: sid,
+            user_id: user.id
           });
           
           if (error) {
             console.error('[VideoGen] Process error:', error);
-            break;
+            // Don't break immediately on network errors, wait and retry loop
+            if (error.message?.includes('Session expired')) {
+              // Session expired, user needs to refresh
+              setIsGeneratingAll(false);
+              setIsBackgroundMode(false);
+              setShowBackgroundToast(false);
+              alert(language === 'id' ? 'Sesi habis. Silakan refresh halaman.' : 'Session expired. Please refresh the page.');
+              break;
+            }
+            // For other errors, wait 5s and continue loop to retry
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            continue;
           }
           
           const result = data?.data;
@@ -528,6 +611,8 @@ export const VideoGeneration = (): JSX.Element => {
             
             // Check for rate limit failures
             if (result?.summary?.failed > 0) {
+              // Ensure session is valid before DB query
+              await ensureValidSession();
               const { data: failedJobs } = await supabase
                 .from('video_generation_jobs')
                 .select('error_message')
@@ -594,15 +679,15 @@ export const VideoGeneration = (): JSX.Element => {
               console.log(`[VideoGen] Poll attempt ${pollAttempts} for UUID ${jobUuid}`);
               
               try {
-                const { data: statusData, error: statusError } = await supabase.functions.invoke('check-video-status', {
-                  body: { 
-                    video_uuids: [jobUuid], 
-                    update_db: true 
-                  }
+                // Use invokeWithRetry to handle network errors
+                const { data: statusData, error: statusError } = await invokeWithRetry('check-video-status', { 
+                  video_uuids: [jobUuid], 
+                  update_db: true 
                 });
                 
                 if (statusError) {
                   console.error('[VideoGen] Status check error:', statusError);
+                  // Continue polling even on error (retry logic is in invokeWithRetry)
                   continue;
                 }
                 
@@ -716,7 +801,7 @@ export const VideoGeneration = (): JSX.Element => {
     
     // Start the sequential processing
     processSequentially();
-  }, [user]);
+  }, [user, language]);
 
   // Poll VEO status and update completed videos
   const startStatusPolling = useCallback((sid: string) => {
@@ -726,12 +811,11 @@ export const VideoGeneration = (): JSX.Element => {
       if (!user) return;
       
       try {
-        const { data, error } = await supabase.functions.invoke('generate-videos', {
-          body: {
-            mode: 'check_and_update',
-            session_id: sid,
-            user_id: user.id
-          }
+        // Use invokeWithRetry for session refresh and retry logic
+        const { data, error } = await invokeWithRetry('generate-videos', {
+          mode: 'check_and_update',
+          session_id: sid,
+          user_id: user.id
         });
         
         if (error) {
@@ -855,6 +939,9 @@ export const VideoGeneration = (): JSX.Element => {
     });
 
     try {
+      // Ensure session is valid before database operations
+      await ensureValidSession();
+      
       // IMPORTANT: First reset any FAILED jobs back to PENDING so they get processed
       // This handles the case where user clicks "Generate All" after some jobs failed
       const { error: resetError } = await supabase
@@ -896,19 +983,17 @@ export const VideoGeneration = (): JSX.Element => {
         };
       });
 
-      // Create jobs in database
-      const { data, error } = await supabase.functions.invoke('generate-videos', {
-        body: {
-          mode: 'create_jobs',
-          user_id: user.id,
-          session_id: sessionId,
-          segments: segmentsData,
-          topic: currentTopic,
-          language: 'indonesian',
-          aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          resolution: videoSettings?.resolution || '1080p',
-          preferred_platform: videoSettings?.model || 'auto' // 'auto' | 'sora2' | 'veo31'
-        }
+      // Create jobs in database (with retry for network errors)
+      const { data, error } = await invokeWithRetry('generate-videos', {
+        mode: 'create_jobs',
+        user_id: user.id,
+        session_id: sessionId,
+        segments: segmentsData,
+        topic: currentTopic,
+        language: 'indonesian',
+        aspect_ratio: videoSettings?.aspectRatio || '9:16',
+        resolution: videoSettings?.resolution || '1080p',
+        preferred_platform: videoSettings?.model || 'auto' // 'auto' | 'sora2' | 'veo31'
       });
 
       if (error) throw error;
@@ -1053,6 +1138,9 @@ export const VideoGeneration = (): JSX.Element => {
     await new Promise(resolve => setTimeout(resolve, 500)); // Wait for loop to stop
     
     try {
+      // Ensure session is valid before database operations
+      await ensureValidSession();
+      
       // Reset failed jobs to pending in database
       const { error } = await supabase
         .from('video_generation_jobs')
