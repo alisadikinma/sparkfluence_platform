@@ -178,12 +178,15 @@ export const History = (): JSX.Element => {
           const topicFromPlannedTitle = planned?.title;
           const topicTitle = topicFromJob || topicFromImageJob || topicFromPlannedData || topicFromPlannedTitle || `Video Project ${sessionId.slice(0, 8)}`;
 
-          // Get metadata from first segment (they share same settings)
+          // Get metadata from first segment OR from planned_content.video_data
           const firstSeg = segments[0];
-          const projectLanguage = firstSeg?.language || 'id';
-          const projectResolution = firstSeg?.resolution || '1080p';
-          const projectModel = firstSeg?.preferred_platform || 'veo31';
-          const segmentDuration = firstSeg?.duration_seconds || 8;
+          const videoData = planned?.video_data || {};
+          
+          // Try segment first, then video_data, then defaults
+          const projectLanguage = firstSeg?.language || videoData?.language || 'id';
+          const projectResolution = firstSeg?.resolution || videoData?.resolution || '1080p';
+          const projectModel = firstSeg?.preferred_platform || videoData?.model || 'veo31';
+          const segmentDuration = firstSeg?.duration_seconds || videoData?.duration_seconds || 8;
           const totalDuration = segments.length * segmentDuration;
 
           // Calculate status text - PRIORITY: Processing > Failed > Pending
