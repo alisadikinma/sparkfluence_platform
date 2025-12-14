@@ -210,7 +210,6 @@ export const Register = (): JSX.Element => {
               phone_number: verifiedPhone,
               phone_verified: true,
               phone_verified_at: new Date().toISOString(),
-              first_login: true,
               onboarding_completed: false,
               country: detectedCountry,
             });
