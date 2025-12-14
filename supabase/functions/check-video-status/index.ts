@@ -119,7 +119,8 @@ serve(async (req) => {
                 videoStatus.video_url,
                 uuid,
                 segmentType,
-                segmentNumber
+                segmentNumber,
+                veoApiKey // Pass API key for authenticated download
               )
               videoStatus.storage_url = storageUrl
               // Replace video_url with storage_url for reliable playback
@@ -135,7 +136,8 @@ serve(async (req) => {
                   videoStatus.video_url,
                   uuid,
                   segmentType,
-                  segmentNumber
+                  segmentNumber,
+                  veoApiKey
                 )
                 videoStatus.storage_url = storageUrl
                 videoStatus.video_url = storageUrl
@@ -244,12 +246,17 @@ async function uploadVideoToStorage(
   videoUrl: string,
   uuid: string,
   segmentType: string | null,
-  segmentNumber: number | null
+  segmentNumber: number | null,
+  apiKey: string
 ): Promise<string> {
   console.log(`[VEO-STATUS] Downloading video from: ${videoUrl}`)
 
-  // Download video from VEO
-  const response = await fetch(videoUrl)
+  // Download video from VEO/GeminiGen (requires API key for authenticated URLs)
+  const response = await fetch(videoUrl, {
+    headers: {
+      'x-api-key': apiKey
+    }
+  })
   if (!response.ok) {
     throw new Error(`Failed to download video: ${response.status}`)
   }

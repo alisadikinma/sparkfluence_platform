@@ -76,6 +76,10 @@ export const VideoGeneration = (): JSX.Element => {
   const checkStatusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasFetchedPrompts = useRef(false);
   const hasInitialized = useRef(false);
+  
+  // Sequential processing control refs
+  const isSequentialProcessingRef = useRef(false);
+  const shouldStopProcessingRef = useRef(false);
 
   // UI Text
   const uiText = {
@@ -111,9 +115,11 @@ export const VideoGeneration = (): JSX.Element => {
     minutes: language === 'id' ? 'menit' : 'minutes',
   };
 
-  // Cleanup intervals on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
+      // Stop sequential processing
+      shouldStopProcessingRef.current = true;
       if (processingIntervalRef.current) clearInterval(processingIntervalRef.current);
       if (checkStatusIntervalRef.current) clearInterval(checkStatusIntervalRef.current);
     };
@@ -379,111 +385,232 @@ export const VideoGeneration = (): JSX.Element => {
     initializeData();
   }, [location.state, searchParams, navigate, user?.id]);
 
-  // Start background processing - process jobs one by one with rate limit protection
+  // Start SEQUENTIAL background processing - process one job at a time
+  // Flow: Submit job → Poll until complete → Submit next job
   const startBackgroundProcessing = useCallback((sid: string) => {
-    if (processingIntervalRef.current) {
-      clearInterval(processingIntervalRef.current);
+    // Prevent multiple simultaneous processing loops
+    if (isSequentialProcessingRef.current) {
+      console.log('[VideoGen] Sequential processing already running');
+      return;
     }
     
-    let isProcessing = false; // Prevent overlapping requests
+    shouldStopProcessingRef.current = false;
+    isSequentialProcessingRef.current = true;
     
-    const processNext = async () => {
-      if (!user) return;
-      if (isProcessing) {
-        console.log('[VideoGen] Skipping - previous request still in flight');
-        return;
+    const processSequentially = async () => {
+      console.log('[VideoGen] Starting sequential processing...');
+      
+      while (!shouldStopProcessingRef.current) {
+        if (!user) break;
+        
+        try {
+          // Step 1: Submit single PENDING job to VEO
+          console.log('[VideoGen] Submitting next pending job...');
+          const { data, error } = await supabase.functions.invoke('generate-videos', {
+            body: {
+              mode: 'process_single',
+              session_id: sid,
+              user_id: user.id
+            }
+          });
+          
+          if (error) {
+            console.error('[VideoGen] Process error:', error);
+            break;
+          }
+          
+          const result = data?.data;
+          
+          // If no more pending jobs, we're done
+          if (result?.summary?.pending === 0 && !result?.job?.veo_uuid) {
+            console.log('[VideoGen] No more pending jobs - all done!');
+            
+            // Check for rate limit failures
+            if (result?.summary?.failed > 0) {
+              const { data: failedJobs } = await supabase
+                .from('video_generation_jobs')
+                .select('error_message')
+                .eq('session_id', sid)
+                .eq('status', JOB_STATUS.FAILED);
+              
+              const hasRateLimit = failedJobs?.some(j => 
+                j.error_message?.includes('RATE_LIMIT') ||
+                j.error_message?.includes('GEMINI_RATE_LIMIT') ||
+                j.error_message?.includes('high traffic')
+              );
+              
+              if (hasRateLimit) {
+                setRateLimitWarning(new Date().toISOString());
+              }
+            }
+            
+            // Update final progress
+            setGenerationProgress({
+              current: (result?.summary?.completed || 0) + (result?.summary?.failed || 0),
+              total: result?.summary?.total || 0,
+              completed: result?.summary?.completed || 0,
+              failed: result?.summary?.failed || 0
+            });
+            
+            setIsGeneratingAll(false);
+            setIsBackgroundMode(false);
+            setShowBackgroundToast(false);
+            break;
+          }
+          
+          // If job was submitted, we have a UUID to poll
+          if (result?.job?.veo_uuid) {
+            const jobUuid = result.job.veo_uuid;
+            const jobId = result.job.id;
+            const segmentId = result.job.segment_id;
+            
+            console.log(`[VideoGen] Job submitted: Segment=${segmentId}, UUID=${jobUuid}`);
+            
+            // Update segment UI as processing
+            setSegments(prev => prev.map(seg => {
+              if (seg.id === segmentId || seg.jobId === jobId) {
+                return {
+                  ...seg,
+                  veoUuid: jobUuid,
+                  isGeneratingVideo: true,
+                  jobId: jobId
+                };
+              }
+              return seg;
+            }));
+            
+            // Step 2: Poll this UUID until complete (every 15 seconds)
+            console.log(`[VideoGen] Polling UUID ${jobUuid} every 15s...`);
+            let isComplete = false;
+            let pollAttempts = 0;
+            const maxPollAttempts = 40; // 40 * 15s = 10 minutes max
+            
+            while (!isComplete && pollAttempts < maxPollAttempts && !shouldStopProcessingRef.current) {
+              // Wait 15 seconds before polling
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              pollAttempts++;
+              
+              console.log(`[VideoGen] Poll attempt ${pollAttempts} for UUID ${jobUuid}`);
+              
+              try {
+                const { data: statusData, error: statusError } = await supabase.functions.invoke('check-video-status', {
+                  body: { 
+                    video_uuids: [jobUuid], 
+                    update_db: true 
+                  }
+                });
+                
+                if (statusError) {
+                  console.error('[VideoGen] Status check error:', statusError);
+                  continue;
+                }
+                
+                const videoInfo = statusData?.data?.videos?.[0];
+                console.log(`[VideoGen] Status: ${videoInfo?.status}, URL: ${videoInfo?.video_url ? 'YES' : 'NO'}`);
+                
+                // Status 2 = completed
+                if (videoInfo?.status === 2 && videoInfo?.video_url) {
+                  console.log(`[VideoGen] ✅ Video complete! URL: ${videoInfo.video_url}`);
+                  
+                  // Update segment with video URL
+                  setSegments(prev => prev.map(seg => {
+                    if (seg.veoUuid === jobUuid || seg.id === segmentId) {
+                      return {
+                        ...seg,
+                        videoUrl: videoInfo.video_url,
+                        isGeneratingVideo: false,
+                        videoError: null
+                      };
+                    }
+                    return seg;
+                  }));
+                  
+                  // Update progress
+                  setGenerationProgress(prev => ({
+                    ...prev,
+                    current: prev.completed + 1 + prev.failed,
+                    completed: prev.completed + 1
+                  }));
+                  
+                  isComplete = true;
+                }
+                // Status 3 = failed
+                else if (videoInfo?.status === 3) {
+                  console.log(`[VideoGen] ❌ Video failed: ${videoInfo.error_message}`);
+                  
+                  // Update segment with error
+                  setSegments(prev => prev.map(seg => {
+                    if (seg.veoUuid === jobUuid || seg.id === segmentId) {
+                      return {
+                        ...seg,
+                        isGeneratingVideo: false,
+                        videoError: videoInfo.error_message || 'Video generation failed'
+                      };
+                    }
+                    return seg;
+                  }));
+                  
+                  // Update progress
+                  setGenerationProgress(prev => ({
+                    ...prev,
+                    current: prev.completed + prev.failed + 1,
+                    failed: prev.failed + 1
+                  }));
+                  
+                  // Check for rate limit error
+                  if (videoInfo.error_message?.includes('RATE_LIMIT') || 
+                      videoInfo.error_message?.includes('high traffic')) {
+                    setRateLimitWarning(new Date().toISOString());
+                    setIsBackgroundMode(false);
+                    setShowBackgroundToast(false);
+                    shouldStopProcessingRef.current = true;
+                  }
+                  
+                  isComplete = true;
+                }
+                // Status 1 = still processing, continue polling
+                
+              } catch (pollErr) {
+                console.error('[VideoGen] Poll error:', pollErr);
+              }
+            }
+            
+            // Timeout - mark as failed
+            if (!isComplete && pollAttempts >= maxPollAttempts) {
+              console.log(`[VideoGen] ⏱️ Timeout for UUID ${jobUuid}`);
+              
+              setSegments(prev => prev.map(seg => {
+                if (seg.veoUuid === jobUuid || seg.id === segmentId) {
+                  return {
+                    ...seg,
+                    isGeneratingVideo: false,
+                    videoError: 'Video generation timeout - please retry'
+                  };
+                }
+                return seg;
+              }));
+              
+              setGenerationProgress(prev => ({
+                ...prev,
+                current: prev.completed + prev.failed + 1,
+                failed: prev.failed + 1
+              }));
+            }
+          }
+          
+        } catch (err) {
+          console.error('[VideoGen] Sequential processing error:', err);
+          break;
+        }
       }
       
-      isProcessing = true;
-      
-      try {
-        // Process single job - edge function will check if another job is processing
-        const { data, error } = await supabase.functions.invoke('generate-videos', {
-          body: {
-            mode: 'process_single',
-            session_id: sid,
-            user_id: user.id
-          }
-        });
-        
-        if (error) {
-          console.error('Process error:', error);
-          isProcessing = false;
-          return;
-        }
-        
-        const result = data?.data;
-        
-        // If server says waiting (another job processing), just wait
-        if (result?.waiting) {
-          console.log(`[VideoGen] Server says wait - ${result.processing_count} job(s) still processing`);
-          isProcessing = false;
-          return;
-        }
-        
-        // If job was submitted successfully, start polling for VEO status
-        if (result?.job?.veo_uuid) {
-          console.log(`[VideoGen] Job submitted: UUID=${result.job.veo_uuid}`);
-          
-          // Update segment as processing
-          setSegments(prev => prev.map(seg => {
-            if (seg.id === result.job.segment_id || parseInt(seg.id) === result.job.segment_number) {
-              return {
-                ...seg,
-                veoUuid: result.job.veo_uuid,
-                isGeneratingVideo: true,
-                jobId: result.job.id
-              };
-            }
-            return seg;
-          }));
-          
-          // Start polling for status
-          startStatusPolling(sid);
-        }
-        
-        // Check if no more pending jobs
-        if (result?.summary?.pending === 0) {
-          console.log('[VideoGen] No more pending jobs to submit');
-          if (processingIntervalRef.current) {
-            clearInterval(processingIntervalRef.current);
-            processingIntervalRef.current = null;
-          }
-          
-          // Check if we have rate limit failures
-          if (result?.summary?.failed > 0) {
-            // Fetch jobs to check for rate limit errors
-            const { data: failedJobs } = await supabase
-              .from('video_generation_jobs')
-              .select('error_message')
-              .eq('session_id', sid)
-              .eq('status', JOB_STATUS.FAILED);
-            
-            const hasRateLimit = failedJobs?.some(j => 
-              j.error_message?.includes('RATE_LIMIT') ||
-              j.error_message?.includes('GEMINI_RATE_LIMIT') ||
-              j.error_message?.includes('high traffic')
-            );
-            
-            if (hasRateLimit) {
-              setRateLimitWarning(new Date().toISOString());
-              setIsBackgroundMode(false);
-              setShowBackgroundToast(false);
-            }
-          }
-        }
-        
-      } catch (err) {
-        console.error('Background processing error:', err);
-      } finally {
-        isProcessing = false;
-      }
+      // Cleanup
+      isSequentialProcessingRef.current = false;
+      console.log('[VideoGen] Sequential processing ended');
     };
     
-    // Process first one immediately, then every 30 seconds (VEO rate limit protection)
-    // VEO API has strict rate limits - 30 seconds is safer than 15
-    processNext();
-    processingIntervalRef.current = setInterval(processNext, 30000);
+    // Start the sequential processing
+    processSequentially();
   }, [user]);
 
   // Poll VEO status and update completed videos
@@ -588,9 +715,9 @@ export const VideoGeneration = (): JSX.Element => {
       }
     };
     
-    // Check immediately, then every 5 seconds
+    // Check immediately, then every 15 seconds
     checkStatus();
-    checkStatusIntervalRef.current = setInterval(checkStatus, 5000);
+    checkStatusIntervalRef.current = setInterval(checkStatus, 15000);
   }, [user]);
 
   // Generate all videos with background job system
@@ -739,11 +866,11 @@ export const VideoGeneration = (): JSX.Element => {
   };
 
   const pollVideoStatus = async (uuid: string): Promise<string> => {
-    const maxAttempts = 60;
+    const maxAttempts = 40; // 40 * 15s = 10 minutes max
     let attempts = 0;
 
     while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await new Promise(resolve => setTimeout(resolve, 15000)); // 15 seconds
       
       try {
         const { data, error } = await supabase.functions.invoke('check-video-status', {
@@ -775,6 +902,10 @@ export const VideoGeneration = (): JSX.Element => {
   const handleRetryFailedJobs = async () => {
     if (!user || !sessionId) return;
     
+    // Stop any existing processing first
+    shouldStopProcessingRef.current = true;
+    await new Promise(resolve => setTimeout(resolve, 500)); // Wait for loop to stop
+    
     try {
       // Reset failed jobs to pending in database
       const { error } = await supabase
@@ -796,7 +927,11 @@ export const VideoGeneration = (): JSX.Element => {
         seg.videoError ? { ...seg, videoError: null, isGeneratingVideo: false, veoUuid: null } : seg
       ));
       
+      // Reset rate limit warning
+      setRateLimitWarning(null);
+      
       // Restart background processing
+      isSequentialProcessingRef.current = false; // Allow new loop to start
       setIsBackgroundMode(true);
       setShowBackgroundToast(true);
       startBackgroundProcessing(sessionId);
@@ -1052,9 +1187,13 @@ export const VideoGeneration = (): JSX.Element => {
                   <span className="text-white/40 text-xs">{segment.timing || segment.duration}</span>
                 </div>
                 {segment.videoUrl ? (
-                  <div className="flex items-center gap-1 text-green-500 text-xs">
+                  <div className="flex items-center gap-1 text-green-500 text-xs" title={segment.videoUrl}>
                     <CheckCircle2 className="w-3 h-3" />
                     {uiText.ready}
+                    {/* DEBUG: Show URL snippet */}
+                    <span className="text-[8px] text-white/30 ml-1 max-w-[60px] truncate">
+                      {segment.videoUrl?.includes('supabase') ? '✓SB' : segment.videoUrl?.substring(0, 15)}
+                    </span>
                   </div>
                 ) : segment.isGeneratingVideo ? (
                   <div className="flex items-center gap-1 text-amber-400 text-xs">
