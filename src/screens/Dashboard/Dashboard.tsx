@@ -181,7 +181,8 @@ export const Dashboard = (): JSX.Element => {
         const imgCompleted = imgJobs.filter(j => j.status === JOB_STATUS.COMPLETED).length;
         const imgFailed = imgJobs.filter(j => j.status === JOB_STATUS.FAILED).length;
         const imgTotal = imgJobs.length;
-        const imgAllDone = imgPending === 0 && imgProcessing === 0;
+        // FIX: Image is only "all done" when ALL images are completed successfully
+        const imgAllDone = imgTotal > 0 && imgCompleted === imgTotal;
 
         // Video stats
         const vidPending = vidJobs.filter(j => j.status === JOB_STATUS.PENDING).length;
@@ -189,7 +190,8 @@ export const Dashboard = (): JSX.Element => {
         const vidCompleted = vidJobs.filter(j => j.status === JOB_STATUS.COMPLETED).length;
         const vidFailed = vidJobs.filter(j => j.status === JOB_STATUS.FAILED).length;
         const vidTotal = vidJobs.length;
-        const vidAllDone = vidTotal > 0 && vidPending === 0 && vidProcessing === 0;
+        // FIX: Video is only "all done" when ALL videos are completed (not just no pending/processing)
+        const vidAllDone = vidTotal > 0 && vidCompleted === vidTotal;
 
         // Determine current stage
         let stage: 'image' | 'video' | 'combining' = 'image';
