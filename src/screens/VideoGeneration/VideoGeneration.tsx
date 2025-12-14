@@ -48,6 +48,88 @@ const JOB_STATUS = {
   FAILED: 3
 };
 
+// ============================================================================
+// SEGMENT TYPE MAPPING - Fixes SEGMENT_X to proper HOOK/BODY/CTA naming
+// ============================================================================
+const SEGMENT_TYPE_BY_POSITION: Record<number, Record<number, string>> = {
+  // 5 segments (30s video): HOOK, FORE, BODY-1, PEAK, CTA
+  5: {
+    1: 'HOOK',
+    2: 'FORE',
+    3: 'BODY-1',
+    4: 'PEAK',
+    5: 'CTA'
+  },
+  // 6 segments: HOOK, FORE, BODY-1, BODY-2, PEAK, CTA
+  6: {
+    1: 'HOOK',
+    2: 'FORE',
+    3: 'BODY-1',
+    4: 'BODY-2',
+    5: 'PEAK',
+    6: 'CTA'
+  },
+  // 7 segments: HOOK, FORE, BODY-1, BODY-2, BODY-3, PEAK, CTA
+  7: {
+    1: 'HOOK',
+    2: 'FORE',
+    3: 'BODY-1',
+    4: 'BODY-2',
+    5: 'BODY-3',
+    6: 'PEAK',
+    7: 'CTA'
+  },
+  // 8 segments (60s video): HOOK, FORE, BODY-1, BODY-2, BODY-3, BODY-4, PEAK, CTA
+  8: {
+    1: 'HOOK',
+    2: 'FORE',
+    3: 'BODY-1',
+    4: 'BODY-2',
+    5: 'BODY-3',
+    6: 'BODY-4',
+    7: 'PEAK',
+    8: 'CTA'
+  }
+};
+
+/**
+ * Maps segment_type from DB to proper naming
+ * - If already proper (HOOK, BODY-1, etc.) → return as-is
+ * - If generic (SEGMENT_1, SEGMENT_2) → map based on position and total count
+ */
+function mapSegmentType(segmentType: string, segmentNumber: number, totalSegments: number): string {
+  // If already proper type, return as-is
+  const properTypes = ['HOOK', 'FORE', 'FORESHADOW', 'BODY', 'BODY-1', 'BODY-2', 'BODY-3', 'BODY-4', 'PEAK', 'CTA', 'ENDING', 'LOOP-END', 'ENDING_CTA'];
+  const upperType = (segmentType || '').toUpperCase();
+  
+  if (properTypes.includes(upperType) || upperType.startsWith('BODY')) {
+    return segmentType;
+  }
+  
+  // Map SEGMENT_X to proper type based on position
+  const mapping = SEGMENT_TYPE_BY_POSITION[totalSegments];
+  if (mapping && mapping[segmentNumber]) {
+    console.log(`[VideoGen] Mapping ${segmentType} → ${mapping[segmentNumber]} (pos ${segmentNumber}/${totalSegments})`);
+    return mapping[segmentNumber];
+  }
+  
+  // Fallback: First segment = HOOK, Last = CTA, rest = BODY-X
+  if (segmentNumber === 1) return 'HOOK';
+  if (segmentNumber === totalSegments) return 'CTA';
+  return `BODY-${segmentNumber - 1}`;
+}
+
+/**
+ * Determines shot_type based on segment type
+ * HOOK and CTA = CREATOR (face visible)
+ * Others = B-ROLL (no face)
+ */
+function getShotTypeFromSegmentType(segmentType: string): string {
+  const upperType = (segmentType || '').toUpperCase();
+  const creatorTypes = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA', 'ENDING'];
+  return creatorTypes.includes(upperType) ? 'CREATOR' : 'B-ROLL';
+}
+
 export const VideoGeneration = (): JSX.Element => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -308,25 +390,36 @@ export const VideoGeneration = (): JSX.Element => {
         if (existingJobs && existingJobs.length > 0) {
           setSessionId(sid);
           
-          // Reconstruct segments from jobs
-          const reconstructedSegments: Segment[] = existingJobs.map((job: any) => ({
-            id: job.segment_id,
-            type: job.segment_type,
-            timing: '',
-            durationSeconds: job.duration_seconds || 8,
-            script: job.script_text || '',
-            visualDirection: '',
-            emotion: job.emotion || '',
-            transition: '',
-            shotType: job.shot_type || 'B-ROLL',
-            imageUrl: job.image_url,
-            videoUrl: job.video_url,
-            veoUuid: job.veo_uuid,
-            isGeneratingVideo: job.status === JOB_STATUS.PROCESSING,
-            videoError: job.status === JOB_STATUS.FAILED ? job.error_message : null,
-            jobId: job.id,
-            prompt: job.prompt || ''
-          }));
+          // Reconstruct segments from jobs with proper type mapping
+          const totalJobs = existingJobs.length;
+          const reconstructedSegments: Segment[] = existingJobs.map((job: any, index: number) => {
+            const segmentNumber = job.segment_number || (index + 1);
+            // Map SEGMENT_X to proper type (HOOK, BODY-1, CTA, etc.)
+            const mappedType = mapSegmentType(job.segment_type || '', segmentNumber, totalJobs);
+            // Derive shot_type from mapped segment type
+            const derivedShotType = getShotTypeFromSegmentType(mappedType);
+            
+            console.log(`[VideoGen] Reconstruct segment ${segmentNumber}: ${job.segment_type} → ${mappedType} (${derivedShotType})`);
+            
+            return {
+              id: job.segment_id,
+              type: mappedType,
+              timing: '',
+              durationSeconds: job.duration_seconds || 8,
+              script: job.script_text || '',
+              visualDirection: '',
+              emotion: job.emotion || '',
+              transition: '',
+              shotType: derivedShotType,
+              imageUrl: job.image_url,
+              videoUrl: job.video_url,
+              veoUuid: job.veo_uuid,
+              isGeneratingVideo: job.status === JOB_STATUS.PROCESSING,
+              videoError: job.status === JOB_STATUS.FAILED ? job.error_message : null,
+              jobId: job.id,
+              prompt: job.prompt || ''
+            };
+          });
           
           setSegments(reconstructedSegments);
           setCurrentTopic(existingJobs[0]?.topic || "Your Video");
