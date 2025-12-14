@@ -11,7 +11,7 @@ export const HeroSection: React.FC = () => {
   const { t } = useLanguage();
 
   const mockupY = useTransform(scrollY, [0, 500], [0, 50]);
-  const opacity = useTransform(scrollY, [0, 400], [1, 0]);
+  // Removed opacity transform - causes blank page effect on mobile
 
   return (
     <section className="relative overflow-hidden">
@@ -36,8 +36,7 @@ export const HeroSection: React.FC = () => {
       </div>
 
       {/* === MAIN CONTENT === */}
-      <motion.div
-        style={{ opacity }}
+      <div
         className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 lg:pt-12 pb-12 lg:pb-16"
       >
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8 lg:gap-16">
@@ -75,9 +74,9 @@ export const HeroSection: React.FC = () => {
               </p>
             </FadeIn>
 
-            {/* CTA Buttons */}
+            {/* CTA Button */}
             <FadeIn delay={0.9} direction="up">
-              <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
+              <div className="flex items-center justify-center lg:justify-start">
                 <motion.button
                   onClick={() => navigate('/register')}
                   className="w-full sm:w-auto btn-gradient text-white px-8 py-4 rounded-pill font-semibold text-lg flex items-center justify-center gap-2 group"
@@ -86,15 +85,6 @@ export const HeroSection: React.FC = () => {
                 >
                   {t.common.getStarted}
                   <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
-                </motion.button>
-
-                <motion.button
-                  className="w-full sm:w-auto px-8 py-4 rounded-pill font-semibold text-lg border border-border-default text-text-primary hover:bg-surface flex items-center justify-center gap-2 transition-colors"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <Play className="w-5 h-5" />
-                  {t.common.watchDemo}
                 </motion.button>
               </div>
             </FadeIn>
@@ -244,7 +234,7 @@ export const HeroSection: React.FC = () => {
           </div>
         </FadeIn>
 
-      </motion.div>
+      </div>
     </section>
   );
 };
