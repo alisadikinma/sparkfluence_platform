@@ -609,7 +609,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
           success: successCount, 
           failed: images.length - successCount 
         },
-        provider: provider === 'openai' ? 'openai-dalle3' : provider === 'gpt-image-1' ? 'openai-gpt-image-1' : 'huggingface-flux',
+        provider_mode: defaultProvider, // 'auto' = hybrid mode
         metadata: { topic, costume, aspectRatio, style }
       } 
     }),
@@ -721,15 +721,13 @@ function buildCinematicPrompt(params: PromptParams): string {
 
   // CREATOR SHOT - Use buildCreatorPrompt from knowledge file
   if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())) {
-    const charDesc = characterDescription || segment.character_description || ''
-    
-    if (!charDesc || charDesc.trim().length < 20) {
-      console.warn('[IMAGE-GEN] WARNING: No detailed character_description provided. Creator shots may be inconsistent!')
-    }
+    // Note: Face consistency is handled by GPT-Image-1 Edit API with character_ref_png
+    // character_description is optional text fallback for prompt context
+    const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
     
     // Use knowledge file function for creator prompt
     const basePrompt = buildCreatorPrompt({
-      characterDescription: charDesc || 'Professional content creator, confident posture, engaging presence',
+      characterDescription: charDesc,
       emotion: emotion,
       topic: topic,
       shotType: mappedShotType,
@@ -741,31 +739,19 @@ function buildCinematicPrompt(params: PromptParams): string {
     const styleEnhancement = `\n\nPRODUCTION STYLE:\n${styleGuide}`
     
     // ========================================================================
-    // CHARACTER IDENTITY ANCHOR (Critical for HOOK↔CTA consistency)
-    // Based on DALL-E 3.6/SORA 2 Best Practices PDF:
-    // "Repeating key physical traits in each part helps prevent character drift"
+    // CHARACTER IDENTITY ANCHOR (Prompt guidance - actual face from reference image)
     // ========================================================================
     const segmentUpperCase = segmentType.toUpperCase()
     const isCreatorFaceSegment = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentUpperCase)
     
     let characterAnchor = ''
-    if (isCreatorFaceSegment && charDesc && charDesc.trim().length >= 20) {
-      // Extract and reinforce key identity markers
+    if (isCreatorFaceSegment) {
       characterAnchor = `\n\n` +
         `══════════════════════════════════════════════════════════════\n` +
-        `CHARACTER IDENTITY ANCHOR (MUST MAINTAIN ACROSS ALL SHOTS)\n` +
+        `SEGMENT: ${segmentUpperCase}\n` +
         `══════════════════════════════════════════════════════════════\n` +
-        `EXACT PERSON: ${charDesc}\n\n` +
-        `CRITICAL CONSISTENCY RULES:\n` +
-        `• This is the SAME person appearing in HOOK and CTA segments\n` +
-        `• Maintain EXACT facial features: face shape, skin tone, eye color\n` +
-        `• Maintain EXACT hairstyle: color, length, texture, styling\n` +
-        `• Maintain EXACT distinguishing marks: glasses, jewelry, accessories\n` +
-        `• Maintain EXACT body type and posture characteristics\n` +
-        `• Only expression/emotion changes between segments, NOT identity\n\n` +
-        `SEGMENT CONTEXT: ${segmentUpperCase} shot\n` +
-        `• ${segmentUpperCase === 'HOOK' ? 'Opening shot - establish character identity clearly' : ''}` +
-        `${segmentUpperCase === 'CTA' ? 'Closing shot - MUST match HOOK character exactly' : ''}` +
+        `${segmentUpperCase === 'HOOK' ? 'Opening shot - establish character identity clearly' : ''}` +
+        `${segmentUpperCase === 'CTA' ? 'Closing shot - maintain character consistency from HOOK' : ''}` +
         `${segmentUpperCase === 'LOOP-END' ? 'Loop transition - seamless match to HOOK frame' : ''}` +
         `${segmentUpperCase === 'ENDING_CTA' ? 'Final CTA - maintain full character consistency' : ''}\n` +
         `══════════════════════════════════════════════════════════════`

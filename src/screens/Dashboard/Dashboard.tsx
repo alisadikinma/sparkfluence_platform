@@ -9,7 +9,7 @@ import { PlatformIcons } from "../../components/ui/platform-icons";
 import {
   Sparkles, Calendar, TrendingUp, Clock, ArrowUpRight,
   Heart, ChevronRight, ImageIcon, Video, Loader2, AlertCircle,
-  CheckCircle2, Play
+  CheckCircle2, Play, X
 } from "lucide-react";
 
 interface PlannedContent {
@@ -98,6 +98,7 @@ export const Dashboard = (): JSX.Element => {
     failed: language === 'id' ? 'Gagal' : language === 'hi' ? 'विफल' : 'Failed',
     needsRetry: language === 'id' ? 'Perlu Retry' : language === 'hi' ? 'पुनः प्रयास करें' : 'Needs Retry',
     continue: language === 'id' ? 'Lanjutkan' : language === 'hi' ? 'जारी रखें' : 'Continue',
+    dismiss: language === 'id' ? 'Hapus' : language === 'hi' ? 'हटाएं' : 'Dismiss',
     noActiveJobs: language === 'id' ? 'Tidak ada proses aktif' : language === 'hi' ? 'कोई सक्रिय प्रक्रिया नहीं' : 'No active jobs',
   };
 
@@ -428,6 +429,32 @@ export const Dashboard = (): JSX.Element => {
     }
   };
 
+  // Dismiss/delete job records for a session
+  const handleDismissJob = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation(); // Prevent navigation
+    
+    try {
+      // Delete image jobs for this session
+      await supabase
+        .from('image_generation_jobs')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('user_id', user?.id);
+      
+      // Delete video jobs for this session
+      await supabase
+        .from('video_generation_jobs')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('user_id', user?.id);
+      
+      // Refresh jobs list
+      fetchActiveJobs();
+    } catch (err) {
+      console.error('Error dismissing job:', err);
+    }
+  };
+
   const quickActions = [
     {
       icon: Sparkles,
@@ -678,6 +705,20 @@ export const Dashboard = (): JSX.Element => {
                               style={{ width: `${isWaitingForVideo || isWaitingForCombine ? 100 : (allFailed ? 100 : progress)}%` }}
                             />
                           </div>
+                          
+                          {/* Dismiss button - show for stalled/failed/completed jobs */}
+                          {(needsRetry || isStalled || allFailed) && (
+                            <div className="flex justify-end mt-2">
+                              <span
+                                onClick={(e) => handleDismissJob(e, job.session_id)}
+                                className="text-[10px] text-text-muted hover:text-red-400 cursor-pointer flex items-center gap-1 transition-colors"
+                                title={jobsText.dismiss}
+                              >
+                                <X className="w-3 h-3" />
+                                {jobsText.dismiss}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </button>
                     );

@@ -672,7 +672,7 @@ export const TopicSelection = (): JSX.Element => {
     refresh: uiLang === 'id' ? "Refresh" : uiLang === 'hi' ? "रीफ्रेश" : "Refresh",
     wait: uiLang === 'id' ? "Tunggu" : uiLang === 'hi' ? "रुकें" : "Wait",
     orType: uiLang === 'id' ? "atau ketik topik sendiri" : uiLang === 'hi' ? "या अपना विषय टाइप करें" : "or type your own topic",
-    generateVideo: uiLang === 'id' ? "Buat Video" : uiLang === 'hi' ? "वीडियो बनाएं" : "Generate Video",
+    generateVideo: uiLang === 'id' ? "Buat Script" : uiLang === 'hi' ? "स्क्रिप्ट बनाएं" : "Generate Script",
     previous: uiLang === 'id' ? "Sebelumnya" : uiLang === 'hi' ? "पिछला" : "Previous",
     step: uiLang === 'id' ? "Langkah" : uiLang === 'hi' ? "चरण" : "Step",
     rateLimitWarning: uiLang === 'id' 
