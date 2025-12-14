@@ -474,14 +474,94 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
     
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
+      let parsed: any
       
-      if (!parsed.segments || !Array.isArray(parsed.segments)) {
-        throw new Error('Missing or invalid segments array')
+      try {
+        parsed = JSON.parse(jsonMatch[0])
+      } catch (jsonError) {
+        // JSON might be truncated - try to fix it
+        console.log('[Parser] JSON parse failed, attempting to fix truncated JSON...')
+        let fixedJson = jsonMatch[0]
+        
+        // Count open/close braces and brackets
+        const openBraces = (fixedJson.match(/\{/g) || []).length
+        const closeBraces = (fixedJson.match(/\}/g) || []).length
+        const openBrackets = (fixedJson.match(/\[/g) || []).length
+        const closeBrackets = (fixedJson.match(/\]/g) || []).length
+        
+        // Add missing closing brackets/braces
+        fixedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets))
+        fixedJson += '}'.repeat(Math.max(0, openBraces - closeBraces))
+        
+        // Try parsing again
+        try {
+          parsed = JSON.parse(fixedJson)
+        } catch {
+          // Still failing - try more aggressive fix
+          // Find last complete segment and close the JSON
+          const lastCompleteSegment = fixedJson.lastIndexOf('},"VIDEO-')
+          if (lastCompleteSegment > 0) {
+            fixedJson = fixedJson.substring(0, lastCompleteSegment + 1) + '}'
+            parsed = JSON.parse(fixedJson)
+          } else {
+            throw jsonError
+          }
+        }
       }
+      
+      // ================================================================
+      // HANDLE DIFFERENT LLM OUTPUT FORMATS
+      // ================================================================
+      
+      let segments: any[] = []
+      
+      // Format 1: Already has segments array
+      if (parsed.segments && Array.isArray(parsed.segments)) {
+        segments = parsed.segments
+      }
+      // Format 2: Object with VIDEO-XXX keys (e.g., { "VIDEO-001": {...}, "VIDEO-002": {...} })
+      else if (parsed['VIDEO-001'] || Object.keys(parsed).some(k => k.startsWith('VIDEO-'))) {
+        console.log('[Parser] Detected VIDEO-XXX object format, converting to array...')
+        const videoKeys = Object.keys(parsed)
+          .filter(k => k.startsWith('VIDEO-'))
+          .sort() // Ensure order
+        
+        segments = videoKeys.map(key => ({
+          segment_id: key,
+          ...parsed[key]
+        }))
+      }
+      // Format 3: Object with segment_X keys
+      else if (Object.keys(parsed).some(k => k.match(/^segment_?\d+$/i))) {
+        console.log('[Parser] Detected segment_X object format, converting to array...')
+        const segmentKeys = Object.keys(parsed)
+          .filter(k => k.match(/^segment_?\d+$/i))
+          .sort((a, b) => {
+            const numA = parseInt(a.replace(/\D/g, ''))
+            const numB = parseInt(b.replace(/\D/g, ''))
+            return numA - numB
+          })
+        
+        segments = segmentKeys.map((key, index) => ({
+          segment_id: `VIDEO-${String(index + 1).padStart(3, '0')}`,
+          ...parsed[key]
+        }))
+      }
+      // Format 4: Direct array at root
+      else if (Array.isArray(parsed)) {
+        console.log('[Parser] Detected root array format')
+        segments = parsed
+      }
+      
+      if (segments.length === 0) {
+        console.error('[Parser] Could not extract segments from:', Object.keys(parsed))
+        throw new Error('Could not extract segments from LLM output')
+      }
+      
+      console.log(`[Parser] Extracted ${segments.length} segments`)
 
       // Validate and enhance segments
-      parsed.segments = parsed.segments.map((segment: any, index: number) => {
+      segments = segments.map((segment: any, index: number) => {
         // Ensure segment_id exists
         if (!segment.segment_id) {
           segment.segment_id = `VIDEO-${String(index + 1).padStart(3, '0')}`
@@ -500,11 +580,12 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
         return segment
       })
 
-      // Ensure metadata exists
-      if (!parsed.metadata) {
-        parsed.metadata = {
+      // Build result object
+      const result: any = {
+        segments,
+        metadata: parsed.metadata || {
           total_duration: parseInt(duration),
-          language: 'indonesian',
+          language: 'english',
           platform: 'tiktok'
         }
       }
@@ -516,26 +597,26 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
         const expectedItemCount = extractTopicItemCount(topic)
         if (expectedItemCount) {
           // Count BODY segments (where content items should be)
-          const bodySegments = parsed.segments.filter((s: any) => 
+          const bodySegments = segments.filter((s: any) => 
             s.type?.toUpperCase().startsWith('BODY') || 
             s.type?.toUpperCase() === 'PEAK'
           )
           
-          parsed.metadata.expected_items = expectedItemCount
-          parsed.metadata.body_segment_count = bodySegments.length
+          result.metadata.expected_items = expectedItemCount
+          result.metadata.body_segment_count = bodySegments.length
           
           if (bodySegments.length < expectedItemCount) {
-            parsed.metadata.content_warning = `Topic mentions ${expectedItemCount} items but only ${bodySegments.length} BODY segments generated. Some items may be missing.`
+            result.metadata.content_warning = `Topic mentions ${expectedItemCount} items but only ${bodySegments.length} BODY segments generated. Some items may be missing.`
             console.warn(`[Parser] ⚠️ Content mismatch: Expected ${expectedItemCount} items, got ${bodySegments.length} BODY segments`)
           } else {
-            parsed.metadata.content_complete = true
+            result.metadata.content_complete = true
             console.log(`[Parser] ✅ Content complete: ${expectedItemCount} items covered in ${bodySegments.length} BODY segments`)
           }
         }
       }
 
-      console.log(`[Parser] Successfully parsed ${parsed.segments.length} segments`)
-      return parsed
+      console.log(`[Parser] Successfully parsed ${segments.length} segments`)
+      return result
     }
 
     throw new Error('No JSON found in response')

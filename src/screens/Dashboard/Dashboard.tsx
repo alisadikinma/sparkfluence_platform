@@ -34,13 +34,22 @@ interface CreatorGalleryItem {
 
 interface ActiveJob {
   session_id: string;
-  type: 'image' | 'video';
+  stage: 'image' | 'video' | 'combining';
   topic: string;
-  total: number;
-  completed: number;
-  failed: number;
-  pending: number;
-  processing: number;
+  // Image stage stats
+  image_total: number;
+  image_completed: number;
+  image_failed: number;
+  image_pending: number;
+  image_processing: number;
+  // Video stage stats
+  video_total: number;
+  video_completed: number;
+  video_failed: number;
+  video_pending: number;
+  video_processing: number;
+  // Overall
+  has_final_video: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -80,6 +89,9 @@ export const Dashboard = (): JSX.Element => {
     title: language === 'id' ? 'Proses Aktif' : language === 'hi' ? 'सक्रिय प्रक्रिया' : 'Active Jobs',
     imageGen: language === 'id' ? 'Generate Gambar' : language === 'hi' ? 'छवि जनरेशन' : 'Image Generation',
     videoGen: language === 'id' ? 'Generate Video' : language === 'hi' ? 'वीडियो जनरेशन' : 'Video Generation',
+    combining: language === 'id' ? 'Menggabungkan Video' : language === 'hi' ? 'वीडियो संयोजन' : 'Combining Video',
+    imagesReady: language === 'id' ? 'Gambar Siap' : language === 'hi' ? 'छवियां तैयार' : 'Images Ready',
+    videosReady: language === 'id' ? 'Video Siap' : language === 'hi' ? 'वीडियो तैयार' : 'Videos Ready',
     processing: language === 'id' ? 'Sedang diproses...' : language === 'hi' ? 'प्रोसेसिंग...' : 'Processing...',
     paused: language === 'id' ? 'Dijeda' : language === 'hi' ? 'रुका हुआ' : 'Paused',
     completed: language === 'id' ? 'Selesai' : language === 'hi' ? 'पूर्ण' : 'Completed',
@@ -89,106 +101,146 @@ export const Dashboard = (): JSX.Element => {
     noActiveJobs: language === 'id' ? 'Tidak ada proses aktif' : language === 'hi' ? 'कोई सक्रिय प्रक्रिया नहीं' : 'No active jobs',
   };
 
-  // Fetch active jobs - show only ONE job per session (latest stage: video > image)
+  // Fetch active jobs - MULTI-STAGE: Image → Video → Combine
+  // Job is only "complete" when final_video_url exists
   const fetchActiveJobs = useCallback(async () => {
     if (!user) return;
 
     try {
       setJobsLoading(true);
 
-      // Fetch image generation jobs grouped by session
+      // Fetch image generation jobs
       const { data: imageJobs, error: imageError } = await supabase
         .from('image_generation_jobs')
         .select('session_id, topic, status, created_at, updated_at')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (imageError) {
-        console.error('Error fetching image jobs:', imageError);
-      }
+      if (imageError) console.error('Error fetching image jobs:', imageError);
 
-      // Fetch video generation jobs grouped by session
+      // Fetch video generation jobs
       const { data: videoJobs, error: videoError } = await supabase
         .from('video_generation_jobs')
         .select('session_id, topic, status, created_at, updated_at')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (videoError) {
-        console.error('Error fetching video jobs:', videoError);
-      }
+      if (videoError) console.error('Error fetching video jobs:', videoError);
 
-      // Group image jobs by session
+      // Fetch planned_content to check for final_video_url
+      // Session IDs from jobs
+      const allSessionIds = new Set([
+        ...(imageJobs?.map(j => j.session_id) || []),
+        ...(videoJobs?.map(j => j.session_id) || [])
+      ]);
+
+      // Check which sessions have final videos
+      const { data: plannedContent } = await supabase
+        .from('planned_content')
+        .select('id, final_video_url, video_data')
+        .eq('user_id', user.id)
+        .not('final_video_url', 'is', null);
+
+      // Get session IDs that have final videos (from video_data.session_id)
+      const completedSessionIds = new Set<string>();
+      plannedContent?.forEach(pc => {
+        const sessionId = pc.video_data?.session_id;
+        if (sessionId && pc.final_video_url) {
+          completedSessionIds.add(sessionId);
+        }
+      });
+
+      // Group jobs by session
       const imageJobsBySession: Record<string, any[]> = {};
       imageJobs?.forEach(job => {
-        if (!imageJobsBySession[job.session_id]) {
-          imageJobsBySession[job.session_id] = [];
-        }
+        if (!imageJobsBySession[job.session_id]) imageJobsBySession[job.session_id] = [];
         imageJobsBySession[job.session_id].push(job);
       });
 
-      // Group video jobs by session
       const videoJobsBySession: Record<string, any[]> = {};
       videoJobs?.forEach(job => {
-        if (!videoJobsBySession[job.session_id]) {
-          videoJobsBySession[job.session_id] = [];
-        }
+        if (!videoJobsBySession[job.session_id]) videoJobsBySession[job.session_id] = [];
         videoJobsBySession[job.session_id].push(job);
       });
 
-      // Get all unique session IDs
-      const allSessionIds = new Set([
-        ...Object.keys(imageJobsBySession),
-        ...Object.keys(videoJobsBySession)
-      ]);
-
-      // Convert to ActiveJob format - ONE entry per session (latest stage only)
+      // Convert to ActiveJob format - MULTI-STAGE TRACKING
       const activeJobsList: ActiveJob[] = [];
 
       allSessionIds.forEach(sessionId => {
+        // Skip if already has final video
+        if (completedSessionIds.has(sessionId)) return;
+
         const imgJobs = imageJobsBySession[sessionId] || [];
         const vidJobs = videoJobsBySession[sessionId] || [];
-        
-        // Determine which stage to show (video takes priority if exists)
-        const hasVideoJobs = vidJobs.length > 0;
-        const jobs = hasVideoJobs ? vidJobs : imgJobs;
-        const jobType: 'image' | 'video' = hasVideoJobs ? 'video' : 'image';
-        
-        if (jobs.length === 0) return;
-        
-        const pending = jobs.filter(j => j.status === JOB_STATUS.PENDING).length;
-        const processing = jobs.filter(j => j.status === JOB_STATUS.PROCESSING).length;
-        const completed = jobs.filter(j => j.status === JOB_STATUS.COMPLETED).length;
-        const failed = jobs.filter(j => j.status === JOB_STATUS.FAILED).length;
-        
-        // Get most recent update time
-        const mostRecentUpdate = jobs.reduce((latest, j) => {
+
+        if (imgJobs.length === 0) return;
+
+        // Image stats
+        const imgPending = imgJobs.filter(j => j.status === JOB_STATUS.PENDING).length;
+        const imgProcessing = imgJobs.filter(j => j.status === JOB_STATUS.PROCESSING).length;
+        const imgCompleted = imgJobs.filter(j => j.status === JOB_STATUS.COMPLETED).length;
+        const imgFailed = imgJobs.filter(j => j.status === JOB_STATUS.FAILED).length;
+        const imgTotal = imgJobs.length;
+        const imgAllDone = imgPending === 0 && imgProcessing === 0;
+
+        // Video stats
+        const vidPending = vidJobs.filter(j => j.status === JOB_STATUS.PENDING).length;
+        const vidProcessing = vidJobs.filter(j => j.status === JOB_STATUS.PROCESSING).length;
+        const vidCompleted = vidJobs.filter(j => j.status === JOB_STATUS.COMPLETED).length;
+        const vidFailed = vidJobs.filter(j => j.status === JOB_STATUS.FAILED).length;
+        const vidTotal = vidJobs.length;
+        const vidAllDone = vidTotal > 0 && vidPending === 0 && vidProcessing === 0;
+
+        // Determine current stage
+        let stage: 'image' | 'video' | 'combining' = 'image';
+        if (imgAllDone && vidTotal === 0) {
+          // Images done, waiting for video generation to start
+          stage = 'image'; // Still show as image stage (ready for video)
+        } else if (imgAllDone && !vidAllDone) {
+          // Video generation in progress
+          stage = 'video';
+        } else if (imgAllDone && vidAllDone && vidTotal > 0) {
+          // Videos done, waiting for combine
+          stage = 'combining';
+        }
+
+        // Get most recent update time across all jobs
+        const allJobs = [...imgJobs, ...vidJobs];
+        const mostRecentUpdate = allJobs.reduce((latest, j) => {
           const jobDate = new Date(j.updated_at || j.created_at);
           return jobDate > latest ? jobDate : latest;
         }, new Date(0));
-        
+
         const isRecent = (Date.now() - mostRecentUpdate.getTime()) < 3600000; // 1 hour
-        const hasPendingOrProcessing = pending > 0 || processing > 0;
-        const hasFailedNeedingRetry = failed > 0 && completed < jobs.length;
-        
-        // Check if all jobs are fully completed successfully
-        const isFullyCompleted = completed === jobs.length && failed === 0;
-        
-        // Only show if:
-        // 1. Has pending/processing jobs (actively working)
-        // 2. Is recent AND has failed jobs needing retry
-        // 3. NOT if fully completed (all done, no errors)
-        if (hasPendingOrProcessing || (isRecent && hasFailedNeedingRetry && !isFullyCompleted)) {
+        const hasAnyPendingOrProcessing = imgPending > 0 || imgProcessing > 0 || vidPending > 0 || vidProcessing > 0;
+        const hasAnyFailed = imgFailed > 0 || vidFailed > 0;
+
+        // Show job if:
+        // 1. Any stage has pending/processing
+        // 2. Images done but no video jobs yet (waiting for next stage)
+        // 3. Videos done but no final video (waiting for combine)
+        // 4. Has failures needing retry
+        const imagesReadyForVideo = imgAllDone && imgFailed === 0 && vidTotal === 0;
+        const videosReadyForCombine = vidAllDone && vidFailed === 0 && vidTotal > 0;
+        const needsRetry = hasAnyFailed && isRecent;
+
+        if (hasAnyPendingOrProcessing || imagesReadyForVideo || videosReadyForCombine || needsRetry) {
           activeJobsList.push({
             session_id: sessionId,
-            type: jobType,
-            topic: jobs[0]?.topic || imgJobs[0]?.topic || 'Video Project',
-            total: jobs.length,
-            completed,
-            failed,
-            pending,
-            processing,
-            created_at: jobs[0]?.created_at || '',
+            stage,
+            topic: imgJobs[0]?.topic || vidJobs[0]?.topic || 'Video Project',
+            image_total: imgTotal,
+            image_completed: imgCompleted,
+            image_failed: imgFailed,
+            image_pending: imgPending,
+            image_processing: imgProcessing,
+            video_total: vidTotal,
+            video_completed: vidCompleted,
+            video_failed: vidFailed,
+            video_pending: vidPending,
+            video_processing: vidProcessing,
+            has_final_video: false,
+            created_at: imgJobs[0]?.created_at || '',
             updated_at: mostRecentUpdate.toISOString()
           });
         }
@@ -365,10 +417,14 @@ export const Dashboard = (): JSX.Element => {
   };
 
   const handleJobClick = (job: ActiveJob) => {
-    if (job.type === 'image') {
+    // Navigate based on current stage
+    if (job.stage === 'image') {
       navigate(`/video-editor?session=${job.session_id}`);
-    } else {
+    } else if (job.stage === 'video') {
       navigate(`/video-generation?session=${job.session_id}`);
+    } else {
+      // Combining stage - go to final video preview
+      navigate(`/full-video?session=${job.session_id}`);
     }
   };
 
@@ -427,13 +483,10 @@ export const Dashboard = (): JSX.Element => {
               <h2 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                 {jobsText.title}
                 {activeJobs.some(j => {
-                  const isComplete = j.pending === 0 && j.processing === 0;
-                  const hasErrors = j.failed > 0;
-                  const timeSince = Date.now() - new Date(j.updated_at).getTime();
-                  const isTimedOut = timeSince > 120000;
-                  const isStalled = !isComplete && (isTimedOut || (hasErrors && j.processing === 0));
+                  const imgActive = j.image_pending > 0 || j.image_processing > 0;
+                  const vidActive = j.video_pending > 0 || j.video_processing > 0;
                   // Only pulse if actively processing
-                  return !isComplete && !isStalled && j.processing > 0;
+                  return imgActive || vidActive;
                 }) && (
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -450,52 +503,83 @@ export const Dashboard = (): JSX.Element => {
               ) : (
                 <div className="flex flex-wrap gap-3">
                   {activeJobs.map((job) => {
-                    const isComplete = job.pending === 0 && job.processing === 0;
-                    const hasErrors = job.failed > 0;
-                    const allFailed = job.failed === job.total;
-                    const needsRetry = isComplete && hasErrors && job.completed < job.total;
-                    const progress = job.total > 0 ? (job.completed / job.total) * 100 : 0;
+                    // Calculate stats based on current stage
+                    const currentStage = job.stage;
+                    const currentTotal = currentStage === 'image' ? job.image_total : job.video_total;
+                    const currentCompleted = currentStage === 'image' ? job.image_completed : job.video_completed;
+                    const currentFailed = currentStage === 'image' ? job.image_failed : job.video_failed;
+                    const currentPending = currentStage === 'image' ? job.image_pending : job.video_pending;
+                    const currentProcessing = currentStage === 'image' ? job.image_processing : job.video_processing;
                     
-                    // Check if job is stalled or needs attention
+                    const isStageComplete = currentPending === 0 && currentProcessing === 0;
+                    const hasErrors = currentFailed > 0;
+                    const allFailed = currentFailed === currentTotal && currentTotal > 0;
+                    const needsRetry = isStageComplete && hasErrors && currentCompleted < currentTotal;
+                    const progress = currentTotal > 0 ? (currentCompleted / currentTotal) * 100 : 0;
+                    
+                    // Check if job is stalled
                     const timeSinceUpdate = Date.now() - new Date(job.updated_at).getTime();
                     const isTimedOut = timeSinceUpdate > 120000; // 2 minutes
+                    const isStalled = !isStageComplete && (isTimedOut || (hasErrors && currentProcessing === 0));
+                    const isActivelyProcessing = !isStageComplete && !isStalled && currentProcessing > 0;
                     
-                    // Show "Paused" if:
-                    // 1. Has pending but timed out (user left page)
-                    // 2. Has failed jobs and nothing actively processing (rate limited)
-                    const isStalled = !isComplete && (
-                      isTimedOut || 
-                      (hasErrors && job.processing === 0)
-                    );
+                    // Check if waiting for next stage
+                    const imgAllDone = job.image_pending === 0 && job.image_processing === 0 && job.image_failed === 0;
+                    const isWaitingForVideo = imgAllDone && job.video_total === 0;
+                    const isWaitingForCombine = currentStage === 'combining';
                     
-                    // Only show spinner if actively processing
-                    const isActivelyProcessing = !isComplete && !isStalled && job.processing > 0;
+                    // Get stage label
+                    const getStageLabel = () => {
+                      if (currentStage === 'image') {
+                        if (isWaitingForVideo) return jobsText.imagesReady;
+                        return jobsText.imageGen;
+                      }
+                      if (currentStage === 'video') return jobsText.videoGen;
+                      return jobsText.combining;
+                    };
+                    
+                    // Get status badge
+                    const getStatusBadge = () => {
+                      if (isWaitingForVideo) return { text: jobsText.continue, color: 'bg-blue-500/20 text-blue-400' };
+                      if (isWaitingForCombine) return { text: jobsText.videosReady, color: 'bg-blue-500/20 text-blue-400' };
+                      if (needsRetry) return { text: jobsText.needsRetry, color: allFailed ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400' };
+                      if (isStalled) return { text: jobsText.paused, color: 'bg-amber-500/20 text-amber-400' };
+                      return null;
+                    };
+                    
+                    const statusBadge = getStatusBadge();
                     
                     return (
                       <button
-                        key={`${job.type}-${job.session_id}`}
+                        key={`${job.stage}-${job.session_id}`}
                         onClick={() => handleJobClick(job)}
                         className={`bg-card border rounded-lg p-3 hover:border-primary/50 transition-all text-left min-w-[280px] max-w-[400px] flex-1 ${
-                          allFailed ? 'border-red-500/50' : needsRetry || isStalled ? 'border-amber-500/50' : 'border-border-default'
+                          allFailed ? 'border-red-500/50' : 
+                          needsRetry || isStalled ? 'border-amber-500/50' : 
+                          isWaitingForVideo || isWaitingForCombine ? 'border-blue-500/50' : 
+                          'border-border-default'
                         }`}
                       >
-                        {/* Header - Compact */}
+                        {/* Header */}
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <div className={`w-8 h-8 rounded-md flex items-center justify-center ${
-                              isComplete 
+                              isWaitingForVideo || isWaitingForCombine ? 'bg-blue-500/20' :
+                              isStageComplete 
                                 ? allFailed ? 'bg-red-500/20' : hasErrors ? 'bg-amber-500/20' : 'bg-green-500/20'
                                 : isStalled ? 'bg-amber-500/20' : 'bg-primary/20'
                             }`}>
-                              {job.type === 'image' ? (
+                              {currentStage === 'image' ? (
                                 <ImageIcon className={`w-4 h-4 ${
-                                  isComplete 
+                                  isWaitingForVideo ? 'text-blue-400' :
+                                  isStageComplete 
                                     ? allFailed ? 'text-red-400' : hasErrors ? 'text-amber-400' : 'text-green-400'
                                     : isStalled ? 'text-amber-400' : 'text-primary'
                                 }`} />
                               ) : (
                                 <Video className={`w-4 h-4 ${
-                                  isComplete 
+                                  isWaitingForCombine ? 'text-blue-400' :
+                                  isStageComplete 
                                     ? allFailed ? 'text-red-400' : hasErrors ? 'text-amber-400' : 'text-green-400'
                                     : isStalled ? 'text-amber-400' : 'text-primary'
                                 }`} />
@@ -503,7 +587,7 @@ export const Dashboard = (): JSX.Element => {
                             </div>
                             <div>
                               <h3 className="text-text-primary font-medium text-xs">
-                                {job.type === 'image' ? jobsText.imageGen : jobsText.videoGen}
+                                {getStageLabel()}
                               </h3>
                               <p className="text-text-muted text-[10px]">
                                 {formatTimeAgo(job.updated_at)}
@@ -513,19 +597,14 @@ export const Dashboard = (): JSX.Element => {
                           
                           {/* Status indicator */}
                           <div className="flex items-center gap-2">
-                            {needsRetry && (
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                                allFailed ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'
-                              }`}>
-                                {jobsText.needsRetry}
+                            {statusBadge && (
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusBadge.color}`}>
+                                {statusBadge.text}
                               </span>
                             )}
-                            {isStalled && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-500/20 text-amber-400">
-                                {jobsText.paused}
-                              </span>
-                            )}
-                            {isComplete ? (
+                            {isWaitingForVideo || isWaitingForCombine ? (
+                              <ChevronRight className="w-4 h-4 text-blue-400" />
+                            ) : isStageComplete ? (
                               allFailed ? (
                                 <AlertCircle className="w-4 h-4 text-red-400" />
                               ) : hasErrors ? (
@@ -543,32 +622,61 @@ export const Dashboard = (): JSX.Element => {
                           </div>
                         </div>
 
-                        {/* Topic - Single line */}
+                        {/* Topic */}
                         <p className="text-text-secondary text-xs mb-2 line-clamp-1">
                           {job.topic}
                         </p>
 
-                        {/* Progress Bar - Compact */}
+                        {/* Multi-stage Progress */}
                         <div className="space-y-1">
+                          {/* Stage indicators */}
+                          <div className="flex items-center gap-1 text-[9px] mb-1">
+                            <span className={`px-1.5 py-0.5 rounded ${
+                              job.image_completed === job.image_total && job.image_failed === 0 
+                                ? 'bg-green-500/20 text-green-400' 
+                                : job.image_pending > 0 || job.image_processing > 0
+                                  ? 'bg-primary/20 text-primary'
+                                  : job.image_failed > 0 
+                                    ? 'bg-red-500/20 text-red-400'
+                                    : 'bg-surface text-text-muted'
+                            }`}>
+                              🖼️ {job.image_completed}/{job.image_total}
+                            </span>
+                            <span className="text-text-muted">→</span>
+                            <span className={`px-1.5 py-0.5 rounded ${
+                              job.video_total === 0 
+                                ? 'bg-surface text-text-muted'
+                                : job.video_completed === job.video_total && job.video_failed === 0
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : job.video_pending > 0 || job.video_processing > 0
+                                    ? 'bg-primary/20 text-primary'
+                                    : job.video_failed > 0
+                                      ? 'bg-red-500/20 text-red-400'
+                                      : 'bg-surface text-text-muted'
+                            }`}>
+                              🎬 {job.video_total > 0 ? `${job.video_completed}/${job.video_total}` : '-'}
+                            </span>
+                            <span className="text-text-muted">→</span>
+                            <span className={`px-1.5 py-0.5 rounded ${
+                              job.has_final_video 
+                                ? 'bg-green-500/20 text-green-400' 
+                                : 'bg-surface text-text-muted'
+                            }`}>
+                              ✨ {job.has_final_video ? '✓' : '-'}
+                            </span>
+                          </div>
+                          
+                          {/* Current stage progress bar */}
                           <div className="h-1.5 bg-surface rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full transition-all duration-500 ${
-                                isComplete 
+                                isWaitingForVideo || isWaitingForCombine ? 'bg-blue-500' :
+                                isStageComplete 
                                   ? allFailed ? 'bg-red-500' : hasErrors ? 'bg-amber-500' : 'bg-green-500'
                                   : 'bg-primary'
                               }`}
-                              style={{ width: `${allFailed ? 100 : progress}%` }}
+                              style={{ width: `${isWaitingForVideo || isWaitingForCombine ? 100 : (allFailed ? 100 : progress)}%` }}
                             />
-                          </div>
-                          
-                          {/* Stats - Inline */}
-                          <div className="flex items-center justify-between text-[10px]">
-                            <div className="flex items-center gap-2">
-                              {job.completed > 0 && <span className="text-green-400">✓{job.completed}</span>}
-                              {job.failed > 0 && <span className="text-red-400">✗{job.failed}</span>}
-                              {job.completed === 0 && job.failed === 0 && <span className="text-text-muted">-</span>}
-                            </div>
-                            <span className="text-text-muted">{job.completed}/{job.total}</span>
                           </div>
                         </div>
                       </button>
