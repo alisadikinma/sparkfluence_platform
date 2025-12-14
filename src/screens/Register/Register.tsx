@@ -170,7 +170,11 @@ export const Register = (): JSX.Element => {
     setError(null);
 
     try {
-      const { user, error: signUpError } = await signUp(email, password);
+      // SignUp returns session if email confirmation is disabled
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
 
       if (signUpError) {
         // If user already exists, try to sign in instead
@@ -185,58 +189,84 @@ export const Register = (): JSX.Element => {
         return;
       }
 
-      if (user) {
-        // Auto-detect country from timezone
-        const detectedCountry = detectCountryFromTimezone();
-        console.log('[Register] Detected country:', detectedCountry);
+      const user = signUpData?.user;
+      if (!user) {
+        setError(language === 'id' ? 'Gagal membuat akun' : 'Failed to create account');
+        setLoading(false);
+        return;
+      }
 
-        // Sign in immediately after signup to get a valid session
+      console.log('[Register] SignUp successful, user:', user.id);
+      console.log('[Register] Session:', signUpData?.session ? 'Yes' : 'No');
+
+      // Auto-detect country from timezone
+      const detectedCountry = detectCountryFromTimezone();
+      console.log('[Register] Detected country:', detectedCountry);
+
+      // If no session from signUp (email confirmation enabled), try to sign in
+      if (!signUpData?.session) {
+        console.log('[Register] No session from signUp, trying auto sign-in...');
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
 
         if (signInError) {
-          console.error('[Register] Auto sign-in error:', signInError);
-          // Continue anyway, user can login manually
+          console.error('[Register] Auto sign-in error:', signInError.message);
+          // If email confirmation required, still continue to update profile
+          // User will need to confirm email then login
         } else {
           console.log('[Register] Auto sign-in successful');
         }
+      }
 
-        // Wait a moment for the trigger to create the profile
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait a moment for the trigger to create the profile
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Update profile with phone verification data (trigger creates profile automatically)
-        const { error: updateError } = await supabase
+      // Update profile with phone verification data (trigger creates profile automatically)
+      const { error: updateError } = await supabase
+        .from("user_profiles")
+        .update({
+          phone_number: verifiedPhone,
+          phone_verified: true,
+          phone_verified_at: new Date().toISOString(),
+          country: detectedCountry,
+        })
+        .eq("user_id", user.id);
+
+      if (updateError) {
+        console.error("Profile update error:", updateError);
+        // If update fails, try upsert as fallback
+        const { error: upsertError } = await supabase
           .from("user_profiles")
-          .update({
+          .upsert({
+            user_id: user.id,
             phone_number: verifiedPhone,
             phone_verified: true,
             phone_verified_at: new Date().toISOString(),
+            onboarding_completed: false,
             country: detectedCountry,
-          })
-          .eq("user_id", user.id);
-
-        if (updateError) {
-          console.error("Profile update error:", updateError);
-          // If update fails, try upsert as fallback
-          const { error: upsertError } = await supabase
-            .from("user_profiles")
-            .upsert({
-              user_id: user.id,
-              phone_number: verifiedPhone,
-              phone_verified: true,
-              phone_verified_at: new Date().toISOString(),
-              onboarding_completed: false,
-              country: detectedCountry,
-            }, { onConflict: 'user_id' });
-            
-          if (upsertError) {
-            console.error("Profile upsert error:", upsertError);
-          }
+          }, { onConflict: 'user_id' });
+          
+        if (upsertError) {
+          console.error("Profile upsert error:", upsertError);
         }
+      }
 
+      // Check if we have a valid session now
+      const { data: sessionData } = await supabase.auth.getSession();
+      
+      if (sessionData?.session) {
+        console.log('[Register] Session valid, navigating to welcome');
         navigate("/welcome");
+      } else {
+        // No session - email confirmation might be required
+        console.log('[Register] No session - email confirmation may be required');
+        setError(language === 'id' 
+          ? 'Akun berhasil dibuat! Silakan cek email untuk konfirmasi, lalu login.'
+          : 'Account created! Please check your email to confirm, then login.');
+        // Navigate to login after 3 seconds
+        setTimeout(() => navigate("/login"), 3000);
       }
     } catch (err: any) {
       setError(err.message || t.errors.general);
