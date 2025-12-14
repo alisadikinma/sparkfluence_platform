@@ -50,44 +50,72 @@ export const FullVideo: React.FC = () => {
 
   // Initialize and trigger combine video
   useEffect(() => {
-    if (location.state && !hasStartedCombine.current) {
-      const state = location.state;
-      setVideoData(state);
+    console.log('[FullVideo] ========== INIT ==========');
+    console.log('[FullVideo] location.state:', location.state);
+    console.log('[FullVideo] location.pathname:', location.pathname);
+    console.log('[FullVideo] hasStartedCombine.current:', hasStartedCombine.current);
+    
+    if (!location.state) {
+      console.log('[FullVideo] ERROR: No location.state! Navigation state was lost.');
+      setCombineError('No video data received. Please go back and try again.');
+      return;
+    }
+    
+    if (hasStartedCombine.current) {
+      console.log('[FullVideo] Already started combine, skipping...');
+      return;
+    }
+    
+    const state = location.state;
+    const segments = state?.segments || state?.selectedSegments || [];
+    console.log('[FullVideo] Segments received:', segments.length);
+    if (segments.length > 0) {
+      console.log('[FullVideo] First segment:', JSON.stringify(segments[0], null, 2));
+    }
+    
+    setVideoData(state);
+    
+    // Set title and description
+    const defaultTitle = state?.topic || "Generated Video Content";
+    const defaultDescription = segments.length > 0
+      ? `This video contains ${segments.length} carefully selected segments. ` +
+        `Total duration: ${segments.reduce((sum: number, seg: any) => sum + (seg.durationSeconds || 8), 0)} seconds.`
+      : "AI-generated video content ready to be scheduled and published to your social media platforms.";
+    
+    setTitle(defaultTitle);
+    setDescription(defaultDescription);
+    
+    // Check if already have final video URL
+    if (state.finalVideoUrl) {
+      console.log('[FullVideo] Already have finalVideoUrl:', state.finalVideoUrl);
+      setFinalVideoUrl(state.finalVideoUrl);
+    } else if (segments.length > 0) {
+      // Check if segments have video URLs (support both videoUrl and video_url)
+      const hasVideos = segments.every((s: any) => s.videoUrl || s.video_url);
+      console.log('[FullVideo] Checking videos - hasVideos:', hasVideos);
+      console.log('[FullVideo] Video URLs:', segments.map((s: any) => s.videoUrl || s.video_url || 'MISSING'));
       
-      // Set title and description
-      const defaultTitle = state?.topic || "Generated Video Content";
-      const segments = state?.segments || state?.selectedSegments || [];
-      const defaultDescription = segments.length > 0
-        ? `This video contains ${segments.length} carefully selected segments. ` +
-          `Total duration: ${segments.reduce((sum: number, seg: any) => sum + (seg.durationSeconds || 8), 0)} seconds.`
-        : "AI-generated video content ready to be scheduled and published to your social media platforms.";
-      
-      setTitle(defaultTitle);
-      setDescription(defaultDescription);
-      
-      // Check if already have final video URL
-      if (state.finalVideoUrl) {
-        setFinalVideoUrl(state.finalVideoUrl);
-      } else if (segments.length > 0) {
-        // Check if segments have video URLs (support both videoUrl and video_url)
-        const hasVideos = segments.every((s: any) => s.videoUrl || s.video_url);
-        console.log('[FullVideo] Segments:', segments.length, 'hasVideos:', hasVideos);
-        
-        if (hasVideos) {
-          // All segments have videos, trigger combine
-          hasStartedCombine.current = true;
-          console.log('[FullVideo] Starting combine process...');
-          triggerCombineVideo(segments, state);
-        } else {
-          console.log('[FullVideo] Missing video URLs in segments');
-          setCombineError('Some segments are missing video URLs. Please go back and generate videos first.');
-        }
+      if (hasVideos) {
+        // All segments have videos, trigger combine
+        hasStartedCombine.current = true;
+        console.log('[FullVideo] ✅ Starting combine process...');
+        triggerCombineVideo(segments, state);
+      } else {
+        console.log('[FullVideo] ❌ Missing video URLs in segments');
+        setCombineError('Some segments are missing video URLs. Please go back and generate videos first.');
       }
+    } else {
+      console.log('[FullVideo] ❌ No segments found');
+      setCombineError('No video segments found. Please go back and create videos first.');
     }
   }, [location.state]);
 
   // Trigger combine video API (direct backend call)
   const triggerCombineVideo = async (segments: any[], state: any) => {
+    console.log('[FullVideo] ========== TRIGGER COMBINE ==========');
+    console.log('[FullVideo] Backend URL:', BACKEND_URL);
+    console.log('[FullVideo] Segments to combine:', segments.length);
+    
     setIsCombining(true);
     setCombineError(null);
     setCombineProgress("Preparing video segments...");
@@ -101,15 +129,29 @@ export const FullVideo: React.FC = () => {
         duration_seconds: seg.durationSeconds || 8
       }));
 
+      console.log('[FullVideo] Prepared videoSegments:', JSON.stringify(videoSegments, null, 2));
+      
       // Check if all segments have video URLs
       const missingVideos = videoSegments.filter((s: any) => !s.video_url);
       if (missingVideos.length > 0) {
+        console.log('[FullVideo] ERROR: Missing video URLs:', missingVideos);
         throw new Error(`${missingVideos.length} segments are missing video URLs`);
       }
 
-      console.log('[FullVideo] Triggering combine with segments:', videoSegments.length);
+      console.log('[FullVideo] ✅ All segments have video URLs');
+      console.log('[FullVideo] Sending request to backend...');
       setCombineProgress("Connecting to video processor...");
       setProgressPercent(10);
+      
+      const requestBody = {
+        project_id: state.sessionId || `project_${Date.now()}`,
+        segments: videoSegments,
+        options: {
+          bgm_url: state.selectedMusic?.audioUrl || state.selectedMusic?.url || null,
+          bgm_volume: state.selectedMusic ? 0.15 : 0
+        }
+      };
+      console.log('[FullVideo] Request body:', JSON.stringify(requestBody, null, 2));
       
       // Direct backend call (same as Loading.tsx)
       const response = await fetch(`${BACKEND_URL}/api/combine-final-video`, {
@@ -118,23 +160,19 @@ export const FullVideo: React.FC = () => {
           'Content-Type': 'application/json',
           'x-api-key': BACKEND_API_KEY
         },
-        body: JSON.stringify({
-          project_id: state.sessionId || `project_${Date.now()}`,
-          segments: videoSegments,
-          options: {
-            bgm_url: state.selectedMusic?.audioUrl || state.selectedMusic?.url || null,
-            bgm_volume: state.selectedMusic ? 0.15 : 0
-          }
-        })
+        body: JSON.stringify(requestBody)
       });
 
+      console.log('[FullVideo] Response status:', response.status);
+      
       if (!response.ok) {
         const errorText = await response.text();
+        console.log('[FullVideo] ERROR response:', errorText);
         throw new Error(`Backend error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      console.log('[FullVideo] Job created:', data);
+      console.log('[FullVideo] ✅ Job created:', data);
 
       if (!data.success || !data.data?.job_id) {
         throw new Error("Failed to create job");
@@ -333,7 +371,7 @@ export const FullVideo: React.FC = () => {
         scheduled_date: publishDate,
         scheduled_time: publishTime,
         status: "scheduled",
-        thumbnail_url: videoData?.segments?.[0]?.imageUrl || videoData?.selectedSegments?.[0]?.imageUrl || "/rectangle-11.png",
+        thumbnail_url: videoData?.segments?.[0]?.imageUrl || videoData?.segments?.[0]?.image_url || videoData?.selectedSegments?.[0]?.imageUrl || getThumbnail(),
         video_data: {
           ...videoData,
           sessionId: videoData?.sessionId || null,
@@ -364,7 +402,8 @@ export const FullVideo: React.FC = () => {
   // Get thumbnail from segments
   const getThumbnail = () => {
     const segments = videoData?.segments || videoData?.selectedSegments || [];
-    return segments[0]?.imageUrl || "/rectangle-11.png";
+    const firstImage = segments[0]?.imageUrl || segments[0]?.image_url;
+    return firstImage || "https://placehold.co/720x1280/1a1a24/7c3aed?text=Video+Preview";
   };
 
   return (

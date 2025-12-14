@@ -948,22 +948,26 @@ export const VideoGeneration = (): JSX.Element => {
 
   const handleNext = () => {
     const allHaveVideos = segments.every(seg => seg.videoUrl);
+    console.log('[VideoGen] handleNext called, allHaveVideos:', allHaveVideos);
+    console.log('[VideoGen] Segments with videoUrl:', segments.map(s => ({ id: s.id, type: s.type, hasVideo: !!s.videoUrl })));
+    
     if (!allHaveVideos) {
       alert(language === 'id' ? 'Harap generate semua video terlebih dahulu.' : 'Please generate videos for all segments before proceeding.');
       return;
     }
 
     // Go directly to full-video with combine process
-    navigate("/full-video", {
-      state: {
-        segments,
-        selectedSegments: segments, // Also pass as selectedSegments for compatibility
-        selectedMusic: null,
-        topic: currentTopic,
-        sessionId,
-        videoSettings
-      }
-    });
+    const navigationState = {
+      segments,
+      selectedSegments: segments, // Also pass as selectedSegments for compatibility
+      selectedMusic: null,
+      topic: currentTopic,
+      sessionId,
+      videoSettings
+    };
+    console.log('[VideoGen] Navigating to /full-video with state:', navigationState);
+    
+    navigate("/full-video", { state: navigationState });
   };
 
   const totalDuration = segments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
