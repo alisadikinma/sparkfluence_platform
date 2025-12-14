@@ -2,9 +2,9 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Logo } from "../../components/ui/logo";
 
-// Backend URL - change to production URL when deployed
-const BACKEND_URL = "http://localhost:8000";
-const BACKEND_API_KEY = "sparkfluence_test_key_123";
+// Backend URL - use environment variable or fallback to localhost for development
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || "sparkfluence_test_key_123";
 
 export const Loading: React.FC = () => {
   const navigate = useNavigate();
