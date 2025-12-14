@@ -91,8 +91,8 @@ export const VideoGeneration = (): JSX.Element => {
     ready: language === 'id' ? 'Siap' : 'Ready',
     processing: language === 'id' ? 'Memproses...' : 'Processing...',
     backToDashboard: language === 'id' ? 'Kembali ke Dashboard' : 'Back to Dashboard',
-    next: language === 'id' ? 'Lanjut: Pilih Musik' : 'Next: Select Music',
-    generateFirst: language === 'id' ? 'Generate Semua Video Dulu' : 'Generate All Videos First',
+    next: language === 'id' ? 'Combine Video' : 'Combine Video',
+    generateFirst: language === 'id' ? 'Combine Video' : 'Combine Video',
     loading: language === 'id' ? 'Memuat video...' : 'Loading videos...',
     backgroundProcessing: language === 'id' 
       ? 'Video sedang di-generate di background. Anda bisa menutup browser atau melakukan aktivitas lain. Kami akan kirim notifikasi saat selesai!'
@@ -953,7 +953,8 @@ export const VideoGeneration = (): JSX.Element => {
       return;
     }
 
-    navigate("/music-selector", {
+    // Go directly to full-video (skip music selector)
+    navigate("/full-video", {
       state: {
         sessionId,
         segments,
