@@ -101,9 +101,11 @@ serve(async (req) => {
         // Status: 1 = Processing, 2 = Completed, 3 = Failed
         if (veoData.status === 2) {
           // Get URL from generated_video array
+          // Prefer video_url (pre-signed Cloudflare R2) over file_download_url (requires API key)
           if (veoData.generated_video && veoData.generated_video.length > 0) {
             const generatedVideo = veoData.generated_video[0]
-            videoStatus.video_url = generatedVideo.file_download_url || generatedVideo.video_url
+            // Use video_url first (pre-signed, no auth needed), fallback to file_download_url
+            videoStatus.video_url = generatedVideo.video_url || generatedVideo.file_download_url
             videoStatus.duration = generatedVideo.duration
             videoStatus.resolution = generatedVideo.resolution
             videoStatus.aspect_ratio = generatedVideo.aspect_ratio

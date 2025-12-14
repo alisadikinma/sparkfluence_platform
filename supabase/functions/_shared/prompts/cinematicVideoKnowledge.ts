@@ -40,7 +40,7 @@ export const VIDEO_MODELS = {
   },
   'veo-3.1-fast': {
     name: 'Veo 3.1 Fast Full HD (8s)',
-    apiModel: 'veo-3.1-fast',
+    apiModel: 'veo-3.1-fast-1080p', // FIXED: Use 1080p model
     resolution: '1080p',
     dimensions: { landscape: '1920x1080', portrait: '1080x1920' },
     maxDuration: 8,
