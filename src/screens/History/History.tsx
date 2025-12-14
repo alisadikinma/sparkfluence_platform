@@ -8,7 +8,7 @@ import { TopNavbar } from "../../components/layout/TopNavbar";
 import { 
   Clock, Video, Play, Trash2, X,
   CheckCircle, AlertCircle, Loader2, Image as ImageIcon,
-  Calendar, Download
+  Calendar, Download, Globe, Monitor, Cpu
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
@@ -22,10 +22,15 @@ interface VideoJob {
   video_url: string | null;
   image_url: string | null;
   script_text: string | null;
-  topic: string | null; // Topic is stored in 'topic' field
+  topic: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  // Metadata fields
+  language?: string;
+  resolution?: string;
+  preferred_platform?: string;
+  duration_seconds?: number;
 }
 
 // Job status constants
@@ -45,9 +50,11 @@ interface ProjectGroup {
   videos_ready: number;
   videos_failed: number;
   videos_processing: number;
+  videos_pending: number;
   is_complete: boolean;
   has_failed: boolean;
-  status_text: string; // Human readable status
+  is_processing: boolean;
+  status_text: string;
   created_at: string;
   updated_at: string;
   planned_content_id?: string;
@@ -57,6 +64,11 @@ interface ProjectGroup {
   scheduled_time?: string;
   platforms?: string[];
   description?: string;
+  // Metadata
+  language?: string;
+  resolution?: string;
+  model?: string;
+  total_duration_seconds: number;
 }
 
 type TabType = 'all' | 'drafts' | 'completed';
@@ -91,10 +103,10 @@ export const History = (): JSX.Element => {
     try {
       setLoading(true);
       
-      // Fetch video generation jobs
+      // Fetch video generation jobs with metadata
       const { data: videoJobs, error: videoError } = await supabase
         .from("video_generation_jobs")
-        .select("*")
+        .select("*, language, resolution, preferred_platform, duration_seconds")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false });
 
@@ -153,8 +165,10 @@ export const History = (): JSX.Element => {
           const videosReady = segments.filter(s => s.video_url || s.status === JOB_STATUS.COMPLETED).length;
           const videosFailed = segments.filter(s => s.status === JOB_STATUS.FAILED).length;
           const videosProcessing = segments.filter(s => s.status === JOB_STATUS.PROCESSING).length;
+          const videosPending = segments.filter(s => s.status === JOB_STATUS.PENDING).length;
           const isComplete = videosReady === segments.length && segments.length > 0;
-          const hasFailed = videosFailed > 0;
+          const hasFailed = videosFailed > 0 && videosProcessing === 0 && videosPending === 0; // Only failed if nothing is processing/pending
+          const isProcessing = videosProcessing > 0 || (videosPending > 0 && videosReady > 0); // Processing if any job is running OR resuming
           const planned = sessionToPlanned.get(sessionId);
 
           // Get topic from multiple sources (priority order)
@@ -164,14 +178,23 @@ export const History = (): JSX.Element => {
           const topicFromPlannedTitle = planned?.title;
           const topicTitle = topicFromJob || topicFromImageJob || topicFromPlannedData || topicFromPlannedTitle || `Video Project ${sessionId.slice(0, 8)}`;
 
-          // Calculate status text
+          // Get metadata from first segment (they share same settings)
+          const firstSeg = segments[0];
+          const projectLanguage = firstSeg?.language || 'id';
+          const projectResolution = firstSeg?.resolution || '1080p';
+          const projectModel = firstSeg?.preferred_platform || 'veo31';
+          const segmentDuration = firstSeg?.duration_seconds || 8;
+          const totalDuration = segments.length * segmentDuration;
+
+          // Calculate status text - PRIORITY: Processing > Failed > Pending
           let statusText = '';
           if (isComplete) {
             statusText = t.common.done || 'Complete';
+          } else if (isProcessing) {
+            // Show processing status with progress
+            statusText = `${t.videoEditor.status.processing || 'Processing'} ${videosReady}/${segments.length}`;
           } else if (hasFailed) {
             statusText = `${videosFailed} ${t.common.failed || 'failed'}`;
-          } else if (videosProcessing > 0) {
-            statusText = `${t.videoEditor.status.processing || 'Processing'} ${videosProcessing}/${segments.length}`;
           } else if (imagesReady < segments.length) {
             statusText = `${t.videoEditor.status.images || 'Images'} ${imagesReady}/${segments.length}`;
           } else {
@@ -187,8 +210,10 @@ export const History = (): JSX.Element => {
             videos_ready: videosReady,
             videos_failed: videosFailed,
             videos_processing: videosProcessing,
+            videos_pending: videosPending,
             is_complete: isComplete,
             has_failed: hasFailed,
+            is_processing: isProcessing,
             status_text: statusText,
             created_at: segments[0].created_at,
             updated_at: segments[0].updated_at,
@@ -198,7 +223,12 @@ export const History = (): JSX.Element => {
             scheduled_date: planned?.scheduled_date,
             scheduled_time: planned?.scheduled_time,
             platforms: planned?.platforms || [],
-            description: planned?.description
+            description: planned?.description,
+            // Metadata
+            language: projectLanguage,
+            resolution: projectResolution,
+            model: projectModel,
+            total_duration_seconds: totalDuration
           });
         });
 
@@ -360,10 +390,10 @@ export const History = (): JSX.Element => {
                   className={`bg-card border rounded-xl overflow-hidden transition-all cursor-pointer hover:scale-[1.02] hover:shadow-lg ${
                     project.is_complete
                       ? 'border-green-500/30 hover:border-green-500/50'
+                      : project.is_processing
+                      ? 'border-blue-500/30 hover:border-blue-500/50'
                       : project.has_failed
                       ? 'border-red-500/30 hover:border-red-500/50'
-                      : project.videos_processing > 0
-                      ? 'border-blue-500/30 hover:border-blue-500/50'
                       : 'border-amber-500/30 hover:border-amber-500/50'
                   }`}
                 >
@@ -381,22 +411,22 @@ export const History = (): JSX.Element => {
                       </div>
                     )}
                     
-                    {/* Status Badge */}
+                    {/* Status Badge - Priority: Complete > Processing > Failed > Draft */}
                     <div className="absolute top-1.5 right-1.5">
                       {project.is_complete ? (
                         <span className="flex items-center gap-0.5 text-[9px] text-green-500 bg-green-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
                           <CheckCircle className="w-2.5 h-2.5" />
                           {t.common.done}
                         </span>
+                      ) : project.is_processing ? (
+                        <span className="flex items-center gap-0.5 text-[9px] text-blue-400 bg-blue-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          {project.videos_ready}/{project.total_segments}
+                        </span>
                       ) : project.has_failed ? (
                         <span className="flex items-center gap-0.5 text-[9px] text-red-500 bg-red-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
                           <AlertCircle className="w-2.5 h-2.5" />
                           {project.videos_failed} {t.common.failed || 'Failed'}
-                        </span>
-                      ) : project.videos_processing > 0 ? (
-                        <span className="flex items-center gap-0.5 text-[9px] text-blue-400 bg-blue-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
-                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                          {t.videoEditor.status.processing || 'Processing'}
                         </span>
                       ) : (
                         <span className="flex items-center gap-0.5 text-[9px] text-amber-500 bg-amber-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
@@ -435,10 +465,10 @@ export const History = (): JSX.Element => {
                           className={`h-full transition-all ${
                             project.is_complete 
                               ? 'bg-green-500' 
+                              : project.is_processing
+                              ? 'bg-blue-500'
                               : project.has_failed
                               ? 'bg-red-500'
-                              : project.videos_processing > 0
-                              ? 'bg-blue-500'
                               : 'bg-amber-500'
                           }`}
                           style={{ 
@@ -450,6 +480,30 @@ export const History = (): JSX.Element => {
                       <p className="text-[8px] text-text-muted mt-0.5">
                         {project.status_text}
                       </p>
+                    </div>
+
+                    {/* Metadata Row */}
+                    <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                      {/* Duration */}
+                      <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
+                        <Clock className="w-2 h-2" />
+                        {project.total_duration_seconds}s
+                      </span>
+                      {/* Resolution */}
+                      <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
+                        <Monitor className="w-2 h-2" />
+                        {project.resolution || '1080p'}
+                      </span>
+                      {/* Model */}
+                      <span className="flex items-center gap-0.5 text-[8px] text-purple-400 bg-purple-500/10 px-1 py-0.5 rounded">
+                        <Cpu className="w-2 h-2" />
+                        {project.model === 'sora2' ? 'SORA 2' : project.model === 'veo31' ? 'VEO 3.1' : 'Auto'}
+                      </span>
+                      {/* Language */}
+                      <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
+                        <Globe className="w-2 h-2" />
+                        {project.language === 'id' ? 'ID' : project.language === 'en' ? 'EN' : project.language?.toUpperCase() || 'ID'}
+                      </span>
                     </div>
 
                     {/* Footer */}
