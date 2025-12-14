@@ -7,12 +7,12 @@ import { useOnboarding } from "../../contexts/OnboardingContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
-import { getAvatarWithCache } from "../../lib/avatarCache";
+import { useAvatarManager } from "../../hooks/useAvatarManager";
+import { AvatarDropdown, AvatarNameModal } from "../../components/ui/avatar-dropdown";
 import { 
-  Loader2, Sparkles, RefreshCw, Wand2, 
+  Loader2, Sparkles, RefreshCw, 
   ChevronDown, ScrollText, AlertCircle,
-  Dna, Target, Lightbulb, Zap, Brain, PenTool,
-  User, Upload, UserCircle, X
+  Dna, Target, Lightbulb, Zap, Brain, PenTool
 } from "lucide-react";
 
 interface Topic {
@@ -22,7 +22,6 @@ interface Topic {
 }
 
 type InputType = "topic" | "transcript";
-type AvatarOption = "none" | "profile" | "upload";
 
 const LANGUAGE_OPTIONS = [
   { value: 'id', label: 'Indonesia' },
@@ -52,11 +51,11 @@ const TOPICS_CACHE_EXPIRY = 60 * 60 * 1000; // 1 hour
 
 // Rate limiting constants
 const REFRESH_RATE_LIMIT_KEY = 'sparkfluence_refresh_rate';
-const MAX_REFRESHES_PER_WINDOW = 3;      // Max 3 refreshes
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;  // Per 1 minute
-const COOLDOWN_MS = 30 * 1000;           // 30 second cooldown after hitting limit
+const MAX_REFRESHES_PER_WINDOW = 3;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const COOLDOWN_MS = 30 * 1000;
 
-// Language-aware fallback topics (SAME AS ScriptLab for consistency)
+// Language-aware fallback topics
 const fallbackTopicsByLang: Record<string, Topic[]> = {
   id: [
     { id: 1, title: "5 Kebiasaan Pagi yang Mengubah Hidupku", description: "Bagikan tips produktivitas personal yang relate dengan audience" },
@@ -84,7 +83,6 @@ const fallbackTopicsByLang: Record<string, Topic[]> = {
   ],
 };
 
-// Get fallback topics based on language
 const getFallbackTopics = (lang: string): Topic[] => {
   return fallbackTopicsByLang[lang] || fallbackTopicsByLang.en;
 };
@@ -93,9 +91,9 @@ export const TopicSelection = (): JSX.Element => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const { onboardingData } = useOnboarding(); // Keep for platforms in handleGenerate
-  const { data: dbOnboardingData, loading: onboardingLoading } = useOnboardingStatus(); // FROM DATABASE
-  const { language: uiLang } = useLanguage(); // UI language (website) - READ ONLY
+  const { onboardingData } = useOnboarding();
+  const { data: dbOnboardingData, loading: onboardingLoading } = useOnboardingStatus();
+  const { language: uiLang } = useLanguage();
   
   const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedTopic, setSelectedTopic] = useState<number | null>(null);
@@ -110,31 +108,23 @@ export const TopicSelection = (): JSX.Element => {
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const cooldownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Form state (matches ScriptLab)
+  // Form state
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
   const [model, setModel] = useState("auto");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("30s");
-  // OUTPUT language for script generation (separate from UI language)
-  const [outputLang, setOutputLang] = useState<string>(uiLang); // Default to UI language
+  const [outputLang, setOutputLang] = useState<string>(uiLang);
   const [useDnaTone, setUseDnaTone] = useState(true);
-  const [cachedAvatarUrl, setCachedAvatarUrl] = useState<string | null>(null);
   const [generatingPhase, setGeneratingPhase] = useState(0);
   
-  // Avatar state - default to "profile" to use profile picture
-  const [avatarOption, setAvatarOption] = useState<AvatarOption>("profile");
-  const [characterDescription, setCharacterDescription] = useState<string | null>(null);
-  const [profileCharacterDesc, setProfileCharacterDesc] = useState<string | null>(null);
-  const [avatarDropdownOpen, setAvatarDropdownOpen] = useState(false);
-  const [analyzingAvatar, setAnalyzingAvatar] = useState(false);
-  const [uploadedAvatarPreview, setUploadedAvatarPreview] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const avatarDropdownRef = useRef<HTMLDivElement>(null);
+  // Avatar management - using shared hook
+  const avatarManager = useAvatarManager({
+    userId: user?.id,
+    language: uiLang
+  });
 
-  // Check if user has DNA tone - USE DATABASE DATA
   const hasDnaTone = dbOnboardingData?.creative_dna && dbOnboardingData.creative_dna.length > 0;
-
   const isReturning = location.state?.returning === true;
 
   // Cleanup cooldown interval on unmount
@@ -151,65 +141,11 @@ export const TopicSelection = (): JSX.Element => {
     checkRateLimit();
   }, []);
 
-  // Close avatar dropdown on click outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (avatarDropdownRef.current && !avatarDropdownRef.current.contains(event.target as Node)) {
-        setAvatarDropdownOpen(false);
-      }
-    };
-
-    if (avatarDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [avatarDropdownOpen]);
-
-  // Load cached avatar and character description on mount
-  // Auto-set character description if profile has one (default avatar = profile)
-  useEffect(() => {
-    const loadProfileData = async () => {
-      if (user?.id) {
-        // Load avatar
-        const avatarUrl = await getAvatarWithCache(supabase, user.id);
-        setCachedAvatarUrl(avatarUrl);
-        
-        // Load character description from profile
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('character_description')
-          .eq('user_id', user.id)
-          .single();
-        
-        if (profile?.character_description) {
-          setProfileCharacterDesc(profile.character_description);
-          // Auto-set for default "profile" avatar option
-          setCharacterDescription(profile.character_description);
-          setUploadedAvatarPreview(avatarUrl);
-          console.log('[TopicSelection] Auto-loaded profile character description');
-        } else if (avatarUrl) {
-          // Has avatar but no description - will analyze on first use
-          setUploadedAvatarPreview(avatarUrl);
-          console.log('[TopicSelection] Profile avatar found but no character description yet');
-        } else {
-          // No avatar - fallback to "none"
-          setAvatarOption('none');
-          console.log('[TopicSelection] No profile avatar, defaulting to none');
-        }
-      }
-    };
-    loadProfileData();
-  }, [user?.id]);
-
   // Rate limiting functions
   const getRateLimitData = (): { timestamps: number[]; cooldownUntil: number | null } => {
     try {
       const data = localStorage.getItem(REFRESH_RATE_LIMIT_KEY);
-      if (data) {
-        return JSON.parse(data);
-      }
+      if (data) return JSON.parse(data);
     } catch (e) {
       console.error('Error reading rate limit data:', e);
     }
@@ -228,7 +164,6 @@ export const TopicSelection = (): JSX.Element => {
     const now = Date.now();
     const data = getRateLimitData();
 
-    // Check if in cooldown
     if (data.cooldownUntil && now < data.cooldownUntil) {
       const remaining = Math.ceil((data.cooldownUntil - now) / 1000);
       setRateLimited(true);
@@ -237,12 +172,9 @@ export const TopicSelection = (): JSX.Element => {
       return false;
     }
 
-    // Clean old timestamps outside the window
     const recentTimestamps = data.timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
     
-    // Check if at limit
     if (recentTimestamps.length >= MAX_REFRESHES_PER_WINDOW) {
-      // Set cooldown
       const cooldownUntil = now + COOLDOWN_MS;
       setRateLimitData({ timestamps: recentTimestamps, cooldownUntil });
       setRateLimited(true);
@@ -251,7 +183,6 @@ export const TopicSelection = (): JSX.Element => {
       return false;
     }
 
-    // Update stored data (cleanup old timestamps)
     setRateLimitData({ timestamps: recentTimestamps, cooldownUntil: null });
     setRateLimited(false);
     return true;
@@ -277,7 +208,6 @@ export const TopicSelection = (): JSX.Element => {
       if (remaining <= 0) {
         setRateLimited(false);
         setCooldownRemaining(0);
-        // Clear cooldown from storage
         const data = getRateLimitData();
         setRateLimitData({ timestamps: data.timestamps, cooldownUntil: null });
         if (cooldownIntervalRef.current) {
@@ -289,29 +219,26 @@ export const TopicSelection = (): JSX.Element => {
     }, 1000);
   };
 
-  // Initial load - WAIT FOR DATABASE DATA
+  // Initial load
   useEffect(() => {
     if (!onboardingLoading) {
       loadTopics();
     }
   }, [onboardingLoading]);
 
-  // Regenerate topics when OUTPUT language changes (not UI language)
+  // Regenerate topics when OUTPUT language changes
   useEffect(() => {
     const cached = getCachedTopics();
-    // Only regenerate if output language changed from cached value AND not initial load
     if (cached && cached.language !== outputLang && !loading) {
       localStorage.removeItem(TOPICS_CACHE_KEY);
       setSelectedTopic(null);
       setPrompt("");
       generateTopics();
     } else if (!cached && !loading) {
-      // No cache, regenerate with new language
       generateTopics();
     }
   }, [outputLang]);
 
-  // Check if cache matches current user preferences
   const isCacheMatchingPreferences = (cached: any): boolean => {
     if (!cached) return false;
     
@@ -319,27 +246,15 @@ export const TopicSelection = (): JSX.Element => {
     const currentNiches = dbOnboardingData?.selected_niches || [];
     const currentDna = dbOnboardingData?.creative_dna || [];
     
-    // Compare interest
-    if (cached.interest !== currentInterest) {
-      console.log('[TopicSelection] Cache invalid: interest changed');
-      return false;
-    }
+    if (cached.interest !== currentInterest) return false;
     
-    // Compare niches (array comparison)
     const cachedNiches = cached.niches || [];
     if (cachedNiches.length !== currentNiches.length || 
-        !cachedNiches.every((n: string, i: number) => n === currentNiches[i])) {
-      console.log('[TopicSelection] Cache invalid: niches changed');
-      return false;
-    }
+        !cachedNiches.every((n: string, i: number) => n === currentNiches[i])) return false;
     
-    // Compare DNA (array comparison)
     const cachedDna = cached.dna || [];
     if (cachedDna.length !== currentDna.length || 
-        !cachedDna.every((d: string, i: number) => d === currentDna[i])) {
-      console.log('[TopicSelection] Cache invalid: DNA changed');
-      return false;
-    }
+        !cachedDna.every((d: string, i: number) => d === currentDna[i])) return false;
     
     return true;
   };
@@ -347,23 +262,13 @@ export const TopicSelection = (): JSX.Element => {
   const loadTopics = useCallback(async () => {
     const cached = getCachedTopics();
     
-    // Check if cache is valid:
-    // 1. Not expired (1 hour) OR returning from video editor
-    // 2. Language matches
-    // 3. Interest/Niches/DNA matches current preferences
     if (cached && 
         (isReturning || isCacheValid(cached.timestamp)) && 
         cached.language === outputLang &&
         isCacheMatchingPreferences(cached)) {
-      console.log('[TopicSelection] Using cached topics');
       setTopics(cached.topics);
       setLoading(false);
       return;
-    }
-    
-    // Cache invalid - regenerate
-    if (cached && !isCacheMatchingPreferences(cached)) {
-      console.log('[TopicSelection] Preferences changed, regenerating topics...');
     }
     
     await generateTopics();
@@ -385,14 +290,13 @@ export const TopicSelection = (): JSX.Element => {
 
   const cacheTopics = (topics: Topic[]) => {
     try {
-      // Use database data for cache validation
       localStorage.setItem(TOPICS_CACHE_KEY, JSON.stringify({
         topics,
         timestamp: Date.now(),
         interest: dbOnboardingData?.interest || '',
         niches: dbOnboardingData?.selected_niches || [],
         dna: dbOnboardingData?.creative_dna || [],
-        language: outputLang  // Output language for script/topics
+        language: outputLang
       }));
     } catch (e) {
       console.error('Error caching topics:', e);
@@ -404,7 +308,6 @@ export const TopicSelection = (): JSX.Element => {
     setRefreshing(true);
     setError(null);
 
-    // Map output lang code to full language name for Edge Function
     const langMap: Record<string, 'indonesian' | 'english' | 'hindi'> = {
       'id': 'indonesian',
       'en': 'english',
@@ -413,21 +316,11 @@ export const TopicSelection = (): JSX.Element => {
     const targetLanguage = langMap[outputLang] || 'indonesian';
 
     try {
-      // USE DATABASE DATA (dbOnboardingData) instead of context
       const interest = dbOnboardingData?.interest || '';
       const selectedNiches = dbOnboardingData?.selected_niches || [];
       const dnaStyles = dbOnboardingData?.creative_dna || [];
 
-      console.log('[TopicSelection] Generating topics with:', {
-        interest,
-        niches: selectedNiches,
-        dnaStyles,
-        language: targetLanguage
-      });
-
-      // If missing onboarding data, use language-aware fallback topics
       if (!interest || selectedNiches.length === 0 || dnaStyles.length === 0) {
-        console.log('[TopicSelection] Missing onboarding data, using fallback');
         const fallbackTopics = getFallbackTopics(outputLang);
         setTopics(fallbackTopics);
         cacheTopics(fallbackTopics);
@@ -436,17 +329,16 @@ export const TopicSelection = (): JSX.Element => {
         return;
       }
 
-      // Get country from localStorage or default to ID
       const savedCountry = localStorage.getItem('sparkfluence_user_country') || 'ID';
 
       const { data, error: funcError } = await supabase.functions.invoke('generate-topic-suggestions', {
         body: { 
           interest, 
-          niches: selectedNiches,  // Already array from database
+          niches: selectedNiches,
           dnaStyles,
           language: targetLanguage,
-          count: 6,  // Request exactly 6 topics
-          country: savedCountry  // For Google Trends RSS
+          count: 6,
+          country: savedCountry
         }
       });
 
@@ -456,14 +348,12 @@ export const TopicSelection = (): JSX.Element => {
         throw new Error(data?.error?.message || 'Failed to generate topics');
       }
 
-      // Ensure exactly 6 topics
       const generatedTopics: Topic[] = data.data.topics.slice(0, 6).map((t: any, index: number) => ({
         id: index + 1,
         title: t.title,
         description: t.description
       }));
 
-      // If less than 6, pad with language-aware fallback topics
       const fallbackTopics = getFallbackTopics(outputLang);
       while (generatedTopics.length < 6) {
         const fallbackIndex = generatedTopics.length;
@@ -477,7 +367,6 @@ export const TopicSelection = (): JSX.Element => {
       cacheTopics(generatedTopics);
     } catch (err: any) {
       console.error('Error generating topics:', err);
-      // Use language-aware fallback on error
       const fallbackTopics = getFallbackTopics(outputLang);
       setTopics(fallbackTopics);
       cacheTopics(fallbackTopics);
@@ -489,15 +378,9 @@ export const TopicSelection = (): JSX.Element => {
 
   const handleRefresh = async () => {
     if (refreshing || rateLimited) return;
-    
-    // Check rate limit before proceeding
-    if (!checkRateLimit()) {
-      return;
-    }
+    if (!checkRateLimit()) return;
 
-    // Record this refresh attempt
     recordRefresh();
-
     localStorage.removeItem(TOPICS_CACHE_KEY);
     setSelectedTopic(null);
     setPrompt("");
@@ -506,7 +389,6 @@ export const TopicSelection = (): JSX.Element => {
 
   const handleTopicSelect = (topic: Topic) => {
     setSelectedTopic(prev => prev === topic.id ? null : topic.id);
-    // Include both title and description for richer LLM context
     setPrompt(`${topic.title}\n\n${topic.description}`);
   };
 
@@ -521,126 +403,6 @@ export const TopicSelection = (): JSX.Element => {
     navigate("/creative-dna");
   };
 
-  // Avatar handling functions
-  const handleAvatarOptionSelect = async (option: AvatarOption) => {
-    setAvatarDropdownOpen(false);
-    
-    if (option === "none") {
-      setAvatarOption("none");
-      setCharacterDescription(null);
-      setUploadedAvatarPreview(null);
-    } else if (option === "profile") {
-      if (profileCharacterDesc) {
-        setAvatarOption("profile");
-        setCharacterDescription(profileCharacterDesc);
-        setUploadedAvatarPreview(cachedAvatarUrl);
-      } else if (cachedAvatarUrl) {
-        // Need to analyze profile avatar
-        setAnalyzingAvatar(true);
-        try {
-          const { data, error } = await supabase.functions.invoke('analyze-avatar', {
-            body: {
-              image_url: cachedAvatarUrl,
-              user_id: user?.id,
-              save_to_profile: true
-            }
-          });
-          
-          if (error) throw error;
-          if (data?.success && data?.data?.character_description) {
-            setAvatarOption("profile");
-            setCharacterDescription(data.data.character_description);
-            setProfileCharacterDesc(data.data.character_description);
-            setUploadedAvatarPreview(cachedAvatarUrl);
-          }
-        } catch (err: any) {
-          console.error('Error analyzing avatar:', err);
-          setError(uiLang === 'id' ? 'Gagal menganalisis avatar' : 'Failed to analyze avatar');
-        } finally {
-          setAnalyzingAvatar(false);
-        }
-      }
-    } else if (option === "upload") {
-      fileInputRef.current?.click();
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      setError(uiLang === 'id' ? 'Hanya file gambar yang diperbolehkan' : 'Only image files are allowed');
-      return;
-    }
-
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      setError(uiLang === 'id' ? 'Ukuran file maksimal 5MB' : 'Maximum file size is 5MB');
-      return;
-    }
-
-    setAnalyzingAvatar(true);
-    setError(null);
-
-    try {
-      // Create preview
-      const previewUrl = URL.createObjectURL(file);
-      setUploadedAvatarPreview(previewUrl);
-
-      // Convert to base64
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        
-        // Call analyze-avatar Edge Function
-        const { data, error } = await supabase.functions.invoke('analyze-avatar', {
-          body: {
-            image_base64: base64,
-            user_id: user?.id,
-            save_to_profile: false // Don't save uploaded avatars to profile
-          }
-        });
-
-        if (error) throw error;
-        if (data?.success && data?.data?.character_description) {
-          setAvatarOption("upload");
-          setCharacterDescription(data.data.character_description);
-        } else {
-          throw new Error('Failed to get character description');
-        }
-        
-        setAnalyzingAvatar(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      console.error('Error uploading avatar:', err);
-      setError(uiLang === 'id' ? 'Gagal menganalisis avatar' : 'Failed to analyze avatar');
-      setAnalyzingAvatar(false);
-      setUploadedAvatarPreview(null);
-    }
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const clearAvatar = () => {
-    setAvatarOption("none");
-    setCharacterDescription(null);
-    setUploadedAvatarPreview(null);
-  };
-
-  // Get avatar display name (use UI language)
-  const getAvatarDisplayName = () => {
-    if (avatarOption === "none") return uiLang === 'id' ? 'Tanpa Avatar' : uiLang === 'hi' ? 'कोई अवतार नहीं' : 'No Avatar';
-    if (avatarOption === "profile") return uiLang === 'id' ? 'Profil' : uiLang === 'hi' ? 'प्रोफ़ाइल' : 'Profile';
-    if (avatarOption === "upload") return uiLang === 'id' ? 'Upload' : uiLang === 'hi' ? 'अपलोड' : 'Uploaded';
-    return '';
-  };
-
   const canProceed = prompt.trim().length > 0;
 
   const handleGenerate = async () => {
@@ -650,7 +412,6 @@ export const TopicSelection = (): JSX.Element => {
     setGeneratingPhase(0);
     setError(null);
 
-    // Multilingual generation phases (use UI language for display)
     const phases = {
       id: [
         { step: "Menganalisis topik...", icon: "analyze" },
@@ -675,23 +436,19 @@ export const TopicSelection = (): JSX.Element => {
     const currentPhases = phases[uiLang as keyof typeof phases] || phases.en;
 
     try {
-      // Phase 1: Analyzing topic
       setGeneratingStep(currentPhases[0].step);
       setGeneratingPhase(1);
       
-      // Map OUTPUT language for script generation
       const langMap: Record<string, string> = {
         'id': 'indonesian',
         'en': 'english',
         'hi': 'hindi',
       };
 
-      // Phase 2: Loading knowledge base
       await new Promise(resolve => setTimeout(resolve, 600));
       setGeneratingStep(currentPhases[1].step);
       setGeneratingPhase(2);
       
-      // Phase 3: Generating script
       await new Promise(resolve => setTimeout(resolve, 600));
       setGeneratingStep(currentPhases[2].step);
       setGeneratingPhase(3);
@@ -703,10 +460,8 @@ export const TopicSelection = (): JSX.Element => {
           duration: duration,
           aspect_ratio: ratio,
           platform: onboardingData.platforms?.[0] || 'tiktok',
-          language: langMap[outputLang] || 'indonesian', // Use OUTPUT language
+          language: langMap[outputLang] || 'indonesian',
           user_id: user?.id
-          // NOTE: character_description is passed to VideoEditor, not here
-          // generate-images will use it for CREATOR shots
         }
       });
 
@@ -716,7 +471,6 @@ export const TopicSelection = (): JSX.Element => {
         throw new Error(scriptData?.error?.message || 'Failed to generate script');
       }
 
-      // Phase 4: Finalizing
       setGeneratingStep(currentPhases[3].step);
       setGeneratingPhase(4);
       await new Promise(resolve => setTimeout(resolve, 400));
@@ -725,6 +479,9 @@ export const TopicSelection = (): JSX.Element => {
       const existingSessionId = location.state?.sessionId;
       const sessionId = existingSessionId || `video_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+      // Pass avatar data to VideoEditor
+      // PRIMARY: selectedAvatarUrl for image reference (gpt-image-1)
+      // FALLBACK: characterDescription for providers without image reference (Z-Image, FLUX)
       navigate("/video-editor", {
         state: {
           sessionId,
@@ -735,9 +492,13 @@ export const TopicSelection = (): JSX.Element => {
             duration,
             aspectRatio: ratio,
             language: langMap[outputLang] || 'indonesian',
-            model: model // 'auto' | 'sora2' | 'veo31'
+            model: model
           },
-          characterDescription: characterDescription
+          // Hybrid approach:
+          // - selectedAvatarUrl: for gpt-image-1 image reference (primary)
+          // - characterDescription: for fallback text-based providers
+          selectedAvatarUrl: avatarManager.selectedAvatarUrl,
+          characterDescription: avatarManager.characterDescription
         }
       });
 
@@ -749,7 +510,7 @@ export const TopicSelection = (): JSX.Element => {
     }
   };
 
-  // Loading state with multilingual support
+  // Loading state
   if (loading) {
     const loadingText = {
       id: {
@@ -789,7 +550,7 @@ export const TopicSelection = (): JSX.Element => {
     );
   }
 
-  // Generating script state with improved UI
+  // Generating script state
   if (generating) {
     const phaseIcons = [
       <Brain key="brain" className="w-8 h-8 text-white" />,
@@ -808,18 +569,15 @@ export const TopicSelection = (): JSX.Element => {
     return (
       <div className="w-full min-h-screen bg-[#0a0a12] flex flex-col items-center justify-center px-4">
         <div className="flex flex-col items-center gap-8 max-w-md w-full">
-          {/* Animated Icon */}
           <div className="relative">
             <div className="w-24 h-24 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] flex items-center justify-center shadow-lg shadow-[#7c3aed]/30">
               <div className="animate-pulse">
                 {phaseIcons[Math.min(generatingPhase - 1, 3)] || phaseIcons[0]}
               </div>
             </div>
-            {/* Rotating ring */}
             <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-[#7c3aed] animate-spin" style={{ animationDuration: '1.5s' }} />
           </div>
 
-          {/* Title and current step */}
           <div className="text-center">
             <h2 className="text-2xl font-bold text-white mb-3">
               {uiLang === 'id' ? 'Membuat Script Viral' : uiLang === 'hi' ? 'वायरल स्क्रिप्ट बना रहे हैं' : 'Creating Viral Script'}
@@ -832,16 +590,13 @@ export const TopicSelection = (): JSX.Element => {
             </p>
           </div>
 
-          {/* Progress steps */}
           <div className="flex items-center gap-2 w-full px-4">
             {[1, 2, 3, 4].map((phase) => (
               <React.Fragment key={phase}>
                 <div className="flex flex-col items-center gap-1 flex-1">
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 ${
-                      generatingPhase >= phase
-                        ? 'bg-[#7c3aed] scale-110'
-                        : 'bg-[#2a2a38]'
+                      generatingPhase >= phase ? 'bg-[#7c3aed] scale-110' : 'bg-[#2a2a38]'
                     }`}
                   >
                     {generatingPhase > phase ? (
@@ -861,17 +616,14 @@ export const TopicSelection = (): JSX.Element => {
                   </span>
                 </div>
                 {phase < 4 && (
-                  <div
-                    className={`h-0.5 flex-1 transition-all duration-500 ${
-                      generatingPhase > phase ? 'bg-[#7c3aed]' : 'bg-[#2a2a38]'
-                    }`}
-                  />
+                  <div className={`h-0.5 flex-1 transition-all duration-500 ${
+                    generatingPhase > phase ? 'bg-[#7c3aed]' : 'bg-[#2a2a38]'
+                  }`} />
                 )}
               </React.Fragment>
             ))}
           </div>
 
-          {/* Topic being processed */}
           <div className="bg-[#1a1a24] border border-[#2b2b38] rounded-xl p-4 w-full">
             <p className="text-white/40 text-xs mb-1">
               {uiLang === 'id' ? 'Topik:' : uiLang === 'hi' ? 'विषय:' : 'Topic:'}
@@ -908,7 +660,6 @@ export const TopicSelection = (): JSX.Element => {
 
   const currentInputType = inputTypeOptions.find((opt) => opt.value === inputType);
 
-  // UI text translations (use uiLang for website interface)
   const uiText = {
     title: uiLang === 'id' ? "Pilih topik" : uiLang === 'hi' ? "एक विषय चुनें" : "Choose a topic",
     subtitle: uiLang === 'id' 
@@ -941,7 +692,6 @@ export const TopicSelection = (): JSX.Element => {
             <Logo />
           </div>
           
-          {/* Progress Steps */}
           <div className="flex gap-2 mb-8 justify-center max-w-md mx-auto">
             {[1, 2, 3, 4, 5, 6, 7].map((step) => (
               <div
@@ -960,7 +710,6 @@ export const TopicSelection = (): JSX.Element => {
             {uiText.subtitle}
           </p>
           
-          {/* Context Badges - Show user's personalization (USE DATABASE DATA) */}
           {(dbOnboardingData?.interest || dbOnboardingData?.selected_niches?.length || hasDnaTone) && (
             <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
               <span className="text-white/40 text-xs">{uiText.basedOn}</span>
@@ -1003,7 +752,6 @@ export const TopicSelection = (): JSX.Element => {
 
         {/* Topic Recommendations Section */}
         <div className="mb-8">
-          {/* Section Header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-[#7c3aed]" />
@@ -1012,7 +760,6 @@ export const TopicSelection = (): JSX.Element => {
               </h3>
             </div>
             
-            {/* Refresh Button with Rate Limit */}
             <button
               onClick={handleRefresh}
               disabled={refreshing || rateLimited}
@@ -1038,7 +785,6 @@ export const TopicSelection = (): JSX.Element => {
             </button>
           </div>
 
-          {/* Rate Limit Warning */}
           {rateLimited && (
             <div className="mb-4 bg-orange-500/10 border border-orange-500/30 rounded-lg px-4 py-2 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-orange-400 flex-shrink-0" />
@@ -1048,7 +794,6 @@ export const TopicSelection = (): JSX.Element => {
             </div>
           )}
 
-          {/* Topic Cards Grid - Exactly 6 items */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {topics.slice(0, 6).map((topic) => {
               const isSelected = selectedTopic === topic.id;
@@ -1085,9 +830,8 @@ export const TopicSelection = (): JSX.Element => {
           <div className="flex-1 h-px bg-[#2b2b38]" />
         </div>
 
-        {/* Input Form - EXACT MATCH with ScriptLab */}
+        {/* Input Form */}
         <div className="bg-[#1a1a24] border border-[#2b2b38] rounded-2xl p-4 mb-8">
-          {/* Input Type Tabs */}
           <div className="flex gap-1 mb-4 p-1 bg-[#0a0a12] rounded-xl">
             {inputTypeOptions.map((opt) => (
               <button
@@ -1108,7 +852,6 @@ export const TopicSelection = (): JSX.Element => {
             ))}
           </div>
 
-          {/* Textarea / Input */}
           {inputType === "transcript" ? (
             <textarea
               value={prompt}
@@ -1125,7 +868,6 @@ export const TopicSelection = (): JSX.Element => {
             />
           )}
 
-          {/* Character count for transcript */}
           {inputType === "transcript" && prompt.length > 0 && (
             <div className="text-right text-white/40 text-xs mb-2">
               {prompt.length} characters
@@ -1176,7 +918,7 @@ export const TopicSelection = (): JSX.Element => {
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60 pointer-events-none" />
             </div>
 
-            {/* Language Dropdown - OUTPUT language for script */}
+            {/* Language Dropdown */}
             <div className="relative">
               <select
                 value={outputLang}
@@ -1190,93 +932,36 @@ export const TopicSelection = (): JSX.Element => {
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60 pointer-events-none" />
             </div>
 
-            {/* Avatar Dropdown */}
-            <div className="relative" ref={avatarDropdownRef}>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                accept="image/*"
-                className="hidden"
-              />
-              
-              <button
-                type="button"
-                onClick={() => setAvatarDropdownOpen(!avatarDropdownOpen)}
-                disabled={analyzingAvatar}
-                className={`flex items-center gap-2 bg-[#2a2a38] border rounded-lg px-3 py-2 text-white text-sm focus:outline-none transition-all ${
-                  avatarOption !== 'none' 
-                    ? 'border-[#7c3aed] bg-[#7c3aed]/10' 
-                    : 'border-[#3b3b48] hover:border-[#7c3aed]/50'
-                } ${analyzingAvatar ? 'opacity-70 cursor-wait' : 'cursor-pointer'}`}
-              >
-                {analyzingAvatar ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : uploadedAvatarPreview ? (
-                  <img src={uploadedAvatarPreview} alt="Avatar" className="w-5 h-5 rounded-full object-cover" />
-                ) : (
-                  <User className="w-4 h-4 text-white/60" />
-                )}
-                <span className="max-w-[60px] truncate">
-                  {analyzingAvatar 
-                    ? (uiLang === 'id' ? 'Analisis...' : 'Analyzing...') 
-                    : getAvatarDisplayName()
-                  }
-                </span>
-                {avatarOption !== 'none' && !analyzingAvatar ? (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); clearAvatar(); }}
-                    className="ml-1 hover:text-red-400 transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                ) : (
-                  <ChevronDown className="w-4 h-4 text-white/60" />
-                )}
-              </button>
-
-              {/* Dropdown Menu */}
-              {avatarDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-48 bg-[#1a1a24] border border-[#2b2b38] rounded-lg shadow-xl z-50 overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => handleAvatarOptionSelect('none')}
-                    className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5 ${
-                      avatarOption === 'none' ? 'text-[#7c3aed]' : 'text-white/80'
-                    }`}
-                  >
-                    <User className="w-4 h-4" />
-                    {uiLang === 'id' ? 'Tanpa Avatar' : uiLang === 'hi' ? 'कोई अवतार नहीं' : 'No Avatar'}
-                  </button>
-                  
-                  {cachedAvatarUrl && (
-                    <button
-                      type="button"
-                      onClick={() => handleAvatarOptionSelect('profile')}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5 ${
-                        avatarOption === 'profile' ? 'text-[#7c3aed]' : 'text-white/80'
-                      }`}
-                    >
-                      <img src={cachedAvatarUrl} alt="Profile" className="w-5 h-5 rounded-full object-cover" />
-                      {uiLang === 'id' ? 'Gunakan Profil' : uiLang === 'hi' ? 'प्रोफ़ाइल उपयोग करें' : 'Use Profile'}
-                      {profileCharacterDesc && <span className="ml-auto text-green-400 text-xs">✓</span>}
-                    </button>
-                  )}
-                  
-                  <button
-                    type="button"
-                    onClick={() => handleAvatarOptionSelect('upload')}
-                    className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5 border-t border-[#2b2b38] ${
-                      avatarOption === 'upload' ? 'text-[#7c3aed]' : 'text-white/80'
-                    }`}
-                  >
-                    <Upload className="w-4 h-4" />
-                    {uiLang === 'id' ? 'Upload Baru' : uiLang === 'hi' ? 'नया अपलोड करें' : 'Upload New'}
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Avatar Dropdown - Using shared component */}
+            <AvatarDropdown
+              avatarOption={avatarManager.avatarOption}
+              avatarDropdownOpen={avatarManager.avatarDropdownOpen}
+              uploadedAvatarPreview={avatarManager.uploadedAvatarPreview}
+              savedAvatars={avatarManager.savedAvatars}
+              selectedSavedAvatar={avatarManager.selectedSavedAvatar}
+              cachedAvatarUrl={avatarManager.cachedAvatarUrl}
+              profileCharacterDesc={avatarManager.profileCharacterDesc}
+              loadingAvatars={avatarManager.loadingAvatars}
+              analyzingAvatar={avatarManager.analyzingAvatar}
+              editingAvatarId={avatarManager.editingAvatarId}
+              editingName={avatarManager.editingName}
+              onDropdownToggle={() => avatarManager.setAvatarDropdownOpen(!avatarManager.avatarDropdownOpen)}
+              onAvatarSelect={avatarManager.handleAvatarOptionSelect}
+              onDelete={avatarManager.handleDeleteAvatar}
+              onEditStart={(id, name) => {
+                avatarManager.setEditingAvatarId(id);
+                avatarManager.setEditingName(name);
+              }}
+              onEditNameChange={avatarManager.setEditingName}
+              onEditSave={avatarManager.handleRenameAvatar}
+              onEditCancel={() => avatarManager.setEditingAvatarId(null)}
+              getDisplayName={avatarManager.getAvatarDisplayName}
+              onClear={avatarManager.clearAvatar}
+              dropdownRef={avatarManager.avatarDropdownRef}
+              fileInputRef={avatarManager.fileInputRef}
+              onFileSelect={avatarManager.handleFileSelect}
+              language={uiLang}
+            />
 
             {/* DNA Tone Toggle */}
             {hasDnaTone && (
@@ -1330,6 +1015,22 @@ export const TopicSelection = (): JSX.Element => {
           </div>
         </div>
       </div>
+
+      {/* Avatar Name Modal - for new uploads */}
+      <AvatarNameModal
+        show={avatarManager.showNameModal}
+        name={avatarManager.newAvatarName}
+        previewFile={avatarManager.pendingUploadFile}
+        saving={avatarManager.savingAvatar}
+        language={uiLang}
+        onNameChange={avatarManager.setNewAvatarName}
+        onSave={avatarManager.handleSaveAvatar}
+        onCancel={() => {
+          avatarManager.setShowNameModal(false);
+          avatarManager.setPendingUploadFile(null);
+        }}
+        nameInputRef={avatarManager.nameInputRef}
+      />
     </div>
   );
 };

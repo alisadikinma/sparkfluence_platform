@@ -33,6 +33,13 @@ const FLUX_RESOLUTIONS: Record<string, { width: number; height: number }> = {
   '1:1': { width: 1024, height: 1024 }
 }
 
+// GPT-Image-1 sizes (similar to DALL-E 3)
+const GPT_IMAGE_SIZES: Record<string, string> = {
+  '9:16': '1024x1792',
+  '16:9': '1792x1024',
+  '1:1': '1024x1024'
+}
+
 // Job status constants
 const JOB_STATUS = {
   PENDING: 0,
@@ -287,7 +294,7 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
 
   // Check API keys
   const provider = job.provider || 'huggingface'
-  if (provider === 'openai' && !openaiApiKey) {
+  if ((provider === 'openai' || provider === 'gpt-image-1') && !openaiApiKey) {
     return new Response(
       JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'OPENAI_API_KEY not configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -314,6 +321,8 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
 
     if (provider === 'openai') {
       imageUrl = await generateWithDalle(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
+    } else if (provider === 'gpt-image-1') {
+      imageUrl = await generateWithGptImage1(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
     } else {
       imageUrl = await generateWithFlux(hfApiKey!, job.visual_prompt, aspectRatio, supabase)
     }
@@ -461,7 +470,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   }
 
   // Check API keys based on provider
-  if (provider === 'openai' && !openaiApiKey) {
+  if ((provider === 'openai' || provider === 'gpt-image-1') && !openaiApiKey) {
     return new Response(
       JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'OPENAI_API_KEY not configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -504,9 +513,16 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
 
       if (provider === 'openai') {
         imageUrl = await generateWithDalle(openaiApiKey!, imagePrompt, aspectRatio, supabase)
+      } else if (provider === 'gpt-image-1') {
+        imageUrl = await generateWithGptImage1(openaiApiKey!, imagePrompt, aspectRatio, supabase)
       } else {
         imageUrl = await generateWithFlux(hfApiKey!, imagePrompt, aspectRatio, supabase)
       }
+
+      // Determine provider string for response
+      const providerString = provider === 'openai' ? 'openai-dalle3' 
+        : provider === 'gpt-image-1' ? 'openai-gpt-image-1' 
+        : 'huggingface-flux'
 
       images.push({
         segment_number: segment.segment_number,
@@ -515,7 +531,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
         emotion: emotion,
         prompt: imagePrompt,
         image_url: imageUrl,
-        provider: provider === 'openai' ? 'openai-dalle3' : 'huggingface-flux',
+        provider: providerString,
         error: null
       })
 
@@ -525,6 +541,11 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       console.error(`[${provider.toUpperCase()}] ❌ Failed: ${errorMessage}`)
       
+      // Determine provider string for error response
+      const errorProviderString = provider === 'openai' ? 'openai-dalle3' 
+        : provider === 'gpt-image-1' ? 'openai-gpt-image-1' 
+        : 'huggingface-flux'
+
       images.push({
         segment_number: segment.segment_number,
         segment_type: segmentType,
@@ -532,7 +553,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
         emotion: emotion,
         prompt: imagePrompt,
         image_url: null,
-        provider: provider === 'openai' ? 'openai-dalle3' : 'huggingface-flux',
+        provider: errorProviderString,
         error: errorMessage
       })
     }
@@ -554,7 +575,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
           success: successCount, 
           failed: images.length - successCount 
         },
-        provider: provider === 'openai' ? 'openai-dalle3' : 'huggingface-flux',
+        provider: provider === 'openai' ? 'openai-dalle3' : provider === 'gpt-image-1' ? 'openai-gpt-image-1' : 'huggingface-flux',
         metadata: { topic, costume, aspectRatio, style }
       } 
     }),
@@ -685,7 +706,38 @@ function buildCinematicPrompt(params: PromptParams): string {
     const costumeEnhancement = costume ? `\n\nWARDROBE OVERRIDE:\nOutfit: ${costume}\nGrooming: Professional, camera-ready` : ''
     const styleEnhancement = `\n\nPRODUCTION STYLE:\n${styleGuide}`
     
-    return basePrompt + costumeEnhancement + styleEnhancement
+    // ========================================================================
+    // CHARACTER IDENTITY ANCHOR (Critical for HOOK↔CTA consistency)
+    // Based on DALL-E 3.6/SORA 2 Best Practices PDF:
+    // "Repeating key physical traits in each part helps prevent character drift"
+    // ========================================================================
+    const segmentUpperCase = segmentType.toUpperCase()
+    const isCreatorFaceSegment = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentUpperCase)
+    
+    let characterAnchor = ''
+    if (isCreatorFaceSegment && charDesc && charDesc.trim().length >= 20) {
+      // Extract and reinforce key identity markers
+      characterAnchor = `\n\n` +
+        `══════════════════════════════════════════════════════════════\n` +
+        `CHARACTER IDENTITY ANCHOR (MUST MAINTAIN ACROSS ALL SHOTS)\n` +
+        `══════════════════════════════════════════════════════════════\n` +
+        `EXACT PERSON: ${charDesc}\n\n` +
+        `CRITICAL CONSISTENCY RULES:\n` +
+        `• This is the SAME person appearing in HOOK and CTA segments\n` +
+        `• Maintain EXACT facial features: face shape, skin tone, eye color\n` +
+        `• Maintain EXACT hairstyle: color, length, texture, styling\n` +
+        `• Maintain EXACT distinguishing marks: glasses, jewelry, accessories\n` +
+        `• Maintain EXACT body type and posture characteristics\n` +
+        `• Only expression/emotion changes between segments, NOT identity\n\n` +
+        `SEGMENT CONTEXT: ${segmentUpperCase} shot\n` +
+        `• ${segmentUpperCase === 'HOOK' ? 'Opening shot - establish character identity clearly' : ''}` +
+        `${segmentUpperCase === 'CTA' ? 'Closing shot - MUST match HOOK character exactly' : ''}` +
+        `${segmentUpperCase === 'LOOP-END' ? 'Loop transition - seamless match to HOOK frame' : ''}` +
+        `${segmentUpperCase === 'ENDING_CTA' ? 'Final CTA - maintain full character consistency' : ''}\n` +
+        `══════════════════════════════════════════════════════════════`
+    }
+    
+    return basePrompt + costumeEnhancement + styleEnhancement + characterAnchor
   }
   
   // B-ROLL SHOT - Use buildBrollPrompt from knowledge file
@@ -822,4 +874,64 @@ async function generateWithFlux(
   } finally {
     clearTimeout(timeoutId)
   }
+}
+
+// ============================================================================
+// GPT-Image-1 Generation (OpenAI - Premium, superior instruction following)
+// ============================================================================
+
+async function generateWithGptImage1(
+  apiKey: string,
+  prompt: string,
+  aspectRatio: string,
+  supabase: any
+): Promise<string> {
+  const size = GPT_IMAGE_SIZES[aspectRatio] || GPT_IMAGE_SIZES['9:16']
+  
+  console.log(`[GPT-IMAGE-1] Size: ${size}, Prompt length: ${prompt.length} chars`)
+  
+  const response = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-image-1',
+      prompt: prompt,
+      n: 1,
+      size: size,
+      quality: 'high' // High quality for cinematic production
+      // Note: gpt-image-1 returns b64_json by default
+    })
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(`GPT-Image-1 API error: ${errorData.error?.message || response.statusText}`)
+  }
+
+  const data = await response.json()
+  const imageBase64 = data.data[0].b64_json
+
+  // Decode base64 to Uint8Array for Deno
+  const binaryString = atob(imageBase64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  const imageBlob = new Blob([bytes], { type: 'image/png' })
+  
+  const filename = `generated/gpt-image-1_${Date.now()}_${Math.random().toString(36).substring(7)}.png`
+  
+  const { error: uploadError } = await supabase.storage
+    .from('generated-images')
+    .upload(filename, imageBlob, { contentType: 'image/png', upsert: false })
+
+  if (uploadError) {
+    throw new Error(`Upload failed: ${uploadError.message}`)
+  }
+
+  const { data: urlData } = supabase.storage.from('generated-images').getPublicUrl(filename)
+  return urlData.publicUrl
 }

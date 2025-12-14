@@ -192,7 +192,7 @@ serve(async (req) => {
     // PARSE OUTPUT
     // ============================================================
     
-    const scriptData = parseScriptOutput(generatedText, selectedDuration)
+    const scriptData = parseScriptOutput(generatedText, selectedDuration, content)
 
     // Add video settings to metadata
     if (scriptData.metadata) {
@@ -226,6 +226,44 @@ function buildSystemPrompt(language: string, duration: string): string {
   const structureGuide = getStructureByDuration(duration)
   
   return `You are an elite Viral Script Engineer specializing in short-form video content that gets millions of views.
+
+═══════════════════════════════════════════════════════════════
+🚨 CONTENT COMPLETENESS RULES (ABSOLUTELY CRITICAL)
+═══════════════════════════════════════════════════════════════
+
+**IF THE TOPIC CONTAINS A NUMBER (e.g., "5 masakan", "3 tips", "7 cara"), YOU MUST:**
+
+1. **COVER ALL ITEMS** - If topic says "5 masakan Italy", script MUST explain ALL 5 dishes
+2. **ONE BODY SEGMENT PER ITEM** - Each numbered item gets its own BODY segment
+3. **NO SKIPPING** - Never skip items to rush to CTA
+4. **COMPLETE STORYLINE** - Each item must have:
+   - Name/title of the item
+   - Why it's relevant/viral/important
+   - Key details or tips
+
+**CONTENT DISTRIBUTION FOR NUMBERED TOPICS:**
+
+| Topic Items | Video Duration | Distribution |
+|-------------|----------------|---------------|
+| 3 items | 30s | BODY-1, BODY-2, BODY-3 (1 item each) |
+| 5 items | 60s | BODY-1 to BODY-4 + PEAK (distribute 5 items) |
+| 7 items | 90s | BODY-1 to BODY-7 (1 item each) |
+
+**EXAMPLE - "5 Masakan Italy yang VIRAL":**
+- HOOK: "Lo wajib coba 5 masakan Italy ini sebelum mati!"
+- FORE: "Gue bakal kasih tau 5 masakan, dan yang kelima ini literally game changer. Stay sampai akhir!"
+- BODY-1: Masakan #1 (Carbonara) - kenapa viral, tips
+- BODY-2: Masakan #2 (Cacio e Pepe) - kenapa viral, tips  
+- BODY-3: Masakan #3 (Amatriciana) - kenapa viral, tips
+- BODY-4: Masakan #4 (Risotto) - kenapa viral, tips
+- PEAK: Masakan #5 (Tiramisu) - THE BEST ONE, payoff dari foreshadow
+- CTA: "Follow buat rekomendasi kuliner lainnya!"
+
+**VALIDATION BEFORE OUTPUT:**
+- [ ] Count items mentioned in topic
+- [ ] Verify ALL items are covered in BODY segments
+- [ ] Ensure PEAK contains the "best" item (teased in FORE)
+- [ ] Storyline flows logically from #1 to #N
 
 ═══════════════════════════════════════════════════════════════
 🚨 CRITICAL OUTPUT RULES (MUST FOLLOW EXACTLY)
@@ -323,6 +361,32 @@ ${CINEMATIC_VISUAL_GUIDE}
 DO NOT deviate from this structure. Output ONLY the JSON.`;
 }
 
+// Helper: Extract number from topic (e.g., "5 masakan" -> 5)
+function extractTopicItemCount(topic: string): number | null {
+  // Match patterns like "5 masakan", "3 tips", "7 cara", "10 fakta"
+  const patterns = [
+    /(\d+)\s*(masakan|makanan|minuman|resep|menu|hidangan)/i,
+    /(\d+)\s*(tips?|trik|cara|langkah|step|hack)/i,
+    /(\d+)\s*(fakta|hal|alasan|reason|thing)/i,
+    /(\d+)\s*(produk|brand|merek|item|barang)/i,
+    /(\d+)\s*(tempat|lokasi|destinasi|spot)/i,
+    /(\d+)\s*(film|movie|series|anime|game)/i,
+    /(\d+)\s*(artis|seleb|influencer|creator)/i,
+    /top\s*(\d+)/i,
+    /(\d+)\s*(best|terbaik|teratas)/i
+  ]
+  
+  for (const pattern of patterns) {
+    const match = topic.match(pattern)
+    if (match) {
+      // Extract the number (could be in group 1 or 2 depending on pattern)
+      const num = parseInt(match[1]) || parseInt(match[2])
+      if (num && num > 0 && num <= 10) return num
+    }
+  }
+  return null
+}
+
 function buildUserPrompt(
   inputType: string,
   content: string,
@@ -336,6 +400,30 @@ function buildUserPrompt(
   const compositionGuide = aspectRatio === '16:9' 
     ? 'LANDSCAPE - wide shots, horizontal framing'
     : 'VERTICAL 9:16 - tight framing, center-focused, mobile-optimized'
+  
+  // Detect if topic has numbered items
+  const itemCount = extractTopicItemCount(content)
+  const numberedTopicInstructions = itemCount ? `
+═══════════════════════════════════════════════════════════════
+⚠️ NUMBERED TOPIC DETECTED: ${itemCount} ITEMS
+═══════════════════════════════════════════════════════════════
+
+Your topic mentions **${itemCount} items**. You MUST:
+
+1. **COVER ALL ${itemCount} ITEMS** in the BODY segments
+2. **Distribution plan:**
+   - BODY-1: Item #1 (with name + why it's special)
+   - BODY-2: Item #2 (with name + why it's special)
+   ${itemCount >= 3 ? '- BODY-3: Item #3 (with name + why it\'s special)' : ''}
+   ${itemCount >= 4 ? '- BODY-4: Item #4 (with name + why it\'s special)' : ''}
+   ${itemCount >= 5 ? '- PEAK: Item #5 - THE BEST ONE (teased in FORE as "yang terakhir paling gila")' : ''}
+   ${itemCount >= 6 ? '- Additional items distributed across remaining BODY segments' : ''}
+3. **FORE must tease**: "...dan yang ke-${itemCount} ini yang paling [gila/penting]"
+4. **NO SKIPPING** - Do NOT jump to CTA before covering all ${itemCount} items!
+
+❌ WRONG: Topic "5 masakan" but only covers 2, then jumps to CTA
+✅ CORRECT: Topic "5 masakan" covers all 5 across BODY-1, BODY-2, BODY-3, BODY-4, PEAK
+` : ''
 
   return `
 ═══════════════════════════════════════════════════════════════
@@ -349,17 +437,19 @@ VIDEO SPECS:
 - Aspect Ratio: ${aspectRatio} (${compositionGuide})
 - Platform: ${platform}
 - Language: ${langConfig.name} (${langConfig.style})
-
+${numberedTopicInstructions}
 ═══════════════════════════════════════════════════════════════
 ⚡ GENERATE NOW - OUTPUT JSON ONLY
 ═══════════════════════════════════════════════════════════════
 
-Remember:
+CRITICAL REMINDERS:
 1. HOOK must stop scroll with curiosity/shock pattern. Example: "${langConfig.hook.example}"
 2. FORE must tease ending: "${langConfig.foreshadow.example}"
 3. Each visual_direction MUST be 50-80 words
 4. ALL script_text MUST be in ${langConfig.name} ONLY - NO mixing languages!
 5. Return ONLY valid JSON, no other text
+${itemCount ? `6. ⚠️ COVER ALL ${itemCount} ITEMS - Do NOT skip any! Each item gets its own BODY segment.
+7. PEAK segment = Item #${itemCount} (the BEST one, teased in FORE)` : ''}
 
 Generate the complete viral script JSON now:`;
 }
@@ -368,7 +458,7 @@ Generate the complete viral script JSON now:`;
 // OUTPUT PARSER (Enhanced with validation)
 // ============================================================================
 
-function parseScriptOutput(generatedText: string, duration: string): any {
+function parseScriptOutput(generatedText: string, duration: string, topic?: string): any {
   try {
     // Try to extract JSON from the response
     let jsonStr = generatedText.trim()
@@ -416,6 +506,31 @@ function parseScriptOutput(generatedText: string, duration: string): any {
           total_duration: parseInt(duration),
           language: 'indonesian',
           platform: 'tiktok'
+        }
+      }
+      
+      // ========================================================
+      // CONTENT COMPLETENESS VALIDATION
+      // ========================================================
+      if (topic) {
+        const expectedItemCount = extractTopicItemCount(topic)
+        if (expectedItemCount) {
+          // Count BODY segments (where content items should be)
+          const bodySegments = parsed.segments.filter((s: any) => 
+            s.type?.toUpperCase().startsWith('BODY') || 
+            s.type?.toUpperCase() === 'PEAK'
+          )
+          
+          parsed.metadata.expected_items = expectedItemCount
+          parsed.metadata.body_segment_count = bodySegments.length
+          
+          if (bodySegments.length < expectedItemCount) {
+            parsed.metadata.content_warning = `Topic mentions ${expectedItemCount} items but only ${bodySegments.length} BODY segments generated. Some items may be missing.`
+            console.warn(`[Parser] ⚠️ Content mismatch: Expected ${expectedItemCount} items, got ${bodySegments.length} BODY segments`)
+          } else {
+            parsed.metadata.content_complete = true
+            console.log(`[Parser] ✅ Content complete: ${expectedItemCount} items covered in ${bodySegments.length} BODY segments`)
+          }
         }
       }
 

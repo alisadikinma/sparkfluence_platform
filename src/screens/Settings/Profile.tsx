@@ -432,6 +432,7 @@ export const Profile = (): JSX.Element => {
       
       // Auto-trigger analyze-avatar to generate character description
       console.log('[Profile] Auto-analyzing avatar with Gemini Vision...');
+      let characterDesc: string | null = null;
       try {
         const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-avatar', {
           body: {
@@ -444,11 +445,39 @@ export const Profile = (): JSX.Element => {
         if (analysisError) {
           console.error('[Profile] Avatar analysis error:', analysisError);
         } else if (analysisData?.success) {
-          console.log('[Profile] Character description generated:', analysisData.data.character_description?.slice(0, 100) + '...');
+          characterDesc = analysisData.data.character_description;
+          console.log('[Profile] Character description generated:', characterDesc?.slice(0, 100) + '...');
         }
       } catch (analysisErr) {
         console.error('[Profile] Failed to analyze avatar:', analysisErr);
-        // Don't fail the upload - analysis is optional enhancement
+      }
+      
+      // Also save to user_avatars table for ScriptLab/TopicSelection reuse
+      try {
+        // Check how many avatars user has
+        const { count } = await supabase
+          .from('user_avatars')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id);
+        
+        const avatarCount = count || 0;
+        const isFirstAvatar = avatarCount === 0;
+        
+        // Insert into user_avatars
+        await supabase
+          .from('user_avatars')
+          .insert({
+            user_id: user.id,
+            name: language === 'id' ? `Profil ${new Date().toLocaleDateString('id-ID')}` : `Profile ${new Date().toLocaleDateString()}`,
+            storage_path: avatarFileName,
+            avatar_url: avatarUrlData.publicUrl,
+            character_description: characterDesc,
+            is_default: isFirstAvatar
+          });
+        
+        console.log('[Profile] Avatar also saved to user_avatars table');
+      } catch (avatarTableErr) {
+        console.error('[Profile] Failed to save to user_avatars:', avatarTableErr);
       }
       
     } catch (err) {

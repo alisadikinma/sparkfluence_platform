@@ -979,6 +979,8 @@ interface VideoPromptParams {
   environment: string
   platform: VideoModelKey
   duration: number
+  // NEW: Voice character for consistency across all segments
+  voiceCharacter?: string
 }
 
 // ============================================================================
@@ -1017,6 +1019,137 @@ function getResolutionForAspectRatio(aspectRatio: string): string {
   return '1080p'
 }
 
+// ============================================================================
+// VOICE CHARACTER ANCHOR - Ensures consistent voice across all segments
+// ============================================================================
+
+interface VoiceCharacter {
+  description: string
+  gender: 'male' | 'female'
+  age: string
+  accent: string
+  tone: string
+  pace: string
+}
+
+function generateVoiceCharacter(language: string, creatorAppearance?: string): VoiceCharacter {
+  // Try to extract gender from creator appearance if provided
+  let gender: 'male' | 'female' = 'male' // default
+  if (creatorAppearance) {
+    if (/\b(female|woman|wanita|perempuan|cewek|gadis)\b/i.test(creatorAppearance)) {
+      gender = 'female'
+    } else if (/\b(male|man|pria|laki|cowok)\b/i.test(creatorAppearance)) {
+      gender = 'male'
+    }
+  }
+  
+  const voiceProfiles: Record<string, Record<'male' | 'female', VoiceCharacter>> = {
+    indonesian: {
+      male: {
+        description: 'Indonesian male voice, 25-30 years old, warm friendly tone with casual Gen-Z energy',
+        gender: 'male',
+        age: '25-30 years old',
+        accent: 'Indonesian native speaker with slight Jakarta urban accent',
+        tone: 'warm, friendly, enthusiastic, casual Gen-Z energy',
+        pace: 'medium-fast, natural conversational rhythm'
+      },
+      female: {
+        description: 'Indonesian female voice, 23-28 years old, bright cheerful tone with casual Gen-Z energy',
+        gender: 'female',
+        age: '23-28 years old',
+        accent: 'Indonesian native speaker with slight Jakarta urban accent',
+        tone: 'bright, cheerful, engaging, casual Gen-Z energy',
+        pace: 'medium-fast, natural conversational rhythm'
+      }
+    },
+    english: {
+      male: {
+        description: 'American English male voice, 28-35 years old, confident engaging tone',
+        gender: 'male',
+        age: '28-35 years old',
+        accent: 'American English, neutral/general American accent',
+        tone: 'confident, engaging, professional yet approachable',
+        pace: 'medium pace, clear articulation'
+      },
+      female: {
+        description: 'American English female voice, 25-32 years old, warm professional tone',
+        gender: 'female',
+        age: '25-32 years old',
+        accent: 'American English, neutral/general American accent',
+        tone: 'warm, professional, engaging, trustworthy',
+        pace: 'medium pace, clear articulation'
+      }
+    },
+    hindi: {
+      male: {
+        description: 'Hindi male voice, 25-32 years old, energetic Hinglish style',
+        gender: 'male',
+        age: '25-32 years old',
+        accent: 'Hindi native with natural English code-switching (Hinglish)',
+        tone: 'energetic, relatable, youthful urban Indian style',
+        pace: 'medium-fast, dynamic rhythm'
+      },
+      female: {
+        description: 'Hindi female voice, 23-30 years old, vibrant Hinglish style',
+        gender: 'female',
+        age: '23-30 years old',
+        accent: 'Hindi native with natural English code-switching (Hinglish)',
+        tone: 'vibrant, relatable, youthful urban Indian style',
+        pace: 'medium-fast, dynamic rhythm'
+      }
+    },
+    spanish: {
+      male: {
+        description: 'Latin American Spanish male voice, 27-34 years old, warm engaging tone',
+        gender: 'male',
+        age: '27-34 years old',
+        accent: 'Latin American Spanish, neutral accent',
+        tone: 'warm, engaging, personable, enthusiastic',
+        pace: 'medium pace, natural rhythm'
+      },
+      female: {
+        description: 'Latin American Spanish female voice, 25-32 years old, bright friendly tone',
+        gender: 'female',
+        age: '25-32 years old',
+        accent: 'Latin American Spanish, neutral accent',
+        tone: 'bright, friendly, engaging, personable',
+        pace: 'medium pace, natural rhythm'
+      }
+    }
+  }
+  
+  const langKey = language.toLowerCase()
+  const profiles = voiceProfiles[langKey] || voiceProfiles.english
+  return profiles[gender]
+}
+
+function buildVoiceCharacterAnchor(voiceChar: VoiceCharacter): string {
+  return `═══════════════════════════════════════════════════════════════
+VOICE CHARACTER ANCHOR (MUST MAINTAIN ACROSS ALL SEGMENTS)
+═══════════════════════════════════════════════════════════════
+Voice Profile: ${voiceChar.description}
+Gender: ${voiceChar.gender}
+Age: ${voiceChar.age}
+Accent: ${voiceChar.accent}
+Tone: ${voiceChar.tone}
+Pace: ${voiceChar.pace}
+
+CRITICAL: This EXACT voice character must be used for ALL audio in this video.
+Do NOT change voice characteristics between segments.
+═══════════════════════════════════════════════════════════════`
+}
+
+// Helper: Get generic voice tone when voice character not available
+function getGenericVoiceTone(language: string): string {
+  const voiceDirections: Record<string, string> = {
+    indonesian: 'Indonesian voice, casual Gen-Z tone, natural narration style',
+    english: 'American English voice, engaging narrator tone, clear delivery',
+    hindi: 'Hindi voice with authentic Hinglish style, warm narration',
+    spanish: 'Latin American Spanish voice, warm narrator delivery'
+  }
+  return voiceDirections[language.toLowerCase()] || voiceDirections.english
+}
+
 function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const {
     segment,
@@ -1027,20 +1160,38 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     aspectRatio,
     environment,
     platform,
-    duration
+    duration,
+    voiceCharacter: voiceCharacterParam
   } = params
 
   // Extract segment data
   const visualDirection = segment.visual_direction || segment.visualDirection || ''
-  const shotType = segment.shot_type || 'B-ROLL'
-  const isCreatorShot = shotType === 'CREATOR'
-  const characterName = segment.character_name || 'Creator'
   const transitionType = segment.transition || 'hold'
   const segmentNumber = segment.segment_number || 1
   const segmentId = segment.segment_id || segment.id || 'CLIP'
   
+  // ========================================================================
+  // VOICE CHARACTER ANCHOR - Same voice for ALL segments
+  // ========================================================================
+  const creatorAppearance = segment.creator_appearance || segment.character_description || ''
+  const detectedLanguage = scriptText ? detectScriptLanguage(scriptText) : language.toLowerCase()
+  const voiceChar = voiceCharacterParam 
+    ? JSON.parse(voiceCharacterParam) as VoiceCharacter
+    : generateVoiceCharacter(detectedLanguage, creatorAppearance)
+  const voiceAnchor = buildVoiceCharacterAnchor(voiceChar)
+  
+  // ========================================================================
+  // CRITICAL: Determine if this is a CREATOR SHOT or B-ROLL
+  // Only HOOK and CTA show creator face with dialogue
+  // All other segments (FORE, BODY, PEAK, etc.) are B-roll without creator face
+  // ========================================================================
+  const CREATOR_SEGMENTS = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA']
+  const segmentTypeUpper = segmentType.toUpperCase()
+  const isCreatorSegment = CREATOR_SEGMENTS.includes(segmentTypeUpper)
+  
+  console.log(`[VIDEO-PROMPT] Segment: ${segmentType}, isCreatorSegment: ${isCreatorSegment}, voiceGender: ${voiceChar.gender}`)
+  
   // Extract enhanced data (new fields)
-  const characterDescription = segment.character_description || segment.characterDescription || undefined
   const propsDescription = segment.props_description || segment.propsDescription || undefined
   const backgroundDescription = segment.background_description || segment.backgroundDescription || undefined
   const timeOfDay = segment.time_of_day || segment.timeOfDay || 'soft natural light'
@@ -1048,62 +1199,354 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const soundEffects = segment.sound_effects || segment.soundEffects || undefined
   const outputIntent = segment.output_intent || segment.outputIntent || undefined
   
-  // IMPORTANT: Detect voice language from SCRIPT TEXT, not UI language
-  // This ensures voice matches the actual dialogue content
+  // ========================================================================
+  // CREATOR SEGMENT (HOOK, CTA) - Shows creator face with dialogue
+  // ========================================================================
+  if (isCreatorSegment) {
+    const characterName = segment.character_name || 'Creator'
+    const characterDescription = segment.character_description || segment.characterDescription || undefined
+    
+    // Use consistent voice from anchor
+    const voiceDirection = `${voiceChar.description}. Accent: ${voiceChar.accent}. Tone: ${voiceChar.tone}. Pace: ${voiceChar.pace}.`
+    
+    const extendedParams: ExtendedPromptParams = {
+      // Basic
+      segmentId: segmentId,
+      segmentNumber: segmentNumber,
+      duration: platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10),
+      aspectRatio: aspectRatio,
+      segmentType: segmentType,
+      emotion: emotion,
+      
+      // Character & Scene - CREATOR FACE VISIBLE
+      characterName: characterName,
+      characterDescription: characterDescription,
+      propsDescription: propsDescription,
+      backgroundDescription: backgroundDescription,
+      
+      // Camera - Direct to camera for creator shots
+      shotType: 'medium_close_up',
+      cameraAngle: 'eye-level, direct to camera',
+      
+      // Lighting & Environment
+      environment: environment,
+      timeOfDay: timeOfDay,
+      lightingDescription: lightingDescription,
+      
+      // Action
+      visualDirection: visualDirection,
+      
+      // Audio - DIALOGUE ENABLED for creator segments
+      dialogue: scriptText || undefined,
+      voiceTone: voiceDirection,
+      soundEffects: soundEffects,
+      
+      // Creative
+      outputIntent: outputIntent,
+      transition: transitionType
+    }
+
+    if (platform === 'veo-3.1-fast') {
+      return buildVeoPrompt(extendedParams)
+    }
+    return buildSoraPrompt(extendedParams)
+  }
+  
+  // ========================================================================
+  // B-ROLL SEGMENT (FORE, BODY, PEAK, etc.) - NO creator face, NO dialogue
+  // Pure visual motion based on image reference
+  // ========================================================================
+  
+  // Detect voice language for voiceover
   const detectedLanguage = scriptText ? detectScriptLanguage(scriptText) : language.toLowerCase()
   
-  // Voice direction based on DETECTED script language
-  const voiceDirections: Record<string, string> = {
-    indonesian: 'Indonesian voice with casual Gen-Z intonation, natural conversational delivery',
-    english: 'American English voice with engaging conversational tone, clear pronunciation',
-    hindi: 'Hindi voice with authentic Hinglish style, natural delivery',
-    spanish: 'Latin American Spanish voice with warm, engaging delivery'
-  }
-  const voiceDirection = voiceDirections[detectedLanguage] || voiceDirections.english
-  
-  // Build extended prompt parameters
-  const extendedParams: ExtendedPromptParams = {
-    // Basic
-    segmentId: segmentId,
-    segmentNumber: segmentNumber,
+  // Build B-roll specific prompt (voiceover narration + visual fokus topik)
+  const brollPrompt = buildBrollVideoPrompt({
+    segmentId,
+    segmentNumber,
     duration: platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10),
-    aspectRatio: aspectRatio,
-    segmentType: segmentType,
-    emotion: emotion,
-    
-    // Character & Scene
-    characterName: characterName,
-    characterDescription: characterDescription,
-    propsDescription: propsDescription,
-    backgroundDescription: backgroundDescription,
-    
-    // Camera
-    shotType: shotType === 'CREATOR' ? 'medium_close_up' : undefined, // Let knowledge file decide
-    cameraAngle: isCreatorShot ? 'eye-level, direct to camera' : 'eye-level',
-    
-    // Lighting & Environment
-    environment: environment,
-    timeOfDay: timeOfDay,
-    lightingDescription: lightingDescription,
-    
-    // Action
-    visualDirection: visualDirection,
-    
-    // Audio
-    dialogue: scriptText || undefined,
-    voiceTone: voiceDirection,
-    soundEffects: soundEffects,
-    
-    // Creative
-    outputIntent: outputIntent,
-    transition: transitionType
-  }
+    aspectRatio,
+    segmentType,
+    emotion,
+    environment,
+    timeOfDay,
+    lightingDescription,
+    visualDirection,
+    backgroundDescription,
+    propsDescription,
+    soundEffects,
+    outputIntent,
+    transition: transitionType,
+    platform,
+    // NEW: Include script for voiceover narration
+    scriptText,
+    language: detectedLanguage,
+    // Voice character for consistency
+    voiceCharacter: voiceChar
+  })
+  
+  return brollPrompt
+}
 
-  // Use knowledge file functions based on platform
-  if (platform === 'veo-3.1-fast') {
-    return buildVeoPrompt(extendedParams)
-  }
+// ============================================================================
+// B-ROLL VIDEO PROMPT BUILDER (No creator face, no dialogue)
+// ============================================================================
 
-  // SORA 2 HD
-  return buildSoraPrompt(extendedParams)
+interface BrollPromptParams {
+  segmentId: string
+  segmentNumber: number
+  duration: number
+  aspectRatio: '9:16' | '16:9'
+  segmentType: string
+  emotion: string
+  environment: string
+  timeOfDay?: string
+  lightingDescription?: string
+  visualDirection?: string
+  backgroundDescription?: string
+  propsDescription?: string
+  soundEffects?: string
+  outputIntent?: string
+  transition: string
+  platform: VideoModelKey
+  // Script text for voiceover narration
+  scriptText?: string
+  language?: string
+  // Voice character for consistency across segments
+  voiceCharacter?: VoiceCharacter
+}
+
+function buildBrollVideoPrompt(params: BrollPromptParams): string {
+  const {
+    segmentId,
+    segmentNumber,
+    duration,
+    aspectRatio,
+    segmentType,
+    emotion,
+    environment,
+    timeOfDay = 'soft natural light',
+    lightingDescription,
+    visualDirection,
+    backgroundDescription,
+    propsDescription,
+    soundEffects,
+    outputIntent,
+    transition,
+    platform,
+    scriptText = '',
+    language = 'english',
+    voiceCharacter
+  } = params
+  
+  // Build voiceover section if script exists - USE VOICE CHARACTER ANCHOR
+  const hasVoiceover = scriptText && scriptText.trim().length > 0
+  
+  // Use voice character if provided, otherwise fallback to generic
+  const voiceTone = voiceCharacter 
+    ? `${voiceCharacter.description}. Accent: ${voiceCharacter.accent}. Tone: ${voiceCharacter.tone}. Pace: ${voiceCharacter.pace}.`
+    : getGenericVoiceTone(language)
+  
+  // Get emotion-based motion settings
+  const emotionMotion = getEmotionMotion(emotion)
+  
+  // Get camera movement for segment type
+  const cameraMove = getCameraMovement(segmentType, emotion)
+  
+  // Get audio template
+  const audioTemplate = getAudioTemplate(environment)
+  const ambientSound = audioTemplate.split('.')[0]
+  
+  // Resolution based on aspect ratio
+  const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
+  
+  // Build visual description from reference image
+  const visualDesc = visualDirection || backgroundDescription || `${environment} scene with ${emotion} atmosphere`
+  
+  // Build props line
+  const propsLine = propsDescription ? `Props: ${propsDescription}.` : ''
+  
+  // Build lighting line
+  const lightingLine = lightingDescription || `${timeOfDay}, professional ${environment} lighting`
+  
+  // Generate output intent if not provided
+  const actualOutputIntent = outputIntent || generateBrollOutputIntent(segmentType)
+  
+  // Build B-roll specific action beats (no character, pure visual motion)
+  const actionBeats = generateBrollActionBeats({
+    duration,
+    segmentType,
+    emotion,
+    visualDirection,
+    emotionMotion
+  })
+  
+  const actionBeatsFormatted = actionBeats.map(beat => `- (${beat.timeRange}): ${beat.action}`).join('\n')
+  
+  // Build voiceover/narration section
+  const voiceoverSection = hasVoiceover
+    ? `VOICEOVER (off-screen narration, NO face visible):
+Narrator: "${scriptText}"
+Voice style: ${voiceTone}`
+    : 'No voiceover in this clip'
+  
+  // Platform-specific prompt
+  if (platform === 'sora-2-hd') {
+    return `[SORA 2 B-ROLL — ${segmentId}.${segmentNumber}]
+
+DURATION: ${duration} seconds
+RESOLUTION: 720p
+ASPECT: ${aspectRatio}
+
+STARTING FRAME:
+Continue from the provided image — ${visualDesc}. ${propsLine} Visual focus on topic/subject matter. NO human face visible.
+
+CAMERA:
+${cameraMove.promptPhrase}. Stable, cinematic movement.
+
+SETTING & LIGHTING:
+${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
+
+ACTION SEQUENCE:
+${actionBeatsFormatted}
+
+SOUND:
+- Ambient: ${ambientSound}
+- Effects: ${soundEffects || 'subtle environmental sounds only'}
+- ${voiceoverSection}
+
+PHYSICS:
+Natural motion, realistic timing. Single camera movement per shot.
+
+CONTINUITY NOTES:
+- Maintain exact lighting and color grade from reference image
+- NO human face should appear - this is B-roll footage
+- Visual focus on topic/subject/product, NOT on people
+- ${hasVoiceover ? 'Voiceover narration plays over visuals' : 'Pure ambient sound'}
+
+TRANSITION:
+${getTransition(transition)}
+
+OUTPUT INTENT:
+${actualOutputIntent}
+
+EXCLUSIONS:
+No text overlays, no human faces, no people on screen, no morphing, no artifacts.`
+  }
+  
+  // VEO 3.1 B-roll prompt
+  return `[VEO 3.1 B-ROLL — ${segmentId}.${segmentNumber}]
+
+DURATION: ${duration} seconds
+RESOLUTION: ${resolution}
+ASPECT: ${aspectRatio}
+
+STARTING FRAME:
+Continue from the provided image — ${visualDesc}. ${propsLine} Visual focus on topic/subject matter. NO human face visible.
+
+CAMERA:
+${cameraMove.promptPhrase}. Stable tripod, cinematic movement. All key elements remain in frame.
+
+SETTING & LIGHTING:
+${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment clearly visible.
+
+ACTION SEQUENCE:
+${actionBeatsFormatted}
+
+SOUND:
+- Ambient: ${ambientSound}
+- Effects: ${soundEffects || 'subtle environmental sounds only'}
+- ${voiceoverSection}
+- Exclude: no subtitles, no text overlays, no background music unless specified
+
+CONTINUITY NOTES:
+- Maintain exact lighting and color grade from reference image
+- NO human face should appear - this is B-roll footage
+- Visual focus on topic/subject/product, NOT on people
+- ${hasVoiceover ? 'Voiceover narration plays over visuals' : 'Pure ambient sound'}
+
+TRANSITION:
+${getTransition(transition)}
+
+OUTPUT INTENT:
+${actualOutputIntent}
+
+NEGATIVE:
+No blurry elements, no distortion, no artifacts, no text overlays, no human faces, no people on screen.`
+}
+
+function generateBrollActionBeats(params: {
+  duration: number
+  segmentType: string
+  emotion: string
+  visualDirection?: string
+  emotionMotion: ReturnType<typeof getEmotionMotion>
+}): Array<{ timeRange: string; action: string }> {
+  const { duration, segmentType, emotion, visualDirection, emotionMotion } = params
+  
+  const beat1End = Math.floor(duration * 0.33)
+  const beat2End = Math.floor(duration * 0.66)
+  
+  const typeUpper = segmentType.toUpperCase()
+  
+  // B-roll action beats (no character, pure visual motion)
+  const brollBeats: Record<string, Array<{ timeRange: string; action: string }>> = {
+    'FORE': [
+      { timeRange: `0s-${beat1End}s`, action: 'Camera slowly reveals scene, ambient motion begins' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Environment elements move naturally, light shifts subtly' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Scene settles, atmospheric particles drift through frame' }
+    ],
+    'FORESHADOW': [
+      { timeRange: `0s-${beat1End}s`, action: 'Slow reveal of key visual element' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Subtle motion builds anticipation' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Hold on mysterious detail, light flickers' }
+    ],
+    'BODY': [
+      { timeRange: `0s-${beat1End}s`, action: visualDirection || 'Scene establishes with subtle ambient motion' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Key visual elements animate naturally' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Motion continues smoothly, environment breathes' }
+    ],
+    'BODY-1': [
+      { timeRange: `0s-${beat1End}s`, action: 'First key concept visualized through motion' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Supporting visual elements animate' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Scene holds with subtle ambient movement' }
+    ],
+    'BODY-2': [
+      { timeRange: `0s-${beat1End}s`, action: 'Second concept visualization begins' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Visual demonstration continues' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Smooth transition preparation' }
+    ],
+    'BODY-3': [
+      { timeRange: `0s-${beat1End}s`, action: 'Final supporting visual' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Culminating motion' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Scene resolves with ${emotion} energy' }
+    ],
+    'PEAK': [
+      { timeRange: `0s-${beat1End}s`, action: 'Dramatic reveal begins, high impact visual' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Peak moment, maximum visual energy' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Impact settles, powerful stillness' }
+    ],
+    'ENDING': [
+      { timeRange: `0s-${beat1End}s`, action: 'Scene begins gentle resolve' },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Atmosphere softens, warm conclusion' },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'Final hold, satisfying visual closure' }
+    ]
+  }
+  
+  return brollBeats[typeUpper] || brollBeats['BODY']
+}
+
+function generateBrollOutputIntent(segmentType: string): string {
+  const intents: Record<string, string> = {
+    'FORE': 'Set the visual context. Create anticipation for upcoming content without revealing too much.',
+    'FORESHADOW': 'Plant visual seeds. Build curiosity through mysterious or intriguing imagery.',
+    'BODY': 'Support the narrative visually. Provide B-roll that enhances the story without distraction.',
+    'BODY-1': 'Illustrate the first key point visually. Make abstract concepts tangible.',
+    'BODY-2': 'Continue visual storytelling. Maintain engagement through compelling imagery.',
+    'BODY-3': 'Build toward climax. Visual energy should increase toward the peak.',
+    'PEAK': 'Maximum visual impact. This is the climactic B-roll moment.',
+    'ENDING': 'Provide visual resolution. Satisfy the viewer with a complete visual arc.'
+  }
+  
+  return intents[segmentType.toUpperCase()] || intents['BODY']
 }
