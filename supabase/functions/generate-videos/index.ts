@@ -8,6 +8,8 @@ import {
   EMOTION_MOTION_MAP,
   AUDIO_TEMPLATES,
   VIDEO_CONTENT_TEMPLATES,
+  SHOT_TYPES,
+  VOICE_TONES,
   selectVideoPlatform,
   getCameraMovement,
   getEmotionMotion,
@@ -17,7 +19,9 @@ import {
   buildSoraPrompt,
   getContentTemplate,
   validateDialogueLength,
-  type VideoModelKey
+  type VideoModelKey,
+  type ExtendedPromptParams,
+  type ActionBeat
 } from '../_shared/prompts/cinematicVideoKnowledge.ts'
 
 const corsHeaders = {
@@ -457,12 +461,17 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
     // Call VEO API
     const apiEndpoint = selectedPlatform === 'sora-2-hd' ? SORA_API_ENDPOINT : VEO_API_ENDPOINT
+    const aspectRatio = job.aspect_ratio || '9:16'
+    // Resolution depends on aspect ratio: 9:16 = 720p max, 16:9 = 1080p
+    const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
+    
     const formData = new FormData()
     formData.append('prompt', videoPrompt)
     formData.append('model', modelSpecs.apiModel)
-    formData.append('resolution', selectedPlatform === 'sora-2-hd' ? '720p' : (job.resolution || '1080p'))
-    formData.append('aspect_ratio', job.aspect_ratio || '9:16')
-    formData.append('file_urls', job.image_url)
+    formData.append('resolution', resolution)
+    formData.append('aspect_ratio', aspectRatio)
+    // Use ref_images for reference image (per API docs)
+    formData.append('ref_images', job.image_url)
 
     const apiResponse = await fetch(apiEndpoint, {
       method: 'POST',
@@ -782,12 +791,16 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
     try {
       const apiEndpoint = selectedPlatform === 'sora-2-hd' ? SORA_API_ENDPOINT : VEO_API_ENDPOINT
 
+      // Resolution depends on aspect ratio: 9:16 = 720p max, 16:9 = 1080p
+      const actualResolution = aspect_ratio === '16:9' ? '1080p' : '720p'
+      
       const formData = new FormData()
       formData.append('prompt', videoPrompt)
       formData.append('model', modelSpecs.apiModel)
-      formData.append('resolution', selectedPlatform === 'sora-2-hd' ? '720p' : resolution)
+      formData.append('resolution', actualResolution)
       formData.append('aspect_ratio', aspect_ratio)
-      formData.append('file_urls', imageUrl)
+      // Use ref_images for reference image (per API docs)
+      formData.append('ref_images', imageUrl)
 
       const apiResponse = await fetch(apiEndpoint, {
         method: 'POST',
@@ -972,6 +985,38 @@ interface VideoPromptParams {
 // CINEMATIC VIDEO PROMPT BUILDER (Using Knowledge File Functions)
 // ============================================================================
 
+// Helper: Detect language from text content
+function detectScriptLanguage(text: string): string {
+  if (!text || text.trim().length === 0) return 'english'
+  
+  // Indonesian indicators: common words and patterns
+  const indonesianPatterns = /\b(yang|dan|di|ke|dari|untuk|dengan|ini|itu|adalah|akan|bisa|sudah|belum|tidak|jangan|ayo|yuk|guys|banget|gak|nggak|nih|dong|sih|loh|kan|gimana|gimana|bagaimana|kenapa|mengapa|apa|siapa|kapan|dimana|mana)\b/i
+  
+  // Hindi indicators: Devanagari script or common romanized Hindi
+  const hindiPatterns = /[\u0900-\u097F]|\b(hai|hain|ka|ki|ke|se|ko|ne|aur|yeh|woh|kya|kaise|kyun|kahaan|kaun|kab|bahut|accha|theek|nahi|haan|ji)\b/i
+  
+  // Spanish indicators
+  const spanishPatterns = /\b(el|la|los|las|un|una|de|en|que|es|por|para|con|como|pero|muy|más|también|ahora|aquí|esto|eso)\b/i
+  
+  // Check patterns
+  if (indonesianPatterns.test(text)) return 'indonesian'
+  if (hindiPatterns.test(text)) return 'hindi'
+  if (spanishPatterns.test(text)) return 'spanish'
+  
+  // Default to English
+  return 'english'
+}
+
+// Helper: Get resolution based on aspect ratio
+function getResolutionForAspectRatio(aspectRatio: string): string {
+  // 9:16 (vertical/portrait) = max 720p
+  // 16:9 (horizontal/landscape) = can do 1080p
+  if (aspectRatio === '9:16' || aspectRatio === '3:4' || aspectRatio === '4:5') {
+    return '720p'
+  }
+  return '1080p'
+}
+
 function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const {
     segment,
@@ -985,100 +1030,80 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     duration
   } = params
 
+  // Extract segment data
   const visualDirection = segment.visual_direction || segment.visualDirection || ''
   const shotType = segment.shot_type || 'B-ROLL'
   const isCreatorShot = shotType === 'CREATOR'
   const characterName = segment.character_name || 'Creator'
   const transitionType = segment.transition || 'hold'
+  const segmentNumber = segment.segment_number || 1
+  const segmentId = segment.segment_id || segment.id || 'CLIP'
   
-  // Voice direction based on language
+  // Extract enhanced data (new fields)
+  const characterDescription = segment.character_description || segment.characterDescription || undefined
+  const propsDescription = segment.props_description || segment.propsDescription || undefined
+  const backgroundDescription = segment.background_description || segment.backgroundDescription || undefined
+  const timeOfDay = segment.time_of_day || segment.timeOfDay || 'soft natural light'
+  const lightingDescription = segment.lighting_description || segment.lightingDescription || undefined
+  const soundEffects = segment.sound_effects || segment.soundEffects || undefined
+  const outputIntent = segment.output_intent || segment.outputIntent || undefined
+  
+  // IMPORTANT: Detect voice language from SCRIPT TEXT, not UI language
+  // This ensures voice matches the actual dialogue content
+  const detectedLanguage = scriptText ? detectScriptLanguage(scriptText) : language.toLowerCase()
+  
+  // Voice direction based on DETECTED script language
   const voiceDirections: Record<string, string> = {
     indonesian: 'Indonesian voice with casual Gen-Z intonation, natural conversational delivery',
     english: 'American English voice with engaging conversational tone, clear pronunciation',
-    hindi: 'Hindi voice with authentic Hinglish style, natural delivery'
+    hindi: 'Hindi voice with authentic Hinglish style, natural delivery',
+    spanish: 'Latin American Spanish voice with warm, engaging delivery'
   }
-  const voiceDirection = voiceDirections[language.toLowerCase()] || voiceDirections.english
-
-  // Use knowledge file functions based on platform
-  if (platform === 'veo-3.1-fast') {
-    // Use buildVeoPrompt from knowledge file
-    const basePrompt = buildVeoPrompt({
-      duration: Math.min(duration, 8),
-      aspectRatio: aspectRatio,
-      segmentType: segmentType,
-      emotion: emotion,
-      dialogue: scriptText || undefined,
-      characterName: characterName,
-      environment: environment
-    })
-    
-    // Enhance with additional production details
-    const enhancements = `
-
-LANGUAGE & VOICE
-Voice Direction: ${voiceDirection}
-${isCreatorShot ? 'Eye Contact: Direct to camera, engaging the viewer authentically' : 'Gaze: Natural, within scene context'}
-
-VISUAL CONTINUITY (CRITICAL)
-- Maintain EXACT appearance from reference image
-- Preserve lighting setup and color grade
-- Keep character proportions and identity consistent
-- No morphing or distortion of facial features
-
-MOTION PHYSICS
-- Natural human movement timing
-- Realistic fabric and hair physics
-- Gravity applies normally
-- Smooth acceleration/deceleration
-
-TRANSITION OUT
-${getTransition(transitionType)}
-
-QUALITY REQUIREMENTS
-- Crystal clear sharp focus on subject
-- Professional color grading
-- No artifacts, no blur, no glitches
-- Hollywood production value`
-    
-    return basePrompt + enhancements
-  }
-
-  // SORA 2 HD - Use buildSoraPrompt from knowledge file
-  const sceneAction = visualDirection || (isCreatorShot 
-    ? 'Creator faces camera directly, speaking with confidence and natural gestures'
-    : 'Professional cinematic scene with subject in frame, natural movement')
+  const voiceDirection = voiceDirections[detectedLanguage] || voiceDirections.english
   
-  const basePrompt = buildSoraPrompt({
-    duration: Math.min(duration, 10),
+  // Build extended prompt parameters
+  const extendedParams: ExtendedPromptParams = {
+    // Basic
+    segmentId: segmentId,
+    segmentNumber: segmentNumber,
+    duration: platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10),
     aspectRatio: aspectRatio,
     segmentType: segmentType,
     emotion: emotion,
-    sceneAction: sceneAction,
-    dialogue: scriptText || undefined,
+    
+    // Character & Scene
     characterName: characterName,
-    environment: environment
-  })
-  
-  // Enhance with additional production details
-  const enhancements = `
+    characterDescription: characterDescription,
+    propsDescription: propsDescription,
+    backgroundDescription: backgroundDescription,
+    
+    // Camera
+    shotType: shotType === 'CREATOR' ? 'medium_close_up' : undefined, // Let knowledge file decide
+    cameraAngle: isCreatorShot ? 'eye-level, direct to camera' : 'eye-level',
+    
+    // Lighting & Environment
+    environment: environment,
+    timeOfDay: timeOfDay,
+    lightingDescription: lightingDescription,
+    
+    // Action
+    visualDirection: visualDirection,
+    
+    // Audio
+    dialogue: scriptText || undefined,
+    voiceTone: voiceDirection,
+    soundEffects: soundEffects,
+    
+    // Creative
+    outputIntent: outputIntent,
+    transition: transitionType
+  }
 
-LANGUAGE & VOICE
-Voice Direction: ${voiceDirection}
+  // Use knowledge file functions based on platform
+  if (platform === 'veo-3.1-fast') {
+    return buildVeoPrompt(extendedParams)
+  }
 
-VISUAL CONSISTENCY (CRITICAL)
-- Reference image defines starting frame exactly
-- Maintain all visual elements throughout
-- No identity drift or morphing
-- Consistent lighting and color
-
-TRANSITION
-${getTransition(transitionType)}
-
-EXCLUSIONS
-- No text overlays or subtitles
-- No morphing between appearances
-- No visual artifacts or glitches
-- No watermarks or logos`
-  
-  return basePrompt + enhancements
+  // SORA 2 HD
+  return buildSoraPrompt(extendedParams)
 }

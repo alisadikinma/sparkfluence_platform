@@ -39,14 +39,14 @@ export const VIDEO_MODELS = {
     bestFor: ['B-roll', 'complex motion', 'longer segments', 'narrative sequences']
   },
   'veo-3.1-fast': {
-    name: 'Veo 3.1 Fast Full HD (8s)',
-    apiModel: 'veo-3.1-fast', // Model name stays same, resolution controlled by 'resolution' param
-    resolution: '1080p', // This gets passed as separate parameter
-    dimensions: { landscape: '1920x1080', portrait: '1080x1920' },
+    name: 'Veo 3.1 Fast (8s)',
+    apiModel: 'veo-3.1-fast',
+    resolution: '720p-1080p', // Depends on aspect: 9:16=720p, 16:9=1080p
+    dimensions: { landscape: '1920x1080', portrait: '720x1280' }, // Portrait limited to 720p
     maxDuration: 8,
     price: 0.01,
-    strengths: ['1080p quality', 'best lip-sync', 'native audio', 'sharp output'],
-    weaknesses: ['8s max', 'cannot extend in fast mode'],
+    strengths: ['best lip-sync', 'native audio', 'sharp output', '1080p for 16:9'],
+    weaknesses: ['8s max', '720p for 9:16 portrait'],
     bestFor: ['Creator talking head', 'Hook', 'CTA', 'dialogue-heavy']
   }
 } as const;
@@ -541,68 +541,74 @@ export const VIDEO_CONTENT_TEMPLATES = {
 };
 
 // ============================================================================
-// VIDEO PROMPT TEMPLATES
+// VIDEO PROMPT TEMPLATES (Claude Project Quality)
 // ============================================================================
 
 export const VIDEO_PROMPT_TEMPLATES = {
-  veo: `[VEO 3.1 - VIDEO]
+  veo: `[VEO 3.1 PROMPT — {segment_id}]
 
-Duration: ~{duration} seconds (max 8s)
-Resolution: 1080p
-Aspect: {aspect_ratio}
+DURATION: {duration} seconds
 
-CAMERA MOTION
-Movement: {camera_movement}
-Speed: {camera_speed}
+STARTING FRAME:
+Continue from the provided image — {character_description}. {props_description}. {background_description}.
 
-SUBJECT MOTION
-{subject_motion}
+CAMERA:
+{focal_length} {shot_type}, {camera_angle}, {camera_stability}. {camera_movement_description}.
 
-AMBIENT MOTION
-{ambient_motion}
+SETTING & LIGHTING:
+{time_of_day}, {lighting_description}. {environment_details}.
 
-AUDIO
-Ambient: {ambient_audio}
-Dialogue: {character_name} says: "{dialogue}"
-Exclude: no subtitles, no audience sounds, no text overlays
+ACTION SEQUENCE:
+{action_beats}
 
-CONTINUITY
-Maintain exact lighting, environment, and appearance from reference image.
+DIALOGUE:
+{character_name} ({emotion_tone}):
+"{dialogue}"
 
-TRANSITION
-{transition_instruction}
+SOUND:
+- Voice: {voice_description}
+- Ambient: {ambient_sounds}
+- Effects: {sound_effects}
 
-NEGATIVE
-No blurry elements, no distortion, no artifacts, no text overlays.`,
+CONTINUITY NOTES:
+{continuity_notes}
 
-  sora: `[SORA 2 - VIDEO]
+OUTPUT INTENT:
+{output_intent}`,
 
-Duration: ~{duration} seconds (max 10s)
-Resolution: 720p
-Aspect: {aspect_ratio}
+  sora: `[SORA 2 PROMPT — {segment_id}]
 
-SCENE ACTION
-{scene_action}
+DURATION: {duration} seconds
 
-CINEMATOGRAPHY
-Camera: {camera_framing} + {camera_movement}
-Mood: {emotional_tone}
+STARTING FRAME:
+Continue from the provided image — {character_description}. {props_description}. {background_description}.
 
-ACTIONS (beat-based timing)
-- {beat_1} (0-3s)
-- {beat_2} (3-6s)
-- {beat_3} (6-10s)
+CAMERA:
+{focal_length} {shot_type}, {camera_angle}, {camera_stability}. {camera_movement_description}.
 
-AUDIO
-Ambient: {ambient_audio}
-Dialogue: "{character_name}: {dialogue}"
+SETTING & LIGHTING:
+{time_of_day}, {lighting_description}. {environment_details}.
 
-PHYSICS
-{physics_description}
+ACTION SEQUENCE:
+{action_beats}
 
-EXCLUSIONS
-No text on screen, no morphing, no artifacts.
-Maintain proportions and identity throughout.`
+DIALOGUE:
+{character_name} ({emotion_tone}):
+"{dialogue}"
+
+SOUND:
+- Voice: {voice_description}
+- Ambient: {ambient_sounds}
+- Effects: {sound_effects}
+
+PHYSICS:
+Natural motion, realistic timing, gravity applies normally. {physics_notes}
+
+CONTINUITY NOTES:
+{continuity_notes}
+
+OUTPUT INTENT:
+{output_intent}`
 };
 
 // ============================================================================
@@ -711,124 +717,494 @@ export function getTransition(transitionType: string): string {
   return TRANSITIONS[type]?.endInstruction || TRANSITIONS.hold.endInstruction;
 }
 
-/**
- * Build VEO video prompt
- */
-export function buildVeoPrompt(params: {
+// ============================================================================
+// EXTENDED PROMPT PARAMETERS TYPE
+// ============================================================================
+
+export interface ExtendedPromptParams {
+  // Basic
+  segmentId: string;
+  segmentNumber: number;
   duration: number;
   aspectRatio: '9:16' | '16:9';
   segmentType: string;
   emotion: string;
+  
+  // Character & Scene
+  characterName: string;
+  characterDescription?: string;  // "bald, glasses, navy blazer, white shirt"
+  propsDescription?: string;      // "holding tablet showing dashboard"
+  backgroundDescription?: string; // "modern office with glass windows"
+  
+  // Camera
+  shotType?: string;              // "medium shot", "close-up", "wide shot"
+  cameraAngle?: string;           // "eye-level", "low angle", "high angle"
+  cameraMovement?: string;        // from getCameraMovement or custom
+  focalLength?: string;           // "35mm", "50mm", "85mm"
+  
+  // Lighting & Environment
+  environment: string;
+  timeOfDay?: string;             // "mid-morning", "golden hour", "night"
+  lightingDescription?: string;   // "soft diffused sunlight", "dramatic side lighting"
+  
+  // Action
+  actionBeats?: ActionBeat[];     // Timestamped actions
+  visualDirection?: string;       // Legacy support
+  
+  // Audio
   dialogue?: string;
-  characterName?: string;
-  environment?: string;
-}): string {
-  const {
-    duration,
-    aspectRatio,
-    segmentType,
-    emotion,
-    dialogue = '',
-    characterName = 'Creator',
-    environment = 'studio'
-  } = params;
+  voiceTone?: string;             // "confident", "warm", "excited"
+  ambientSounds?: string;         // Specific ambient description
+  soundEffects?: string;          // "soft beep", "door closing"
   
-  const cameraMove = getCameraMovement(segmentType, emotion);
+  // Continuity
+  continuityNotes?: string[];     // Array of continuity reminders
+  
+  // Creative
+  outputIntent?: string;          // "Establish authority and expertise"
+  transition?: string;
+}
+
+export interface ActionBeat {
+  timeRange: string;              // "0s-4s"
+  action: string;                 // "holds tablet, gestures explaining"
+}
+
+// ============================================================================
+// SHOT TYPE MAPPING
+// ============================================================================
+
+export const SHOT_TYPES: Record<string, {
+  name: string;
+  focalLength: string;
+  framing: string;
+}> = {
+  'extreme_close_up': { name: 'extreme close-up', focalLength: '85mm', framing: 'eyes or specific detail only' },
+  'close_up': { name: 'close-up', focalLength: '85mm', framing: 'face fills frame' },
+  'medium_close_up': { name: 'medium close-up', focalLength: '50mm', framing: 'head and shoulders' },
+  'medium': { name: 'medium shot', focalLength: '50mm', framing: 'waist up' },
+  'medium_wide': { name: 'medium wide shot', focalLength: '35mm', framing: 'knees up' },
+  'wide': { name: 'wide shot', focalLength: '24mm', framing: 'full body with environment' },
+  'extreme_wide': { name: 'extreme wide shot', focalLength: '18mm', framing: 'environment dominant' },
+  'group': { name: 'group shot', focalLength: '35mm', framing: 'multiple subjects in frame' }
+};
+
+// ============================================================================
+// VOICE TONE MAPPING
+// ============================================================================
+
+export const VOICE_TONES: Record<string, string> = {
+  'authority': 'confident, measured pace, clear articulation',
+  'curiosity': 'interested, slightly higher pitch, engaged',
+  'tension': 'tight, controlled, urgent undertone',
+  'warmth': 'gentle, welcoming, soft delivery',
+  'excitement': 'energetic, enthusiastic, upbeat pace',
+  'urgency': 'fast-paced, intense, commanding',
+  'hope': 'optimistic, rising intonation, warm',
+  'determination': 'steady, resolute, powerful',
+  'contemplation': 'thoughtful, slower pace, reflective',
+  'explaining': 'clear, educational, patient pace'
+};
+
+// ============================================================================
+// SEGMENT TYPE TO SHOT TYPE MAPPING
+// ============================================================================
+
+function getDefaultShotType(segmentType: string): string {
+  const mapping: Record<string, string> = {
+    'HOOK': 'medium_close_up',
+    'FORE': 'wide',
+    'FORESHADOW': 'wide',
+    'BODY': 'medium',
+    'BODY-1': 'medium',
+    'BODY-2': 'medium_wide',
+    'BODY-3': 'medium',
+    'PEAK': 'close_up',
+    'CTA': 'medium_close_up',
+    'ENDING': 'medium',
+    'ENDING_CTA': 'medium_close_up',
+    'LOOP-END': 'medium_close_up'
+  };
+  return mapping[segmentType.toUpperCase()] || 'medium';
+}
+
+// ============================================================================
+// GENERATE ACTION BEATS
+// ============================================================================
+
+function generateActionBeats(params: {
+  duration: number;
+  segmentType: string;
+  emotion: string;
+  characterName: string;
+  hasDialogue: boolean;
+  propsDescription?: string;
+}): ActionBeat[] {
+  const { duration, segmentType, emotion, characterName, hasDialogue, propsDescription } = params;
   const emotionMotion = getEmotionMotion(emotion);
-  const audioTemplate = getAudioTemplate(environment);
+  const typeUpper = segmentType.toUpperCase();
   
-  const dialogueLine = dialogue 
-    ? `${characterName} says: "${dialogue.substring(0, 100)}"` 
-    : 'No dialogue, ambient only';
+  // Calculate beat timing based on duration
+  const beat1End = Math.floor(duration * 0.33);
+  const beat2End = Math.floor(duration * 0.66);
   
-  return `Duration: ~${Math.min(duration, 8)} seconds
-Resolution: 1080p
-Aspect: ${aspectRatio}
+  // Default beats based on segment type
+  const defaultBeats: Record<string, ActionBeat[]> = {
+    'HOOK': [
+      { timeRange: `0s-${beat1End}s`, action: `${characterName} looks directly at camera, expression shifts to intrigue` },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: hasDialogue ? `speaks with ${emotion} energy, subtle hand gesture` : `${emotionMotion.expression}` },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'holds gaze, slight head tilt, inviting viewer in' }
+    ],
+    'CTA': [
+      { timeRange: `0s-${beat1End}s`, action: `${characterName} maintains warm eye contact, slight forward lean` },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: hasDialogue ? 'delivers call-to-action with genuine enthusiasm' : `${emotionMotion.expression}` },
+      { timeRange: `${beat2End}s-${duration}s`, action: 'warm smile, subtle nod, holds for emphasis' }
+    ],
+    'BODY': [
+      { timeRange: `0s-${beat1End}s`, action: propsDescription ? `${characterName} ${propsDescription}` : `${characterName} in natural speaking position` },
+      { timeRange: `${beat1End}s-${beat2End}s`, action: hasDialogue ? `explains with natural gestures, ${emotionMotion.subject}` : emotionMotion.subject },
+      { timeRange: `${beat2End}s-${duration}s`, action: `${emotionMotion.expression}, maintains engagement` }
+    ]
+  };
+  
+  // Return type-specific beats or default BODY beats
+  return defaultBeats[typeUpper] || defaultBeats['BODY'];
+}
 
-CAMERA MOTION
-Movement: ${cameraMove.promptPhrase}
-Speed: ${cameraMove.speed}
+// ============================================================================
+// GENERATE CONTINUITY NOTES
+// ============================================================================
 
-SUBJECT MOTION
-${emotionMotion.subject}
-Expression: ${emotionMotion.expression}
+function generateContinuityNotes(params: {
+  characterName: string;
+  characterDescription?: string;
+  propsDescription?: string;
+  environment?: string;
+}): string[] {
+  const notes: string[] = [];
+  
+  if (params.characterDescription) {
+    notes.push(`- ${params.characterName}: ${params.characterDescription} — consistent throughout`);
+  } else {
+    notes.push(`- ${params.characterName}: maintain exact appearance from reference image`);
+  }
+  
+  if (params.propsDescription) {
+    notes.push(`- Props: ${params.propsDescription}`);
+  }
+  
+  notes.push('- Lighting and color grade must match reference exactly');
+  notes.push('- No identity drift or morphing between frames');
+  
+  return notes;
+}
 
-AMBIENT MOTION
-${emotionMotion.ambient}
+// ============================================================================
+// GENERATE OUTPUT INTENT
+// ============================================================================
 
-AUDIO
-Ambient: ${audioTemplate.split('.')[0]}
-Dialogue: ${dialogueLine}
-Exclude: no subtitles, no audience sounds, no text overlays
-
-CONTINUITY
-Maintain exact lighting, environment, and appearance from reference image.
-
-TRANSITION
-${TRANSITIONS.hold.endInstruction}
-
-NEGATIVE
-No blurry elements, no distortion, no artifacts, no text overlays.`;
+function generateOutputIntent(segmentType: string, emotion: string): string {
+  const intents: Record<string, string> = {
+    'HOOK': 'Capture attention immediately. Create intrigue that compels viewer to keep watching.',
+    'FORE': 'Build anticipation. Hint at value to come without revealing everything.',
+    'FORESHADOW': 'Plant seeds for upcoming content. Create curiosity loop.',
+    'BODY': 'Deliver core value. Maintain engagement through clear, compelling delivery.',
+    'BODY-1': 'Establish first key point. Build foundation for argument.',
+    'BODY-2': 'Develop narrative. Deepen understanding with examples or evidence.',
+    'BODY-3': 'Reinforce message. Add final layer of value before conclusion.',
+    'PEAK': 'Climactic moment. Maximum emotional impact and revelation.',
+    'CTA': 'Drive action. Convert attention into engagement (follow, like, comment, click).',
+    'ENDING': 'Satisfying conclusion. Leave viewer with clear takeaway.',
+    'ENDING_CTA': 'Combine closure with action. End strong with clear next step.',
+    'LOOP-END': 'Create seamless loop back to hook. Encourage rewatch.'
+  };
+  
+  return intents[segmentType.toUpperCase()] || intents['BODY'];
 }
 
 /**
- * Build Sora 2 video prompt
+ * Build VEO video prompt (Claude Project Quality)
  */
-export function buildSoraPrompt(params: {
-  duration: number;
-  aspectRatio: '9:16' | '16:9';
-  segmentType: string;
-  emotion: string;
-  sceneAction: string;
-  dialogue?: string;
-  characterName?: string;
-  environment?: string;
-}): string {
+export function buildVeoPrompt(params: ExtendedPromptParams): string {
   const {
+    segmentId = 'CLIP',
+    segmentNumber = 1,
     duration,
     aspectRatio,
     segmentType,
     emotion,
-    sceneAction,
-    dialogue = '',
     characterName = 'Creator',
-    environment = 'studio'
+    characterDescription,
+    propsDescription,
+    backgroundDescription,
+    shotType,
+    cameraAngle = 'eye-level',
+    cameraMovement,
+    focalLength,
+    environment = 'studio',
+    timeOfDay = 'soft natural light',
+    lightingDescription,
+    actionBeats,
+    visualDirection,
+    dialogue = '',
+    voiceTone,
+    ambientSounds,
+    soundEffects,
+    continuityNotes,
+    outputIntent,
+    transition = 'hold'
   } = params;
   
+  // Determine shot type and camera settings
+  const defaultShot = getDefaultShotType(segmentType);
+  const shotConfig = SHOT_TYPES[shotType || defaultShot] || SHOT_TYPES['medium'];
+  const actualFocalLength = focalLength || shotConfig.focalLength;
+  
+  // Get camera movement
   const cameraMove = getCameraMovement(segmentType, emotion);
+  const actualCameraMovement = cameraMovement || cameraMove.promptPhrase;
+  
+  // Get emotion settings
   const emotionMotion = getEmotionMotion(emotion);
+  const actualVoiceTone = voiceTone || VOICE_TONES[emotion.toLowerCase()] || VOICE_TONES['authority'];
+  
+  // Get audio template
   const audioTemplate = getAudioTemplate(environment);
+  const actualAmbient = ambientSounds || audioTemplate.split('.')[0];
   
-  const dialogueLine = dialogue 
-    ? `"${characterName}: ${dialogue.substring(0, 80)}"` 
-    : 'No dialogue';
+  // Resolution based on aspect ratio
+  const resolution = aspectRatio === '16:9' ? '1080p' : '720p';
   
-  return `Duration: ~${Math.min(duration, 10)} seconds
-Resolution: 720p
-Aspect: ${aspectRatio}
+  // Generate action beats if not provided
+  const hasDialogue = dialogue.length > 0;
+  const actualActionBeats = actionBeats || generateActionBeats({
+    duration: Math.min(duration, 8),
+    segmentType,
+    emotion,
+    characterName,
+    hasDialogue,
+    propsDescription
+  });
+  
+  // Format action beats
+  const actionBeatsFormatted = actualActionBeats
+    .map(beat => `- (${beat.timeRange}): ${beat.action}`)
+    .join('\n');
+  
+  // Generate continuity notes if not provided
+  const actualContinuityNotes = continuityNotes || generateContinuityNotes({
+    characterName,
+    characterDescription,
+    propsDescription,
+    environment
+  });
+  const continuityFormatted = actualContinuityNotes.join('\n');
+  
+  // Generate output intent if not provided
+  const actualOutputIntent = outputIntent || generateOutputIntent(segmentType, emotion);
+  
+  // Build character description line
+  const charDescLine = characterDescription 
+    ? `${characterName} (${characterDescription})`
+    : `${characterName} as shown in reference image`;
+  
+  // Build props line
+  const propsLine = propsDescription || 'no specific props';
+  
+  // Build background line  
+  const bgLine = backgroundDescription || `${environment} setting as shown in reference`;
+  
+  // Build lighting line
+  const lightingLine = lightingDescription || `${timeOfDay}, professional ${environment} lighting`;
+  
+  // Build dialogue section
+  const dialogueSection = hasDialogue
+    ? `${characterName} (${emotion}):\n"${dialogue}"`
+    : `No dialogue. ${characterName} maintains ${emotionMotion.expression}.`;
+  
+  // Build sound effects line
+  const effectsLine = soundEffects || 'subtle ambient only, no music';
+  
+  return `[VEO 3.1 PROMPT — ${segmentId}.${segmentNumber}]
 
-SCENE ACTION
-${sceneAction}
+DURATION: ${Math.min(duration, 8)} seconds
+RESOLUTION: ${resolution}
+ASPECT: ${aspectRatio}
 
-CINEMATOGRAPHY
-Camera: ${cameraMove.promptPhrase}
-Mood: ${emotion}
+STARTING FRAME:
+Continue from the provided image — ${charDescLine}. ${propsLine}. Background: ${bgLine}.
 
-ACTIONS (beat-based timing)
-- Scene begins, subject in starting position (0-3s)
-- ${emotionMotion.subject} (3-6s)
-- ${emotionMotion.expression}, hold for emphasis (6-10s)
+CAMERA:
+${actualFocalLength} ${shotConfig.name}, ${cameraAngle}, stable tripod. ${actualCameraMovement}. All key elements remain in frame throughout.
 
-AUDIO
-Ambient: ${audioTemplate.split('.')[0]}
-Dialogue: ${dialogueLine}
+SETTING & LIGHTING:
+${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment clearly visible.
 
-PHYSICS
-Natural motion, realistic timing, gravity applies normally.
+ACTION SEQUENCE:
+${actionBeatsFormatted}
 
-EXCLUSIONS
-No text on screen, no morphing, no artifacts.
-Maintain proportions and identity throughout.`;
+DIALOGUE:
+${dialogueSection}
+
+SOUND:
+- Voice: ${actualVoiceTone}
+- Ambient: ${actualAmbient}
+- Effects: ${effectsLine}
+- Exclude: no subtitles, no text overlays, no background music unless specified
+
+CONTINUITY NOTES:
+${continuityFormatted}
+
+TRANSITION:
+${getTransition(transition)}
+
+OUTPUT INTENT:
+${actualOutputIntent}
+
+NEGATIVE:
+No blurry elements, no distortion, no artifacts, no text overlays, no identity morphing.`;
+}
+
+/**
+ * Build Sora 2 video prompt (Claude Project Quality)
+ */
+export function buildSoraPrompt(params: ExtendedPromptParams): string {
+  const {
+    segmentId = 'CLIP',
+    segmentNumber = 1,
+    duration,
+    aspectRatio,
+    segmentType,
+    emotion,
+    characterName = 'Creator',
+    characterDescription,
+    propsDescription,
+    backgroundDescription,
+    shotType,
+    cameraAngle = 'eye-level',
+    cameraMovement,
+    focalLength,
+    environment = 'studio',
+    timeOfDay = 'soft natural light',
+    lightingDescription,
+    actionBeats,
+    visualDirection,
+    dialogue = '',
+    voiceTone,
+    ambientSounds,
+    soundEffects,
+    continuityNotes,
+    outputIntent,
+    transition = 'hold'
+  } = params;
+  
+  // Determine shot type and camera settings
+  const defaultShot = getDefaultShotType(segmentType);
+  const shotConfig = SHOT_TYPES[shotType || defaultShot] || SHOT_TYPES['medium'];
+  const actualFocalLength = focalLength || shotConfig.focalLength;
+  
+  // Get camera movement - Sora prefers ONE clear movement
+  const cameraMove = getCameraMovement(segmentType, emotion);
+  const actualCameraMovement = cameraMovement || cameraMove.promptPhrase;
+  
+  // Get emotion settings
+  const emotionMotion = getEmotionMotion(emotion);
+  const actualVoiceTone = voiceTone || VOICE_TONES[emotion.toLowerCase()] || VOICE_TONES['authority'];
+  
+  // Get audio template
+  const audioTemplate = getAudioTemplate(environment);
+  const actualAmbient = ambientSounds || audioTemplate.split('.')[0];
+  
+  // Generate action beats if not provided
+  const hasDialogue = dialogue.length > 0;
+  const actualActionBeats = actionBeats || generateActionBeats({
+    duration: Math.min(duration, 10),
+    segmentType,
+    emotion,
+    characterName,
+    hasDialogue,
+    propsDescription
+  });
+  
+  // Format action beats
+  const actionBeatsFormatted = actualActionBeats
+    .map(beat => `- (${beat.timeRange}): ${beat.action}`)
+    .join('\n');
+  
+  // Generate continuity notes if not provided
+  const actualContinuityNotes = continuityNotes || generateContinuityNotes({
+    characterName,
+    characterDescription,
+    propsDescription,
+    environment
+  });
+  const continuityFormatted = actualContinuityNotes.join('\n');
+  
+  // Generate output intent if not provided
+  const actualOutputIntent = outputIntent || generateOutputIntent(segmentType, emotion);
+  
+  // Build character description line
+  const charDescLine = characterDescription 
+    ? `${characterName} (${characterDescription})`
+    : `${characterName} as shown in reference image`;
+  
+  // Build props line
+  const propsLine = propsDescription || 'no specific props';
+  
+  // Build background line  
+  const bgLine = backgroundDescription || `${environment} setting as shown in reference`;
+  
+  // Build lighting line
+  const lightingLine = lightingDescription || `${timeOfDay}, professional ${environment} lighting`;
+  
+  // Build dialogue section
+  const dialogueSection = hasDialogue
+    ? `${characterName} (${emotion}):\n"${dialogue}"`
+    : `No dialogue. ${characterName} maintains ${emotionMotion.expression}.`;
+  
+  // Build sound effects line
+  const effectsLine = soundEffects || 'subtle ambient only';
+  
+  return `[SORA 2 PROMPT — ${segmentId}.${segmentNumber}]
+
+DURATION: ${Math.min(duration, 10)} seconds
+RESOLUTION: 720p
+ASPECT: ${aspectRatio}
+
+STARTING FRAME:
+Continue from the provided image — ${charDescLine}. ${propsLine}. Background: ${bgLine}.
+
+CAMERA:
+${actualFocalLength} ${shotConfig.name}, ${cameraAngle}, stable. ${actualCameraMovement}.
+
+SETTING & LIGHTING:
+${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
+
+ACTION SEQUENCE:
+${actionBeatsFormatted}
+
+DIALOGUE:
+${dialogueSection}
+
+SOUND:
+- Voice: ${actualVoiceTone}
+- Ambient: ${actualAmbient}
+- Effects: ${effectsLine}
+
+PHYSICS:
+Natural motion, realistic timing, gravity applies normally. Single camera movement, single subject action per beat.
+
+CONTINUITY NOTES:
+${continuityFormatted}
+
+TRANSITION:
+${getTransition(transition)}
+
+OUTPUT INTENT:
+${actualOutputIntent}
+
+EXCLUSIONS:
+No text overlays, no morphing, no artifacts, no identity drift. Maintain proportions throughout.`;
 }
 
 /**
