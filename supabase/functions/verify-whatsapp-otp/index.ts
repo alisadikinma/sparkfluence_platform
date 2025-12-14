@@ -33,14 +33,12 @@ serve(async (req) => {
       );
     }
 
-    // Normalize phone
+    // Normalize phone - remove non-digits, keep country code as-is
+    // Must match logic in send-whatsapp-otp to ensure OTP lookup works
     let normalizedPhone = phone_number.replace(/\D/g, "");
-    if (normalizedPhone.startsWith("0")) {
-      normalizedPhone = "62" + normalizedPhone.slice(1);
-    }
-    if (!normalizedPhone.startsWith("62")) {
-      normalizedPhone = "62" + normalizedPhone;
-    }
+    
+    // DEBUG: Log normalized phone
+    console.log("[VERIFY-OTP] Normalized phone:", normalizedPhone);
 
     // Normalize OTP (remove spaces)
     const normalizedOtp = otp_code.replace(/\s/g, "");
