@@ -27,6 +27,7 @@ Transform content ideas into viral-ready videos in minutes with cutting-edge AI
 - [Architecture Overview](#-architecture-overview)
 - [Technology Stack](#-technology-stack)
 - [Video Generation Pipeline](#-video-generation-pipeline)
+- [FFmpeg Quick Reference](#-ffmpeg-quick-reference)
 - [Getting Started](#-getting-started)
 - [Project Structure](#-project-structure)
 - [Database Schema](#-database-schema)
@@ -398,6 +399,141 @@ The complete video creation pipeline consists of 6 automated stages:
 | BODY-1/2/3 | B-ROLL | Focus on content, not creator |
 | PEAK | B-ROLL | Highlight key moment/insight |
 | CTA | CREATOR | Personal appeal for action (like, follow, share) |
+
+---
+
+## 🎛 FFmpeg Quick Reference
+
+FFmpeg is used for final video assembly, audio mixing, and subtitle burn-in.
+
+### Video Transitions (58 Available)
+
+Use with `xfade` filter: `ffmpeg -i clip1.mp4 -i clip2.mp4 -filter_complex "xfade=transition=fade:duration=0.5:offset=4"`
+
+| Category | Transitions |
+|----------|-------------|
+| **Basic** | fade, dissolve, distance, wipeleft, wiperight, wipeup, wipedown |
+| **Slide** | slideleft, slideright, slideup, slidedown, smoothleft, smoothright |
+| **Zoom** | zoomin, fadefast, fadeslow, hlslice, hrslice, vuslice, vdslice |
+| **Circle** | circleopen, circleclose, circlecrop, rectcrop |
+| **Diagonal** | diagtl, diagtr, diagbl, diagbr, hlwind, hrwind |
+| **Special** | squeezeh, squeezev, fadegrays, pixelize, radial, hblur |
+| **Cover** | coverup, coverdown, coverleft, coverright |
+| **Reveal** | revealup, revealdown, revealleft, revealright |
+
+### Audio Filters
+
+| Filter | Purpose | Example |
+|--------|---------|--------|
+| `volume` | Adjust volume | `volume=0.3` (30%) |
+| `afade` | Fade in/out | `afade=t=in:d=2` (2s fade in) |
+| `amix` | Mix multiple tracks | `amix=inputs=2:duration=longest` |
+| `sidechaincompress` | Audio ducking (auto-lower BGM during speech) | See example below |
+| `loudnorm` | EBU R128 normalization | `loudnorm=I=-16:TP=-1.5:LRA=11` |
+| `apad` | Pad audio to match video | `apad=whole_dur=60` |
+
+**Audio Ducking Example:**
+```bash
+ffmpeg -i voice.mp3 -i bgm.mp3 -filter_complex \
+  "[1:a]asplit=2[sc][mix];[0:a][sc]sidechaincompress=threshold=0.03:ratio=4:attack=200:release=1000[compr];[compr][mix]amix=inputs=2:duration=first" \
+  output.mp3
+```
+
+### Subtitle Filters
+
+| Filter | Format | Example |
+|--------|--------|--------|
+| `subtitles` | SRT/VTT | `subtitles=file.srt:force_style='FontSize=24'` |
+| `ass` | ASS (styled) | `ass=file.ass` |
+
+**ASS Subtitle with Word-by-Word Animation:**
+```ass
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, Bold, Alignment, MarginV
+Style: Default,Montserrat,60,&H00FFFFFF,1,2,100
+
+[Events]
+Format: Layer, Start, End, Style, Text
+Dialogue: 0,0:00:00.00,0:00:00.50,Default,{\k50}Hello
+Dialogue: 0,0:00:00.50,0:00:01.00,Default,{\k50}World
+```
+
+### Common Video Processing Commands
+
+**Concatenate Videos:**
+```bash
+# Create concat.txt:
+# file 'clip1.mp4'
+# file 'clip2.mp4'
+ffmpeg -f concat -safe 0 -i concat.txt -c copy output.mp4
+```
+
+**Add BGM to Video:**
+```bash
+ffmpeg -i video.mp4 -i bgm.mp3 -filter_complex \
+  "[1:a]volume=0.15[bgm];[0:a][bgm]amix=inputs=2:duration=first" \
+  -c:v copy output.mp4
+```
+
+**Burn Subtitles:**
+```bash
+ffmpeg -i video.mp4 -vf "ass=subtitles.ass" -c:a copy output.mp4
+```
+
+**Full Pipeline (Concat + BGM + Subtitles):**
+```bash
+ffmpeg -f concat -safe 0 -i concat.txt -i bgm.mp3 -filter_complex \
+  "[0:v]ass=subtitles.ass[v];[1:a]volume=0.15[bgm];[0:a][bgm]amix=inputs=2[a]" \
+  -map "[v]" -map "[a]" -c:v libx264 -preset fast output.mp4
+```
+
+### Transcription (Groq Whisper - FREE)
+
+| Spec | Value |
+|------|-------|
+| **Model** | `whisper-large-v3-turbo` |
+| **Output** | `verbose_json` (word-level timestamps) |
+| **Language** | `id` (Indonesian), supports code-mixing |
+| **Limit** | 14,400 requests/day (~2,000 audio hours/month) |
+
+```python
+from groq import Groq
+client = Groq(api_key=os.environ["GROQ_API_KEY"])
+
+transcription = client.audio.transcriptions.create(
+    file=open("audio.mp3", "rb"),
+    model="whisper-large-v3-turbo",
+    response_format="verbose_json",
+    language="id"
+)
+```
+
+### BGM/SFX Library (Pixabay - FREE)
+
+| Spec | Value |
+|------|-------|
+| **API** | REST search + direct download |
+| **License** | Royalty-free commercial use |
+| **Limit** | 5,000 requests/month |
+| **Categories** | upbeat, calm, dramatic, corporate, electronic |
+
+```python
+import requests
+
+response = requests.get(
+    "https://pixabay.com/api/",
+    params={
+        "key": os.environ["PIXABAY_KEY"],
+        "q": "upbeat background music",
+        "category": "music"
+    }
+)
+```
 
 ---
 
