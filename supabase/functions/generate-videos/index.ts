@@ -24,6 +24,17 @@ import {
   type ActionBeat
 } from '../_shared/prompts/cinematicVideoKnowledge.ts'
 
+// Import Voice & Face Anchor functions (2026 - Sora 2 Consistency)
+import {
+  generateVoiceAnchor,
+  generateFaceAnchor,
+  getCreatorAudioDirective,
+  getBRollAudioDirective,
+  detectBRollCategory,
+  type VoiceProfile,
+  type FaceAnchorConfig,
+} from '../_shared/prompts/audioDirective.ts'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -119,7 +130,14 @@ async function handlePreviewPrompts(requestBody: any) {
     language = 'indonesian',
     aspect_ratio = '9:16',
     environment = 'studio',
-    preferred_platform = 'auto' // 'auto' | 'sora2' | 'veo31'
+    preferred_platform = 'auto', // 'auto' | 'sora2' | 'veo31'
+    // ========================================================================
+    // NEW: Avatar/Face selection from UI (2026)
+    // ========================================================================
+    avatar_selection = 'no_avatar',
+    profile_image_url = null,
+    creator_gender = 'male',
+    character_description = ''
   } = requestBody
 
   if (!segments || !Array.isArray(segments) || segments.length === 0) {
@@ -130,6 +148,10 @@ async function handlePreviewPrompts(requestBody: any) {
   }
 
   console.log(`[PREVIEW_PROMPTS] Generating prompts for ${segments.length} segments, preferred_platform: ${preferred_platform}`)
+  console.log(`[PREVIEW_PROMPTS] Avatar: ${avatar_selection}, hasProfileImage: ${avatar_selection !== 'no_avatar'}`)
+
+  // Determine if profile image is available
+  const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
 
   // Map user selection to actual platform key
   // AUTO = VEO 3.1 (1080p) for consistent quality - never mix resolutions
@@ -171,7 +193,7 @@ async function handlePreviewPrompts(requestBody: any) {
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
-    // Build the cinematic video prompt
+    // Build the cinematic video prompt with anchor params
     const videoPrompt = buildCinematicVideoPrompt({
       segment: {
         ...segment,
@@ -186,7 +208,14 @@ async function handlePreviewPrompts(requestBody: any) {
       aspectRatio: aspect_ratio as '9:16' | '16:9',
       environment,
       platform: selectedPlatform,
-      duration: Math.min(duration, modelSpecs.maxDuration)
+      duration: Math.min(duration, modelSpecs.maxDuration),
+      // ========================================================================
+      // NEW: Face Anchor params (2026)
+      // ========================================================================
+      hasProfileImage,
+      profileImageUrl: profile_image_url || '',
+      creatorGender: creator_gender as 'male' | 'female',
+      characterDescription: character_description
     })
 
     // Validate dialogue length
@@ -241,7 +270,14 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     resolution = '1080p',
     environment = 'studio',
     preferred_platform = 'auto', // 'auto' | 'sora2' | 'veo31'
-    creator_appearance = '' // Optional: creator appearance for voice gender detection
+    creator_appearance = '', // Optional: creator appearance for voice gender detection
+    // ========================================================================
+    // NEW: Avatar/Face selection from UI (2026)
+    // ========================================================================
+    avatar_selection = 'no_avatar', // 'no_avatar' | 'use_profile' | 'upload_new'
+    profile_image_url = null,       // URL to profile image (if use_profile or upload_new)
+    creator_gender = 'male',        // 'male' | 'female' - from user profile
+    character_description = '',     // Text description of creator (fallback if no image)
   } = requestBody
 
   if (!user_id || !session_id || !segments || !Array.isArray(segments)) {
@@ -287,6 +323,11 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   const voiceCharacterJson = JSON.stringify(sessionVoiceCharacter)
   
   console.log(`[CREATE_JOBS] 🎤 Session voice character: ${sessionVoiceCharacter.gender}, ${sessionVoiceCharacter.age}, ${detectedLanguage}`)
+  console.log(`[CREATE_JOBS] 👤 Avatar selection: ${avatar_selection}, hasProfileImage: ${avatar_selection !== 'no_avatar'}`)
+
+  // Determine if profile image is available
+  const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
+  const actualCharacterDescription = character_description || creatorAppearanceStr
 
   // Create job records with SAME voice character for all
   const jobRecords = segments.map((segment: any, index: number) => {
@@ -316,6 +357,14 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       topic,
       preferred_platform: selectedPlatformForAll, // Store resolved platform (always VEO for auto)
       voice_character: voiceCharacterJson, // SAME voice for ALL segments
+      // ========================================================================
+      // NEW: Avatar/Face anchor data (2026)
+      // ========================================================================
+      avatar_selection,
+      has_profile_image: hasProfileImage,
+      profile_image_url: profile_image_url,
+      creator_gender,
+      character_description: actualCharacterDescription,
       status: JOB_STATUS.PENDING,
       veo_uuid: null,
       video_url: null,
@@ -473,6 +522,7 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
     // Build prompt - USE STORED VOICE CHARACTER for consistency across all segments
+    // Also pass Face Anchor params from job record (2026)
     const videoPrompt = buildCinematicVideoPrompt({
       segment: job,
       segmentType,
@@ -483,7 +533,14 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       environment: job.environment || 'studio',
       platform: selectedPlatform,
       duration: Math.min(duration, modelSpecs.maxDuration),
-      voiceCharacter: job.voice_character // Use stored voice character from session
+      voiceCharacter: job.voice_character, // Use stored voice character from session
+      // ========================================================================
+      // NEW: Face Anchor params from job record (2026)
+      // ========================================================================
+      hasProfileImage: job.has_profile_image || false,
+      profileImageUrl: job.profile_image_url || '',
+      creatorGender: job.creator_gender || 'male',
+      characterDescription: job.character_description || ''
     })
 
     console.log(`[PROCESS_SINGLE] Platform: ${selectedPlatform}, Prompt length: ${videoPrompt.length}`)
@@ -1010,6 +1067,13 @@ interface VideoPromptParams {
   duration: number
   // NEW: Voice character for consistency across all segments
   voiceCharacter?: string
+  // ========================================================================
+  // NEW: Face Anchor params (2026) - from UI avatar selection
+  // ========================================================================
+  hasProfileImage?: boolean      // true if user selected "use_profile" or "upload_new"
+  profileImageUrl?: string       // URL to profile image
+  creatorGender?: 'male' | 'female'
+  characterDescription?: string  // fallback text description
 }
 
 // ============================================================================
@@ -1190,7 +1254,14 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     environment,
     platform,
     duration,
-    voiceCharacter: voiceCharacterParam
+    voiceCharacter: voiceCharacterParam,
+    // ========================================================================
+    // NEW: Face Anchor params (2026)
+    // ========================================================================
+    hasProfileImage = false,
+    profileImageUrl = '',
+    creatorGender = 'male',
+    characterDescription: charDescParam = ''
   } = params
 
   // Extract segment data
@@ -1202,7 +1273,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // ========================================================================
   // VOICE CHARACTER ANCHOR - Same voice for ALL segments
   // ========================================================================
-  const creatorAppearance = segment.creator_appearance || segment.character_description || ''
+  const creatorAppearance = segment.creator_appearance || segment.character_description || charDescParam || ''
   const detectedLanguage = scriptText ? detectScriptLanguage(scriptText) : language.toLowerCase()
   const voiceChar = voiceCharacterParam 
     ? JSON.parse(voiceCharacterParam) as VoiceCharacter
@@ -1218,7 +1289,36 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const segmentTypeUpper = segmentType.toUpperCase()
   const isCreatorSegment = CREATOR_SEGMENTS.includes(segmentTypeUpper)
   
-  console.log(`[VIDEO-PROMPT] Segment: ${segmentType}, isCreatorSegment: ${isCreatorSegment}, voiceGender: ${voiceChar.gender}`)
+  // ========================================================================
+  // FACE ANCHOR - Only for CREATOR segments (2026)
+  // Uses generateFaceAnchor from audioDirective.ts
+  // ========================================================================
+  let faceAnchorBlock = ''
+  
+  // Get actual values from segment or params (job record values take precedence)
+  const actualHasProfileImage = segment.has_profile_image ?? hasProfileImage
+  const actualProfileImageUrl = segment.profile_image_url || profileImageUrl
+  const actualCreatorGender = (segment.creator_gender || creatorGender) as 'male' | 'female'
+  const actualCharacterDescription = segment.character_description || charDescParam || creatorAppearance
+  
+  if (isCreatorSegment && actualHasProfileImage) {
+    // Generate face anchor using imported function
+    faceAnchorBlock = generateFaceAnchor({
+      hasProfileImage: true,
+      profileImageUrl: actualProfileImageUrl,
+      gender: actualCreatorGender,
+      characterDescription: actualCharacterDescription
+    })
+  } else if (isCreatorSegment && actualCharacterDescription) {
+    // Fallback to character description if no profile image
+    faceAnchorBlock = generateFaceAnchor({
+      hasProfileImage: false,
+      gender: actualCreatorGender,
+      characterDescription: actualCharacterDescription
+    })
+  }
+  
+  console.log(`[VIDEO-PROMPT] Segment: ${segmentType}, isCreatorSegment: ${isCreatorSegment}, voiceGender: ${voiceChar.gender}, hasProfileImage: ${actualHasProfileImage}`)
   
   // Extract enhanced data (new fields)
   const propsDescription = segment.props_description || segment.propsDescription || undefined
@@ -1233,52 +1333,79 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // ========================================================================
   if (isCreatorSegment) {
     const characterName = segment.character_name || 'Creator'
-    const characterDescription = segment.character_description || segment.characterDescription || undefined
+    const characterDescription = actualCharacterDescription || undefined
     
     // Use consistent voice from anchor
     const voiceDirection = `${voiceChar.description}. Accent: ${voiceChar.accent}. Tone: ${voiceChar.tone}. Pace: ${voiceChar.pace}.`
     
-    const extendedParams: ExtendedPromptParams = {
-      // Basic
-      segmentId: segmentId,
-      segmentNumber: segmentNumber,
-      duration: platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10),
-      aspectRatio: aspectRatio,
-      segmentType: segmentType,
-      emotion: emotion,
-      
-      // Character & Scene - CREATOR FACE VISIBLE
-      characterName: characterName,
-      characterDescription: characterDescription,
-      propsDescription: propsDescription,
-      backgroundDescription: backgroundDescription,
-      
-      // Camera - Direct to camera for creator shots
-      shotType: 'medium_close_up',
-      cameraAngle: 'eye-level, direct to camera',
-      
-      // Lighting & Environment
-      environment: environment,
-      timeOfDay: timeOfDay,
-      lightingDescription: lightingDescription,
-      
-      // Action
-      visualDirection: visualDirection,
-      
-      // Audio - DIALOGUE ENABLED for creator segments
-      dialogue: scriptText || undefined,
-      voiceTone: voiceDirection,
-      soundEffects: soundEffects,
-      
-      // Creative
-      outputIntent: outputIntent,
-      transition: transitionType
-    }
+    // Resolution based on aspect ratio (dynamic)
+    const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
+    
+    // Build custom prompt with VOICE_ANCHOR and FACE_ANCHOR blocks
+    const platformLabel = platform === 'sora-2-hd' ? 'SORA 2' : 'VEO 3.1'
+    const actualDuration = platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10)
+    
+    // Get camera movement and audio template
+    const cameraMove = getCameraMovement(segmentType, emotion)
+    const audioTemplate = getAudioTemplate(environment)
+    const ambientSound = audioTemplate.split('.')[0]
+    
+    // Build the custom prompt with anchors
+    let prompt = `[${platformLabel} PROMPT — ${segmentTypeUpper}.${segmentNumber}]
 
-    if (platform === 'veo-3.1-fast') {
-      return buildVeoPrompt(extendedParams)
+DURATION: ${actualDuration} seconds
+RESOLUTION: ${resolution}
+ASPECT: ${aspectRatio}
+
+`
+    
+    // Add VOICE ANCHOR
+    prompt += voiceAnchor + '\n\n'
+    
+    // Add FACE ANCHOR if available (only for CREATOR shots with profile image)
+    if (faceAnchorBlock) {
+      prompt += faceAnchorBlock + '\n\n'
     }
-    return buildSoraPrompt(extendedParams)
+    
+    // Add rest of prompt
+    prompt += `STARTING FRAME:
+Continue from the provided image. ${characterDescription ? `Character: ${characterDescription}.` : ''} ${visualDirection || 'Direct eye contact with camera.'}
+
+CAMERA:
+${cameraMove.promptPhrase}. Eye-level, direct to camera. All key elements remain in frame.
+
+SETTING & LIGHTING:
+${timeOfDay}, professional ${environment} lighting. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
+
+ACTION SEQUENCE:
+- (0s-${Math.floor(actualDuration * 0.3)}s): ${characterName} begins speaking, establishes ${emotion} expression
+- (${Math.floor(actualDuration * 0.3)}s-${Math.floor(actualDuration * 0.7)}s): Natural hand gestures while delivering key message
+- (${Math.floor(actualDuration * 0.7)}s-${actualDuration}s): Concluding expression, maintains eye contact
+
+AUDIO DIRECTIVE (Creator Speaking):
+Dialogue: "${scriptText || ''}"
+Word count: ${(scriptText || '').split(/\s+/).filter(Boolean).length} words (~${Math.ceil((scriptText || '').split(/\s+/).filter(Boolean).length / 2.5)}s speaking time)
+Emotion: ${emotion}, engaging delivery
+Lip sync: Character's lip movements MUST match dialogue timing exactly
+Audio perspective: Close-mic, dry voice, minimal room reverb
+Background: ${ambientSound}, subtle room tone only
+
+CONTINUITY NOTES:
+- Maintain exact lighting and color grade from reference image
+- Character face MUST match reference image exactly (no identity drift)
+- Natural micro-expressions: subtle blinks, breathing, head movements
+- ${actualHasProfileImage ? 'Use reference image as face anchor' : 'Maintain consistent character appearance'}
+
+TRANSITION:
+${getTransition(transitionType)}
+
+OUTPUT INTENT:
+${segmentTypeUpper === 'HOOK' ? 'Grab attention immediately. Create curiosity and stop the scroll.' : 'Drive action. Warm, inviting call-to-action that converts viewers.'}
+
+EXCLUSIONS:
+No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
+    
+    return prompt
   }
   
   // ========================================================================

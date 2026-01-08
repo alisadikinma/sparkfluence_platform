@@ -8,6 +8,7 @@
  * - Camera Movement Library (VEO-verified terms)
  * - I2V Motion Descriptions
  * - Audio Specifications
+ * - VOICE/FACE ANCHORS for consistency across segments (2026)
  * 
  * Source Files:
  * - Video_Project_Instruction.md
@@ -19,8 +20,18 @@
  * - Sora 2 HD (10s) - 720p - $0.01/video
  * - Veo 3.1 Fast Full HD (8s) - 1080p - $0.01/video
  * 
- * Last Updated: 2025-12-13
+ * Last Updated: 2026-01-13
  */
+
+import {
+  generateVoiceAnchor,
+  generateFaceAnchor,
+  getCreatorAudioDirective,
+  getBRollAudioDirective,
+  detectBRollCategory as detectBRollCategoryAudio,
+  type VoiceProfile,
+  type FaceAnchorConfig,
+} from './audioDirective.ts';
 
 // ============================================================================
 // VIDEO MODEL SPECS
@@ -763,6 +774,22 @@ export interface ExtendedPromptParams {
   // Creative
   outputIntent?: string;          // "Establish authority and expertise"
   transition?: string;
+  
+  // ============================================================
+  // VOICE & FACE ANCHORS (2026 - Sora 2 Consistency)
+  // ============================================================
+  
+  // Voice Anchor - ensures consistent voice across segments
+  language?: string;              // 'indonesian' | 'hindi' | 'english'
+  creatorGender?: 'male' | 'female';
+  customVoiceProfile?: Partial<VoiceProfile>;
+  
+  // Face Anchor - ensures consistent creator face
+  hasProfileImage?: boolean;       // User uploaded profile image?
+  profileImageUrl?: string;        // URL to profile image for reference
+  
+  // Shot type (CREATOR vs B-ROLL)
+  isCreatorShot?: boolean;         // True for HOOK, CTA, LOOP-END
 }
 
 export interface ActionBeat {
@@ -924,6 +951,7 @@ function generateOutputIntent(segmentType: string, emotion: string): string {
 
 /**
  * Build VEO video prompt (Claude Project Quality)
+ * Now includes VOICE_ANCHOR and FACE_ANCHOR for Sora 2 consistency
  */
 export function buildVeoPrompt(params: ExtendedPromptParams): string {
   const {
@@ -952,7 +980,14 @@ export function buildVeoPrompt(params: ExtendedPromptParams): string {
     soundEffects,
     continuityNotes,
     outputIntent,
-    transition = 'hold'
+    transition = 'hold',
+    // New anchor params
+    language = 'english',
+    creatorGender = 'male',
+    customVoiceProfile,
+    hasProfileImage = false,
+    profileImageUrl,
+    isCreatorShot = false,
   } = params;
   
   // Determine shot type and camera settings
@@ -1025,11 +1060,45 @@ export function buildVeoPrompt(params: ExtendedPromptParams): string {
   // Build sound effects line
   const effectsLine = soundEffects || 'subtle ambient only, no music';
   
+  // ============================================================
+  // GENERATE VOICE & FACE ANCHORS (2026 Consistency)
+  // ============================================================
+  
+  // Determine if this is a CREATOR shot based on segment type
+  const CREATOR_SEGMENT_TYPES = ['HOOK', 'CTA', 'LOOP-END', 'ENDING', 'ENDING_CTA'];
+  const actualIsCreatorShot = isCreatorShot || CREATOR_SEGMENT_TYPES.includes(segmentType.toUpperCase());
+  
+  // Generate VOICE_ANCHOR (always included for reference)
+  const voiceAnchor = generateVoiceAnchor(language, creatorGender, customVoiceProfile);
+  
+  // Generate FACE_ANCHOR (only for CREATOR shots)
+  let faceAnchor = '';
+  if (actualIsCreatorShot) {
+    faceAnchor = generateFaceAnchor({
+      hasProfileImage,
+      profileImageUrl,
+      characterDescription,
+      gender: creatorGender,
+    });
+  }
+  
+  // Generate appropriate audio directive
+  let audioDirective = '';
+  if (actualIsCreatorShot && hasDialogue) {
+    audioDirective = getCreatorAudioDirective(language, dialogue, segmentType);
+  } else {
+    const brollCategory = detectBRollCategoryAudio(visualDirection || backgroundDescription || '');
+    audioDirective = getBRollAudioDirective(brollCategory, emotion.toLowerCase());
+  }
+  
   return `[VEO 3.1 PROMPT — ${segmentId}.${segmentNumber}]
 
 DURATION: ${Math.min(duration, 8)} seconds
 RESOLUTION: ${resolution}
 ASPECT: ${aspectRatio}
+${voiceAnchor}
+${faceAnchor}
+${audioDirective}
 
 STARTING FRAME:
 Continue from the provided image — ${charDescLine}. ${propsLine}. Background: ${bgLine}.
@@ -1067,6 +1136,7 @@ No blurry elements, no distortion, no artifacts, no text overlays, no identity m
 
 /**
  * Build Sora 2 video prompt (Claude Project Quality)
+ * Now includes VOICE_ANCHOR and FACE_ANCHOR for consistency across segments
  */
 export function buildSoraPrompt(params: ExtendedPromptParams): string {
   const {
@@ -1095,7 +1165,14 @@ export function buildSoraPrompt(params: ExtendedPromptParams): string {
     soundEffects,
     continuityNotes,
     outputIntent,
-    transition = 'hold'
+    transition = 'hold',
+    // New anchor params
+    language = 'english',
+    creatorGender = 'male',
+    customVoiceProfile,
+    hasProfileImage = false,
+    profileImageUrl,
+    isCreatorShot = false,
   } = params;
   
   // Determine shot type and camera settings
@@ -1165,11 +1242,45 @@ export function buildSoraPrompt(params: ExtendedPromptParams): string {
   // Build sound effects line
   const effectsLine = soundEffects || 'subtle ambient only';
   
+  // ============================================================
+  // GENERATE VOICE & FACE ANCHORS (2026 Consistency)
+  // ============================================================
+  
+  // Determine if this is a CREATOR shot based on segment type
+  const CREATOR_SEGMENT_TYPES = ['HOOK', 'CTA', 'LOOP-END', 'ENDING', 'ENDING_CTA'];
+  const actualIsCreatorShot = isCreatorShot || CREATOR_SEGMENT_TYPES.includes(segmentType.toUpperCase());
+  
+  // Generate VOICE_ANCHOR (always included for reference)
+  const voiceAnchor = generateVoiceAnchor(language, creatorGender, customVoiceProfile);
+  
+  // Generate FACE_ANCHOR (only for CREATOR shots)
+  let faceAnchor = '';
+  if (actualIsCreatorShot) {
+    faceAnchor = generateFaceAnchor({
+      hasProfileImage,
+      profileImageUrl,
+      characterDescription,
+      gender: creatorGender,
+    });
+  }
+  
+  // Generate appropriate audio directive
+  let audioDirective = '';
+  if (actualIsCreatorShot && hasDialogue) {
+    audioDirective = getCreatorAudioDirective(language, dialogue, segmentType);
+  } else {
+    const brollCategory = detectBRollCategoryAudio(visualDirection || backgroundDescription || '');
+    audioDirective = getBRollAudioDirective(brollCategory, emotion.toLowerCase());
+  }
+  
   return `[SORA 2 PROMPT — ${segmentId}.${segmentNumber}]
 
 DURATION: ${Math.min(duration, 10)} seconds
 RESOLUTION: 720p
 ASPECT: ${aspectRatio}
+${voiceAnchor}
+${faceAnchor}
+${audioDirective}
 
 STARTING FRAME:
 Continue from the provided image — ${charDescLine}. ${propsLine}. Background: ${bgLine}.

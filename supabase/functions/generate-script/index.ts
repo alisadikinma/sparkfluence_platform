@@ -9,6 +9,26 @@ import {
   CINEMATIC_VISUAL_GUIDE,
   getStructureByDuration 
 } from '../_shared/prompts/viralScriptKnowledge.ts'
+import { 
+  validateSlangUsage, 
+  getSlangKnowledge 
+} from '../_shared/prompts/slangValidator.ts'
+// P0 Improvements (Jan 2026)
+import {
+  detectContentType,
+  getFilteredHooksForPrompt,
+  validateItemCoverage,
+  ContentTypeResult
+} from '../_shared/prompts/contentTypeDetector.ts'
+import {
+  validateAndFixScript,
+  checkViralityFactors,
+  ScriptValidationResult
+} from '../_shared/prompts/scriptValidator.ts'
+import {
+  enhanceAllVisuals,
+  addFFmpegSpecs
+} from '../_shared/prompts/visualEnhancer.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -192,13 +212,105 @@ serve(async (req) => {
     // PARSE OUTPUT
     // ============================================================
     
-    const scriptData = parseScriptOutput(generatedText, selectedDuration, content)
+    let scriptData = parseScriptOutput(generatedText, selectedDuration, content, selectedLanguage)
 
     // Add video settings to metadata
     if (scriptData.metadata) {
       scriptData.metadata.aspect_ratio = selectedAspectRatio
       scriptData.metadata.resolution = selectedResolution
       scriptData.metadata.llm_source = llmSource
+    }
+
+    // ============================================================
+    // P0 #2: VALIDATION & AUTO-FIX
+    // ============================================================
+    if (scriptData.segments && scriptData.segments.length > 0) {
+      console.log('[Validation] Running P0 validation layer...')
+      
+      const validationResult = validateAndFixScript(
+        scriptData.segments,
+        content,
+        selectedLanguage
+      )
+      
+      // Replace segments with validated/fixed version
+      scriptData.segments = validationResult.segments
+      
+      // Add validation report to quality_report
+      scriptData.quality_report = {
+        ...scriptData.quality_report,
+        validation: {
+          valid: validationResult.valid,
+          score: validationResult.score,
+          issues_count: validationResult.issues.length,
+          auto_fixes_applied: validationResult.auto_fixes_applied,
+          virality_factors: validationResult.virality_check.factors_found,
+          virality_passed: validationResult.virality_check.passed,
+        },
+        issues: validationResult.issues,
+      }
+      
+      console.log(`[Validation] Score: ${validationResult.score}/100, Fixes: ${validationResult.auto_fixes_applied}`)
+      console.log(`[Validation] Virality: ${validationResult.virality_check.factors_count}/2 factors (${validationResult.virality_check.passed ? 'PASS' : 'WARN'})`)
+      
+      if (validationResult.issues.length > 0) {
+        console.log(`[Validation] Issues found: ${validationResult.issues.length}`)
+        validationResult.issues.forEach(issue => {
+          console.log(`  - [${issue.severity}] ${issue.segment_id}/${issue.field}: ${issue.message}`)
+        })
+      }
+    }
+
+    // ============================================================
+    // P0 #3: VISUAL ENHANCEMENT
+    // ============================================================
+    if (scriptData.segments && scriptData.segments.length > 0) {
+      console.log('[Visual] Running P0 visual enhancement...')
+      
+      const enhancementResult = enhanceAllVisuals(
+        scriptData.segments,
+        selectedLanguage
+      )
+      
+      // Replace segments with enhanced version
+      scriptData.segments = enhancementResult.segments
+      
+      // Add enhancement report
+      scriptData.quality_report = {
+        ...scriptData.quality_report,
+        visual_enhancement: {
+          segments_enhanced: enhancementResult.total_enhanced,
+          specs_added: enhancementResult.specs_summary,
+        },
+      }
+      
+      console.log(`[Visual] Enhanced ${enhancementResult.total_enhanced}/${scriptData.segments.length} segments`)
+      if (Object.keys(enhancementResult.specs_summary).length > 0) {
+        console.log(`[Visual] Specs added: ${JSON.stringify(enhancementResult.specs_summary)}`)
+      }
+    }
+
+    // ============================================================
+    // P1 #5: ADD FFMPEG SPECS (Preview)
+    // ============================================================
+    if (scriptData.segments && scriptData.segments.length > 0) {
+      scriptData.segments = addFFmpegSpecs(scriptData.segments)
+      console.log('[FFmpeg] Added transition and subtitle specs to all segments')
+    }
+
+    // ============================================================
+    // FINAL QUALITY SCORE
+    // ============================================================
+    if (scriptData.quality_report) {
+      const slangScore = scriptData.quality_report.slang_validation?.score || 70
+      const validationScore = scriptData.quality_report.validation?.score || 70
+      
+      // Weighted average: Validation 60%, Slang 40%
+      scriptData.quality_report.final_score = Math.round(
+        (validationScore * 0.6) + (slangScore * 0.4)
+      )
+      
+      console.log(`[Quality] Final Score: ${scriptData.quality_report.final_score}/100`)
     }
 
     return new Response(
@@ -224,6 +336,9 @@ function buildSystemPrompt(language: string, duration: string): string {
   // CRITICAL: Segment counts updated for max 8s per segment (VEO 3.1 limit)
   const segmentCount = duration === '30s' ? 5 : duration === '60s' ? 8 : 12
   const structureGuide = getStructureByDuration(duration)
+  
+  // Get slang knowledge for language
+  const slangGuide = getSlangKnowledge(language)
   
   return `You are an elite Viral Script Engineer specializing in short-form video content that gets millions of views.
 
@@ -353,6 +468,23 @@ ${language === 'indonesian' ? INDONESIAN_GENZ_PLAYBOOK : ''}
 ${TOP_HOOK_TEMPLATES}
 
 ═══════════════════════════════════════════════════════════════
+🗣️ SLANG & LANGUAGE AUTHENTICITY (2026 UPDATED)
+═══════════════════════════════════════════════════════════════
+
+${slangGuide}
+
+**CRITICAL SLANG RULES:**
+1. Use ≥2 current slang terms from Top 20 list (virality score 8-10/10)
+2. AVOID all outdated terms listed in the guide
+3. Include filler words/particles for natural flow
+${language === 'indonesian' ? '4. Use gue/lo pronouns (NEVER saya/kamu - sounds corporate)' : ''}
+${language === 'indonesian' ? '5. Include particles: sih, tuh, gitu, dong (≥2 per script)' : ''}
+${language === 'hindi' ? '4. Use tum pronouns (avoid excessive aap/ji - sounds too formal)' : ''}
+${language === 'hindi' ? '5. Include fillers: yaar, na, matlab, arre (≥2 per script)' : ''}
+${language === 'english' ? '4. Use UNIVERSAL slang only (no regional: "no cap", "innit", "finna")' : ''}
+${language === 'english' ? '5. Avoid outdated emoji: 😂 is CRINGE (use 💀 or 😭 for laughing)' : ''}
+
+═══════════════════════════════════════════════════════════════
 🎬 CINEMATIC VISUAL DIRECTION (CRITICAL FOR QUALITY)
 ═══════════════════════════════════════════════════════════════
 
@@ -401,8 +533,13 @@ function buildUserPrompt(
     ? 'LANDSCAPE - wide shots, horizontal framing'
     : 'VERTICAL 9:16 - tight framing, center-focused, mobile-optimized'
   
+  // P0 #1: Content Type Detection - filter hooks to reduce context
+  const contentTypeDetection = detectContentType(content, language)
+  const filteredHooks = getFilteredHooksForPrompt(content, language)
+  console.log(`[ContentType] Detected: ${contentTypeDetection.primary_type} (${contentTypeDetection.confidence}%)`)
+  
   // Detect if topic has numbered items
-  const itemCount = extractTopicItemCount(content)
+  const itemCount = extractTopicItemCount(content) || contentTypeDetection.item_count
   const numberedTopicInstructions = itemCount ? `
 ═══════════════════════════════════════════════════════════════
 ⚠️ NUMBERED TOPIC DETECTED: ${itemCount} ITEMS
@@ -437,6 +574,11 @@ VIDEO SPECS:
 - Aspect Ratio: ${aspectRatio} (${compositionGuide})
 - Platform: ${platform}
 - Language: ${langConfig.name} (${langConfig.style})
+
+═══════════════════════════════════════════════════════════════
+🎣 CONTENT-SPECIFIC HOOKS (Filtered for this topic)
+═══════════════════════════════════════════════════════════════
+${filteredHooks}
 ${numberedTopicInstructions}
 ═══════════════════════════════════════════════════════════════
 ⚡ GENERATE NOW - OUTPUT JSON ONLY
@@ -458,7 +600,7 @@ Generate the complete viral script JSON now:`;
 // OUTPUT PARSER (Enhanced with validation)
 // ============================================================================
 
-function parseScriptOutput(generatedText: string, duration: string, topic?: string): any {
+function parseScriptOutput(generatedText: string, duration: string, topic?: string, language?: string): any {
   try {
     // Try to extract JSON from the response
     let jsonStr = generatedText.trim()
@@ -611,8 +753,39 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
         segments,
         metadata: parsed.metadata || {
           total_duration: parseInt(duration),
-          language: 'english',
+          language: language || 'english',
           platform: 'tiktok'
+        }
+      }
+      
+      // ========================================================
+      // SLANG VALIDATION (NEW - 2026)
+      // ========================================================
+      if (language && segments.length > 0) {
+        // Extract all script text from segments
+        const allScriptText = segments
+          .map((s: any) => s.script_text || '')
+          .filter(Boolean)
+          .join(' ')
+        
+        if (allScriptText.length > 0) {
+          console.log(`[Slang] Validating ${allScriptText.length} characters in ${language}...`)
+          const slangValidation = validateSlangUsage(allScriptText, language)
+          
+          result.quality_report = {
+            slang_validation: slangValidation,
+            quality_score: slangValidation.score,
+            timestamp: new Date().toISOString()
+          }
+          
+          console.log(`[Slang] Score: ${slangValidation.score}/100`)
+          console.log(`[Slang] Current slang: ${slangValidation.current_slang.join(', ')}` )
+          if (slangValidation.outdated_slang.length > 0) {
+            console.warn(`[Slang] Outdated: ${slangValidation.outdated_slang.join(', ')}`)
+          }
+          if (slangValidation.warnings.length > 0) {
+            console.warn(`[Slang] Warnings: ${slangValidation.warnings.join('; ')}`)
+          }
         }
       }
       

@@ -29,19 +29,83 @@ export const currencyByLanguage: Record<Language, CurrencyConfig> = {
 };
 
 // Price conversion rates (relative to IDR as base)
-// These are approximate rates for display purposes
 const conversionRates: Record<string, number> = {
   IDR: 1,
   USD: 0.000063, // 1 IDR = ~0.000063 USD
   INR: 0.0053,   // 1 IDR = ~0.0053 INR
 };
 
-// Base prices in IDR
+// Base prices in IDR (Monthly) - SALE PRICES
 export const basePricesIDR = {
   free: 0,
-  premium: 160000,
-  enterprise: 810000,
+  starter: 149000,
+  pro: 349000,
+  business: 749000,
 };
+
+// Original prices in IDR (for strikethrough display)
+export const originalPricesIDR = {
+  free: 0,
+  starter: 299000,
+  pro: 699000,
+  business: 1499000,
+};
+
+// Sparks allocation per tier (monthly)
+export const sparksPerTier = {
+  free: 30,
+  starter: 1000,
+  pro: 3000,
+  business: 10000,
+};
+
+// Sparks cost per action
+export const sparksCost = {
+  fullPipeline: 100,  // Script Lab - full video production
+  imageOnly: 10,      // Visual Forge - single image
+  videoOnly: 15,      // Video Genie - single video segment
+  viralScript: 5,     // Viral Script Gen - script consultation
+};
+
+// Yearly prices in IDR (33% discount from sale price)
+export const yearlyPricesIDR = {
+  free: 0,
+  starter: 1199000,  // Rp149K x 12 x 0.67 = ~Rp1.199K
+  pro: 2799000,      // Rp349K x 12 x 0.67 = ~Rp2.799K
+  business: 5999000, // Rp749K x 12 x 0.67 = ~Rp5.999K
+};
+
+// Original yearly prices in IDR (for strikethrough display)
+export const originalYearlyPricesIDR = {
+  free: 0,
+  starter: 3588000,  // Rp299K x 12 = Rp3.588K
+  pro: 8388000,      // Rp699K x 12 = Rp8.388K
+  business: 17988000, // Rp1.499K x 12 = Rp17.988K
+};
+
+// Sparks per tier (yearly includes 10% bonus)
+export const creditsPerTier = {
+  free: 30,
+  starter: {
+    monthly: 1000,
+    yearly: 13200, // 1000 x 12 + 10% bonus
+  },
+  pro: {
+    monthly: 3000,
+    yearly: 39600, // 3000 x 12 + 10% bonus
+  },
+  business: {
+    monthly: 10000,
+    yearly: 132000, // 10000 x 12 + 10% bonus
+  },
+};
+
+// Top-up packages in IDR (Sparks) - subscriber only
+export const topUpPackagesIDR = [
+  { id: 'spark', sparks: 300, price: 59000 },
+  { id: 'blaze', sparks: 1000, price: 149000 },
+  { id: 'inferno', sparks: 3500, price: 399000 },
+];
 
 export function getPrice(basePriceIDR: number, language: Language): number {
   const currency = currencyByLanguage[language];
@@ -77,12 +141,27 @@ export function formatPriceWithSymbol(price: number, language: Language): string
   const formattedPrice = formatPrice(price, language);
   
   if (currency.position === 'prefix') {
-    return `${currency.symbol} ${formattedPrice}`;
+    return `${currency.symbol}${formattedPrice}`;
   }
-  return `${formattedPrice} ${currency.symbol}`;
+  return `${formattedPrice}${currency.symbol}`;
 }
 
 // Hook-friendly function to get currency config
 export function getCurrencyConfig(language: Language): CurrencyConfig {
   return currencyByLanguage[language];
+}
+
+// Calculate yearly savings
+export function getYearlySavings(tier: 'starter' | 'pro' | 'business', language: Language): number {
+  const monthlyTotal = basePricesIDR[tier] * 12;
+  const yearlyPrice = yearlyPricesIDR[tier];
+  const savingsIDR = monthlyTotal - yearlyPrice;
+  return getPrice(savingsIDR, language);
+}
+
+// Get bonus credits for yearly
+export function getBonusCredits(tier: 'starter' | 'pro' | 'business'): number {
+  const monthlyCredits = creditsPerTier[tier].monthly;
+  const yearlyCredits = creditsPerTier[tier].yearly;
+  return yearlyCredits - (monthlyCredits * 12);
 }

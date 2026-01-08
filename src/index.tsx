@@ -18,6 +18,7 @@ import { Welcome } from "./screens/Welcome";
 import { PackageSelection } from "./screens/PackageSelection";
 import { Dashboard } from "./screens/Dashboard";
 import { Settings, PlanBilling, Profile, LinkedAccounts, Notifications } from "./screens/Settings";
+import { Billing } from "./screens/Billing";
 import { Onboarding } from "./screens/Onboarding";
 import { NicheRecommendations } from "./screens/NicheRecommendations";
 import { CreativeDNA } from "./screens/CreativeDNA";
@@ -92,6 +93,8 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/settings/profile" element={<Profile />} />
                     <Route path="/settings/linked-accounts" element={<LinkedAccounts />} />
                     <Route path="/settings/notifications" element={<Notifications />} />
+                    <Route path="/app/billing" element={<Billing />} />
+                    <Route path="/billing" element={<Billing />} />
                   </Routes>
                 </PlannerProvider>
               </OnboardingProvider>

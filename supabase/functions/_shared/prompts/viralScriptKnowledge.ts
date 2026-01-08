@@ -6,10 +6,26 @@
  * - Project Instruction (output format, structure rules)
  * - Core Frameworks (Seefluencer, Killer Script, Psychology)
  * - Hook Library (250+ templates)
+ * - Slang Dictionaries (Indonesian, Hindi, English 2026)
  * - Supporting Knowledge (Case Studies, Editing, Platform, Branding)
  * 
- * Last Updated: 2024-12-14
+ * Last Updated: 2026-01-09
  */
+
+// ============================================================================
+// SLANG DICTIONARY IMPORTS (2026 Updated)
+// ============================================================================
+
+import INDONESIAN_SLANG_RAW from '../knowledge/08-indonesian-slang-2026.ts'
+import HINDI_SLANG_RAW from '../knowledge/09-hindi-slang-2026.ts'
+import ENGLISH_SLANG_RAW from '../knowledge/10-global-english-slang-2026.ts'
+
+// Export slang dictionaries
+export const SLANG_DICTIONARY = {
+  indonesian: INDONESIAN_SLANG_RAW,
+  hindi: HINDI_SLANG_RAW,
+  english: ENGLISH_SLANG_RAW
+}
 
 // ============================================================================
 // PROJECT INSTRUCTION (Output Format & Rules)
