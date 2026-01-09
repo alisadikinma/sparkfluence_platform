@@ -74,8 +74,17 @@ class SubtitleProcessor:
                 resp.raise_for_status()
                 result = resp.json()
         
-        word_count = sum(len(seg.get('words', [])) for seg in result.get('segments', []))
-        logger.info(f"Transcription complete: {len(result.get('segments', []))} segments, {word_count} words")
+        segments = result.get('segments') or []
+        word_count = sum(len(seg.get('words') or []) for seg in segments)
+        logger.info(f"Transcription complete: {len(segments)} segments, {word_count} words")
+        
+        # Debug: Log if segments or words are null
+        if result.get('segments') is None:
+            logger.warning("Whisper returned null segments")
+        for i, seg in enumerate(segments):
+            if seg.get('words') is None:
+                logger.warning(f"Segment {i} has null words field")
+        
         return result
     
     def generate_ass(self, whisper_data: Dict[str, Any], output_path: Path, style: str = 'tiktok') -> Path:
@@ -91,9 +100,9 @@ class SubtitleProcessor:
         
         # Convert Whisper data to SubtitleSegments
         segments = []
-        for seg in whisper_data.get('segments', []):
+        for seg in (whisper_data.get('segments') or []):
             words = []
-            for w in seg.get('words', []):
+            for w in (seg.get('words') or []):
                 word_text = w.get('word', '').strip()
                 if word_text:
                     words.append(WordTimestamp(
@@ -198,7 +207,7 @@ class SubtitleProcessor:
                 "success": True,
                 "video_path": str(final_path),
                 "transcript": whisper_data,
-                "word_count": sum(len(seg.get('words', [])) for seg in whisper_data.get('segments', []))
+                "word_count": sum(len(seg.get('words') or []) for seg in (whisper_data.get('segments') or []))
             }
             
         except Exception as e:

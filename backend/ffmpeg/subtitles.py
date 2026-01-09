@@ -295,9 +295,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         """
         segments = []
         
-        for seg in whisper_data.get('segments', []):
+        for seg in (whisper_data.get('segments') or []):
             words = []
-            for w in seg.get('words', []):
+            for w in (seg.get('words') or []):
                 words.append(WordTimestamp(
                     word=w.get('word', '').strip(),
                     start=w.get('start', 0),

@@ -5,7 +5,7 @@ import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play } from "lucide-react";
 
 // Backend API URL - adjust based on environment
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
@@ -15,11 +15,14 @@ const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || 'sparkfluence_pr
 const DEFAULT_COMBINE_OPTIONS = {
   enable_transitions: true,
   transition_duration: 0.5,
-  enable_subtitles: false,  // Disabled - use Add Subtitle feature after combining
+  enable_subtitles: false,
   subtitle_style: 'tiktok',
   word_by_word: true,
   normalize_audio: true
 };
+
+// Cache key for storing combined video results
+const getCacheKey = (sessionId: string) => `sparkfluence_combined_${sessionId}`;
 
 export const FullVideo: React.FC = () => {
   const navigate = useNavigate();
@@ -45,18 +48,19 @@ export const FullVideo: React.FC = () => {
   const [combineProgress, setCombineProgress] = useState<string>("Initializing...");
   const [progressPercent, setProgressPercent] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [showCombinePrompt, setShowCombinePrompt] = useState(false);
   
-  const hasStartedCombine = useRef(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // Subtitle states
-  const [showSubtitleOption, setShowSubtitleOption] = useState(false);
+  const [showSubtitleModal, setShowSubtitleModal] = useState(false);
   const [isAddingSubtitles, setIsAddingSubtitles] = useState(false);
   const [subtitleProgress, setSubtitleProgress] = useState<string>("Initializing...");
   const [subtitlePercent, setSubtitlePercent] = useState(0);
   const [subtitleJobId, setSubtitleJobId] = useState<string | null>(null);
   const [subtitleStyle, setSubtitleStyle] = useState<string>("tiktok");
   const [videoWithoutSubtitle, setVideoWithoutSubtitle] = useState<string | null>(null);
+  const [hasSubtitles, setHasSubtitles] = useState(false);
   const subtitlePollRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
@@ -71,11 +75,9 @@ export const FullVideo: React.FC = () => {
     };
   }, []);
 
-  // Initialize and trigger combine video
+  // Initialize - check cache first, don't auto-combine
   useEffect(() => {
     console.log('[FullVideo] ========== INIT ==========');
-    console.log('[FullVideo] location.state:', location.state);
-    console.log('[FullVideo] hasStartedCombine.current:', hasStartedCombine.current);
     
     // Try to get state from location.state first, then sessionStorage
     let state = location.state;
@@ -98,16 +100,11 @@ export const FullVideo: React.FC = () => {
       return;
     }
     
-    if (hasStartedCombine.current) {
-      console.log('[FullVideo] Already started combine, skipping...');
-      return;
-    }
-    
     const segments = state?.segments || state?.selectedSegments || [];
+    const sessionId = state?.sessionId || state?.projectId;
+    
+    console.log('[FullVideo] SessionId:', sessionId);
     console.log('[FullVideo] Segments received:', segments.length);
-    if (segments.length > 0) {
-      console.log('[FullVideo] First segment:', JSON.stringify(segments[0], null, 2));
-    }
     
     setVideoData(state);
     
@@ -115,27 +112,49 @@ export const FullVideo: React.FC = () => {
     const defaultTitle = state?.topic || "Generated Video Content";
     const defaultDescription = segments.length > 0
       ? "This video contains " + segments.length + " carefully selected segments. " +
-        "Total duration: " + segments.reduce((sum, seg) => sum + (seg.durationSeconds || 8), 0) + " seconds."
+        "Total duration: " + segments.reduce((sum: number, seg: any) => sum + (seg.durationSeconds || 8), 0) + " seconds."
       : "AI-generated video content ready to be scheduled and published to your social media platforms.";
     
     setTitle(defaultTitle);
     setDescription(defaultDescription);
     
-    // Check if already have final video URL
+    // Check if already have final video URL from state
     if (state.finalVideoUrl) {
-      console.log('[FullVideo] Already have finalVideoUrl:', state.finalVideoUrl);
+      console.log('[FullVideo] Already have finalVideoUrl from state:', state.finalVideoUrl);
       setFinalVideoUrl(state.finalVideoUrl);
-    } else if (segments.length > 0) {
-      // Check if segments have video URLs (support both videoUrl and video_url)
-      const hasVideos = segments.every((s) => s.videoUrl || s.video_url);
-      console.log('[FullVideo] Checking videos - hasVideos:', hasVideos);
-      console.log('[FullVideo] Video URLs:', segments.map((s) => s.videoUrl || s.video_url || 'MISSING'));
-      
+      return;
+    }
+    
+    // Check cache for previously combined video
+    if (sessionId) {
+      const cacheKey = getCacheKey(sessionId);
+      const cachedResult = sessionStorage.getItem(cacheKey);
+      if (cachedResult) {
+        try {
+          const cached = JSON.parse(cachedResult);
+          if (cached.finalVideoUrl) {
+            console.log('[FullVideo] Found cached video:', cached.finalVideoUrl);
+            setFinalVideoUrl(cached.finalVideoUrl);
+            if (cached.hasSubtitles) {
+              setHasSubtitles(true);
+            }
+            if (cached.videoWithoutSubtitle) {
+              setVideoWithoutSubtitle(cached.videoWithoutSubtitle);
+            }
+            return;
+          }
+        } catch (e) {
+          console.log('[FullVideo] Failed to parse cache:', e);
+        }
+      }
+    }
+    
+    // No cached result - show combine prompt instead of auto-combining
+    if (segments.length > 0) {
+      const hasVideos = segments.every((s: any) => s.videoUrl || s.video_url);
       if (hasVideos) {
-        // All segments have videos, trigger combine
-        hasStartedCombine.current = true;
-        console.log('[FullVideo] Starting combine process...');
-        triggerCombineVideo(segments, state);
+        console.log('[FullVideo] Segments ready - showing combine prompt');
+        setShowCombinePrompt(true);
       } else {
         console.log('[FullVideo] Missing video URLs in segments');
         setCombineError('Some segments are missing video URLs. Please go back and generate videos first.');
@@ -146,8 +165,32 @@ export const FullVideo: React.FC = () => {
     }
   }, [location.state]);
 
+  // Save to cache when video is ready
+  const saveToCache = (url: string, withSubtitles: boolean = false, originalUrl: string | null = null) => {
+    const sessionId = videoData?.sessionId || videoData?.projectId;
+    if (sessionId) {
+      const cacheKey = getCacheKey(sessionId);
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        finalVideoUrl: url,
+        hasSubtitles: withSubtitles,
+        videoWithoutSubtitle: originalUrl,
+        timestamp: Date.now()
+      }));
+      console.log('[FullVideo] Saved to cache');
+    }
+  };
+
+  // Start combine video process
+  const handleStartCombine = () => {
+    setShowCombinePrompt(false);
+    const segments = videoData?.segments || videoData?.selectedSegments || [];
+    if (segments.length > 0) {
+      triggerCombineVideo(segments, videoData);
+    }
+  };
+
   // Trigger combine video API (V2 with transitions + subtitles)
-  const triggerCombineVideo = async (segments, state) => {
+  const triggerCombineVideo = async (segments: any[], state: any) => {
     console.log('[FullVideo] ========== TRIGGER COMBINE V2 ==========');
     console.log('[FullVideo] Backend URL:', BACKEND_URL);
     console.log('[FullVideo] Segments to combine:', segments.length);
@@ -159,7 +202,7 @@ export const FullVideo: React.FC = () => {
 
     try {
       // Prepare segments data for V2 backend
-      const videoSegments = segments.map((seg, index) => ({
+      const videoSegments = segments.map((seg: any, index: number) => ({
         segment_id: seg.id || seg.segmentId || `seg_${index}`,
         segment_number: index + 1,
         segment_type: seg.type || seg.element || "BODY",
@@ -226,17 +269,15 @@ export const FullVideo: React.FC = () => {
       setProgressPercent(15);
       startPollingJobStatusDirect(data.data.job_id);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('[FullVideo] Combine error:', err);
       setCombineError(err.message || "Failed to combine video");
       setIsCombining(false);
     }
   };
 
-
-
   // Poll job status directly from backend
-  const startPollingJobStatusDirect = (jid) => {
+  const startPollingJobStatusDirect = (jid: string) => {
     let attempts = 0;
     const maxAttempts = 120; // 10 minutes max (120 * 5s)
     
@@ -248,7 +289,7 @@ export const FullVideo: React.FC = () => {
       setProgressPercent(Math.round(progressFromAttempts));
       
       if (attempts > maxAttempts) {
-        clearInterval(pollIntervalRef.current);
+        clearInterval(pollIntervalRef.current!);
         setCombineError("Video processing timeout. Please try again.");
         setIsCombining(false);
         return;
@@ -258,7 +299,7 @@ export const FullVideo: React.FC = () => {
     }, 5000);
   };
 
-  const pollJobStatusDirect = async (jid, attempts = 0) => {
+  const pollJobStatusDirect = async (jid: string, attempts = 0) => {
     try {
       const response = await fetch(BACKEND_URL + "/api/job-status/" + jid, {
         headers: { 'x-api-key': BACKEND_API_KEY }
@@ -287,10 +328,15 @@ export const FullVideo: React.FC = () => {
         }
         setProgressPercent(100);
         setFinalVideoUrl(jobData.final_video_url);
-        setVideoWithoutSubtitle(jobData.final_video_url); // Store original video
+        setVideoWithoutSubtitle(jobData.final_video_url);
         setIsCombining(false);
         setCombineProgress("Complete!");
-        setShowSubtitleOption(true); // Show subtitle option
+        
+        // Save to cache
+        saveToCache(jobData.final_video_url, false, jobData.final_video_url);
+        
+        // Show subtitle modal
+        setShowSubtitleModal(true);
         
         if (videoData?.sessionId) {
           await updatePlannedContentWithVideo(jobData.final_video_url);
@@ -315,14 +361,13 @@ export const FullVideo: React.FC = () => {
     if (attempts < 3) return "Downloading video segments...";
     if (attempts < 8) return "Normalizing video formats...";
     if (attempts < 15) return "Applying transitions...";
-    if (attempts < 22) return "Generating subtitles...";
-    if (attempts < 30) return "Burning subtitles...";
-    if (attempts < 38) return "Normalizing audio (EBU R128)...";
-    return "Finalizing... (this may take a while)";
+    if (attempts < 22) return "Processing audio...";
+    if (attempts < 30) return "Finalizing video...";
+    return "Almost done... (this may take a while)";
   };
 
   // Update planned_content with final video URL
-  const updatePlannedContentWithVideo = async (videoUrl) => {
+  const updatePlannedContentWithVideo = async (videoUrl: string) => {
     if (!user || !videoData?.sessionId) return;
     
     try {
@@ -348,7 +393,7 @@ export const FullVideo: React.FC = () => {
     
     console.log('[FullVideo] Adding subtitles with style:', subtitleStyle);
     setIsAddingSubtitles(true);
-    setShowSubtitleOption(false);
+    setShowSubtitleModal(false);
     setSubtitleProgress("Initializing...");
     setSubtitlePercent(5);
     
@@ -381,11 +426,11 @@ export const FullVideo: React.FC = () => {
       setSubtitleJobId(data.data.job_id);
       startPollingSubtitleJob(data.data.job_id);
       
-    } catch (err) {
+    } catch (err: any) {
       console.error('[FullVideo] Subtitle error:', err);
       alert("Failed to add subtitles: " + err.message);
       setIsAddingSubtitles(false);
-      setShowSubtitleOption(true);
+      setShowSubtitleModal(true);
     }
   };
   
@@ -427,8 +472,12 @@ export const FullVideo: React.FC = () => {
           clearInterval(subtitlePollRef.current!);
           setSubtitlePercent(100);
           setSubtitleProgress("Complete!");
-          setFinalVideoUrl(jobData.final_video_url); // Update to video with subtitles
+          setFinalVideoUrl(jobData.final_video_url);
+          setHasSubtitles(true);
           setIsAddingSubtitles(false);
+          
+          // Save to cache with subtitle info
+          saveToCache(jobData.final_video_url, true, videoWithoutSubtitle);
           
           // Update in database
           if (videoData?.sessionId) {
@@ -438,7 +487,6 @@ export const FullVideo: React.FC = () => {
           clearInterval(subtitlePollRef.current!);
           alert("Subtitle processing failed: " + (jobData?.error_message || "Unknown error"));
           setIsAddingSubtitles(false);
-          setShowSubtitleOption(true);
         }
       } catch (err) {
         console.error('[FullVideo] Subtitle poll error:', err);
@@ -448,19 +496,26 @@ export const FullVideo: React.FC = () => {
   
   // Skip subtitles
   const handleSkipSubtitles = () => {
-    setShowSubtitleOption(false);
+    setShowSubtitleModal(false);
     console.log('[FullVideo] User skipped subtitles');
   };
 
-  // Retry combine
-  const handleRetryCombine = () => {
-    hasStartedCombine.current = false;
+  // Recombine video (clear cache and restart)
+  const handleRecombine = () => {
+    const sessionId = videoData?.sessionId || videoData?.projectId;
+    if (sessionId) {
+      const cacheKey = getCacheKey(sessionId);
+      sessionStorage.removeItem(cacheKey);
+    }
+    
+    setFinalVideoUrl(null);
+    setVideoWithoutSubtitle(null);
+    setHasSubtitles(false);
     setCombineError(null);
-    setIsCombining(false);
+    setShowSubtitleModal(false);
     
     const segments = videoData?.segments || videoData?.selectedSegments || [];
     if (segments.length > 0) {
-      hasStartedCombine.current = true;
       triggerCombineVideo(segments, videoData);
     }
   };
@@ -471,7 +526,7 @@ export const FullVideo: React.FC = () => {
     { id: "instagram", name: "Instagram" },
   ];
 
-  const getPlatformIcon = (platformId) => {
+  const getPlatformIcon = (platformId: string) => {
     switch (platformId) {
       case "tiktok":
         return (
@@ -496,7 +551,7 @@ export const FullVideo: React.FC = () => {
     }
   };
 
-  const togglePlatform = (platformId) => {
+  const togglePlatform = (platformId: string) => {
     setSelectedPlatforms((prev) =>
       prev.includes(platformId)
         ? prev.filter((id) => id !== platformId)
@@ -568,16 +623,106 @@ export const FullVideo: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0a12] p-8">
+      {/* Subtitle Modal - Centered Overlay */}
+      {showSubtitleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#7c3aed]/50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl shadow-[#7c3aed]/20">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#7c3aed]/20 rounded-full flex items-center justify-center">
+                  <Captions className="w-5 h-5 text-[#7c3aed]" />
+                </div>
+                <h3 className="text-white font-semibold text-lg">Add Subtitles?</h3>
+              </div>
+              <button 
+                onClick={handleSkipSubtitles}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <p className="text-white/70 text-sm mb-5">
+              AI akan transcribe audio dan menambahkan subtitle animasi word-by-word ke video kamu.
+            </p>
+            
+            {/* Style Selector */}
+            <div className="mb-5">
+              <label className="text-white/60 text-xs mb-2 block">Pilih Style Subtitle</label>
+              <div className="grid grid-cols-5 gap-2">
+                {['tiktok', 'reels', 'shorts', 'viral', 'dramatic'].map((style) => (
+                  <button
+                    key={style}
+                    onClick={() => setSubtitleStyle(style)}
+                    className={"px-2 py-2 rounded-lg text-xs font-medium transition-all " + 
+                      (subtitleStyle === style 
+                        ? "bg-[#7c3aed] text-white ring-2 ring-[#7c3aed]/50" 
+                        : "bg-white/10 text-white/70 hover:bg-white/20")}
+                  >
+                    {style.charAt(0).toUpperCase() + style.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <Button
+                onClick={handleAddSubtitles}
+                className="flex-1 bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:from-[#6d28d9] hover:to-[#db2777] text-white h-11"
+              >
+                <Captions className="w-4 h-4 mr-2" />
+                Yes, Add Subtitles
+              </Button>
+              <Button
+                onClick={handleSkipSubtitles}
+                variant="secondary"
+                className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11"
+              >
+                <CaptionsOff className="w-4 h-4 mr-2" />
+                Skip
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subtitle Processing Overlay */}
+      {isAddingSubtitles && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#7c3aed]/50 rounded-2xl p-8 max-w-sm w-full mx-4 text-center">
+            <div className="w-20 h-20 mx-auto mb-6 relative">
+              <svg className="w-20 h-20 transform -rotate-90">
+                <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="6" fill="none" className="text-white/20" />
+                <circle cx="40" cy="40" r="36" stroke="url(#subtitleGradient)" strokeWidth="6" fill="none" strokeLinecap="round"
+                  strokeDasharray={subtitlePercent * 2.26 + " 226"} className="transition-all duration-500" />
+                <defs>
+                  <linearGradient id="subtitleGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#7c3aed" />
+                    <stop offset="100%" stopColor="#ec4899" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-white font-bold text-lg">{subtitlePercent}%</span>
+              </div>
+            </div>
+            <h3 className="text-white font-semibold text-lg mb-2">Adding Subtitles</h3>
+            <p className="text-white/60 text-sm mb-4">{subtitleProgress}</p>
+            <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
+                style={{ width: subtitlePercent + "%" }} />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-center mb-6">
           <Logo />
         </div>
         <div className="flex gap-2 mb-8 max-w-md mx-auto">
           {[1, 2, 3, 4, 5, 6, 7].map((step) => (
-            <div
-              key={step}
-              className="h-1 flex-1 rounded-full bg-[#7c3aed]"
-            />
+            <div key={step} className="h-1 flex-1 rounded-full bg-[#7c3aed]" />
           ))}
         </div>
         <div className="flex items-center justify-between mb-8">
@@ -615,33 +760,34 @@ export const FullVideo: React.FC = () => {
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-black/20" />
                   
-                  {/* Processing Overlay */}
+                  {/* Processing/Prompt Overlay */}
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-                    {isCombining ? (
+                    {showCombinePrompt ? (
+                      // Combine Prompt - Ask user to start
+                      <div className="text-center px-6">
+                        <div className="w-20 h-20 bg-[#7c3aed]/20 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-[#7c3aed]/50 mb-4 mx-auto">
+                          <Play className="w-10 h-10 text-[#7c3aed]" />
+                        </div>
+                        <h3 className="text-white font-semibold text-lg mb-2">Ready to Combine</h3>
+                        <p className="text-white/60 text-sm mb-6 max-w-xs">
+                          {(videoData?.segments || videoData?.selectedSegments || []).length} segments ready to be combined into one video
+                        </p>
+                        <Button
+                          onClick={handleStartCombine}
+                          className="bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:from-[#6d28d9] hover:to-[#db2777] text-white px-8"
+                        >
+                          <Play className="w-4 h-4 mr-2" />
+                          Start Combining
+                        </Button>
+                      </div>
+                    ) : isCombining ? (
                       <div className="text-center px-6 max-w-xs">
                         {/* Circular Progress */}
                         <div className="relative w-24 h-24 mx-auto mb-6">
                           <svg className="w-24 h-24 transform -rotate-90">
-                            <circle
-                              cx="48"
-                              cy="48"
-                              r="40"
-                              stroke="currentColor"
-                              strokeWidth="6"
-                              fill="none"
-                              className="text-white/20"
-                            />
-                            <circle
-                              cx="48"
-                              cy="48"
-                              r="40"
-                              stroke="url(#gradient)"
-                              strokeWidth="6"
-                              fill="none"
-                              strokeLinecap="round"
-                              strokeDasharray={progressPercent * 2.51 + " 251"}
-                              className="transition-all duration-500"
-                            />
+                            <circle cx="48" cy="48" r="40" stroke="currentColor" strokeWidth="6" fill="none" className="text-white/20" />
+                            <circle cx="48" cy="48" r="40" stroke="url(#gradient)" strokeWidth="6" fill="none" strokeLinecap="round"
+                              strokeDasharray={progressPercent * 2.51 + " 251"} className="transition-all duration-500" />
                             <defs>
                               <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
                                 <stop offset="0%" stopColor="#7c3aed" />
@@ -659,10 +805,8 @@ export const FullVideo: React.FC = () => {
                         
                         {/* Linear Progress Bar */}
                         <div className="w-full bg-white/20 rounded-full h-2 overflow-hidden">
-                          <div 
-                            className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
-                            style={{ width: progressPercent + "%" }}
-                          />
+                          <div className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
+                            style={{ width: progressPercent + "%" }} />
                         </div>
                         <p className="text-white/50 text-xs mt-3">Please wait, this may take a minute...</p>
                       </div>
@@ -672,7 +816,7 @@ export const FullVideo: React.FC = () => {
                         <p className="text-white font-semibold text-lg mb-2">Processing Failed</p>
                         <p className="text-red-400 text-sm text-center px-4 mb-6 max-w-xs">{combineError}</p>
                         <Button
-                          onClick={handleRetryCombine}
+                          onClick={handleRecombine}
                           className="bg-[#7c3aed] hover:bg-[#6d28d9] text-white px-8"
                         >
                           <RefreshCw className="w-4 h-4 mr-2" />
@@ -681,12 +825,8 @@ export const FullVideo: React.FC = () => {
                       </div>
                     ) : (
                       <div className="text-center">
-                        <div className="w-20 h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/40 mb-4 mx-auto">
-                          <svg className="w-10 h-10 text-white/60" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
-                        </div>
-                        <p className="text-white/60 text-sm">Waiting for video segments...</p>
+                        <Loader2 className="w-12 h-12 text-[#7c3aed] animate-spin mx-auto mb-4" />
+                        <p className="text-white/60 text-sm">Loading...</p>
                       </div>
                     )}
                   </div>
@@ -694,113 +834,45 @@ export const FullVideo: React.FC = () => {
               )}
             </div>
             
-            {/* Download Button */}
+            {/* Action Buttons - Only show when video is ready */}
             {finalVideoUrl && (
-              <a
-                href={finalVideoUrl}
-                download={(title || 'video') + ".mp4"}
-                className="w-full flex items-center justify-center gap-2 bg-[#7c3aed] hover:bg-[#6d28d9] text-white py-3 rounded-lg transition-colors"
-              >
-                <Download className="w-5 h-5" />
-                Download Video
-              </a>
-            )}
-            
-            {/* Processing Status */}
-            {isCombining && (
-              <div className="mt-4 bg-gradient-to-r from-[#7c3aed]/20 to-[#ec4899]/20 border border-[#7c3aed]/30 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-[#7c3aed]">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm font-medium">{combineProgress}</span>
-                  </div>
-                  <span className="text-white font-bold">{progressPercent}%</span>
-                </div>
-                <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
-                    style={{ width: progressPercent + "%" }}
-                  />
-                </div>
-              </div>
-            )}
-            
-            {finalVideoUrl && !isAddingSubtitles && !showSubtitleOption && (
-              <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-green-400 text-sm">
-                  <CheckCircle className="w-4 h-4" />
-                  <span>Video ready!</span>
-                </div>
-              </div>
-            )}
-            
-            {/* Subtitle Option Dialog */}
-            {showSubtitleOption && finalVideoUrl && (
-              <div className="mt-4 bg-gradient-to-r from-[#7c3aed]/20 to-[#ec4899]/20 border border-[#7c3aed]/40 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Captions className="w-5 h-5 text-[#7c3aed]" />
-                  <h3 className="text-white font-semibold">Add Subtitles?</h3>
-                </div>
-                <p className="text-white/70 text-sm mb-4">
-                  AI will transcribe audio and add word-by-word animated subtitles.
-                </p>
+              <div className="space-y-3">
+                {/* Download Button */}
+                <a
+                  href={finalVideoUrl}
+                  download={(title || 'video') + ".mp4"}
+                  className="w-full flex items-center justify-center gap-2 bg-[#7c3aed] hover:bg-[#6d28d9] text-white py-3 rounded-lg transition-colors"
+                >
+                  <Download className="w-5 h-5" />
+                  Download Video
+                </a>
                 
-                {/* Style Selector */}
-                <div className="mb-4">
-                  <label className="text-white/60 text-xs mb-2 block">Subtitle Style</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {['tiktok', 'reels', 'shorts', 'viral', 'dramatic'].map((style) => (
-                      <button
-                        key={style}
-                        onClick={() => setSubtitleStyle(style)}
-                        className={"px-3 py-1.5 rounded-lg text-xs font-medium transition-all " + 
-                          (subtitleStyle === style 
-                            ? "bg-[#7c3aed] text-white" 
-                            : "bg-white/10 text-white/70 hover:bg-white/20")}
-                      >
-                        {style.charAt(0).toUpperCase() + style.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                
+                {/* Subtitle & Recombine Buttons */}
                 <div className="flex gap-2">
                   <Button
-                    onClick={handleAddSubtitles}
-                    className="flex-1 bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                    onClick={() => setShowSubtitleModal(true)}
+                    className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20"
                   >
                     <Captions className="w-4 h-4 mr-2" />
-                    Yes, Add Subtitles
+                    {hasSubtitles ? 'Change Subtitle' : 'Add Subtitle'}
                   </Button>
                   <Button
-                    onClick={handleSkipSubtitles}
+                    onClick={handleRecombine}
                     variant="secondary"
                     className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20"
                   >
-                    <CaptionsOff className="w-4 h-4 mr-2" />
-                    No, Skip
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Recombine
                   </Button>
                 </div>
-              </div>
-            )}
-            
-            {/* Subtitle Processing Progress */}
-            {isAddingSubtitles && (
-              <div className="mt-4 bg-gradient-to-r from-[#7c3aed]/20 to-[#ec4899]/20 border border-[#7c3aed]/30 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-[#7c3aed]">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm font-medium">{subtitleProgress}</span>
+                
+                {/* Status Badge */}
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-green-400 text-sm">
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Video ready{hasSubtitles ? ' with subtitles' : ''}!</span>
                   </div>
-                  <span className="text-white font-bold">{subtitlePercent}%</span>
                 </div>
-                <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
-                    style={{ width: subtitlePercent + "%" }}
-                  />
-                </div>
-                <p className="text-white/50 text-xs mt-2">Transcribing audio and generating subtitles...</p>
               </div>
             )}
           </div>
@@ -840,9 +912,7 @@ export const FullVideo: React.FC = () => {
                     onClick={() => setPublishToPublic(!publishToPublic)}
                     className={"relative w-14 h-7 rounded-full transition-colors " + (publishToPublic ? "bg-[#7c3aed]" : "bg-[#4e5562]")}
                   >
-                    <div
-                      className={"absolute top-1 left-1 w-5 h-5 bg-white rounded-full transition-transform " + (publishToPublic ? "translate-x-7" : "translate-x-0")}
-                    />
+                    <div className={"absolute top-1 left-1 w-5 h-5 bg-white rounded-full transition-transform " + (publishToPublic ? "translate-x-7" : "translate-x-0")} />
                   </button>
                 </div>
               </div>
@@ -895,7 +965,7 @@ export const FullVideo: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <Button
                     onClick={handlePlanContent}
-                    disabled={loading || isCombining}
+                    disabled={loading || isCombining || !finalVideoUrl}
                     className="bg-gradient-to-r from-[#7c3aed] to-[#ec4899] text-white hover:from-[#6d28d9] hover:to-[#db2777] h-12 font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Calendar className="w-5 h-5" />
