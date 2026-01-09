@@ -152,7 +152,7 @@ export const FullVideo: React.FC = () => {
         segment_type: seg.type || seg.element || "BODY",
         video_url: seg.videoUrl || seg.video_url,
         duration_seconds: seg.durationSeconds || seg.duration_seconds || 8,
-        script_text: seg.scriptText || seg.script_text || seg.text || null,
+        script_text: seg.script || seg.scriptText || seg.script_text || seg.text || null,
         emotion: seg.emotion || "neutral"
       }));
 

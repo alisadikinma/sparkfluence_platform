@@ -18,6 +18,7 @@ import threading
 
 # Import FFmpeg modules
 from ffmpeg import VideoCombiner, CombineConfig, VideoSegmentInput, TransitionType
+from ffmpeg.subtitle_processor import SubtitleProcessor
 
 # Load environment variables from root .env
 load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
@@ -209,8 +210,8 @@ class CombineOptionsV2(BaseModel):
     enable_transitions: bool = True
     transition_duration: float = 0.5
     
-    # Subtitles
-    enable_subtitles: bool = True
+    # Subtitles (disabled by default - use /api/add-subtitles endpoint after combining)
+    enable_subtitles: bool = False
     subtitle_style: str = "tiktok"  # tiktok, reels, shorts, minimal, dramatic
     word_by_word: bool = True
     
@@ -929,6 +930,113 @@ def check_ffmpeg_available() -> bool:
         return True
     except Exception:
         return False
+
+
+# ==================== Add Subtitles Endpoint ====================
+
+class AddSubtitlesRequest(BaseModel):
+    """Request to add subtitles to existing video."""
+    video_url: str
+    subtitle_style: str = "tiktok"  # tiktok, reels, shorts, viral, dramatic
+    project_id: Optional[str] = None
+
+
+@app.post("/api/add-subtitles")
+async def add_subtitles(
+    request: AddSubtitlesRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """
+    Add subtitles to existing video using Groq Whisper transcription.
+    
+    Pipeline:
+    1. Download video
+    2. Extract audio
+    3. Transcribe with Groq Whisper (word-level timestamps)
+    4. Generate ASS subtitle file
+    5. Burn subtitles into video
+    6. Upload to storage
+    """
+    verify_api_key(api_key)
+    
+    # Check Groq API key
+    if not os.getenv('GROQ_API_KEY'):
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+    
+    job_id = f"sub_{uuid.uuid4().hex[:12]}"
+    
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "processing",
+        "progress_percentage": 0,
+        "current_step": "Initializing",
+        "final_video_url": None,
+        "error_message": None
+    }
+    
+    background_tasks.add_task(
+        process_add_subtitles,
+        job_id,
+        request.video_url,
+        request.subtitle_style,
+        request.project_id
+    )
+    
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "status": "processing",
+            "estimated_time_seconds": 60,
+            "polling_endpoint": f"/api/job-status/{job_id}"
+        }
+    }
+
+
+async def process_add_subtitles(
+    job_id: str,
+    video_url: str,
+    style: str,
+    project_id: Optional[str]
+):
+    """Background task: transcribe + generate + burn subtitles."""
+    try:
+        def progress_callback(percent: int, step: str):
+            update_job_status(job_id, percent, step)
+        
+        processor = SubtitleProcessor()
+        result = await processor.process(video_url, style, progress_callback)
+        
+        if not result.get("success"):
+            raise Exception(result.get("error", "Subtitle processing failed"))
+        
+        # Upload to storage
+        update_job_status(job_id, 90, "Uploading final video")
+        final_url = await upload_to_storage(
+            Path(result["video_path"]),
+            project_id or "subtitled"
+        )
+        
+        jobs[job_id].update({
+            "status": "completed",
+            "progress_percentage": 100,
+            "current_step": "Complete",
+            "final_video_url": final_url,
+            "metadata": {
+                "word_count": result.get("word_count", 0),
+                "subtitle_style": style
+            }
+        })
+        
+        logger.info(f"Subtitle job {job_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Subtitle job {job_id} failed: {e}")
+        jobs[job_id].update({
+            "status": "failed",
+            "error_message": str(e)
+        })
 
 
 if __name__ == "__main__":

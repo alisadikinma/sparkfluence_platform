@@ -1,50 +1,53 @@
 """
-FFmpeg Subtitles Module
-Generates ASS subtitles with word-by-word animation from Whisper transcripts.
+FFmpeg Subtitles Module - TikTok/Reels Style
+Generates ASS subtitles with word-by-word karaoke animation.
+Shows 2-3 words at a time with highlight on current word.
 """
 
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-import json
+import re
 
 logger = logging.getLogger('FFmpeg.Subtitles')
 
 
 class SubtitlePosition(Enum):
-    """Subtitle position on screen."""
-    BOTTOM_CENTER = 2   # Default
-    TOP_CENTER = 8
-    MIDDLE_CENTER = 5
+    """Subtitle position on screen (ASS alignment)."""
     BOTTOM_LEFT = 1
+    BOTTOM_CENTER = 2
     BOTTOM_RIGHT = 3
+    MIDDLE_LEFT = 4
+    MIDDLE_CENTER = 5
+    MIDDLE_RIGHT = 6
+    TOP_LEFT = 7
+    TOP_CENTER = 8
+    TOP_RIGHT = 9
 
 
 @dataclass
 class SubtitleStyle:
     """ASS subtitle style configuration."""
     font_name: str = "Montserrat"
-    font_size: int = 18
+    font_size: int = 54  # Large for mobile
     primary_color: str = "&HFFFFFF"  # White (BGR format)
-    secondary_color: str = "&H00FFFF"  # Yellow highlight
+    highlight_color: str = "&H00FFFF"  # Yellow/Cyan for current word
     outline_color: str = "&H000000"  # Black outline
     back_color: str = "&H80000000"  # Semi-transparent black
     bold: bool = True
     italic: bool = False
-    outline: int = 2
-    shadow: int = 1
-    alignment: SubtitlePosition = SubtitlePosition.BOTTOM_CENTER
-    margin_l: int = 20
-    margin_r: int = 20
-    margin_v: int = 30
+    outline: int = 4  # Thick outline for readability
+    shadow: int = 2
+    alignment: SubtitlePosition = SubtitlePosition.MIDDLE_CENTER
+    margin_l: int = 40
+    margin_r: int = 40
+    margin_v: int = 200  # Push down from center
     
-    # Animation settings
-    highlight_words: bool = True
-    highlight_color: str = "&H00FFFF"  # Yellow for current word
-    fade_in_ms: int = 100
-    fade_out_ms: int = 100
+    # Word display settings
+    words_per_group: int = 3  # Show 2-3 words at a time
+    word_gap_ms: int = 50  # Gap between word groups
 
 
 @dataclass
@@ -67,9 +70,9 @@ class SubtitleSegment:
 
 
 class SubtitleGenerator:
-    """Generates ASS subtitles from transcripts."""
+    """Generates ASS subtitles with TikTok-style word-by-word animation."""
     
-    # ASS header template
+    # ASS header template - 9:16 vertical video (1080x1920)
     ASS_HEADER = """[Script Info]
 Title: Sparkfluence Subtitles
 ScriptType: v4.00+
@@ -81,8 +84,8 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{primary_color},{secondary_color},{outline_color},{back_color},{bold},{italic},0,0,100,100,0,0,1,{outline},{shadow},{alignment},{margin_l},{margin_r},{margin_v},1
-Style: Highlight,{font_name},{font_size},{highlight_color},{secondary_color},{outline_color},{back_color},{bold},{italic},0,0,100,100,0,0,1,{outline},{shadow},{alignment},{margin_l},{margin_r},{margin_v},1
+Style: Default,{font_name},{font_size},{primary_color},{primary_color},{outline_color},{back_color},{bold},{italic},0,0,100,100,0,0,1,{outline},{shadow},{alignment},{margin_l},{margin_r},{margin_v},1
+Style: Highlight,{font_name},{font_size},{highlight_color},{highlight_color},{outline_color},{back_color},{bold},{italic},0,0,100,100,0,0,1,{outline},{shadow},{alignment},{margin_l},{margin_r},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -105,10 +108,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             font_name=self.style.font_name,
             font_size=self.style.font_size,
             primary_color=self.style.primary_color,
-            secondary_color=self.style.secondary_color,
+            highlight_color=self.style.highlight_color,
             outline_color=self.style.outline_color,
             back_color=self.style.back_color,
-            highlight_color=self.style.highlight_color,
             bold="-1" if self.style.bold else "0",
             italic="-1" if self.style.italic else "0",
             outline=self.style.outline,
@@ -119,49 +121,112 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             margin_v=self.style.margin_v
         )
     
-    def _generate_word_by_word_line(self, segment: SubtitleSegment) -> List[str]:
+    def _group_words(self, words: List[WordTimestamp]) -> List[List[WordTimestamp]]:
         """
-        Generate ASS dialogue lines for word-by-word highlight animation.
-        Each word gets highlighted when it's being spoken.
+        Group words into chunks of 2-3 words for display.
+        This creates the karaoke effect where only a few words show at once.
+        """
+        groups = []
+        n = self.style.words_per_group
+        
+        for i in range(0, len(words), n):
+            group = words[i:i+n]
+            groups.append(group)
+        
+        return groups
+    
+    def _generate_karaoke_lines(self, segment: SubtitleSegment) -> List[str]:
+        """
+        Generate TikTok-style karaoke subtitles.
+        Shows 2-3 words at a time with current word highlighted.
         """
         lines = []
         
         if not segment.words:
-            # No word timestamps - show full line
+            # No word timestamps - show full line at center
             start = self._format_time(segment.start)
             end = self._format_time(segment.end)
             lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{segment.text}")
             return lines
         
-        # Build word-by-word animation
-        for i, word in enumerate(segment.words):
-            # Build line with current word highlighted
-            text_parts = []
-            
-            for j, w in enumerate(segment.words):
-                if j == i:
-                    # Current word - highlighted
-                    text_parts.append(f"{{\\c{self.style.highlight_color}}}{w.word}{{\\c{self.style.primary_color}}}")
-                else:
-                    text_parts.append(w.word)
-            
-            full_text = " ".join(text_parts)
-            start = self._format_time(word.start)
-            end = self._format_time(word.end)
-            
-            # Add fade effect
-            fade = f"{{\\fad({self.style.fade_in_ms},{self.style.fade_out_ms})}}"
-            
-            lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{fade}{full_text}")
+        # Group words into chunks
+        word_groups = self._group_words(segment.words)
+        
+        for group_idx, group in enumerate(word_groups):
+            # Each word in the group gets its own dialogue line with highlight
+            for word_idx, current_word in enumerate(group):
+                # Build the display text with current word highlighted
+                text_parts = []
+                
+                for i, w in enumerate(group):
+                    if i == word_idx:
+                        # Current word - HIGHLIGHTED (yellow/cyan)
+                        text_parts.append(f"{{\\c{self.style.highlight_color}\\b1}}{w.word.upper()}{{\\c{self.style.primary_color}\\b1}}")
+                    else:
+                        # Other words - normal white
+                        text_parts.append(w.word.upper())
+                
+                # Join with newline for vertical stacking (TikTok style)
+                # Or space for horizontal
+                display_text = "\\N".join(text_parts)  # Vertical stack
+                # display_text = " ".join(text_parts)  # Horizontal
+                
+                start = self._format_time(current_word.start)
+                end = self._format_time(current_word.end)
+                
+                lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{display_text}")
         
         return lines
     
-    def _generate_simple_line(self, segment: SubtitleSegment) -> str:
-        """Generate simple subtitle line without word animation."""
-        start = self._format_time(segment.start)
-        end = self._format_time(segment.end)
-        fade = f"{{\\fad({self.style.fade_in_ms},{self.style.fade_out_ms})}}"
-        return f"Dialogue: 0,{start},{end},Default,,0,0,0,,{fade}{segment.text}"
+    def _generate_word_popup_lines(self, segment: SubtitleSegment) -> List[str]:
+        """
+        Alternative style: Words pop up one at a time.
+        Current word appears, then stays while next word appears highlighted.
+        """
+        lines = []
+        
+        if not segment.words:
+            start = self._format_time(segment.start)
+            end = self._format_time(segment.end)
+            lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{segment.text.upper()}")
+            return lines
+        
+        # Group words
+        word_groups = self._group_words(segment.words)
+        
+        for group in word_groups:
+            if not group:
+                continue
+                
+            group_start = group[0].start
+            group_end = group[-1].end
+            
+            # For each word position in the group
+            for word_idx in range(len(group)):
+                # Build text showing words up to current, with current highlighted
+                text_parts = []
+                
+                for i in range(word_idx + 1):
+                    word = group[i]
+                    if i == word_idx:
+                        # Current word - highlighted
+                        text_parts.append(f"{{\\c{self.style.highlight_color}}}{word.word.upper()}{{\\c{self.style.primary_color}}}")
+                    else:
+                        # Previous words - white
+                        text_parts.append(word.word.upper())
+                
+                display_text = "\\N".join(text_parts)
+                
+                start = self._format_time(group[word_idx].start)
+                # End when next word starts, or at group end
+                if word_idx < len(group) - 1:
+                    end = self._format_time(group[word_idx + 1].start - 0.01)
+                else:
+                    end = self._format_time(group_end)
+                
+                lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{display_text}")
+        
+        return lines
     
     def generate_ass(
         self, 
@@ -173,7 +238,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         
         Args:
             segments: List of subtitle segments with timing
-            word_by_word: If True, generate word-by-word highlight animation
+            word_by_word: If True, generate word-by-word karaoke animation
         
         Returns:
             ASS file content as string
@@ -182,9 +247,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         
         for segment in segments:
             if word_by_word and segment.words:
-                lines.extend(self._generate_word_by_word_line(segment))
+                # Use popup style (words accumulate)
+                lines.extend(self._generate_word_popup_lines(segment))
             else:
-                lines.append(self._generate_simple_line(segment))
+                # Simple full line
+                start = self._format_time(segment.start)
+                end = self._format_time(segment.end)
+                lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{segment.text.upper()}")
         
         return "\n".join(lines)
     
@@ -251,7 +320,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         script_text: str,
         start_time: float,
         end_time: float,
-        words_per_second: float = 2.5
+        words_per_minute: float = 150.0
     ) -> SubtitleSegment:
         """
         Create subtitle segment from script text without Whisper.
@@ -261,11 +330,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             script_text: The script text
             start_time: Start time in seconds
             end_time: End time in seconds  
-            words_per_second: Average speaking rate (default 2.5 = 150 WPM)
+            words_per_minute: Average speaking rate (default 150 WPM)
         
         Returns:
             SubtitleSegment with estimated word timings
         """
+        # Clean script text
+        script_text = script_text.strip()
+        if not script_text:
+            return SubtitleSegment(
+                segment_id="0",
+                text="",
+                start=start_time,
+                end=end_time,
+                words=[]
+            )
+        
+        # Split into words
         words = script_text.split()
         if not words:
             return SubtitleSegment(
@@ -279,14 +360,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         duration = end_time - start_time
         time_per_word = duration / len(words)
         
+        # Minimum time per word (to avoid too fast)
+        min_time = 0.2  # 200ms minimum per word
+        time_per_word = max(time_per_word, min_time)
+        
         word_timestamps = []
         current_time = start_time
         
         for word in words:
+            word_end = min(current_time + time_per_word - 0.02, end_time)
             word_timestamps.append(WordTimestamp(
                 word=word,
-                start=current_time,
-                end=current_time + time_per_word - 0.05,  # Small gap
+                start=round(current_time, 2),
+                end=round(word_end, 2),
                 confidence=0.9  # Lower confidence for estimated
             ))
             current_time += time_per_word
@@ -300,67 +386,104 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         )
 
 
-# Preset styles for different content types
+# ============================================================================
+# PRESET STYLES - Optimized for TikTok/Reels/Shorts
+# ============================================================================
+
 SUBTITLE_PRESETS = {
-    'default': SubtitleStyle(),
+    'default': SubtitleStyle(
+        font_name="Montserrat",
+        font_size=54,
+        bold=True,
+        outline=4,
+        shadow=2,
+        alignment=SubtitlePosition.MIDDLE_CENTER,
+        margin_v=200,
+        words_per_group=3
+    ),
     
     'tiktok': SubtitleStyle(
         font_name="Montserrat",
-        font_size=20,
+        font_size=60,  # Large for mobile
         bold=True,
-        outline=3,
+        outline=4,
         shadow=2,
-        highlight_color="&H00FFFF",  # Yellow
-        alignment=SubtitlePosition.BOTTOM_CENTER,
-        margin_v=60
+        primary_color="&HFFFFFF",  # White
+        highlight_color="&H00FFFF",  # Yellow/Cyan
+        outline_color="&H000000",  # Black
+        alignment=SubtitlePosition.MIDDLE_CENTER,
+        margin_v=250,  # Below center
+        words_per_group=2  # 2 words at a time
     ),
     
     'reels': SubtitleStyle(
         font_name="Poppins",
-        font_size=18,
+        font_size=56,
         bold=True,
-        outline=2,
-        shadow=1,
-        highlight_color="&H00FF00",  # Green
-        alignment=SubtitlePosition.BOTTOM_CENTER,
-        margin_v=50
+        outline=3,
+        shadow=2,
+        primary_color="&HFFFFFF",
+        highlight_color="&H00FF00",  # Green highlight
+        alignment=SubtitlePosition.MIDDLE_CENTER,
+        margin_v=220,
+        words_per_group=3
     ),
     
     'shorts': SubtitleStyle(
         font_name="Roboto",
-        font_size=18,
+        font_size=52,
         bold=True,
-        outline=2,
+        outline=3,
         shadow=1,
+        primary_color="&HFFFFFF",
         highlight_color="&HFF00FF",  # Magenta
-        alignment=SubtitlePosition.BOTTOM_CENTER,
-        margin_v=40
+        alignment=SubtitlePosition.MIDDLE_CENTER,
+        margin_v=200,
+        words_per_group=3
     ),
     
     'minimal': SubtitleStyle(
         font_name="Inter",
-        font_size=16,
-        bold=False,
-        outline=1,
-        shadow=0,
-        highlight_words=False,
-        alignment=SubtitlePosition.BOTTOM_CENTER
+        font_size=48,
+        bold=True,
+        outline=2,
+        shadow=1,
+        primary_color="&HFFFFFF",
+        highlight_color="&HFFFFFF",  # No highlight
+        alignment=SubtitlePosition.BOTTOM_CENTER,
+        margin_v=100,
+        words_per_group=4
     ),
     
     'dramatic': SubtitleStyle(
         font_name="Montserrat",
-        font_size=24,
+        font_size=72,  # Extra large
         bold=True,
-        outline=4,
+        outline=5,
         shadow=3,
         primary_color="&HFFFFFF",
-        highlight_color="&H0000FF",  # Red
+        highlight_color="&H0000FF",  # Red highlight (BGR)
         alignment=SubtitlePosition.MIDDLE_CENTER,
-        margin_v=0
+        margin_v=150,
+        words_per_group=2
+    ),
+    
+    'viral': SubtitleStyle(
+        font_name="Montserrat",
+        font_size=64,
+        bold=True,
+        outline=4,
+        shadow=2,
+        primary_color="&HFFFFFF",  # White
+        highlight_color="&H00D7FF",  # Orange-Yellow (BGR)
+        outline_color="&H000000",
+        alignment=SubtitlePosition.MIDDLE_CENTER,
+        margin_v=280,
+        words_per_group=2
     )
 }
 
 
 def get_preset_style(preset_name: str) -> SubtitleStyle:
     """Get a preset subtitle style by name."""
-    return SUBTITLE_PRESETS.get(preset_name, SUBTITLE_PRESETS['default'])
+    return SUBTITLE_PRESETS.get(preset_name, SUBTITLE_PRESETS['tiktok'])
