@@ -1,7 +1,24 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+
+// ============================================================================
+// CENTRALIZED AI MODEL CONFIG (2026)
+// All model specs in one place - no code changes needed when adding new models
+// ============================================================================
 import {
-  DALLE3_SPECS,
+  IMAGE_MODELS,
+  getImageModel,
+  getAspectRatioApiValue,
+  getDimensions,
+  buildImageFormData,
+  selectImageModel,
+  getImageModelFallbackChain,
+  type ImageModelKey,
+  type AspectRatio,
+} from '../_shared/config/aiModels.ts'
+
+// Legacy imports for prompt building
+import {
   IMAGE_PROJECT_INSTRUCTION,
   EMOTION_EXPRESSION_MAP,
   LIGHTING_PATTERNS,
@@ -26,20 +43,11 @@ const corsHeaders = {
 
 const TIMEOUT = 120000
 
-// FLUX resolutions (lower than DALL-E, free tier)
-const FLUX_RESOLUTIONS: Record<string, { width: number; height: number }> = {
-  '9:16': { width: 576, height: 1024 },
-  '16:9': { width: 1024, height: 576 },
-  '1:1': { width: 1024, height: 1024 }
-}
-
-// GPT-Image-1 sizes (different from DALL-E 3)
-// Supported: '1024x1024', '1024x1536', '1536x1024', 'auto'
-const GPT_IMAGE_SIZES: Record<string, string> = {
-  '9:16': '1024x1536',  // Portrait (closest to 9:16)
-  '16:9': '1536x1024',  // Landscape (closest to 16:9)
-  '1:1': '1024x1024'    // Square
-}
+// ============================================================================
+// GEMINIGEN API ENDPOINT (Nano Banana / Imagen models)
+// ============================================================================
+const GEMINIGEN_IMAGE_ENDPOINT = 'https://api.geminigen.ai/uapi/v1/generate_image'
+const GEMINIGEN_HISTORY_ENDPOINT = 'https://api.geminigen.ai/uapi/v1/history'
 
 // Job status constants
 const JOB_STATUS = {
@@ -179,15 +187,22 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     // Determine if this segment needs character reference (CREATOR shots only)
     const isCreatorShot = shotType === 'CREATOR'
     
-    // HYBRID PROVIDER LOGIC:
-    // - CREATOR shots → gpt-image-1 (for face consistency with reference)
-    // - B-ROLL shots → huggingface (free, no face needed)
-    let segmentProvider = defaultProvider
+    // HYBRID PROVIDER LOGIC (Cost-optimized):
+    // - HOOK/CTA (CREATOR): Nano Banana (FREE) → GPT-Image-1 (face fallback)
+    // - B-ROLL: FLUX (FREE) → Nano Banana (fallback)
+    let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
     if (defaultProvider === 'auto') {
-      segmentProvider = isCreatorShot ? 'gpt-image-1' : 'huggingface'
+      // Use selectImageModel helper from config
+      const selectedModel = selectImageModel({
+        needsFaceConsistency: isCreatorShot && !!(segment.character_ref_png || character_ref_png),
+        hasReferenceImage: !!(segment.character_ref_png || character_ref_png),
+        preferFree: true, // Always prefer FREE first
+        isCreatorShot
+      })
+      segmentProvider = selectedModel.key as ImageModelKey
     }
     
-    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider}`)
+    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} ${isCreatorShot ? '(CREATOR)' : '(B-ROLL)'}`)
     
     return {
       user_id,
@@ -309,17 +324,32 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
     )
   }
 
-  // Check API keys
-  const provider = job.provider || 'huggingface'
-  if ((provider === 'openai' || provider === 'gpt-image-1') && !openaiApiKey) {
+  // Check API keys based on provider config
+  const provider = (job.provider || 'imagen-pro') as ImageModelKey
+  const providerConfig = IMAGE_MODELS[provider]
+  
+  // Determine which API key is needed based on provider
+  const needsOpenAI = providerConfig?.provider === 'openai'
+  const needsHuggingFace = providerConfig?.provider === 'huggingface'
+  const needsGeminiGen = providerConfig?.provider === 'geminigen'
+  
+  const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
+  
+  if (needsOpenAI && !openaiApiKey) {
     return new Response(
       JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'OPENAI_API_KEY not configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
-  if (provider === 'huggingface' && !hfApiKey) {
+  if (needsHuggingFace && !hfApiKey) {
     return new Response(
       JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'HUGGINGFACE_API_KEY not configured' } }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+  if (needsGeminiGen && !geminiGenApiKey) {
+    return new Response(
+      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'VEO_API_KEY (GeminiGen) not configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
@@ -334,20 +364,38 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
 
   try {
     let imageUrl: string | null = null
-    const aspectRatio = job.aspect_ratio || '9:16'
+    const aspectRatio = (job.aspect_ratio || '9:16') as AspectRatio
 
-    if (provider === 'openai') {
-      imageUrl = await generateWithDalle(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
-    } else if (provider === 'gpt-image-1') {
-      // Pass character reference for face consistency if available
-      imageUrl = await generateWithGptImage1(
-        openaiApiKey!, 
-        job.visual_prompt, 
-        aspectRatio, 
+    // ========================================================================
+    // GENERATE IMAGE USING CENTRALIZED CONFIG
+    // ========================================================================
+    console.log(`[PROCESS_SINGLE] Provider: ${provider}, Config: ${providerConfig?.displayName || 'unknown'}`)
+    
+    if (providerConfig?.provider === 'openai') {
+      if (provider === 'dall-e-3') {
+        imageUrl = await generateWithDalle(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
+      } else {
+        // gpt-image-1 with optional reference
+        imageUrl = await generateWithGptImage1(
+          openaiApiKey!, 
+          job.visual_prompt, 
+          aspectRatio, 
+          supabase,
+          job.character_ref_png || undefined
+        )
+      }
+    } else if (providerConfig?.provider === 'geminigen') {
+      // Nano Banana / Imagen models via GeminiGen API
+      imageUrl = await generateWithGeminiGen(
+        geminiGenApiKey!,
+        job.visual_prompt,
+        aspectRatio,
+        provider,
         supabase,
         job.character_ref_png || undefined
       )
     } else {
+      // HuggingFace FLUX (fallback)
       imageUrl = await generateWithFlux(hfApiKey!, job.visual_prompt, aspectRatio, supabase)
     }
 
@@ -517,13 +565,21 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
     // Determine if this is a CREATOR shot (has face)
     const isCreatorShot = shotType === 'CREATOR'
     
-    // HYBRID PROVIDER LOGIC:
-    // - CREATOR shots → gpt-image-1 (for face consistency)
-    // - B-ROLL shots → huggingface (free, no face needed)
-    let segmentProvider = defaultProvider
+    // HYBRID PROVIDER LOGIC (Cost-optimized):
+    // - HOOK/CTA (CREATOR): Nano Banana (FREE) → GPT-Image-1 (face fallback)
+    // - B-ROLL: FLUX (FREE) → Nano Banana (fallback)
+    let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
     if (defaultProvider === 'auto') {
-      segmentProvider = isCreatorShot ? 'gpt-image-1' : 'huggingface'
+      const selectedModel = selectImageModel({
+        needsFaceConsistency: isCreatorShot && !!(segment.character_ref_png || characterRefPng),
+        hasReferenceImage: !!(segment.character_ref_png || characterRefPng),
+        preferFree: true, // Always prefer FREE first
+        isCreatorShot
+      })
+      segmentProvider = selectedModel.key as ImageModelKey
     }
+    
+    const providerConfig = IMAGE_MODELS[segmentProvider]
     
     const imagePrompt = buildCinematicPrompt({
       segment,
@@ -535,28 +591,36 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       emotion
     })
     
-    console.log(`[${segmentProvider.toUpperCase()}] Generating ${i + 1}/${segments.length}: ${segmentType} (${shotType})`)
+    console.log(`[${segmentProvider.toUpperCase()}] Generating ${i + 1}/${segments.length}: ${segmentType} (${shotType}) ${isCreatorShot ? '[CREATOR]' : '[B-ROLL]'}`)
 
     try {
       let imageUrl: string | null = null
+      const geminiGenApiKey = Deno.env.get('VEO_API_KEY')
 
-      if (segmentProvider === 'openai') {
+      // ========================================================================
+      // GENERATE IMAGE USING CENTRALIZED CONFIG
+      // ========================================================================
+      if (providerConfig?.provider === 'openai') {
         if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
-        imageUrl = await generateWithDalle(openaiApiKey, imagePrompt, aspectRatio, supabase)
-      } else if (segmentProvider === 'gpt-image-1') {
-        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
-        // Pass character reference for face consistency (only for CREATOR shots)
+        if (segmentProvider === 'dall-e-3') {
+          imageUrl = await generateWithDalle(openaiApiKey, imagePrompt, aspectRatio, supabase)
+        } else {
+          // gpt-image-1 with optional reference
+          const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng) : undefined
+          imageUrl = await generateWithGptImage1(openaiApiKey, imagePrompt, aspectRatio, supabase, refImage || undefined)
+        }
+      } else if (providerConfig?.provider === 'geminigen') {
+        if (!geminiGenApiKey) throw new Error('VEO_API_KEY (GeminiGen) not configured')
+        // Nano Banana / Imagen models
         const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng) : undefined
-        imageUrl = await generateWithGptImage1(openaiApiKey, imagePrompt, aspectRatio, supabase, refImage || undefined)
+        imageUrl = await generateWithGeminiGen(geminiGenApiKey, imagePrompt, aspectRatio, segmentProvider, supabase, refImage || undefined)
       } else {
         if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
         imageUrl = await generateWithFlux(hfApiKey, imagePrompt, aspectRatio, supabase)
       }
 
-      // Determine provider string for response
-      const providerString = segmentProvider === 'openai' ? 'openai-dalle3' 
-        : segmentProvider === 'gpt-image-1' ? 'openai-gpt-image-1' 
-        : 'huggingface-flux'
+      // Determine provider string for response (using config displayName)
+      const providerString = providerConfig?.displayName || segmentProvider
 
       images.push({
         segment_number: segment.segment_number,
@@ -575,10 +639,8 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       console.error(`[${segmentProvider.toUpperCase()}] ❌ Failed: ${errorMessage}`)
       
-      // Determine provider string for error response
-      const errorProviderString = segmentProvider === 'openai' ? 'openai-dalle3' 
-        : segmentProvider === 'gpt-image-1' ? 'openai-gpt-image-1' 
-        : 'huggingface-flux'
+      // Use provider displayName for error response
+      const errorProviderString = providerConfig?.displayName || segmentProvider
 
       images.push({
         segment_number: segment.segment_number,
@@ -778,32 +840,34 @@ function buildCinematicPrompt(params: PromptParams): string {
 }
 
 // ============================================================================
-// DALL-E 3 Generation
+// DALL-E 3 Generation (using centralized config)
 // ============================================================================
 
 async function generateWithDalle(
   apiKey: string, 
   prompt: string, 
-  aspectRatio: string, 
+  aspectRatio: AspectRatio, 
   supabase: any
 ): Promise<string> {
-  const size = DALLE3_SPECS.sizes[aspectRatio as keyof typeof DALLE3_SPECS.sizes] || DALLE3_SPECS.sizes['9:16']
+  const modelConfig = IMAGE_MODELS['dall-e-3']
+  const sizeConfig = modelConfig.aspectRatios[aspectRatio]
+  const size = sizeConfig ? getAspectRatioApiValue(modelConfig, aspectRatio) : '1024x1792'
   
   console.log(`[DALL-E] Size: ${size}, Prompt length: ${prompt.length} chars`)
   
-  const response = await fetch('https://api.openai.com/v1/images/generations', {
+  const response = await fetch(modelConfig.endpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: DALLE3_SPECS.model,
+      model: modelConfig.apiModelName,
       prompt: prompt,
       n: 1,
       size: size,
-      quality: DALLE3_SPECS.quality,
-      style: DALLE3_SPECS.style,
+      quality: 'hd',
+      style: 'vivid',
       response_format: 'url'
     })
   })
@@ -834,25 +898,26 @@ async function generateWithDalle(
 }
 
 // ============================================================================
-// FLUX Generation (HuggingFace - FREE)
+// FLUX Generation (HuggingFace - FREE, using centralized config)
 // ============================================================================
 
 async function generateWithFlux(
   apiKey: string, 
   prompt: string, 
-  aspectRatio: string, 
+  aspectRatio: AspectRatio, 
   supabase: any
 ): Promise<string> {
-  const resolution = FLUX_RESOLUTIONS[aspectRatio] || FLUX_RESOLUTIONS['9:16']
+  const modelConfig = IMAGE_MODELS['flux-schnell']
+  const dimensions = getDimensions(modelConfig, aspectRatio) || { width: 576, height: 1024 }
   
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), TIMEOUT)
 
   try {
-    console.log(`[FLUX] Resolution: ${resolution.width}x${resolution.height}, Prompt length: ${prompt.length} chars`)
+    console.log(`[FLUX] Resolution: ${dimensions.width}x${dimensions.height}, Prompt length: ${prompt.length} chars`)
     
     const response = await fetch(
-      'https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell',
+      modelConfig.endpoint,
       {
         method: 'POST',
         headers: {
@@ -862,8 +927,8 @@ async function generateWithFlux(
         body: JSON.stringify({
           inputs: prompt,
           parameters: { 
-            width: resolution.width, 
-            height: resolution.height 
+            width: dimensions.width, 
+            height: dimensions.height 
           }
         }),
         signal: controller.signal
@@ -897,7 +962,7 @@ async function generateWithFlux(
 }
 
 // ============================================================================
-// GPT-Image-1 Generation (OpenAI - Premium, superior instruction following)
+// GPT-Image-1 Generation (OpenAI - Premium, using centralized config)
 // Supports character reference via Image Edit API for consistent faces
 // Based on OpenAI docs: https://platform.openai.com/docs/guides/image-generation
 // ============================================================================
@@ -905,11 +970,12 @@ async function generateWithFlux(
 async function generateWithGptImage1(
   apiKey: string,
   prompt: string,
-  aspectRatio: string,
+  aspectRatio: AspectRatio,
   supabase: any,
   referenceImageUrl?: string // Avatar URL for character consistency
 ): Promise<string> {
-  const size = GPT_IMAGE_SIZES[aspectRatio] || GPT_IMAGE_SIZES['9:16']
+  const modelConfig = IMAGE_MODELS['gpt-image-1']
+  const size = getAspectRatioApiValue(modelConfig, aspectRatio) || '1024x1536'
   
   // If reference image provided, use Image Edit API for character consistency
   if (referenceImageUrl) {
@@ -928,7 +994,7 @@ async function generateWithGptImage1(
       // Build FormData for multipart upload (OpenAI Image Edit API format)
       // Per docs: image[] accepts multiple files, input_fidelity="high" for face preservation
       const formData = new FormData()
-      formData.append('model', 'gpt-image-1')
+      formData.append('model', modelConfig.apiModelName)
       formData.append('prompt', prompt)
       formData.append('size', size)
       formData.append('quality', 'high')
@@ -976,16 +1042,17 @@ async function generateWithGptImage1WithoutRef(
   size: string,
   supabase: any
 ): Promise<string> {
+  const modelConfig = IMAGE_MODELS['gpt-image-1']
   console.log(`[GPT-IMAGE-1] Size: ${size}, Prompt length: ${prompt.length} chars`)
   
-  const response = await fetch('https://api.openai.com/v1/images/generations', {
+  const response = await fetch(modelConfig.endpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-image-1',
+      model: modelConfig.apiModelName,
       prompt: prompt,
       n: 1,
       size: size,
@@ -1017,6 +1084,150 @@ async function uploadBase64ToStorage(
   }
   const imageBlob = new Blob([bytes], { type: 'image/png' })
   
+  const filename = `generated/${prefix}_${Date.now()}_${Math.random().toString(36).substring(7)}.png`
+  
+  const { error: uploadError } = await supabase.storage
+    .from('generated-images')
+    .upload(filename, imageBlob, { contentType: 'image/png', upsert: false })
+
+  if (uploadError) {
+    throw new Error(`Upload failed: ${uploadError.message}`)
+  }
+
+  const { data: urlData } = supabase.storage.from('generated-images').getPublicUrl(filename)
+  return urlData.publicUrl
+}
+
+// ============================================================================
+// GEMINIGEN IMAGE GENERATION (Nano Banana / Imagen models - using centralized config)
+// FREE tier with rate limits: 5 req/min, 100/hour, 1000/day
+// Supports reference images via file_urls parameter
+// ============================================================================
+
+async function generateWithGeminiGen(
+  apiKey: string,
+  prompt: string,
+  aspectRatio: AspectRatio,
+  modelKey: ImageModelKey,
+  supabase: any,
+  referenceImageUrl?: string
+): Promise<string> {
+  const modelConfig = IMAGE_MODELS[modelKey]
+  if (!modelConfig || modelConfig.provider !== 'geminigen') {
+    throw new Error(`Invalid GeminiGen model: ${modelKey}`)
+  }
+  
+  const aspectRatioApiValue = getAspectRatioApiValue(modelConfig, aspectRatio) || '9:16'
+  
+  console.log(`[GEMINIGEN] Model: ${modelConfig.apiModelName}, Aspect: ${aspectRatioApiValue}`)
+  console.log(`[GEMINIGEN] Prompt length: ${prompt.length} chars`)
+  if (referenceImageUrl) {
+    console.log(`[GEMINIGEN] Reference image provided`)
+  }
+  
+  // Build FormData for GeminiGen API
+  const formData = new FormData()
+  formData.append('prompt', prompt)
+  formData.append('model', modelConfig.apiModelName)
+  formData.append('aspect_ratio', aspectRatioApiValue)
+  
+  // Add style if applicable (default to Photorealistic for video content)
+  if (modelConfig.styleOptions && modelConfig.styleOptions.length > 0) {
+    formData.append('style', 'Photorealistic')
+  }
+  
+  // Add reference image if provided and supported
+  if (referenceImageUrl && modelConfig.refImageParam) {
+    formData.append(modelConfig.refImageParam, referenceImageUrl)
+  }
+  
+  const response = await fetch(GEMINIGEN_IMAGE_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey
+      // Note: Don't set Content-Type - fetch sets multipart/form-data with boundary
+    },
+    body: formData
+  })
+  
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`GeminiGen API error: ${response.status} - ${errorText}`)
+  }
+  
+  const responseData = await response.json()
+  
+  // GeminiGen returns async - status 1 = processing, 2 = completed
+  // For immediate response, they return generate_result URL if ready
+  // Otherwise we need to poll
+  
+  if (responseData.status === 2 && responseData.generate_result) {
+    // Image ready immediately
+    console.log(`[GEMINIGEN] ✅ Image ready immediately`)
+    return await downloadAndUploadImage(responseData.generate_result, 'geminigen', supabase)
+  }
+  
+  if (responseData.uuid) {
+    // Need to poll for completion
+    console.log(`[GEMINIGEN] Polling for UUID: ${responseData.uuid}`)
+    return await pollGeminiGenResult(apiKey, responseData.uuid, supabase)
+  }
+  
+  throw new Error('GeminiGen API returned unexpected response format')
+}
+
+// Helper: Poll GeminiGen for image completion
+async function pollGeminiGenResult(
+  apiKey: string,
+  uuid: string,
+  supabase: any,
+  maxAttempts: number = 30,
+  intervalMs: number = 2000
+): Promise<string> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+    
+    const response = await fetch(`${GEMINIGEN_HISTORY_ENDPOINT}/${uuid}`, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey
+      }
+    })
+    
+    if (!response.ok) {
+      console.warn(`[GEMINIGEN] Poll attempt ${attempt + 1} failed: ${response.status}`)
+      continue
+    }
+    
+    const data = await response.json()
+    
+    if (data.status === 2 && data.generate_result) {
+      console.log(`[GEMINIGEN] ✅ Image ready after ${attempt + 1} polls`)
+      return await downloadAndUploadImage(data.generate_result, 'geminigen', supabase)
+    }
+    
+    if (data.status === 3) {
+      throw new Error(`GeminiGen generation failed: ${data.error_message || 'Unknown error'}`)
+    }
+    
+    console.log(`[GEMINIGEN] Poll ${attempt + 1}/${maxAttempts}: status=${data.status}, progress=${data.status_percentage || 0}%`)
+  }
+  
+  throw new Error(`GeminiGen generation timed out after ${maxAttempts} attempts`)
+}
+
+// Helper: Download image from URL and upload to Supabase storage
+async function downloadAndUploadImage(
+  imageUrl: string,
+  prefix: string,
+  supabase: any
+): Promise<string> {
+  const imageResponse = await fetch(imageUrl)
+  if (!imageResponse.ok) {
+    throw new Error(`Failed to download image: ${imageResponse.status}`)
+  }
+  
+  const imageBlob = await imageResponse.blob()
   const filename = `generated/${prefix}_${Date.now()}_${Math.random().toString(36).substring(7)}.png`
   
   const { error: uploadError } = await supabase.storage

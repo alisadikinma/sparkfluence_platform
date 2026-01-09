@@ -3,12 +3,13 @@
  * Static knowledge for video generation - NO DATABASE QUERIES NEEDED
  * 
  * This file contains all the knowledge required for generating cinematic videos:
- * - Project Instruction (output format, rules, templates)
- * - Platform Specs (VEO 3.1 Fast Full HD, Sora 2 HD)
  * - Camera Movement Library (VEO-verified terms)
  * - I2V Motion Descriptions
- * - Audio Specifications
- * - VOICE/FACE ANCHORS for consistency across segments (2026)
+ * - Emotion-based motion settings
+ * - Transition instructions
+ * 
+ * NOTE: Video model specs are now centralized in config/aiModels.ts
+ * Import VIDEO_MODELS from there for model configurations.
  * 
  * Source Files:
  * - Video_Project_Instruction.md
@@ -16,11 +17,7 @@
  * - VEO_3_1_Enhanced.md
  * - OpenAI_Sora_2_Image-to-Video__Complete_Production_Guide.md
  * 
- * Supported Models (geminigen.ai):
- * - Sora 2 HD (10s) - 720p - $0.01/video
- * - Veo 3.1 Fast Full HD (8s) - 1080p - $0.01/video
- * 
- * Last Updated: 2026-01-13
+ * Last Updated: 2026-01-09
  */
 
 import {
@@ -34,35 +31,17 @@ import {
 } from './audioDirective.ts';
 
 // ============================================================================
-// VIDEO MODEL SPECS
+// RE-EXPORT VIDEO MODELS FROM CENTRALIZED CONFIG
+// For backward compatibility - new code should import from config/aiModels.ts
 // ============================================================================
-
-export const VIDEO_MODELS = {
-  'sora-2-hd': {
-    name: 'Sora 2 HD (10s)',
-    apiModel: 'sora-2-hd',
-    resolution: '720p',
-    dimensions: { landscape: '1280x720', portrait: '720x1280' },
-    maxDuration: 10,
-    price: 0.01,
-    strengths: ['longer duration', 'multi-shot consistency', 'physics simulation', 'complex motion'],
-    weaknesses: ['720p only', 'lip-sync not best'],
-    bestFor: ['B-roll', 'complex motion', 'longer segments', 'narrative sequences']
-  },
-  'veo-3.1-fast': {
-    name: 'Veo 3.1 Fast (8s)',
-    apiModel: 'veo-3.1-fast',
-    resolution: '720p-1080p', // Depends on aspect: 9:16=720p, 16:9=1080p
-    dimensions: { landscape: '1920x1080', portrait: '720x1280' }, // Portrait limited to 720p
-    maxDuration: 8,
-    price: 0.01,
-    strengths: ['best lip-sync', 'native audio', 'sharp output', '1080p for 16:9'],
-    weaknesses: ['8s max', '720p for 9:16 portrait'],
-    bestFor: ['Creator talking head', 'Hook', 'CTA', 'dialogue-heavy']
-  }
-} as const;
-
-export type VideoModelKey = keyof typeof VIDEO_MODELS;
+export {
+  VIDEO_MODELS,
+  type VideoModelKey,
+  getVideoModel,
+  getClosestDuration,
+  getMaxDialogueWords,
+  buildVideoFormData,
+} from '../config/aiModels.ts';
 
 // ============================================================================
 // PROJECT INSTRUCTION

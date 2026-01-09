@@ -1,12 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+
+// ============================================================================
+// CENTRALIZED AI MODEL CONFIG (2026)
+// All model specs in one place - no code changes needed when adding new models
+// ============================================================================
 import {
   VIDEO_MODELS,
+  getVideoModel,
+  getAspectRatioApiValue,
+  getClosestDuration,
+  getMaxDialogueWords,
+  buildVideoFormData,
+  type VideoModelKey,
+  type AspectRatio,
+} from '../_shared/config/aiModels.ts'
+
+// Legacy imports for prompt building (camera movement, emotion, etc.)
+import {
   getCameraMovement,
   getEmotionMotion,
   getTransition,
-  validateDialogueLength,
-  type VideoModelKey,
 } from '../_shared/prompts/cinematicVideoKnowledge.ts'
 
 // Import Voice & Face Anchor functions (2026 - Sora 2 Consistency + Enhanced Audio)
@@ -22,16 +36,27 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// API Endpoints
-const VEO_API_ENDPOINT = 'https://api.geminigen.ai/uapi/v1/video-gen/veo'
-const SORA_API_ENDPOINT = 'https://api.geminigen.ai/uapi/v1/video-gen/sora'
-
 // Job status constants
 const JOB_STATUS = {
   PENDING: 0,
   PROCESSING: 1,
   COMPLETED: 2,
   FAILED: 3
+}
+
+// Helper: Validate dialogue length for video model
+function validateDialogueLength(scriptText: string, platform: VideoModelKey): { valid: boolean; wordCount: number; maxWords: number } {
+  const model = VIDEO_MODELS[platform]
+  if (!model) return { valid: true, wordCount: 0, maxWords: 0 }
+  
+  const wordCount = scriptText.trim().split(/\s+/).filter(w => w.length > 0).length
+  const maxWords = getMaxDialogueWords(model, model.defaultDuration)
+  
+  return {
+    valid: wordCount <= maxWords,
+    wordCount,
+    maxWords
+  }
 }
 
 serve(async (req) => {
@@ -136,13 +161,15 @@ async function handlePreviewPrompts(requestBody: any) {
   const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
 
   // Map user selection to actual platform key
-  // DEFAULT = SORA 2 HD for best quality with AI voiceover
+  // DEFAULT = SORA 2 for best quality with AI voiceover (10s/15s, 720p)
   const platformMap: Record<string, VideoModelKey> = {
     'veo31': 'veo-3.1-fast',
-    'sora2': 'sora-2-hd',
-    'auto': 'sora-2-hd' // Default to SORA 2 for best quality
+    'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
+    'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
+    'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
+    'auto': 'sora-2'             // Default to standard Sora 2
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'sora-2-hd'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'sora-2'
 
   const prompts: Array<{
     segment_id: string
@@ -209,10 +236,10 @@ async function handlePreviewPrompts(requestBody: any) {
       segment_type: segmentType,
       shot_type: shotType,
       platform: selectedPlatform,
-      platform_name: modelSpecs.name,
+      platform_name: modelSpecs.displayName,
       duration: Math.min(duration, modelSpecs.maxDuration),
       max_duration: modelSpecs.maxDuration,
-      resolution: modelSpecs.resolution,
+      resolution: Object.keys(modelSpecs.resolutions)[0] || '720p', // Get first resolution key
       has_dialogue: hasDialogue,
       dialogue_preview: scriptText ? scriptText.substring(0, 100) + (scriptText.length > 100 ? '...' : '') : '',
       dialogue_validation: dialogueValidation,
@@ -272,13 +299,15 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   console.log(`[CREATE_JOBS] Creating ${segments.length} video jobs for session: ${session_id}, preferred_platform: ${preferred_platform}`)
 
   // Map user selection to actual platform key
-  // DEFAULT = SORA 2 HD for best quality with AI voiceover
+  // DEFAULT = SORA 2 for best quality with AI voiceover (10s/15s, 720p)
   const platformMap: Record<string, VideoModelKey> = {
     'veo31': 'veo-3.1-fast',
-    'sora2': 'sora-2-hd',
-    'auto': 'sora-2-hd' // Default to SORA 2 for best quality
+    'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
+    'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
+    'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
+    'auto': 'sora-2'             // Default to standard Sora 2
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'sora-2-hd'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'sora-2'
 
   // ========================================================================
   // VOICE CHARACTER CONSISTENCY FIX:
@@ -527,21 +556,24 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
     console.log(`[PROCESS_SINGLE] Platform: ${selectedPlatform}, Prompt length: ${videoPrompt.length}`)
 
-    // Call VEO API
-    const apiEndpoint = selectedPlatform === 'sora-2-hd' ? SORA_API_ENDPOINT : VEO_API_ENDPOINT
-    const aspectRatio = job.aspect_ratio || '9:16'
-    // Resolution depends on aspect ratio: 9:16 = 720p max, 16:9 = 1080p
-    const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
+    // ========================================================================
+    // BUILD FORM DATA USING CENTRALIZED CONFIG (2026)
+    // API params differ between providers - config handles the mapping
+    // ========================================================================
+    const aspectRatioInternal = (job.aspect_ratio || '9:16') as AspectRatio
+    const actualDuration = getClosestDuration(modelSpecs, duration)
     
-    const formData = new FormData()
-    formData.append('prompt', videoPrompt)
-    formData.append('model', modelSpecs.apiModel)
-    formData.append('resolution', resolution)
-    formData.append('aspect_ratio', aspectRatio)
-    // Use ref_images for reference image (per API docs)
-    formData.append('ref_images', job.image_url)
+    // Use helper from config to build FormData with correct API values
+    const formData = buildVideoFormData(modelSpecs, {
+      prompt: videoPrompt,
+      aspectRatio: aspectRatioInternal,
+      duration: actualDuration,
+      referenceImageUrl: job.image_url
+    })
+    
+    console.log(`[PROCESS_SINGLE] API: ${modelSpecs.endpoint}, model: ${modelSpecs.apiModelName}, duration: ${actualDuration}s`)
 
-    const apiResponse = await fetch(apiEndpoint, {
+    const apiResponse = await fetch(modelSpecs.endpoint, {
       method: 'POST',
       headers: { 'x-api-key': veoApiKey },
       body: formData
@@ -840,7 +872,7 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
     const hasDialogue = scriptText.length > 0
 
     // Always use SORA 2 for best quality with AI voiceover (unless explicitly overridden)
-    const selectedPlatform: VideoModelKey = prefer_platform || 'sora-2-hd'
+    const selectedPlatform: VideoModelKey = prefer_platform || 'sora-2'
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
@@ -857,20 +889,20 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
     })
 
     try {
-      const apiEndpoint = selectedPlatform === 'sora-2-hd' ? SORA_API_ENDPOINT : VEO_API_ENDPOINT
-
-      // Resolution depends on aspect ratio: 9:16 = 720p max, 16:9 = 1080p
-      const actualResolution = aspect_ratio === '16:9' ? '1080p' : '720p'
+      // ========================================================================
+      // BUILD FORM DATA USING CENTRALIZED CONFIG (2026)
+      // ========================================================================
+      const aspectRatioInternal = aspect_ratio as AspectRatio
+      const actualDuration = getClosestDuration(modelSpecs, duration)
       
-      const formData = new FormData()
-      formData.append('prompt', videoPrompt)
-      formData.append('model', modelSpecs.apiModel)
-      formData.append('resolution', actualResolution)
-      formData.append('aspect_ratio', aspect_ratio)
-      // Use ref_images for reference image (per API docs)
-      formData.append('ref_images', imageUrl)
+      const formData = buildVideoFormData(modelSpecs, {
+        prompt: videoPrompt,
+        aspectRatio: aspectRatioInternal,
+        duration: actualDuration,
+        referenceImageUrl: imageUrl
+      })
 
-      const apiResponse = await fetch(apiEndpoint, {
+      const apiResponse = await fetch(modelSpecs.endpoint, {
         method: 'POST',
         headers: { 'x-api-key': veoApiKey },
         body: formData
@@ -882,7 +914,7 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
       }
 
       const responseData = JSON.parse(responseText)
-      totalCost += modelSpecs.price
+      totalCost += modelSpecs.costPerVideo
 
       if (user_id && session_id) {
         await supabase
@@ -910,7 +942,7 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
         segment_id: segmentId,
         segment_type: segmentType,
         platform: selectedPlatform,
-        model_name: modelSpecs.name,
+        model_name: modelSpecs.displayName,
         veo_response: {
           id: responseData.id,
           uuid: responseData.uuid,
@@ -1302,8 +1334,10 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
     
     // Build custom prompt with VOICE_ANCHOR and FACE_ANCHOR blocks
-    const platformLabel = platform === 'sora-2-hd' ? 'SORA 2' : 'VEO 3.1'
-    const actualDuration = platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10)
+    const isSoraModel = platform.startsWith('sora-')
+    const platformLabel = isSoraModel ? 'SORA 2' : 'VEO 3.1'
+    const modelConfig = VIDEO_MODELS[platform]
+    const actualDuration = modelConfig ? getClosestDuration(modelConfig, duration) : duration
     
     // Get camera movement
     const cameraMove = getCameraMovement(segmentType, emotion)
@@ -1376,10 +1410,12 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
   // ========================================================================
   
   // Build B-roll specific prompt (voiceover narration + visual fokus topik)
+  const brollModelConfig = VIDEO_MODELS[platform]
+  const brollActualDuration = brollModelConfig ? getClosestDuration(brollModelConfig, duration) : duration
   const brollPrompt = buildBrollVideoPrompt({
     segmentId,
     segmentNumber,
-    duration: platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10),
+    duration: brollActualDuration,
     aspectRatio,
     segmentType,
     emotion,
@@ -1501,8 +1537,9 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
     hasVoiceover ? scriptText : ''
   )
   
-  // Platform-specific prompt
-  if (platform === 'sora-2-hd') {
+  // Platform-specific prompt (check if Sora model)
+  const isSoraModel = platform.startsWith('sora-')
+  if (isSoraModel) {
     return `[SORA 2 B-ROLL — ${segmentId}.${segmentNumber}]
 
 DURATION: ${duration} seconds

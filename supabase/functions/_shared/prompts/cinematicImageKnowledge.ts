@@ -3,20 +3,39 @@
  * Static knowledge for image generation - NO DATABASE QUERIES NEEDED
  * 
  * This file contains all the knowledge required for generating cinematic images:
- * - Project Instruction (output format, rules, templates)
- * - Technical Reference (emotion mapping, lighting, camera, film stocks)
- * - DALL-E 3 Platform Specs (API details, best practices)
+ * - Emotion mapping, lighting patterns, camera settings
+ * - Film stocks, atmosphere types, mood setups
+ * - Prompt building helpers
+ * 
+ * NOTE: Image model specs are now centralized in config/aiModels.ts
+ * Import IMAGE_MODELS from there for model configurations.
  * 
  * Source Files:
  * - Image_Project_Instruction.md
  * - Cinematic_Image_Technical_Reference.md
  * - DALL-E_3_Cinematic_Production_Knowledge_File.md
  * 
- * Last Updated: 2025-12-13
+ * Last Updated: 2026-01-09
  */
 
 // ============================================================================
-// DALL-E 3 TECHNICAL SPECS
+// RE-EXPORT IMAGE MODELS FROM CENTRALIZED CONFIG
+// For backward compatibility - new code should import from config/aiModels.ts
+// ============================================================================
+export {
+  IMAGE_MODELS,
+  type ImageModelKey,
+  getImageModel,
+  getAspectRatioApiValue,
+  getDimensions,
+  buildImageFormData,
+  selectImageModel,
+  getImageModelFallbackChain,
+} from '../config/aiModels.ts';
+
+// ============================================================================
+// DALL-E 3 TECHNICAL SPECS (Legacy - kept for backward compatibility)
+// New code should use IMAGE_MODELS['dall-e-3'] from config/aiModels.ts
 // ============================================================================
 
 export const DALLE3_SPECS = {
