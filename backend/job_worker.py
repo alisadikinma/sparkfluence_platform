@@ -12,9 +12,10 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 import json
+from pathlib import Path
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from root .env
+load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configure logging
 logging.basicConfig(
@@ -31,9 +32,9 @@ JOB_STATUS = {
     'FAILED': 3
 }
 
-# Configuration
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+# Configuration - support both VITE_ prefixed and non-prefixed variable names
+SUPABASE_URL = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL')
+SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_KEY')
 
 # Worker settings
 POLL_INTERVAL = 15  # seconds between polling
@@ -515,7 +516,7 @@ class BackgroundWorker:
     
     def __init__(self):
         if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-            raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
+            raise ValueError("Supabase credentials not found. Set SUPABASE_URL/VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_SERVICE_KEY")
         
         self.db = SupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         self.image_worker = ImageJobWorker(self.db)

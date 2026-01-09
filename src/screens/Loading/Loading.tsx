@@ -6,6 +6,16 @@ import { Logo } from "../../components/ui/logo";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || "sparkfluence_test_key_123";
 
+// V2 Options defaults
+const DEFAULT_COMBINE_OPTIONS = {
+  enable_transitions: true,
+  transition_duration: 0.5,
+  enable_subtitles: true,
+  subtitle_style: 'tiktok',
+  word_by_word: true,
+  normalize_audio: true
+};
+
 export const Loading: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -23,11 +33,15 @@ export const Loading: React.FC = () => {
       }
 
       try {
-        // Prepare segments data
-        const segments = stateData.selectedSegments.map((seg: any) => ({
-          type: seg.type || seg.element || "SEGMENT",
+        // Prepare segments data for V2 API
+        const segments = stateData.selectedSegments.map((seg: any, index: number) => ({
+          segment_id: seg.id || seg.segmentId || `seg_${index}`,
+          segment_number: index + 1,
+          segment_type: seg.type || seg.element || "BODY",
           video_url: seg.videoUrl || seg.video_url,
-          duration_seconds: seg.durationSeconds || 8
+          duration_seconds: seg.durationSeconds || seg.duration_seconds || 8,
+          script_text: seg.scriptText || seg.script_text || seg.text || null,
+          emotion: seg.emotion || "neutral"
         }));
 
         // Check if all segments have video URLs
@@ -37,24 +51,22 @@ export const Loading: React.FC = () => {
           return;
         }
 
-        console.log("[Loading] Segments to combine:", segments);
+        console.log("[Loading] Segments to combine (V2):", segments);
         setStatus("Starting video combination...");
         setProgress(5);
 
-        // Call backend to combine videos
-        const response = await fetch(`${BACKEND_URL}/api/combine-final-video`, {
+        // Call backend V2 API to combine videos with transitions + subtitles
+        const response = await fetch(`${BACKEND_URL}/api/combine-final-video-v2`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "x-api-key": BACKEND_API_KEY
           },
           body: JSON.stringify({
-            project_id: `video_${Date.now()}`,
+            project_id: stateData.projectId || `video_${Date.now()}`,
+            session_id: stateData.sessionId || `session_${Date.now()}`,
             segments: segments,
-            options: {
-              bgm_url: stateData.selectedMusic?.audioUrl || null,
-              bgm_volume: 0.15
-            }
+            options: DEFAULT_COMBINE_OPTIONS
           })
         });
 
@@ -64,7 +76,7 @@ export const Loading: React.FC = () => {
         }
 
         const data = await response.json();
-        console.log("[Loading] Job created:", data);
+        console.log("[Loading] Job created (V2):", data);
 
         if (!data.success || !data.data?.job_id) {
           throw new Error("Failed to create job");

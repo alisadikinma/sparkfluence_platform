@@ -8,8 +8,17 @@
  * 1. VOICE_ANCHOR - Same voice description for every segment
  * 2. FACE_ANCHOR - Reference image for creator face consistency
  * 3. Audio directives per segment type (CREATOR vs B-ROLL)
+ * 4. EMOTION_SFX_MAP - Concrete sound design for each emotion (2026)
+ * 5. Volume Priority - Audio layer hierarchy for professional mix (2026)
  * 
- * Created: 2026-01-13
+ * Best Practices (from Sora 2.0 research):
+ * - Use precise acoustic vocabulary (crack, thud, whoosh) not abstract (loud noise)
+ * - Specify volume relationships explicitly
+ * - Emotion → Concrete SFX translation (not "tense" but "heartbeat 60BPM")
+ * - Spatial cues for 3D audio (distant, close, off-screen)
+ * 
+ * Created: 2026-01-09
+ * Updated: 2026-01-09 - Added EMOTION_SFX_MAP + Volume Priority
  */
 
 // ============================================================================
@@ -75,6 +84,165 @@ const DEFAULT_VOICE_PROFILES: Record<string, VoiceProfile> = {
     language_specific: 'neutral global English, no strong regional accent',
   },
 };
+
+// ============================================================================
+// EMOTION → CONCRETE SFX MAP (2026 - Sora 2.0 Best Practice)
+// ============================================================================
+// Research: Abstract emotion labels produce inconsistent results.
+// Solution: Translate emotions into CONCRETE acoustic elements.
+// Reference: Sora 2.0 Audio Generation Guide
+
+export interface EmotionSFX {
+  // Core sound design elements
+  undertone: string;        // Low-frequency foundation
+  accent_sfx: string;       // Punctuation sounds
+  ambient_texture: string;  // Background atmosphere
+  spatial_cue: string;      // 3D audio positioning
+  // For creator shots
+  voice_quality: string;    // How voice should sound
+  breath_pattern: string;   // Breathing style
+}
+
+export const EMOTION_SFX_MAP: Record<string, EmotionSFX> = {
+  // High-energy emotions
+  excitement: {
+    undertone: 'subtle upbeat pulse, bright energy hum',
+    accent_sfx: 'soft whoosh on gesture, crisp snap on emphasis',
+    ambient_texture: 'airy bright atmosphere, slight reverb shimmer',
+    spatial_cue: 'close proximity, slightly elevated presence',
+    voice_quality: 'energetic, upward inflection, bright resonance',
+    breath_pattern: 'quick energized breaths between phrases',
+  },
+  curiosity: {
+    undertone: 'gentle mysterious hum, soft anticipation tone',
+    accent_sfx: 'subtle chime on reveal, soft ping on question',
+    ambient_texture: 'intriguing atmospheric depth, slight suspense',
+    spatial_cue: 'intimate close distance, leaning-in quality',
+    voice_quality: 'interested rising tone, engaged warmth',
+    breath_pattern: 'thoughtful pause breaths, anticipatory inhale',
+  },
+  shock: {
+    undertone: 'sudden silence then low rumble, impact bass',
+    accent_sfx: 'sharp audio hit, brief silence beat, gasp sound',
+    ambient_texture: 'stark contrast shift, momentary vacuum',
+    spatial_cue: 'sudden close proximity, in-your-face presence',
+    voice_quality: 'sharp intake, widened vocal, surprised pitch jump',
+    breath_pattern: 'sharp gasp, held breath, slow exhale',
+  },
+  
+  // Authority emotions
+  authority: {
+    undertone: 'confident low-frequency foundation, powerful stillness',
+    accent_sfx: 'subtle bass punctuation on key points, grounded thud',
+    ambient_texture: 'clean professional space, controlled acoustics',
+    spatial_cue: 'centered commanding presence, stable position',
+    voice_quality: 'measured confident delivery, resonant chest voice',
+    breath_pattern: 'controlled steady breaths, no rushed breathing',
+  },
+  determination: {
+    undertone: 'steady building pulse, resolute bass foundation',
+    accent_sfx: 'firm thud on emphasis, solid impact sounds',
+    ambient_texture: 'focused intensity, stripped-back clarity',
+    spatial_cue: 'direct frontal presence, unwavering position',
+    voice_quality: 'set jaw delivery, powerful controlled projection',
+    breath_pattern: 'deep grounded breaths, purposeful exhale',
+  },
+  
+  // Tension emotions  
+  tension: {
+    undertone: 'heartbeat rhythm 55-65 BPM, low ominous drone building',
+    accent_sfx: 'subtle creak, distant rumble, tight string tension',
+    ambient_texture: 'oppressive atmosphere, closing-in sensation',
+    spatial_cue: 'uncomfortably close, pressing presence',
+    voice_quality: 'tight controlled delivery, slight strain audible',
+    breath_pattern: 'shallow tense breaths, held breath moments',
+  },
+  urgency: {
+    undertone: 'accelerating pulse 80-100 BPM, rising pressure tone',
+    accent_sfx: 'rapid ticks, sharp alerts, whoosh movements',
+    ambient_texture: 'high-stakes atmosphere, time-pressure ambience',
+    spatial_cue: 'close urgent proximity, forward-leaning presence',
+    voice_quality: 'fast-paced delivery, clipped consonants, intense',
+    breath_pattern: 'quick sharp breaths, minimal pauses',
+  },
+  
+  // Warm emotions
+  warmth: {
+    undertone: 'gentle warm hum, comforting low frequencies',
+    accent_sfx: 'soft pleasant chimes, gentle rustle sounds',
+    ambient_texture: 'cozy inviting atmosphere, embracing acoustics',
+    spatial_cue: 'friendly close distance, welcoming presence',
+    voice_quality: 'soft warm delivery, genuine smile audible',
+    breath_pattern: 'relaxed natural breaths, comfortable pace',
+  },
+  hope: {
+    undertone: 'gentle rising tone, brightening frequency shift',
+    accent_sfx: 'soft shimmer, uplifting chime, light sparkle',
+    ambient_texture: 'opening expansive atmosphere, light breaking through',
+    spatial_cue: 'upward-lifting presence, ascending quality',
+    voice_quality: 'optimistic rising inflection, growing warmth',
+    breath_pattern: 'deep hopeful inhale, relieved exhale',
+  },
+  
+  // Reflective emotions
+  contemplation: {
+    undertone: 'thoughtful ambient pad, meditative low drone',
+    accent_sfx: 'subtle room tone shifts, soft environmental sounds',
+    ambient_texture: 'spacious thinking room, reflective acoustics',
+    spatial_cue: 'slightly distant, internal-thought quality',
+    voice_quality: 'measured thoughtful delivery, processing pauses',
+    breath_pattern: 'slow contemplative breaths, thinking pauses',
+  },
+  
+  // Neutral fallback
+  neutral: {
+    undertone: 'clean subtle room tone, balanced frequencies',
+    accent_sfx: 'minimal natural sounds only, diegetic elements',
+    ambient_texture: 'professional clean atmosphere, neutral space',
+    spatial_cue: 'balanced centered presence, natural distance',
+    voice_quality: 'clear natural delivery, conversational tone',
+    breath_pattern: 'natural relaxed breathing pattern',
+  },
+};
+
+// ============================================================================
+// VOLUME PRIORITY SYSTEM (2026 - Professional Audio Mix)
+// ============================================================================
+// Research: Default settings produce competing audio layers.
+// Solution: Explicit volume relationships for clean mix.
+
+export interface VolumePriority {
+  layer: string;
+  level: string;      // Relative dB or description
+  description: string;
+}
+
+export const VOLUME_PRIORITY_CREATOR: VolumePriority[] = [
+  { layer: '1st - Dialogue', level: '0dB (primary)', description: 'Close-mic, dry, crystal clear' },
+  { layer: '2nd - Breath/Movement', level: '-12dB', description: 'Natural body sounds, subtle' },
+  { layer: '3rd - Room Tone', level: '-18dB', description: 'Subtle ambient, non-distracting' },
+  { layer: '4th - Accent SFX', level: '-15dB', description: 'Punctuation sounds, supportive' },
+];
+
+export const VOLUME_PRIORITY_BROLL: VolumePriority[] = [
+  { layer: '1st - Primary Ambient', level: '0dB (primary)', description: 'Main environmental sound' },
+  { layer: '2nd - Accent SFX', level: '-6dB', description: 'Action-synced sounds' },
+  { layer: '3rd - Undertone', level: '-12dB', description: 'Emotional foundation layer' },
+  { layer: '4th - Texture', level: '-18dB', description: 'Atmospheric depth' },
+];
+
+export const VOLUME_PRIORITY_BROLL_WITH_VOICEOVER: VolumePriority[] = [
+  { layer: '1st - Voiceover', level: '0dB (primary)', description: 'Narrator voice, close-mic dry' },
+  { layer: '2nd - Primary Ambient', level: '-15dB', description: 'Ducked under voice' },
+  { layer: '3rd - Accent SFX', level: '-12dB', description: 'Supportive action sounds' },
+  { layer: '4th - Undertone', level: '-20dB', description: 'Subtle emotional foundation' },
+];
+
+function formatVolumePriority(priorities: VolumePriority[]): string {
+  return priorities
+    .map(p => `  ${p.layer}: ${p.level} — ${p.description}`)
+    .join('\n');
+}
 
 // ============================================================================
 // VOICE ANCHOR GENERATOR
@@ -219,38 +387,72 @@ Approachable and authentic presence.`,
 }
 
 // ============================================================================
-// SEGMENT-SPECIFIC AUDIO DIRECTIVES
+// SEGMENT-SPECIFIC AUDIO DIRECTIVES (Enhanced 2026)
 // ============================================================================
+
+/**
+ * Get emotion SFX profile with fallback
+ */
+function getEmotionSFX(emotion: string): EmotionSFX {
+  const emotionLower = emotion.toLowerCase();
+  return EMOTION_SFX_MAP[emotionLower] || EMOTION_SFX_MAP.neutral;
+}
 
 /**
  * Audio directive for CREATOR shots (HOOK, CTA, LOOP-END)
  * Creator speaks to camera with lip-sync
+ * 
+ * Enhanced 2026: Now includes emotion-based SFX + volume priority
  */
 export function getCreatorAudioDirective(
   language: string,
   dialogueText: string,
-  segmentType: string
+  segmentType: string,
+  emotion: string = 'authority'
 ): string {
   const emotionBySegment: Record<string, string> = {
-    'HOOK': 'attention-grabbing, slightly intense, creates curiosity',
-    'CTA': 'warm, inviting, encouraging action',
-    'LOOP-END': 'casual, conversational, natural closing',
+    'HOOK': 'curiosity',
+    'CTA': 'warmth',
+    'LOOP-END': 'warmth',
   };
 
-  const emotion = emotionBySegment[segmentType] || 'engaging, conversational';
+  // Use segment-specific emotion or provided emotion
+  const effectiveEmotion = emotionBySegment[segmentType] || emotion;
+  const sfx = getEmotionSFX(effectiveEmotion);
+  
   const wordCount = dialogueText.split(/\s+/).length;
   
   // Calculate approximate speaking duration (150 WPM average)
   const speakingDuration = Math.ceil((wordCount / 150) * 60);
 
   return `
-AUDIO DIRECTIVE (Creator Speaking):
-Dialogue: "${dialogueText}"
+═══════════════════════════════════════════════════════════════
+🔊 AUDIO DIRECTIVE (Creator Speaking - ${segmentType})
+═══════════════════════════════════════════════════════════════
+
+DIALOGUE:
+"${dialogueText}"
 Word count: ${wordCount} words (~${speakingDuration}s speaking time)
-Emotion: ${emotion}
-Lip sync: Character's lip movements MUST match the dialogue timing exactly
-Audio perspective: Close-mic, dry voice, minimal room reverb
-Background: Subtle room tone only, no music during speech
+Lip sync: Character's lip movements MUST match dialogue timing exactly
+
+VOICE QUALITY:
+${sfx.voice_quality}
+Breath: ${sfx.breath_pattern}
+
+SOUND DESIGN (${effectiveEmotion}):
+- Undertone: ${sfx.undertone}
+- Accent SFX: ${sfx.accent_sfx}
+- Spatial: ${sfx.spatial_cue}
+
+VOLUME PRIORITY (mix hierarchy):
+${formatVolumePriority(VOLUME_PRIORITY_CREATOR)}
+
+AUDIO PERSPECTIVE:
+Close-mic, dry voice, minimal room reverb
+Background: Subtle room tone only
+
+EXCLUSIONS:
+No background music, no audience sounds, no text overlays, no subtitles
 
 ⚠️ Maintain voice anchor characteristics throughout this segment.
 `;
@@ -258,43 +460,71 @@ Background: Subtle room tone only, no music during speech
 
 /**
  * Audio directive for B-ROLL shots (FORE, BODY, PEAK, TWIST)
- * No dialogue, ambient sound only
+ * Can have voiceover narration OR ambient-only
+ * 
+ * Enhanced 2026: Now includes emotion-based SFX + volume priority
  */
 export function getBRollAudioDirective(
   category: string,
-  mood: string = 'neutral'
+  emotion: string = 'neutral',
+  hasVoiceover: boolean = false,
+  voiceoverText: string = ''
 ): string {
+  const sfx = getEmotionSFX(emotion);
+  
   const ambientByCategory: Record<string, string> = {
-    'tech': 'soft server hum, subtle electronic ambient, quiet data center atmosphere',
-    'food': 'gentle kitchen ambience, soft sizzling, subtle utensil sounds',
-    'nature': 'light wind, distant birds, natural outdoor atmosphere',
-    'office': 'quiet office tone, soft HVAC hum, distant keyboard typing',
-    'urban': 'city ambient, distant traffic, urban atmosphere',
-    'product': 'clean studio silence with subtle room tone',
-    'data': 'soft electronic hum, subtle digital beeps, tech atmosphere',
-    'default': 'subtle room tone, clean ambient, minimal background noise',
+    'tech': 'soft server fan hum, subtle electronic beeps, quiet data center atmosphere',
+    'food': 'gentle sizzle, soft utensil clinks, kitchen ambient warmth',
+    'nature': 'light breeze rustle, distant bird calls, natural outdoor atmosphere',
+    'office': 'soft HVAC hum, distant keyboard clicks, professional space tone',
+    'urban': 'city ambient hum, distant traffic whoosh, urban atmosphere',
+    'product': 'clean studio silence, subtle room tone, premium feel',
+    'data': 'soft electronic hum, subtle digital processing sounds, tech atmosphere',
+    'default': 'subtle room tone, clean ambient, minimal background',
   };
 
-  const moodModifiers: Record<string, string> = {
-    'tense': 'Add subtle low-frequency undertone for tension',
-    'exciting': 'Slightly elevated ambient energy',
-    'calm': 'Peaceful, relaxed ambient tone',
-    'mysterious': 'Add subtle atmospheric depth',
-    'neutral': '',
-  };
+  const primaryAmbient = ambientByCategory[category] || ambientByCategory.default;
+  
+  // Choose volume priority based on voiceover presence
+  const volumePriority = hasVoiceover 
+    ? VOLUME_PRIORITY_BROLL_WITH_VOICEOVER 
+    : VOLUME_PRIORITY_BROLL;
 
-  const ambient = ambientByCategory[category] || ambientByCategory.default;
-  const moodNote = moodModifiers[mood] || '';
+  // Build voiceover section if applicable
+  const voiceoverSection = hasVoiceover && voiceoverText
+    ? `
+VOICEOVER (off-screen narration):
+"${voiceoverText}"
+Voice: ${sfx.voice_quality}
+Delivery: Natural narrator style, NOT lip-synced to any visible character`
+    : `
+SPEECH: NONE
+No dialogue, no voiceover, no narration in this segment`;
 
   return `
-AUDIO DIRECTIVE (B-Roll - No Speech):
-Ambient sound: ${ambient}
-${moodNote ? `Mood: ${moodNote}` : ''}
-Speech: NONE - no dialogue, no voiceover, no narration
-Music: NO background music
-Sound effects: Natural/diegetic only (sounds from visible objects)
+═══════════════════════════════════════════════════════════════
+🔊 AUDIO DIRECTIVE (B-Roll - ${category} / ${emotion})
+═══════════════════════════════════════════════════════════════
+${voiceoverSection}
 
-⚠️ This is a visual segment. Audio should support visuals without distraction.
+SOUND DESIGN (${emotion}):
+- Primary Ambient: ${primaryAmbient}
+- Undertone: ${sfx.undertone}
+- Accent SFX: ${sfx.accent_sfx}
+- Texture: ${sfx.ambient_texture}
+- Spatial: ${sfx.spatial_cue}
+
+VOLUME PRIORITY (mix hierarchy):
+${formatVolumePriority(volumePriority)}
+
+DIEGETIC SOUNDS:
+Natural sounds from visible objects only (footsteps, door, typing, etc.)
+Sync to on-screen actions
+
+EXCLUSIONS:
+No background music, no audience sounds, no text overlays, no subtitles
+
+⚠️ Audio should support visuals without distraction.
 `;
 }
 
@@ -312,7 +542,9 @@ export interface AnchorConfig {
   profileImageUrl?: string;
   characterDescription?: string;
   brollCategory?: string;
-  mood?: string;
+  emotion?: string;
+  hasVoiceover?: boolean;
+  voiceoverText?: string;
   customVoiceProfile?: Partial<VoiceProfile>;
 }
 
@@ -336,17 +568,20 @@ export function generateSegmentAnchors(config: AnchorConfig): string {
     }));
   }
 
-  // 3. AUDIO_DIRECTIVE (specific to segment type)
+  // 3. AUDIO_DIRECTIVE (specific to segment type) - Enhanced 2026
   if (config.shotType === 'CREATOR' && config.dialogueText) {
     blocks.push(getCreatorAudioDirective(
       config.language,
       config.dialogueText,
-      config.segmentType
+      config.segmentType,
+      config.emotion || 'authority'
     ));
   } else {
     blocks.push(getBRollAudioDirective(
       config.brollCategory || 'default',
-      config.mood || 'neutral'
+      config.emotion || 'neutral',
+      config.hasVoiceover || false,
+      config.voiceoverText || ''
     ));
   }
 
@@ -361,13 +596,13 @@ export function detectBRollCategory(visualDirection: string): string {
   const text = visualDirection.toLowerCase();
   
   const categories: Record<string, string[]> = {
-    tech: ['code', 'screen', 'computer', 'laptop', 'software', 'ai', 'robot', 'digital', 'algorithm', 'data'],
-    food: ['food', 'cook', 'kitchen', 'dish', 'recipe', 'eat', 'restaurant', 'chef', 'masakan'],
-    nature: ['nature', 'outdoor', 'forest', 'mountain', 'beach', 'sky', 'tree', 'landscape', 'alam'],
-    office: ['office', 'desk', 'meeting', 'business', 'corporate', 'kantor', 'workspace'],
-    urban: ['city', 'street', 'building', 'traffic', 'downtown', 'mall', 'urban', 'night'],
-    product: ['product', 'unbox', 'package', 'brand', 'item', 'gadget', 'device'],
-    data: ['chart', 'graph', 'statistics', 'analytics', 'dashboard', 'percentage', 'metric'],
+    tech: ['code', 'screen', 'computer', 'laptop', 'software', 'ai', 'robot', 'digital', 'algorithm', 'data', 'server', 'coding'],
+    food: ['food', 'cook', 'kitchen', 'dish', 'recipe', 'eat', 'restaurant', 'chef', 'masakan', 'makan'],
+    nature: ['nature', 'outdoor', 'forest', 'mountain', 'beach', 'sky', 'tree', 'landscape', 'alam', 'garden'],
+    office: ['office', 'desk', 'meeting', 'business', 'corporate', 'kantor', 'workspace', 'boardroom'],
+    urban: ['city', 'street', 'building', 'traffic', 'downtown', 'mall', 'urban', 'night', 'neon'],
+    product: ['product', 'unbox', 'package', 'brand', 'item', 'gadget', 'device', 'showcase'],
+    data: ['chart', 'graph', 'statistics', 'analytics', 'dashboard', 'percentage', 'metric', 'visualization'],
   };
 
   for (const [category, keywords] of Object.entries(categories)) {
@@ -377,6 +612,29 @@ export function detectBRollCategory(visualDirection: string): string {
   }
 
   return 'default';
+}
+
+// ============================================================================
+// HELPER: Get Emotion from Segment Type (Default Mapping)
+// ============================================================================
+
+export function getDefaultEmotionForSegment(segmentType: string): string {
+  const mapping: Record<string, string> = {
+    'HOOK': 'curiosity',
+    'FORE': 'curiosity',
+    'FORESHADOW': 'tension',
+    'BODY': 'authority',
+    'BODY-1': 'authority',
+    'BODY-2': 'excitement',
+    'BODY-3': 'determination',
+    'PEAK': 'shock',
+    'CTA': 'warmth',
+    'ENDING': 'warmth',
+    'ENDING_CTA': 'warmth',
+    'LOOP-END': 'curiosity',
+  };
+  
+  return mapping[segmentType.toUpperCase()] || 'neutral';
 }
 
 // ============================================================================
@@ -409,8 +667,11 @@ export function applyAnchorsToSegments(
       ? detectBRollCategory(segment.visual_direction || '')
       : undefined;
 
-    // Detect mood from emotion
-    const mood = segment.emotion?.toLowerCase() || 'neutral';
+    // Get emotion - use segment emotion or derive from segment type
+    const emotion = segment.emotion?.toLowerCase() || getDefaultEmotionForSegment(segmentType);
+
+    // Check if B-roll has voiceover (script_text on B-ROLL = voiceover)
+    const hasVoiceover = shotType === 'B-ROLL' && !!segment.script_text;
 
     const anchors = generateSegmentAnchors({
       language,
@@ -422,7 +683,9 @@ export function applyAnchorsToSegments(
       profileImageUrl,
       characterDescription,
       brollCategory,
-      mood,
+      emotion,
+      hasVoiceover,
+      voiceoverText: hasVoiceover ? segment.script_text : undefined,
     });
 
     return {

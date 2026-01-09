@@ -2,37 +2,19 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
   VIDEO_MODELS,
-  VIDEO_PROJECT_INSTRUCTION,
-  CAMERA_MOVEMENTS,
-  TRANSITIONS,
-  EMOTION_MOTION_MAP,
-  AUDIO_TEMPLATES,
-  VIDEO_CONTENT_TEMPLATES,
-  SHOT_TYPES,
-  VOICE_TONES,
-  selectVideoPlatform,
   getCameraMovement,
   getEmotionMotion,
-  getAudioTemplate,
   getTransition,
-  buildVeoPrompt,
-  buildSoraPrompt,
-  getContentTemplate,
   validateDialogueLength,
   type VideoModelKey,
-  type ExtendedPromptParams,
-  type ActionBeat
 } from '../_shared/prompts/cinematicVideoKnowledge.ts'
 
-// Import Voice & Face Anchor functions (2026 - Sora 2 Consistency)
+// Import Voice & Face Anchor functions (2026 - Sora 2 Consistency + Enhanced Audio)
 import {
-  generateVoiceAnchor,
   generateFaceAnchor,
   getCreatorAudioDirective,
   getBRollAudioDirective,
   detectBRollCategory,
-  type VoiceProfile,
-  type FaceAnchorConfig,
 } from '../_shared/prompts/audioDirective.ts'
 
 const corsHeaders = {
@@ -1102,16 +1084,6 @@ function detectScriptLanguage(text: string): string {
   return 'english'
 }
 
-// Helper: Get resolution based on aspect ratio
-function getResolutionForAspectRatio(aspectRatio: string): string {
-  // 9:16 (vertical/portrait) = max 720p
-  // 16:9 (horizontal/landscape) = can do 1080p
-  if (aspectRatio === '9:16' || aspectRatio === '3:4' || aspectRatio === '4:5') {
-    return '720p'
-  }
-  return '1080p'
-}
-
 // ============================================================================
 // VOICE CHARACTER ANCHOR - Ensures consistent voice across all segments
 // ============================================================================
@@ -1232,17 +1204,6 @@ Do NOT change voice characteristics between segments.
 ═══════════════════════════════════════════════════════════════`
 }
 
-// Helper: Get generic voice tone when voice character not available
-function getGenericVoiceTone(language: string): string {
-  const voiceDirections: Record<string, string> = {
-    indonesian: 'Indonesian voice, casual Gen-Z tone, natural narration style',
-    english: 'American English voice, engaging narrator tone, clear delivery',
-    hindi: 'Hindi voice with authentic Hinglish style, warm narration',
-    spanish: 'Latin American Spanish voice, warm narrator delivery'
-  }
-  return voiceDirections[language.toLowerCase()] || voiceDirections.english
-}
-
 function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const {
     segment,
@@ -1335,8 +1296,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     const characterName = segment.character_name || 'Creator'
     const characterDescription = actualCharacterDescription || undefined
     
-    // Use consistent voice from anchor
-    const voiceDirection = `${voiceChar.description}. Accent: ${voiceChar.accent}. Tone: ${voiceChar.tone}. Pace: ${voiceChar.pace}.`
+    // Use consistent voice from anchor (voiceChar already contains all voice info)
     
     // Resolution based on aspect ratio (dynamic)
     const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
@@ -1345,10 +1305,8 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     const platformLabel = platform === 'sora-2-hd' ? 'SORA 2' : 'VEO 3.1'
     const actualDuration = platform === 'veo-3.1-fast' ? Math.min(duration, 8) : Math.min(duration, 10)
     
-    // Get camera movement and audio template
+    // Get camera movement
     const cameraMove = getCameraMovement(segmentType, emotion)
-    const audioTemplate = getAudioTemplate(environment)
-    const ambientSound = audioTemplate.split('.')[0]
     
     // Build the custom prompt with anchors
     let prompt = `[${platformLabel} PROMPT — ${segmentTypeUpper}.${segmentNumber}]
@@ -1367,6 +1325,16 @@ ASPECT: ${aspectRatio}
       prompt += faceAnchorBlock + '\n\n'
     }
     
+    // ========================================================================
+    // Enhanced Audio Directive (2026) - Emotion-based SFX + Volume Priority
+    // ========================================================================
+    const creatorAudioDirective = getCreatorAudioDirective(
+      detectedLanguage,
+      scriptText || '',
+      segmentTypeUpper,
+      emotion
+    )
+    
     // Add rest of prompt
     prompt += `STARTING FRAME:
 Continue from the provided image. ${characterDescription ? `Character: ${characterDescription}.` : ''} ${visualDirection || 'Direct eye contact with camera.'}
@@ -1382,13 +1350,7 @@ ACTION SEQUENCE:
 - (${Math.floor(actualDuration * 0.3)}s-${Math.floor(actualDuration * 0.7)}s): Natural hand gestures while delivering key message
 - (${Math.floor(actualDuration * 0.7)}s-${actualDuration}s): Concluding expression, maintains eye contact
 
-AUDIO DIRECTIVE (Creator Speaking):
-Dialogue: "${scriptText || ''}"
-Word count: ${(scriptText || '').split(/\s+/).filter(Boolean).length} words (~${Math.ceil((scriptText || '').split(/\s+/).filter(Boolean).length / 2.5)}s speaking time)
-Emotion: ${emotion}, engaging delivery
-Lip sync: Character's lip movements MUST match dialogue timing exactly
-Audio perspective: Close-mic, dry voice, minimal room reverb
-Background: ${ambientSound}, subtle room tone only
+${creatorAudioDirective}
 
 CONTINUITY NOTES:
 - Maintain exact lighting and color grade from reference image
@@ -1492,23 +1454,14 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
     voiceCharacter
   } = params
   
-  // Build voiceover section if script exists - USE VOICE CHARACTER ANCHOR
+  // Build voiceover section if script exists
   const hasVoiceover = scriptText && scriptText.trim().length > 0
-  
-  // Use voice character if provided, otherwise fallback to generic
-  const voiceTone = voiceCharacter 
-    ? `${voiceCharacter.description}. Accent: ${voiceCharacter.accent}. Tone: ${voiceCharacter.tone}. Pace: ${voiceCharacter.pace}.`
-    : getGenericVoiceTone(language)
   
   // Get emotion-based motion settings
   const emotionMotion = getEmotionMotion(emotion)
   
   // Get camera movement for segment type
   const cameraMove = getCameraMovement(segmentType, emotion)
-  
-  // Get audio template
-  const audioTemplate = getAudioTemplate(environment)
-  const ambientSound = audioTemplate.split('.')[0]
   
   // Resolution based on aspect ratio
   const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
@@ -1536,12 +1489,17 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
   
   const actionBeatsFormatted = actionBeats.map(beat => `- (${beat.timeRange}): ${beat.action}`).join('\n')
   
-  // Build voiceover/narration section
-  const voiceoverSection = hasVoiceover
-    ? `VOICEOVER (off-screen narration, NO face visible):
-Narrator: "${scriptText}"
-Voice style: ${voiceTone}`
-    : 'No voiceover in this clip'
+  // ========================================================================
+  // Enhanced Audio Directive (2026) - Emotion-based SFX + Volume Priority
+  // Detect B-roll category from visual direction for appropriate ambient
+  // ========================================================================
+  const brollCategory = detectBRollCategory(visualDesc)
+  const brollAudioDirective = getBRollAudioDirective(
+    brollCategory,
+    emotion,
+    hasVoiceover,
+    hasVoiceover ? scriptText : ''
+  )
   
   // Platform-specific prompt
   if (platform === 'sora-2-hd') {
@@ -1563,10 +1521,7 @@ ${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} e
 ACTION SEQUENCE:
 ${actionBeatsFormatted}
 
-SOUND:
-- Ambient: ${ambientSound}
-- Effects: ${soundEffects || 'subtle environmental sounds only'}
-- ${voiceoverSection}
+${brollAudioDirective}
 
 PHYSICS:
 Natural motion, realistic timing. Single camera movement per shot.
@@ -1575,7 +1530,6 @@ CONTINUITY NOTES:
 - Maintain exact lighting and color grade from reference image
 - NO human face should appear - this is B-roll footage
 - Visual focus on topic/subject/product, NOT on people
-- ${hasVoiceover ? 'Voiceover narration plays over visuals' : 'Pure ambient sound'}
 
 TRANSITION:
 ${getTransition(transition)}
@@ -1606,17 +1560,12 @@ ${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} e
 ACTION SEQUENCE:
 ${actionBeatsFormatted}
 
-SOUND:
-- Ambient: ${ambientSound}
-- Effects: ${soundEffects || 'subtle environmental sounds only'}
-- ${voiceoverSection}
-- Exclude: no subtitles, no text overlays, no background music unless specified
+${brollAudioDirective}
 
 CONTINUITY NOTES:
 - Maintain exact lighting and color grade from reference image
 - NO human face should appear - this is B-roll footage
 - Visual focus on topic/subject/product, NOT on people
-- ${hasVoiceover ? 'Voiceover narration plays over visuals' : 'Pure ambient sound'}
 
 TRANSITION:
 ${getTransition(transition)}

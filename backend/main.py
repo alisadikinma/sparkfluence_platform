@@ -16,8 +16,11 @@ from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import threading
 
-# Load environment variables
-load_dotenv()
+# Import FFmpeg modules
+from ffmpeg import VideoCombiner, CombineConfig, VideoSegmentInput, TransitionType
+
+# Load environment variables from root .env
+load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configure logging
 logging.basicConfig(
@@ -43,7 +46,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Sparkfluence Video Backend...")
     
     # Start background worker if Supabase is configured
-    if os.getenv('SUPABASE_URL') and os.getenv('SUPABASE_SERVICE_ROLE_KEY'):
+    supabase_url = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL')
+    supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_KEY')
+    if supabase_url and supabase_key:
         try:
             background_worker = BackgroundWorker()
             worker_task = asyncio.create_task(background_worker.start())
@@ -91,8 +96,9 @@ completed_videos: Dict[str, str] = {}
 # Supabase client helper
 class SupabaseHelper:
     def __init__(self):
-        self.url = os.getenv('SUPABASE_URL')
-        self.key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+        # Support both VITE_ prefixed and non-prefixed variable names
+        self.url = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL')
+        self.key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_KEY')
         self.headers = {
             'apikey': self.key,
             'Authorization': f'Bearer {self.key}',
@@ -185,6 +191,41 @@ class CreateVideoJobsRequest(BaseModel):
     resolution: str = '1080p'
 
 
+# ==================== V2 Models (Enhanced FFmpeg) ====================
+
+class VideoSegmentV2(BaseModel):
+    """Enhanced video segment with all metadata."""
+    segment_id: str
+    segment_number: int
+    segment_type: str  # HOOK, FORE, BODY, PEAK, CTA
+    video_url: str
+    duration_seconds: float
+    script_text: Optional[str] = None
+    emotion: str = "neutral"
+
+class CombineOptionsV2(BaseModel):
+    """Enhanced combine options."""
+    # Transitions
+    enable_transitions: bool = True
+    transition_duration: float = 0.5
+    
+    # Subtitles
+    enable_subtitles: bool = True
+    subtitle_style: str = "tiktok"  # tiktok, reels, shorts, minimal, dramatic
+    word_by_word: bool = True
+    
+    # Audio
+    normalize_audio: bool = True
+
+class CombineVideoRequestV2(BaseModel):
+    """Enhanced combine request."""
+    project_id: str
+    session_id: str
+    segments: List[VideoSegmentV2]
+    options: CombineOptionsV2 = CombineOptionsV2()
+    whisper_data: Optional[Dict[str, Any]] = None  # Optional Whisper transcription
+
+
 # API Key authentication
 def verify_api_key(x_api_key: str = Header(...)):
     expected_key = os.getenv('BACKEND_API_KEY')
@@ -199,19 +240,33 @@ def verify_api_key(x_api_key: str = Header(...)):
 async def root():
     return {
         "message": "Sparkfluence Video Backend API", 
-        "version": "2.0.0",
-        "features": ["video_combining", "background_jobs", "image_generation", "video_generation"]
+        "version": "2.1.0",
+        "features": [
+            "video_combining",
+            "video_combining_v2",  # With transitions + subtitles
+            "background_jobs",
+            "image_generation",
+            "video_generation"
+        ],
+        "ffmpeg_features": {
+            "transitions": "xfade (58 types)",
+            "subtitles": "ASS word-by-word animation",
+            "audio": "EBU R128 normalization"
+        }
     }
 
 
 @app.get("/health")
 async def health_check():
-    supabase_configured = bool(os.getenv('SUPABASE_URL') and os.getenv('SUPABASE_SERVICE_ROLE_KEY'))
+    supabase_url = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL')
+    supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_KEY')
+    supabase_configured = bool(supabase_url and supabase_key)
     worker_running = background_worker is not None and background_worker.running if background_worker else False
     
     return {
         "status": "healthy",
         "ffmpeg_available": check_ffmpeg_available(),
+        "ffmpeg_modules": ["transitions", "subtitles", "combiner"],
         "supabase_configured": supabase_configured,
         "background_worker": "running" if worker_running else "stopped"
     }
@@ -415,6 +470,63 @@ async def combine_final_video(
     }
 
 
+# ==================== V2: Enhanced Video Combining (Transitions + Subtitles) ====================
+
+@app.post("/api/combine-final-video-v2")
+async def combine_final_video_v2(
+    request: CombineVideoRequestV2,
+    background_tasks: BackgroundTasks,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """
+    Enhanced video combination with:
+    - xfade transitions between segments
+    - ASS subtitle burn-in (word-by-word animation)
+    - Audio normalization (EBU R128)
+    """
+    verify_api_key(api_key)
+
+    # Create job ID
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+
+    # Initialize job status
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "processing",
+        "progress_percentage": 0,
+        "current_step": "Initializing",
+        "final_video_url": None,
+        "error_message": None,
+        "metadata": None
+    }
+
+    # Start background processing
+    background_tasks.add_task(
+        process_video_combination_v2,
+        job_id,
+        request.project_id,
+        request.session_id,
+        request.segments,
+        request.options,
+        request.whisper_data
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "status": "processing",
+            "estimated_time_seconds": 60,  # Longer due to transitions
+            "polling_endpoint": f"/api/job-status/{job_id}",
+            "features": {
+                "transitions": request.options.enable_transitions,
+                "subtitles": request.options.enable_subtitles,
+                "audio_normalization": request.options.normalize_audio
+            }
+        }
+    }
+
+
 @app.get("/api/job-status/{job_id}")
 async def get_job_status(
     job_id: str,
@@ -510,10 +622,103 @@ async def process_video_combination(
         logger.error(f"Job {job_id} failed: {str(e)}")
         jobs[job_id].update({
             "status": "failed",
-            "current_step": jobs[job_id]["current_step"],
+            "current_step": jobs[job_id].get("current_step", "Processing"),
             "error_message": str(e)
         })
         cleanup_directory(work_dir)
+
+
+async def process_video_combination_v2(
+    job_id: str,
+    project_id: str,
+    session_id: str,
+    segments: List[VideoSegmentV2],
+    options: CombineOptionsV2,
+    whisper_data: Optional[Dict[str, Any]] = None
+):
+    """
+    Enhanced video combination using FFmpeg modules.
+    Supports transitions, subtitles, and audio normalization.
+    """
+    try:
+        # Progress callback
+        def progress_callback(progress: int, step: str):
+            update_job_status(job_id, progress, step)
+        
+        # Convert segments to VideoSegmentInput
+        segment_inputs = [
+            VideoSegmentInput(
+                video_url=seg.video_url,
+                segment_type=seg.segment_type,
+                segment_number=seg.segment_number,
+                duration_seconds=seg.duration_seconds,
+                script_text=seg.script_text,
+                emotion=seg.emotion
+            )
+            for seg in segments
+        ]
+        
+        # Build config
+        config = CombineConfig(
+            enable_transitions=options.enable_transitions,
+            transition_duration=options.transition_duration,
+            auto_select_transitions=True,
+            enable_subtitles=options.enable_subtitles,
+            subtitle_style=options.subtitle_style,
+            word_by_word=options.word_by_word
+        )
+        
+        # Create output path
+        output_dir = Path(tempfile.gettempdir()) / "sparkfluence_outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{project_id}_{session_id}_{uuid.uuid4().hex[:8]}.mp4"
+        
+        # Run combiner
+        combiner = VideoCombiner()
+        result = await combiner.combine(
+            segments=segment_inputs,
+            output_path=output_path,
+            config=config,
+            whisper_data=whisper_data,
+            progress_callback=progress_callback
+        )
+        
+        if not result.success:
+            raise Exception(result.error_message or "Combination failed")
+        
+        # Upload to storage
+        update_job_status(job_id, 95, "Uploading final video")
+        final_url = await upload_to_storage(result.output_path, project_id)
+        
+        # Mark as completed
+        jobs[job_id].update({
+            "status": "completed",
+            "progress_percentage": 100,
+            "current_step": "Complete",
+            "final_video_url": final_url,
+            "metadata": {
+                "duration_seconds": result.duration_seconds,
+                "file_size_mb": result.file_size_mb,
+                "resolution": result.resolution,
+                "segments_count": len(segments),
+                **result.metadata
+            }
+        })
+        
+        # Cleanup
+        combiner.cleanup()
+        if result.output_path and result.output_path.exists():
+            result.output_path.unlink(missing_ok=True)
+        
+        logger.info(f"Job {job_id} completed successfully")
+    
+    except Exception as e:
+        logger.error(f"Job {job_id} failed: {str(e)}")
+        jobs[job_id].update({
+            "status": "failed",
+            "current_step": jobs[job_id].get("current_step", "Processing"),
+            "error_message": str(e)
+        })
 
 
 # ==================== Helper Functions ====================
@@ -617,8 +822,8 @@ async def add_background_music(
 
 
 async def upload_to_storage(video_file: Path, project_id: str) -> str:
-    supabase_url = os.getenv('SUPABASE_URL')
-    supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+    supabase_url = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL')
+    supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_KEY')
 
     if not supabase_url or not supabase_key:
         logger.warning("Supabase not configured, using local storage fallback")

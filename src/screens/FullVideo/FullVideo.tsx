@@ -11,6 +11,16 @@ import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
 const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || 'sparkfluence_prod_key_2024';
 
+// V2 Options defaults
+const DEFAULT_COMBINE_OPTIONS = {
+  enable_transitions: true,
+  transition_duration: 0.5,
+  enable_subtitles: true,
+  subtitle_style: 'tiktok', // tiktok, reels, shorts, minimal, dramatic
+  word_by_word: true,
+  normalize_audio: true
+};
+
 export const FullVideo: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -123,9 +133,9 @@ export const FullVideo: React.FC = () => {
     }
   }, [location.state]);
 
-  // Trigger combine video API (direct backend call)
+  // Trigger combine video API (V2 with transitions + subtitles)
   const triggerCombineVideo = async (segments, state) => {
-    console.log('[FullVideo] ========== TRIGGER COMBINE ==========');
+    console.log('[FullVideo] ========== TRIGGER COMBINE V2 ==========');
     console.log('[FullVideo] Backend URL:', BACKEND_URL);
     console.log('[FullVideo] Segments to combine:', segments.length);
     
@@ -135,14 +145,18 @@ export const FullVideo: React.FC = () => {
     setProgressPercent(5);
 
     try {
-      // Prepare segments data for backend
+      // Prepare segments data for V2 backend
       const videoSegments = segments.map((seg, index) => ({
-        type: seg.type || seg.element || "segment_" + (index + 1),
+        segment_id: seg.id || seg.segmentId || `seg_${index}`,
+        segment_number: index + 1,
+        segment_type: seg.type || seg.element || "BODY",
         video_url: seg.videoUrl || seg.video_url,
-        duration_seconds: seg.durationSeconds || 8
+        duration_seconds: seg.durationSeconds || seg.duration_seconds || 8,
+        script_text: seg.scriptText || seg.script_text || seg.text || null,
+        emotion: seg.emotion || "neutral"
       }));
 
-      console.log('[FullVideo] Prepared videoSegments:', JSON.stringify(videoSegments, null, 2));
+      console.log('[FullVideo] Prepared videoSegments (V2):', JSON.stringify(videoSegments, null, 2));
       
       // Check if all segments have video URLs
       const missingVideos = videoSegments.filter((s) => !s.video_url);
@@ -152,22 +166,20 @@ export const FullVideo: React.FC = () => {
       }
 
       console.log('[FullVideo] All segments have video URLs');
-      console.log('[FullVideo] Sending request to backend...');
+      console.log('[FullVideo] Sending request to backend V2...');
       setCombineProgress("Connecting to video processor...");
       setProgressPercent(10);
       
       const requestBody = {
-        project_id: state.sessionId || "project_" + Date.now(),
+        project_id: state.projectId || state.sessionId || "project_" + Date.now(),
+        session_id: state.sessionId || "session_" + Date.now(),
         segments: videoSegments,
-        options: {
-          bgm_url: state.selectedMusic?.audioUrl || state.selectedMusic?.url || null,
-          bgm_volume: state.selectedMusic ? 0.15 : 0
-        }
+        options: DEFAULT_COMBINE_OPTIONS
       };
-      console.log('[FullVideo] Request body:', JSON.stringify(requestBody, null, 2));
+      console.log('[FullVideo] Request body (V2):', JSON.stringify(requestBody, null, 2));
       
-      // Direct backend call (same as Loading.tsx)
-      const response = await fetch(BACKEND_URL + "/api/combine-final-video", {
+      // V2 endpoint with transitions + subtitles
+      const response = await fetch(BACKEND_URL + "/api/combine-final-video-v2", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -185,10 +197,15 @@ export const FullVideo: React.FC = () => {
       }
 
       const data = await response.json();
-      console.log('[FullVideo] Job created:', data);
+      console.log('[FullVideo] Job created (V2):', data);
 
       if (!data.success || !data.data?.job_id) {
         throw new Error("Failed to create job");
+      }
+
+      // Log enabled features
+      if (data.data?.features) {
+        console.log('[FullVideo] V2 Features enabled:', data.data.features);
       }
 
       setJobId(data.data.job_id);
@@ -270,20 +287,23 @@ export const FullVideo: React.FC = () => {
         setCombineError(jobData?.error_message || "Video processing failed");
         setIsCombining(false);
       } else {
-        // Update progress text based on status
-        if (attempts < 5) {
-          setCombineProgress("Downloading video segments...");
-        } else if (attempts < 15) {
-          setCombineProgress("Concatenating videos with FFmpeg...");
-        } else if (attempts < 30) {
-          setCombineProgress("Encoding final video...");
-        } else {
-          setCombineProgress("Finalizing... (this may take a while)");
-        }
+        // Update progress text based on V2 steps
+        setCombineProgress(getProgressText(attempts));
       }
     } catch (err) {
       console.error('[FullVideo] Direct poll error:', err);
     }
+  };
+
+  // Get progress text based on attempts (V2 steps)
+  const getProgressText = (attempts: number) => {
+    if (attempts < 3) return "Downloading video segments...";
+    if (attempts < 8) return "Normalizing video formats...";
+    if (attempts < 15) return "Applying transitions...";
+    if (attempts < 22) return "Generating subtitles...";
+    if (attempts < 30) return "Burning subtitles...";
+    if (attempts < 38) return "Normalizing audio (EBU R128)...";
+    return "Finalizing... (this may take a while)";
   };
 
   // Update planned_content with final video URL
