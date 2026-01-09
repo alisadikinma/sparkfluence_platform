@@ -37,6 +37,7 @@ import { Planner } from "./screens/Planner";
 import { History } from "./screens/History/History";
 import { AuthCallback } from "./screens/AuthCallback/AuthCallback";
 import { ScriptLab } from "./screens/ScriptLab";
+import { Privacy, Terms } from "./screens/Legal";
 
 // Wrapper component for smooth scroll
 const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -63,6 +64,10 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                       <Route path="/help" element={<HelpCenter />} />
                       <Route path="/help/:slug" element={<HelpDetail />} />
                     </Route>
+
+                    {/* Legal pages (no layout - standalone) */}
+                    <Route path="/privacy" element={<Privacy />} />
+                    <Route path="/terms" element={<Terms />} />
 
                     {/* Auth pages (no layout) */}
                     <Route path="/login" element={<Login />} />
