@@ -58,7 +58,7 @@ export const FullVideo: React.FC = () => {
   const [subtitleProgress, setSubtitleProgress] = useState<string>("Initializing...");
   const [subtitlePercent, setSubtitlePercent] = useState(0);
   const [subtitleJobId, setSubtitleJobId] = useState<string | null>(null);
-  const [subtitleStyle, setSubtitleStyle] = useState<string>("tiktok");
+  // Subtitle style hardcoded to 'tiktok' - no user selection needed
   const [videoWithoutSubtitle, setVideoWithoutSubtitle] = useState<string | null>(null);
   const [hasSubtitles, setHasSubtitles] = useState(false);
   const subtitlePollRef = useRef<NodeJS.Timeout | null>(null);
@@ -391,7 +391,7 @@ export const FullVideo: React.FC = () => {
   const handleAddSubtitles = async () => {
     if (!finalVideoUrl) return;
     
-    console.log('[FullVideo] Adding subtitles with style:', subtitleStyle);
+    console.log('[FullVideo] Adding subtitles with style: tiktok');
     setIsAddingSubtitles(true);
     setShowSubtitleModal(false);
     setSubtitleProgress("Initializing...");
@@ -406,7 +406,7 @@ export const FullVideo: React.FC = () => {
         },
         body: JSON.stringify({
           video_url: finalVideoUrl,
-          subtitle_style: subtitleStyle,
+          subtitle_style: 'tiktok',
           project_id: videoData?.projectId || videoData?.sessionId || "subtitled"
         })
       });
@@ -645,25 +645,6 @@ export const FullVideo: React.FC = () => {
             <p className="text-white/70 text-sm mb-5">
               AI akan transcribe audio dan menambahkan subtitle animasi word-by-word ke video kamu.
             </p>
-            
-            {/* Style Selector */}
-            <div className="mb-5">
-              <label className="text-white/60 text-xs mb-2 block">Pilih Style Subtitle</label>
-              <div className="grid grid-cols-5 gap-2">
-                {['tiktok', 'reels', 'shorts', 'viral', 'dramatic'].map((style) => (
-                  <button
-                    key={style}
-                    onClick={() => setSubtitleStyle(style)}
-                    className={"px-2 py-2 rounded-lg text-xs font-medium transition-all " + 
-                      (subtitleStyle === style 
-                        ? "bg-[#7c3aed] text-white ring-2 ring-[#7c3aed]/50" 
-                        : "bg-white/10 text-white/70 hover:bg-white/20")}
-                  >
-                    {style.charAt(0).toUpperCase() + style.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
             
             <div className="flex gap-3">
               <Button
