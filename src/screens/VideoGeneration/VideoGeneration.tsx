@@ -31,6 +31,7 @@ interface Segment {
   jobId?: string;
   prompt?: string; // Video prompt from VEO
   videoProgress?: number; // 0-100 percentage
+  isDismissed?: boolean; // Skip this segment from final video
 }
 
 interface VideoSettings {
@@ -262,6 +263,8 @@ export const VideoGeneration = (): JSX.Element => {
     platform: language === 'id' ? 'Platform' : 'Platform',
     preview: language === 'id' ? 'Preview' : 'Preview',
     retry: language === 'id' ? 'Coba Lagi' : 'Retry',
+    dismiss: language === 'id' ? 'Lewati' : 'Skip',
+    dismissed: language === 'id' ? 'Dilewati' : 'Skipped',
     total: language === 'id' ? 'Total' : 'Total',
     videosReady: language === 'id' ? 'video siap' : 'videos ready',
     rateLimitTitle: language === 'id' ? '⏳ Server Sedang Sibuk' : '⏳ Server Busy',
@@ -1402,24 +1405,48 @@ export const VideoGeneration = (): JSX.Element => {
     }
   };
 
+  // Dismiss/Skip a failed segment from the final video
+  const handleDismissSegment = (segmentId: string) => {
+    setSegments(prev => prev.map(seg => 
+      seg.id === segmentId 
+        ? { ...seg, isDismissed: true, videoError: null }
+        : seg
+    ));
+    console.log(`[VideoGen] Dismissed segment ${segmentId}`);
+  };
+
+  // Undo dismiss - restore segment
+  const handleUndoDismiss = (segmentId: string) => {
+    setSegments(prev => prev.map(seg => 
+      seg.id === segmentId 
+        ? { ...seg, isDismissed: false }
+        : seg
+    ));
+    console.log(`[VideoGen] Restored segment ${segmentId}`);
+  };
+
   const handleBackToDashboard = () => {
     navigate("/dashboard");
   };
 
   const handleNext = () => {
-    const allHaveVideos = segments.every(seg => seg.videoUrl);
+    // Filter out dismissed segments for navigation
+    const activeSegs = segments.filter(s => !s.isDismissed);
+    const allHaveVideos = activeSegs.length > 0 && activeSegs.every(seg => seg.videoUrl);
+    
     console.log('[VideoGen] handleNext called, allHaveVideos:', allHaveVideos);
-    console.log('[VideoGen] Segments with videoUrl:', segments.map(s => ({ id: s.id, type: s.type, hasVideo: !!s.videoUrl })));
+    console.log('[VideoGen] Active segments:', activeSegs.length, 'Dismissed:', segments.length - activeSegs.length);
+    console.log('[VideoGen] Segments with videoUrl:', activeSegs.map(s => ({ id: s.id, type: s.type, hasVideo: !!s.videoUrl })));
     
     if (!allHaveVideos) {
       alert(language === 'id' ? 'Harap generate semua video terlebih dahulu.' : 'Please generate videos for all segments before proceeding.');
       return;
     }
 
-    // Go directly to full-video with combine process
+    // Go directly to full-video with combine process (only active segments)
     const navigationState = {
-      segments,
-      selectedSegments: segments, // Also pass as selectedSegments for compatibility
+      segments: activeSegs,
+      selectedSegments: activeSegs, // Also pass as selectedSegments for compatibility
       selectedMusic: null,
       topic: currentTopic,
       sessionId,
@@ -1434,9 +1461,11 @@ export const VideoGeneration = (): JSX.Element => {
     navigate("/full-video", { state: navigationState });
   };
 
-  const totalDuration = segments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
-  const videosGenerated = segments.filter(s => s.videoUrl).length;
-  const allHaveVideos = segments.every(seg => seg.videoUrl);
+  // Filter out dismissed segments for counting
+  const activeSegments = segments.filter(s => !s.isDismissed);
+  const totalDuration = activeSegments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
+  const videosGenerated = activeSegments.filter(s => s.videoUrl).length;
+  const allHaveVideos = activeSegments.length > 0 && activeSegments.every(seg => seg.videoUrl);
 
   // Helper: Get camera movement hint based on segment type
   const getCameraHint = (segmentType: string, emotion: string): string => {
@@ -1604,7 +1633,12 @@ export const VideoGeneration = (): JSX.Element => {
             <div className="text-right text-sm">
               <div className="text-white/60">{uiText.total}: {totalDuration}s</div>
               <div className="text-[#7c3aed] text-xs mt-1">
-                {videosGenerated}/{segments.length} {uiText.videosReady}
+                {videosGenerated}/{activeSegments.length} {uiText.videosReady}
+                {segments.length !== activeSegments.length && (
+                  <span className="text-gray-400 ml-1">
+                    ({segments.length - activeSegments.length} {language === 'id' ? 'dilewati' : 'skipped'})
+                  </span>
+                )}
               </div>
               {/* DEBUG: Force Refresh Button */}
               <button
@@ -1651,7 +1685,11 @@ export const VideoGeneration = (): JSX.Element => {
             <div 
               key={segment.id} 
               className={`bg-[#1a1a24] border rounded-2xl overflow-hidden transition-all ${
-                segment.videoUrl ? 'border-green-500/50' : 'border-[#2b2b38]'
+                segment.isDismissed 
+                  ? 'border-gray-500/30 opacity-50' 
+                  : segment.videoUrl 
+                    ? 'border-green-500/50' 
+                    : 'border-[#2b2b38]'
               }`}
             >
               {/* Segment Header */}
@@ -1665,7 +1703,12 @@ export const VideoGeneration = (): JSX.Element => {
                   <span className="text-white font-medium text-sm">{segment.type || segment.element}</span>
                   <span className="text-white/40 text-xs">{segment.timing || segment.duration}</span>
                 </div>
-                {segment.videoUrl ? (
+                {segment.isDismissed ? (
+                  <div className="flex items-center gap-1 text-gray-400 text-xs">
+                    <X className="w-3 h-3" />
+                    {uiText.dismissed}
+                  </div>
+                ) : segment.videoUrl ? (
                   <div className="flex items-center gap-1 text-green-500 text-xs" title={segment.videoUrl}>
                     <CheckCircle2 className="w-3 h-3" />
                     {uiText.ready}
@@ -1845,21 +1888,48 @@ export const VideoGeneration = (): JSX.Element => {
                             </p>
                           )}
                         </div>
+                      ) : segment.isDismissed ? (
+                        <div className="bg-gray-500/10 border border-gray-500/30 rounded-lg p-3">
+                          <div className="flex items-center gap-2 text-gray-400 text-sm mb-2">
+                            <X className="w-4 h-4 flex-shrink-0" />
+                            <span>{uiText.dismissed}</span>
+                          </div>
+                          <Button
+                            onClick={() => handleUndoDismiss(segment.id)}
+                            size="sm"
+                            variant="outline"
+                            className="border-gray-500/50 text-gray-400 hover:bg-gray-500/10"
+                          >
+                            <RefreshCw className="w-4 h-4 mr-1" />
+                            {language === 'id' ? 'Kembalikan' : 'Restore'}
+                          </Button>
+                        </div>
                       ) : segment.videoError ? (
                         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
                           <div className="flex items-center gap-2 text-red-400 text-sm mb-2">
                             <AlertCircle className="w-4 h-4 flex-shrink-0" />
                             <span className="truncate">{segment.videoError}</span>
                           </div>
-                          <Button
-                            onClick={() => handleRegenerateVideo(segment.id)}
-                            size="sm"
-                            variant="outline"
-                            className="border-red-500/50 text-red-400 hover:bg-red-500/10"
-                          >
-                            <RefreshCw className="w-4 h-4 mr-1" />
-                            {uiText.retry}
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button
+                              onClick={() => handleRegenerateVideo(segment.id)}
+                              size="sm"
+                              variant="outline"
+                              className="border-red-500/50 text-red-400 hover:bg-red-500/10"
+                            >
+                              <RefreshCw className="w-4 h-4 mr-1" />
+                              {uiText.retry}
+                            </Button>
+                            <Button
+                              onClick={() => handleDismissSegment(segment.id)}
+                              size="sm"
+                              variant="outline"
+                              className="border-gray-500/50 text-gray-400 hover:bg-gray-500/10"
+                            >
+                              <X className="w-4 h-4 mr-1" />
+                              {uiText.dismiss}
+                            </Button>
+                          </div>
                         </div>
                       ) : segment.videoUrl ? (
                         <div className="flex gap-2">
@@ -1921,7 +1991,7 @@ export const VideoGeneration = (): JSX.Element => {
                 <ChevronRight className="w-4 h-4 ml-1" />
               </>
             ) : (
-              `${uiText.generateFirst} (${videosGenerated}/${segments.length})`
+              `${uiText.generateFirst} (${videosGenerated}/${activeSegments.length})`
             )}
           </Button>
         </div>
