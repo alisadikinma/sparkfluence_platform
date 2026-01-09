@@ -281,36 +281,130 @@ export const VideoGeneration = (): JSX.Element => {
     };
   }, []);
 
-  // Sync jobs with segments - ROBUST MATCHING (2026)
-  // Handles different ID formats between frontend state and database
+  // MANUAL FORCE SYNC - Called when user wants to refresh from DB
+  const forceRefreshFromDatabase = async () => {
+    if (!sessionId || !user) {
+      console.log('[FORCE_REFRESH] No sessionId or user');
+      return;
+    }
+    
+    console.log('[FORCE_REFRESH] 🔄 Starting force refresh from database...');
+    console.log('[FORCE_REFRESH] Session ID:', sessionId);
+    
+    try {
+      const { data: jobs, error } = await supabase
+        .from('video_generation_jobs')
+        .select('*')
+        .eq('session_id', sessionId)
+        .eq('user_id', user.id)
+        .order('segment_number', { ascending: true });
+      
+      if (error) {
+        console.error('[FORCE_REFRESH] DB error:', error);
+        return;
+      }
+      
+      console.log('[FORCE_REFRESH] Found', jobs?.length || 0, 'jobs in DB');
+      
+      if (!jobs || jobs.length === 0) {
+        console.log('[FORCE_REFRESH] No jobs found');
+        return;
+      }
+      
+      // Log each job
+      jobs.forEach((j, i) => {
+        console.log(`[FORCE_REFRESH] Job ${i+1}: segment_number=${j.segment_number}, status=${j.status}, video_url=${j.video_url ? 'YES' : 'NO'}`);
+        if (j.video_url) {
+          console.log(`[FORCE_REFRESH]   URL: ${j.video_url}`);
+        }
+      });
+      
+      // FORCE UPDATE segments by segment_number (array index)
+      setSegments(prev => {
+        console.log('[FORCE_REFRESH] Current segments:', prev.length);
+        
+        return prev.map((seg, index) => {
+          const segmentNumber = index + 1;
+          const job = jobs.find(j => j.segment_number === segmentNumber);
+          
+          if (job) {
+            console.log(`[FORCE_REFRESH] Segment ${segmentNumber}: Found job, video_url=${job.video_url ? 'YES' : 'NO'}`);
+            return {
+              ...seg,
+              jobId: job.id,
+              veoUuid: job.veo_uuid,
+              videoUrl: job.video_url || null,
+              videoError: job.status === 3 ? job.error_message : null,
+              isGeneratingVideo: job.status === 1
+            };
+          } else {
+            console.log(`[FORCE_REFRESH] Segment ${segmentNumber}: No matching job`);
+            return seg;
+          }
+        });
+      });
+      
+      console.log('[FORCE_REFRESH] ✅ Done!');
+      
+    } catch (err) {
+      console.error('[FORCE_REFRESH] Error:', err);
+    }
+  };
+
+  // Sync jobs with segments - FORCED DATABASE PRIORITY (2026)
+  // Always trust database video_url over frontend state
   const syncJobsWithSegments = (jobs: any[], currentSegments: Segment[]): Segment[] => {
+    console.log('[SYNC] ═══════════════════════════════════════════');
+    console.log(`[SYNC] Syncing ${currentSegments.length} segments with ${jobs.length} jobs`);
+    
+    // Create lookup map by segment_number (most reliable key)
+    const jobsByNumber = new Map<number, any>();
+    jobs.forEach(j => {
+      const num = j.segment_number || parseInt(j.segment_id) || 0;
+      if (num > 0) jobsByNumber.set(num, j);
+    });
+    
+    console.log(`[SYNC] Jobs by number: ${Array.from(jobsByNumber.keys()).join(', ')}`);
+    
     return currentSegments.map((seg, index) => {
       const segmentNumber = index + 1;
       
-      // Try multiple matching strategies (priority order)
-      const job = jobs.find(j => {
-        // 1. Exact segment_id match
-        if (j.segment_id === seg.id) return true;
-        // 2. segment_id as string number matches index+1
-        if (j.segment_id === String(segmentNumber)) return true;
-        // 3. segment_number matches
-        if (j.segment_number === segmentNumber) return true;
-        // 4. image_url matches (fallback)
-        if (j.image_url && seg.imageUrl && j.image_url === seg.imageUrl) return true;
-        return false;
-      });
+      // Primary match: by segment_number
+      let job = jobsByNumber.get(segmentNumber);
+      
+      // Fallback: by segment_id
+      if (!job) {
+        job = jobs.find(j => j.segment_id === seg.id);
+      }
+      
+      // Fallback: by image_url
+      if (!job && seg.imageUrl) {
+        job = jobs.find(j => j.image_url === seg.imageUrl);
+      }
       
       if (job) {
-        console.log(`[SYNC] Matched segment ${segmentNumber} (${seg.type}) with job ${job.id}, videoUrl: ${job.video_url ? 'YES' : 'NO'}`);
+        const hasVideo = !!job.video_url;
+        const status = job.status === 2 ? 'COMPLETED' : job.status === 1 ? 'PROCESSING' : job.status === 3 ? 'FAILED' : 'PENDING';
+        
+        console.log(`[SYNC] ✓ Segment ${segmentNumber} (${seg.type || seg.element}):`);
+        console.log(`[SYNC]   - Job ID: ${job.id}`);
+        console.log(`[SYNC]   - Status: ${status}`);
+        console.log(`[SYNC]   - Video URL: ${hasVideo ? job.video_url.substring(0, 60) + '...' : 'NONE'}`);
+        console.log(`[SYNC]   - UUID: ${job.veo_uuid || 'NONE'}`);
+        
         return {
           ...seg,
+          id: seg.id, // Keep original ID
           jobId: job.id,
           veoUuid: job.veo_uuid || seg.veoUuid,
-          videoUrl: job.video_url || seg.videoUrl,
+          // FORCE video_url from database (most important!)
+          videoUrl: job.video_url || null,
           videoError: job.status === JOB_STATUS.FAILED ? (job.error_message || 'Video failed') : null,
           isGeneratingVideo: job.status === JOB_STATUS.PROCESSING,
           prompt: job.prompt || seg.prompt
         };
+      } else {
+        console.log(`[SYNC] ✗ Segment ${segmentNumber} (${seg.type || seg.element}): NO MATCH FOUND`);
       }
       return seg;
     });
@@ -412,12 +506,38 @@ export const VideoGeneration = (): JSX.Element => {
           videoError: null,
         }));
 
-        // Check existing jobs and sync video URLs
+        // Check existing jobs and sync video URLs - CRITICAL FOR RESUME
         const existingJobs = await checkExistingJobs(sid);
+        console.log('[INIT] 🔍 checkExistingJobs returned:', existingJobs?.length || 0, 'jobs');
+        
         if (existingJobs && existingJobs.length > 0) {
-          console.log(`[INIT] Found ${existingJobs.length} existing jobs, syncing...`);
-          console.log(`[INIT] Jobs status: ${existingJobs.map(j => `${j.segment_type}:${j.status}${j.video_url ? '✓' : ''}`).join(', ')}`);
+          console.log('[INIT] ═══════════════════════════════════════════════');
+          console.log(`[INIT] Processing ${existingJobs.length} jobs from database`);
+          
+          // Log each job with full details
+          existingJobs.forEach((j, i) => {
+            const statusText = j.status === 2 ? 'COMPLETED' : j.status === 1 ? 'PROCESSING' : j.status === 3 ? 'FAILED' : 'PENDING';
+            console.log(`[INIT] DB Job ${i+1}:`);
+            console.log(`[INIT]   - segment_number: ${j.segment_number}`);
+            console.log(`[INIT]   - segment_id: "${j.segment_id}"`);
+            console.log(`[INIT]   - segment_type: ${j.segment_type}`);
+            console.log(`[INIT]   - status: ${statusText} (${j.status})`);
+            console.log(`[INIT]   - video_url: ${j.video_url ? 'YES - ' + j.video_url.substring(0, 60) : 'NO'}`);
+          });
+          
+          console.log('[INIT] Frontend segments BEFORE sync:');
+          initialSegments.forEach((s, i) => {
+            console.log(`[INIT]   Segment ${i+1}: id="${s.id}", type=${s.type || s.element}, videoUrl=${s.videoUrl ? 'YES' : 'NO'}`);
+          });
+          
+          // SYNC - this should update videoUrl from database
           initialSegments = syncJobsWithSegments(existingJobs, initialSegments);
+          
+          console.log('[INIT] Frontend segments AFTER sync:');
+          initialSegments.forEach((s, i) => {
+            console.log(`[INIT]   Segment ${i+1}: type=${s.type || s.element}, videoUrl=${s.videoUrl ? 'YES ✓ ' + s.videoUrl.substring(0, 40) : 'NO ✗'}, jobId=${s.jobId || 'none'}`);
+          });
+          console.log('[INIT] ═══════════════════════════════════════════════');
           
           // Check if there are pending/processing jobs to resume
           const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING);
@@ -1412,6 +1532,14 @@ export const VideoGeneration = (): JSX.Element => {
               <div className="text-[#7c3aed] text-xs mt-1">
                 {videosGenerated}/{segments.length} {uiText.videosReady}
               </div>
+              {/* DEBUG: Force Refresh Button */}
+              <button
+                onClick={forceRefreshFromDatabase}
+                className="mt-2 px-2 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-[10px] rounded"
+                title="Force refresh video status from database"
+              >
+                🔄 Sync DB
+              </button>
             </div>
           </div>
         </div>
