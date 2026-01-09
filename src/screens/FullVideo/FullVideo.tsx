@@ -5,7 +5,7 @@ import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff } from "lucide-react";
 
 // Backend API URL - adjust based on environment
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
@@ -15,8 +15,8 @@ const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || 'sparkfluence_pr
 const DEFAULT_COMBINE_OPTIONS = {
   enable_transitions: true,
   transition_duration: 0.5,
-  enable_subtitles: true,
-  subtitle_style: 'tiktok', // tiktok, reels, shorts, minimal, dramatic
+  enable_subtitles: false,  // Disabled - use Add Subtitle feature after combining
+  subtitle_style: 'tiktok',
   word_by_word: true,
   normalize_audio: true
 };
@@ -48,12 +48,25 @@ export const FullVideo: React.FC = () => {
   
   const hasStartedCombine = useRef(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Subtitle states
+  const [showSubtitleOption, setShowSubtitleOption] = useState(false);
+  const [isAddingSubtitles, setIsAddingSubtitles] = useState(false);
+  const [subtitleProgress, setSubtitleProgress] = useState<string>("Initializing...");
+  const [subtitlePercent, setSubtitlePercent] = useState(0);
+  const [subtitleJobId, setSubtitleJobId] = useState<string | null>(null);
+  const [subtitleStyle, setSubtitleStyle] = useState<string>("tiktok");
+  const [videoWithoutSubtitle, setVideoWithoutSubtitle] = useState<string | null>(null);
+  const subtitlePollRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+      }
+      if (subtitlePollRef.current) {
+        clearInterval(subtitlePollRef.current);
       }
     };
   }, []);
@@ -274,8 +287,10 @@ export const FullVideo: React.FC = () => {
         }
         setProgressPercent(100);
         setFinalVideoUrl(jobData.final_video_url);
+        setVideoWithoutSubtitle(jobData.final_video_url); // Store original video
         setIsCombining(false);
         setCombineProgress("Complete!");
+        setShowSubtitleOption(true); // Show subtitle option
         
         if (videoData?.sessionId) {
           await updatePlannedContentWithVideo(jobData.final_video_url);
@@ -323,6 +338,118 @@ export const FullVideo: React.FC = () => {
     } catch (err) {
       console.error('[FullVideo] Update error:', err);
     }
+  };
+
+  // ==================== Subtitle Functions ====================
+  
+  // Add subtitles to video
+  const handleAddSubtitles = async () => {
+    if (!finalVideoUrl) return;
+    
+    console.log('[FullVideo] Adding subtitles with style:', subtitleStyle);
+    setIsAddingSubtitles(true);
+    setShowSubtitleOption(false);
+    setSubtitleProgress("Initializing...");
+    setSubtitlePercent(5);
+    
+    try {
+      const response = await fetch(BACKEND_URL + "/api/add-subtitles", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': BACKEND_API_KEY
+        },
+        body: JSON.stringify({
+          video_url: finalVideoUrl,
+          subtitle_style: subtitleStyle,
+          project_id: videoData?.projectId || videoData?.sessionId || "subtitled"
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error("Subtitle API error: " + response.status + " - " + errorText);
+      }
+      
+      const data = await response.json();
+      console.log('[FullVideo] Subtitle job created:', data);
+      
+      if (!data.success || !data.data?.job_id) {
+        throw new Error("Failed to create subtitle job");
+      }
+      
+      setSubtitleJobId(data.data.job_id);
+      startPollingSubtitleJob(data.data.job_id);
+      
+    } catch (err) {
+      console.error('[FullVideo] Subtitle error:', err);
+      alert("Failed to add subtitles: " + err.message);
+      setIsAddingSubtitles(false);
+      setShowSubtitleOption(true);
+    }
+  };
+  
+  // Poll subtitle job status
+  const startPollingSubtitleJob = (jid: string) => {
+    let attempts = 0;
+    const maxAttempts = 60; // 5 minutes max
+    
+    subtitlePollRef.current = setInterval(async () => {
+      attempts++;
+      
+      if (attempts > maxAttempts) {
+        clearInterval(subtitlePollRef.current!);
+        alert("Subtitle processing timeout. Video is available without subtitles.");
+        setIsAddingSubtitles(false);
+        return;
+      }
+      
+      try {
+        const response = await fetch(BACKEND_URL + "/api/job-status/" + jid, {
+          headers: { 'x-api-key': BACKEND_API_KEY }
+        });
+        
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const jobData = data?.data;
+        
+        console.log('[FullVideo] Subtitle job status:', jobData?.status, jobData?.progress_percentage);
+        
+        if (jobData?.progress_percentage) {
+          setSubtitlePercent(jobData.progress_percentage);
+        }
+        if (jobData?.current_step) {
+          setSubtitleProgress(jobData.current_step);
+        }
+        
+        if (jobData?.status === 'completed' && jobData?.final_video_url) {
+          clearInterval(subtitlePollRef.current!);
+          setSubtitlePercent(100);
+          setSubtitleProgress("Complete!");
+          setFinalVideoUrl(jobData.final_video_url); // Update to video with subtitles
+          setIsAddingSubtitles(false);
+          
+          // Update in database
+          if (videoData?.sessionId) {
+            await updatePlannedContentWithVideo(jobData.final_video_url);
+          }
+        } else if (jobData?.status === 'failed') {
+          clearInterval(subtitlePollRef.current!);
+          alert("Subtitle processing failed: " + (jobData?.error_message || "Unknown error"));
+          setIsAddingSubtitles(false);
+          setShowSubtitleOption(true);
+        }
+      } catch (err) {
+        console.error('[FullVideo] Subtitle poll error:', err);
+      }
+    }, 5000);
+  };
+  
+  // Skip subtitles
+  const handleSkipSubtitles = () => {
+    setShowSubtitleOption(false);
+    console.log('[FullVideo] User skipped subtitles');
   };
 
   // Retry combine
@@ -598,12 +725,82 @@ export const FullVideo: React.FC = () => {
               </div>
             )}
             
-            {finalVideoUrl && (
+            {finalVideoUrl && !isAddingSubtitles && !showSubtitleOption && (
               <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-lg p-3">
                 <div className="flex items-center gap-2 text-green-400 text-sm">
                   <CheckCircle className="w-4 h-4" />
                   <span>Video ready!</span>
                 </div>
+              </div>
+            )}
+            
+            {/* Subtitle Option Dialog */}
+            {showSubtitleOption && finalVideoUrl && (
+              <div className="mt-4 bg-gradient-to-r from-[#7c3aed]/20 to-[#ec4899]/20 border border-[#7c3aed]/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Captions className="w-5 h-5 text-[#7c3aed]" />
+                  <h3 className="text-white font-semibold">Add Subtitles?</h3>
+                </div>
+                <p className="text-white/70 text-sm mb-4">
+                  AI will transcribe audio and add word-by-word animated subtitles.
+                </p>
+                
+                {/* Style Selector */}
+                <div className="mb-4">
+                  <label className="text-white/60 text-xs mb-2 block">Subtitle Style</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {['tiktok', 'reels', 'shorts', 'viral', 'dramatic'].map((style) => (
+                      <button
+                        key={style}
+                        onClick={() => setSubtitleStyle(style)}
+                        className={"px-3 py-1.5 rounded-lg text-xs font-medium transition-all " + 
+                          (subtitleStyle === style 
+                            ? "bg-[#7c3aed] text-white" 
+                            : "bg-white/10 text-white/70 hover:bg-white/20")}
+                      >
+                        {style.charAt(0).toUpperCase() + style.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleAddSubtitles}
+                    className="flex-1 bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                  >
+                    <Captions className="w-4 h-4 mr-2" />
+                    Yes, Add Subtitles
+                  </Button>
+                  <Button
+                    onClick={handleSkipSubtitles}
+                    variant="secondary"
+                    className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                  >
+                    <CaptionsOff className="w-4 h-4 mr-2" />
+                    No, Skip
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            {/* Subtitle Processing Progress */}
+            {isAddingSubtitles && (
+              <div className="mt-4 bg-gradient-to-r from-[#7c3aed]/20 to-[#ec4899]/20 border border-[#7c3aed]/30 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-[#7c3aed]">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm font-medium">{subtitleProgress}</span>
+                  </div>
+                  <span className="text-white font-bold">{subtitlePercent}%</span>
+                </div>
+                <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
+                    style={{ width: subtitlePercent + "%" }}
+                  />
+                </div>
+                <p className="text-white/50 text-xs mt-2">Transcribing audio and generating subtitles...</p>
               </div>
             )}
           </div>
