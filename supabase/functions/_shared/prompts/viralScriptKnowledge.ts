@@ -46,44 +46,35 @@ You are NOT a writer. You are an engineer applying:
 
 ## 2. DURATION-BASED STRUCTURE RULES
 
-⚠️ CRITICAL: Maximum 8 seconds per segment (VEO 3.1 / Sora 2 compatibility)
+⚠️ SORA 2.0 OPTIMIZED: HOOK always 5s (scroll-stopper), other segments 10s or 15s
 
-### 30-Second Video Structure (5 segments)
+### 30-Second Video Structure (4 segments)
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|-----------|
 | HOOK | 0-5s | 5s | CREATOR |
-| BODY-1 | 5-13s | 8s | B-ROLL |
-| BODY-2 | 13-21s | 8s | B-ROLL |
-| BODY-3 | 21-26s | 5s | B-ROLL |
-| CTA | 26-30s | 4s | CREATOR |
+| BODY-1 | 5-15s | 10s | B-ROLL |
+| BODY-2 | 15-25s | 10s | B-ROLL |
+| CTA | 25-30s | 5s | CREATOR |
 
-### 60-Second Video Structure (8 segments) - DEFAULT
+### 60-Second Video Structure (5 segments) - DEFAULT
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|-----------|
 | HOOK | 0-5s | 5s | CREATOR |
-| FORE | 5-10s | 5s | B-ROLL |
-| BODY-1 | 10-18s | 8s | B-ROLL |
-| BODY-2 | 18-26s | 8s | B-ROLL |
-| BODY-3 | 26-34s | 8s | B-ROLL |
-| BODY-4 | 34-42s | 8s | B-ROLL |
-| PEAK | 42-50s | 8s | B-ROLL |
-| CTA | 50-58s | 8s | CREATOR |
+| FORE | 5-15s | 10s | B-ROLL |
+| BODY-1 | 15-30s | 15s | B-ROLL |
+| PEAK | 30-45s | 15s | B-ROLL |
+| CTA | 45-55s | 10s | CREATOR |
 
-### 90-Second Video Structure (12 segments)
+### 90-Second Video Structure (7 segments)
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|-----------|
 | HOOK | 0-5s | 5s | CREATOR |
-| FORE | 5-12s | 7s | B-ROLL |
-| BODY-1 | 12-20s | 8s | B-ROLL |
-| BODY-2 | 20-28s | 8s | B-ROLL |
-| BODY-3 | 28-36s | 8s | B-ROLL |
-| BODY-4 | 36-44s | 8s | B-ROLL |
-| BODY-5 | 44-52s | 8s | B-ROLL |
-| BODY-6 | 52-60s | 8s | B-ROLL |
-| BODY-7 | 60-68s | 8s | B-ROLL |
-| PEAK | 68-76s | 8s | B-ROLL |
-| CTA | 76-84s | 8s | CREATOR |
-| LOOP-END | 84-90s | 6s | CREATOR |
+| FORE | 5-15s | 10s | B-ROLL |
+| BODY-1 | 15-30s | 15s | B-ROLL |
+| BODY-2 | 30-45s | 15s | B-ROLL |
+| BODY-3 | 45-60s | 15s | B-ROLL |
+| PEAK | 60-75s | 15s | B-ROLL |
+| CTA | 75-85s | 10s | CREATOR |
 
 ## 3. SHOT TYPE ALLOCATION
 
@@ -711,54 +702,45 @@ ${CASE_STUDIES}
 // ============================================================================
 
 export function getStructureByDuration(duration: string): string {
-  // CRITICAL: Max 8 seconds per segment (VEO 3.1 limit)
-  // This ensures compatibility with all video generation platforms
+  // SORA 2.0 OPTIMIZED: HOOK always 5s (non-negotiable scroll-stopper)
+  // Other segments use 10s or 15s for better content density
   const structures: Record<string, string> = {
     '30s': `
-5 segments for 30s video (max 8s each):
+4 segments for 30s video (Sora 2.0 optimized):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
-| BODY-1 | 5-13s | 8s | B-ROLL |
-| BODY-2 | 13-21s | 8s | B-ROLL |
-| BODY-3 | 21-26s | 5s | B-ROLL |
-| CTA | 26-30s | 4s | CREATOR |
+| BODY-1 | 5-15s | 10s | B-ROLL |
+| BODY-2 | 15-25s | 10s | B-ROLL |
+| CTA | 25-30s | 5s | CREATOR |
 
-Note: No FORESHADOW for 30s — go straight to value. Each segment max 8s for video generation compatibility.`,
+Note: No FORESHADOW for 30s — go straight to value. HOOK must be exactly 5s for scroll-stopping.`,
     
     '60s': `
-8 segments for 60s video (max 8s each):
+5 segments for 60s video (Sora 2.0 optimized):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
-| FORE | 5-10s | 5s | B-ROLL |
-| BODY-1 | 10-18s | 8s | B-ROLL |
-| BODY-2 | 18-26s | 8s | B-ROLL |
-| BODY-3 | 26-34s | 8s | B-ROLL |
-| BODY-4 | 34-42s | 8s | B-ROLL |
-| PEAK | 42-50s | 8s | B-ROLL |
-| CTA | 50-58s | 8s | CREATOR |
+| FORE | 5-15s | 10s | B-ROLL |
+| BODY-1 | 15-30s | 15s | B-ROLL |
+| PEAK | 30-45s | 15s | B-ROLL |
+| CTA | 45-55s | 10s | CREATOR |
 
-CRITICAL: Each segment MUST be max 8 seconds for VEO 3.1 compatibility. Split longer content into multiple BODY segments.`,
+CRITICAL: HOOK must be exactly 5s (scroll-stopper, non-negotiable). Use 15s for content-dense segments.`,
     
     '90s': `
-12 segments for 90s video (max 8s each):
+7 segments for 90s video (Sora 2.0 optimized):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
-| FORE | 5-12s | 7s | B-ROLL |
-| BODY-1 | 12-20s | 8s | B-ROLL |
-| BODY-2 | 20-28s | 8s | B-ROLL |
-| BODY-3 | 28-36s | 8s | B-ROLL |
-| BODY-4 | 36-44s | 8s | B-ROLL |
-| BODY-5 | 44-52s | 8s | B-ROLL |
-| BODY-6 | 52-60s | 8s | B-ROLL |
-| BODY-7 | 60-68s | 8s | B-ROLL |
-| PEAK | 68-76s | 8s | B-ROLL |
-| CTA | 76-84s | 8s | CREATOR |
-| LOOP-END | 84-90s | 6s | CREATOR |
+| FORE | 5-15s | 10s | B-ROLL |
+| BODY-1 | 15-30s | 15s | B-ROLL |
+| BODY-2 | 30-45s | 15s | B-ROLL |
+| BODY-3 | 45-60s | 15s | B-ROLL |
+| PEAK | 60-75s | 15s | B-ROLL |
+| CTA | 75-85s | 10s | CREATOR |
 
-CRITICAL: Each segment MUST be max 8 seconds. More segments = better pacing for long-form content.`
+CRITICAL: HOOK must be exactly 5s. Fewer segments with longer durations = better content flow.`
   };
 
   return structures[duration] || structures['60s'];

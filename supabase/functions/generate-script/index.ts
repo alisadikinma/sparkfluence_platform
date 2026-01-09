@@ -333,8 +333,9 @@ serve(async (req) => {
 
 function buildSystemPrompt(language: string, duration: string): string {
   const langConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG['indonesian']
-  // CRITICAL: Segment counts updated for max 8s per segment (VEO 3.1 limit)
-  const segmentCount = duration === '30s' ? 5 : duration === '60s' ? 8 : 12
+  // SORA 2.0 OPTIMIZED: Fewer segments with longer durations (10s/15s)
+  // HOOK always 5s (non-negotiable scroll-stopper)
+  const segmentCount = duration === '30s' ? 4 : duration === '60s' ? 5 : 7
   const structureGuide = getStructureByDuration(duration)
   
   // Get slang knowledge for language

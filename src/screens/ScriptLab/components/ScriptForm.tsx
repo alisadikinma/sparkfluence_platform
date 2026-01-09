@@ -52,7 +52,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
-  const [model, setModel] = useState("auto");
+  const [model, setModel] = useState("sora2");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("30s");
   const [useDnaTone, setUseDnaTone] = useState(true);
@@ -416,9 +416,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   };
 
   const modelOptions = [
-    { value: "auto", label: "Auto" },
-    { value: "sora2", label: "SORA 2" },
-    { value: "veo31", label: "VEO 3.1" },
+    { value: "sora2", label: "SORA 2.0" },
   ];
 
   const ratioOptions = [

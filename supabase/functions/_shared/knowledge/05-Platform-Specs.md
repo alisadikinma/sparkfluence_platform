@@ -94,31 +94,48 @@
 
 ---
 
-## Sora 2 (Video Generation)
+## Sora 2.0 (Video Generation) — DEFAULT PLATFORM
 
 ### Model Variants
 
 | Parameter | sora-2 | sora-2-pro |
 |-----------|--------|------------|
 | Resolution | 720×1280 | 1024×1792 |
-| Duration | 4s, 8s, 12s | Up to 20s |
+| Duration | **10s, 15s** (recommended) | Up to 20s |
 | Cost | ~$0.10/s | ~$0.30-0.50/s |
-| Best For | Iteration | Cinematic |
+| Best For | Standard production | Cinematic |
+
+### Sparkfluence Segment Durations
+
+| Segment Type | Duration | Rationale |
+|--------------|----------|------------|
+| **HOOK** | **5s (FIXED)** | Scroll-stopper, non-negotiable |
+| FORE | 10s | Tease + retention lock |
+| BODY-X | 10s or 15s | Content density |
+| PEAK | 15s | Payoff moment |
+| CTA | 10s | Closing impact |
+
+### Dialogue Limits by Duration
+
+| Duration | Max Words | Max Syllables |
+|----------|-----------|---------------|
+| 10s | 20-25 words | 30-35 |
+| 15s | 30-35 words | 45-50 |
 
 ### Critical Constraints
 
 - Reference image = **first-frame anchor**
 - Image must **exactly match** target resolution
-- **4s clips > 8s clips** for quality
+- **10s clips = best quality/cost balance**
 - **ONE camera move + ONE action** per shot
-- Blocks human face uploads (enterprise only)
+- Built-in voiceover (no separate TTS needed)
 
-### Beat-Based Timing
+### Beat-Based Timing (10s example)
 
 ```
-- Subject turns (0-2s)
-- Pauses, expression changes (2-3s)
-- Completes gesture (3-4s)
+- Subject intro, expression (0-3s)
+- Main action/delivery (3-7s)
+- Reaction, gesture completion (7-10s)
 ```
 
 ### Physics Rules
@@ -133,59 +150,58 @@ Always describe forces explicitly:
 ## Platform Decision Matrix
 
 ```
-Use VEO 3.1 when:
-├─ Segment ≤ 8 seconds
-├─ Critical lip-sync (dialogue-heavy)
-├─ 4K deliverable needed
-└─ Single-shot, high-quality
-
-Use Sora 2 when:
-├─ Segment > 8 seconds (up to 20s)
+Use Sora 2.0 (DEFAULT):
+├─ Standard production (10s, 15s segments)
+├─ Built-in voiceover capability
 ├─ Multi-shot narrative
 ├─ Complex physics/motion
-├─ Extended camera movements
-└─ Budget exploration
+└─ Cost-effective at scale
+
+Use VEO 3.1 when:
+├─ Segment ≤ 8 seconds only
+├─ Critical lip-sync (dialogue-heavy)
+└─ Legacy workflow compatibility
 ```
 
-**Default:** VEO 3.1 (better audio, proven workflow)
+**Default:** Sora 2.0 (10s/15s segments, built-in voiceover)
 
 ---
 
 ## Comparison Table
 
-| Capability | DALL-E 3 | VEO 3.1 | Sora 2 |
-|------------|----------|---------|--------|
+| Capability | DALL-E 3 | VEO 3.1 | Sora 2.0 |
+|------------|----------|---------|----------|
 | Max Resolution | 1792×1024 | 1080p | 1080p |
-| Max Duration | — | 8s | 20s |
-| Native Audio | — | ✅ Best | ✅ Good |
+| Max Duration | — | 8s | **10s, 15s** (rec) |
+| Native Audio | — | ✅ Best | ✅ Built-in VO |
 | Lip-sync | — | ✅ Best | Good |
 | Multi-shot | — | Good | ✅ Best |
 | Physics | — | Strong | ✅ Best |
 | Ref Images | ❌ No | Up to 3 | ✅ Yes |
-| Neg Prompts | ❌ No | ✅ Yes | ❌ No |
+| Sparkfluence Default | Images | Legacy | **✅ Primary** |
 
 ---
 
-## I2V Workflow Pipeline
+## I2V Workflow Pipeline (Sora 2.0 Default)
 
 ```
 DALL-E 3 (1024×1792, HD)
     ↓
-[Optional: Resize to exact target]
+[Resize to exact 1024×1792]
     ↓
-VEO 3.1 / Sora 2 (1080p, 9:16)
+Sora 2.0 (10s or 15s, built-in VO)
+    ↓
+FFmpeg Combine (transitions + subtitles)
     ↓
 Final Video
 ```
 
 ### Resolution Matching
 
-| Platform | Input Requirement |
-|----------|-------------------|
-| VEO 3.1 | 720p+ (auto-resize) |
-| Sora 2 | **Exact match** required |
-
-For Sora 2: Resize DALL-E output (1024×1792) to target (720×1280 or 1024×1792).
+| Platform | Input Requirement | Notes |
+|----------|-------------------|-------|
+| Sora 2.0 | **1024×1792** exact | Primary workflow |
+| VEO 3.1 | 720p+ (auto-resize) | Legacy fallback |
 
 ---
 
