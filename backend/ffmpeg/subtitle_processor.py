@@ -78,7 +78,8 @@ class SubtitleProcessor:
         logger.info(f"Whisper response keys: {result.keys() if result else None}")
         segments = result.get('segments') or []
         word_count = sum(len(seg.get('words') or []) for seg in segments)
-        logger.info(f"Transcription complete: {len(segments)} segments, {word_count} words")
+        root_wc=len(result.get("words") or [])
+        logger.info(f"Transcription: {len(segments)} segs, {word_count} seg_words, {root_wc} root_words")
         
         # Debug: Log if segments or words are null
         if result.get('segments') is None:
@@ -101,7 +102,16 @@ class SubtitleProcessor:
         generator = SubtitleGenerator(subtitle_style)
         
         # Convert Whisper data to SubtitleSegments
+        root_words = whisper_data.get("words") or []
         segments = []
+        if root_words:
+            logger.info(f"ROOT: {len(root_words)} words")
+            for i in range(0,len(root_words),3):
+                g=root_words[i:i+3]
+                wts=[WordTimestamp(word=w.get("word","").strip(),start=w.get("start",0),end=w.get("end",0)) for w in g if w.get("word","").strip()]
+                if wts: segments.append(SubtitleSegment(segment_id=str(len(segments)),text=" ".join(x.word for x in wts),start=wts[0].start,end=wts[-1].end,words=wts))
+            generator.save_ass(segments, output_path, word_by_word=True)
+            return output_path
         for seg in (whisper_data.get('segments') or []):
             words = []
             for w in (seg.get('words') or []):
@@ -209,7 +219,7 @@ class SubtitleProcessor:
                 "success": True,
                 "video_path": str(final_path),
                 "transcript": whisper_data,
-                "word_count": sum(len(seg.get('words') or []) for seg in (whisper_data.get('segments') or []))
+                "word_count": len(whisper_data.get("words") or []) or sum(len(seg.get('words') or []) for seg in (whisper_data.get('segments') or []))
             }
             
         except Exception as e:
