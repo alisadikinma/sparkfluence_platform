@@ -100,7 +100,10 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
       '16:9': { apiValue: 'landscape', maxResolution: '720p' },
     },
     refImageParam: 'file_urls',
-    dialogueLimits: { 10: 20, 15: 30 },
+    // Max words based on Indonesian speech rate (130 WPM * 0.80 safety margin)
+    // 10s: 130/60 * 10 * 0.80 = 17.3 ≈ 17 words
+    // 15s: 130/60 * 15 * 0.80 = 26 words
+    dialogueLimits: { 10: 17, 15: 26 },
     costPerVideo: 0.20,
     strengths: ['10s/15s duration', 'good motion', 'AI voiceover'],
     weaknesses: ['720p only', 'lip-sync not best'],
@@ -128,7 +131,8 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
       '16:9': { apiValue: 'landscape', maxResolution: '720p' },
     },
     refImageParam: 'file_urls',
-    dialogueLimits: { 25: 50 },
+    // 25s: 130/60 * 25 * 0.80 = 43.3 ≈ 43 words
+    dialogueLimits: { 25: 43 },
     costPerVideo: 0.50,
     strengths: ['25s long duration', 'consistency'],
     weaknesses: ['720p only', 'expensive'],
@@ -156,7 +160,8 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
       '16:9': { apiValue: 'landscape', maxResolution: '1080p' },
     },
     refImageParam: 'file_urls',
-    dialogueLimits: { 15: 30 },
+    // 15s: 130/60 * 15 * 0.80 = 26 words
+    dialogueLimits: { 15: 26 },
     costPerVideo: 0.50,
     strengths: ['1080p HD quality', '15s duration'],
     weaknesses: ['15s only', 'expensive'],
@@ -185,7 +190,9 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
       '16:9': { apiValue: '16:9', maxResolution: '1080p' },
     },
     refImageParam: 'ref_images',
-    dialogueLimits: { 4: 8, 6: 12, 8: 15 },
+    // Based on Indonesian 130 WPM * 0.80 safety:
+    // 4s: 6.9 ≈ 7 words, 6s: 10.4 ≈ 10 words, 8s: 13.8 ≈ 14 words
+    dialogueLimits: { 4: 7, 6: 10, 8: 14 },
     costPerVideo: 0.20,
     strengths: ['best lip-sync', 'native audio', '1080p for 16:9'],
     weaknesses: ['8s max', '720p for portrait'],

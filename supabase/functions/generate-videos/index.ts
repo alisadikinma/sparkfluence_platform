@@ -44,18 +44,93 @@ const JOB_STATUS = {
   FAILED: 3
 }
 
+// ============================================================================
+// SPEECH RATE CONFIG PER LANGUAGE (Words Per Minute)
+// Indonesian: slower due to multi-syllabic words
+// Hindi: slower due to complex sentence structure
+// English: baseline
+// ============================================================================
+const SPEECH_RATES: Record<string, number> = {
+  indonesian: 130, // WPM - slower, multi-syllabic
+  hindi: 125,      // WPM - complex sentences
+  english: 150,    // WPM - baseline
+  spanish: 145,    // WPM - moderate
+}
+
+// Safety margin (80% of theoretical max to account for pauses/emphasis)
+const SPEECH_SAFETY_MARGIN = 0.80
+
+/**
+ * Calculate max words for a given duration and language
+ * More accurate than fixed limits per duration
+ */
+function calculateMaxWords(durationSeconds: number, language: string): number {
+  const wpm = SPEECH_RATES[language.toLowerCase()] || SPEECH_RATES.english
+  const wordsPerSecond = wpm / 60
+  const theoreticalMax = Math.floor(durationSeconds * wordsPerSecond)
+  return Math.floor(theoreticalMax * SPEECH_SAFETY_MARGIN)
+}
+
+/**
+ * Truncate script to fit within max words while preserving meaning
+ * Prioritizes keeping complete sentences
+ */
+function truncateScript(scriptText: string, maxWords: number): { truncated: string; wasModified: boolean; originalWords: number } {
+  const words = scriptText.trim().split(/\s+/).filter(w => w.length > 0)
+  const originalWords = words.length
+  
+  if (words.length <= maxWords) {
+    return { truncated: scriptText, wasModified: false, originalWords }
+  }
+  
+  // Take first maxWords words
+  let truncated = words.slice(0, maxWords).join(' ')
+  
+  // Try to end at a sentence boundary (. ! ?)
+  const lastPunctuation = Math.max(
+    truncated.lastIndexOf('.'),
+    truncated.lastIndexOf('!'),
+    truncated.lastIndexOf('?')
+  )
+  
+  // If we found a sentence boundary in the last 30% of text, use it
+  if (lastPunctuation > truncated.length * 0.7) {
+    truncated = truncated.substring(0, lastPunctuation + 1)
+  }
+  
+  return { truncated, wasModified: true, originalWords }
+}
+
 // Helper: Validate dialogue length for video model
-function validateDialogueLength(scriptText: string, platform: VideoModelKey): { valid: boolean; wordCount: number; maxWords: number } {
+function validateDialogueLength(scriptText: string, platform: VideoModelKey, duration?: number, language?: string): { 
+  valid: boolean; 
+  wordCount: number; 
+  maxWords: number;
+  languageAdjusted: boolean;
+} {
   const model = VIDEO_MODELS[platform]
-  if (!model) return { valid: true, wordCount: 0, maxWords: 0 }
+  if (!model) return { valid: true, wordCount: 0, maxWords: 0, languageAdjusted: false }
   
   const wordCount = scriptText.trim().split(/\s+/).filter(w => w.length > 0).length
-  const maxWords = getMaxDialogueWords(model, model.defaultDuration)
+  const actualDuration = duration || model.defaultDuration
+  
+  // Use language-aware calculation if language provided
+  let maxWords: number
+  let languageAdjusted = false
+  
+  if (language && language !== 'english') {
+    maxWords = calculateMaxWords(actualDuration, language)
+    languageAdjusted = true
+  } else {
+    // Fallback to config-based limits
+    maxWords = getMaxDialogueWords(model, actualDuration)
+  }
   
   return {
     valid: wordCount <= maxWords,
     wordCount,
-    maxWords
+    maxWords,
+    languageAdjusted
   }
 }
 
@@ -1375,7 +1450,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     segment,
     segmentType,
     emotion,
-    scriptText,
+    scriptText: rawScriptText,
     language,
     aspectRatio,
     environment,
@@ -1393,6 +1468,18 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   
   // Check if using Sora (needs sanitization)
   const isSoraModel = platform.startsWith('sora-')
+  
+  // ========================================================================
+  // VOICEOVER DURATION FIX (2026): Truncate script to fit duration
+  // This prevents voiceover from exceeding video length
+  // ========================================================================
+  const maxWords = calculateMaxWords(duration, language)
+  const truncationResult = truncateScript(rawScriptText || '', maxWords)
+  const scriptText = truncationResult.truncated
+  
+  if (truncationResult.wasModified) {
+    console.log(`[VIDEO-PROMPT] ⚠️ Script truncated: ${truncationResult.originalWords} → ${scriptText.split(/\s+/).length} words (max: ${maxWords} for ${duration}s ${language})`)
+  }
 
   // Extract segment data
   const visualDirection = segment.visual_direction || segment.visualDirection || ''
@@ -1422,8 +1509,13 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // ========================================================================
   // FACE ANCHOR - Only for CREATOR segments (2026)
   // Uses generateFaceAnchor from audioDirective.ts
+  // 
+  // SORA GUARDRAILS FIX: Sora rejects real human face uploads as reference.
+  // For CREATOR shots with Sora: use character description only, not profile image URL.
+  // The reference image (from DALL-E/Nano Banana) should be AI-generated, not real photo.
   // ========================================================================
   let faceAnchorBlock = ''
+  let skipReferenceImageForSora = false
   
   // Get actual values from segment or params (job record values take precedence)
   const actualHasProfileImage = segment.has_profile_image ?? hasProfileImage
@@ -1432,16 +1524,41 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const actualCharacterDescription = segment.character_description || charDescParam || creatorAppearance
   
   if (isCreatorSegment && actualHasProfileImage) {
-    // Generate face anchor using imported function
-    // For Sora: use simplified character description
-    faceAnchorBlock = generateFaceAnchor({
-      hasProfileImage: true,
-      profileImageUrl: actualProfileImageUrl,
-      gender: actualCreatorGender,
-      characterDescription: isSoraModel 
-        ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
-        : actualCharacterDescription
-    })
+    // ========================================================================
+    // SORA GUARDRAILS: If using Sora + real profile image detected, warn user
+    // Sora may reject reference images containing real human faces
+    // ========================================================================
+    if (isSoraModel && actualProfileImageUrl) {
+      // Check if profile image looks like real photo (contains 'profile', 'avatar', 'photo' in URL)
+      const looksLikeRealPhoto = /profile|avatar|photo|user|face/i.test(actualProfileImageUrl)
+      if (looksLikeRealPhoto) {
+        console.warn(`[VIDEO-PROMPT] ⚠️ SORA GUARDRAILS WARNING: CREATOR segment ${segmentType} has profile image URL that may be a real photo. Sora may reject this.`)
+        console.warn(`[VIDEO-PROMPT] 💡 TIP: Use AI-generated character image (from DALL-E/Nano Banana) as reference, not real photo.`)
+        // Don't include profile image URL in face anchor for Sora - rely on description only
+        skipReferenceImageForSora = true
+      }
+    }
+    
+    // Generate face anchor - but for Sora, skip profile image URL if it's a real photo
+    if (isSoraModel && skipReferenceImageForSora) {
+      // Use character description only (no profile image URL)
+      faceAnchorBlock = generateFaceAnchor({
+        hasProfileImage: false, // Force to description mode
+        gender: actualCreatorGender,
+        characterDescription: simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
+      })
+      console.log(`[VIDEO-PROMPT] 🔄 Using character description instead of profile image for Sora`)
+    } else {
+      // Normal mode: use profile image URL (for non-Sora or AI-generated images)
+      faceAnchorBlock = generateFaceAnchor({
+        hasProfileImage: true,
+        profileImageUrl: actualProfileImageUrl,
+        gender: actualCreatorGender,
+        characterDescription: isSoraModel 
+          ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
+          : actualCharacterDescription
+      })
+    }
   } else if (isCreatorSegment && actualCharacterDescription) {
     // Fallback to character description if no profile image
     faceAnchorBlock = generateFaceAnchor({

@@ -404,6 +404,17 @@ function getEmotionSFX(emotion: string): EmotionSFX {
  * 
  * Enhanced 2026: Now includes emotion-based SFX + volume priority
  */
+// ============================================================================
+// SPEECH RATE CONFIG PER LANGUAGE (Words Per Minute)
+// Must match generate-videos/index.ts values for consistency
+// ============================================================================
+const SPEECH_RATES: Record<string, number> = {
+  indonesian: 130, // WPM - slower, multi-syllabic
+  hindi: 125,      // WPM - complex sentences
+  english: 150,    // WPM - baseline
+  spanish: 145,    // WPM - moderate
+};
+
 export function getCreatorAudioDirective(
   language: string,
   dialogueText: string,
@@ -420,10 +431,11 @@ export function getCreatorAudioDirective(
   const effectiveEmotion = emotionBySegment[segmentType] || emotion;
   const sfx = getEmotionSFX(effectiveEmotion);
   
-  const wordCount = dialogueText.split(/\s+/).length;
+  const wordCount = dialogueText.split(/\s+/).filter(w => w.length > 0).length;
   
-  // Calculate approximate speaking duration (150 WPM average)
-  const speakingDuration = Math.ceil((wordCount / 150) * 60);
+  // Calculate approximate speaking duration using language-specific WPM
+  const wpm = SPEECH_RATES[language.toLowerCase()] || SPEECH_RATES.english;
+  const speakingDuration = Math.ceil((wordCount / wpm) * 60);
 
   return `
 ═══════════════════════════════════════════════════════════════
