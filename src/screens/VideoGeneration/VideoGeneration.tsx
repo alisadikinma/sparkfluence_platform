@@ -552,255 +552,274 @@ export const VideoGeneration = (): JSX.Element => {
     initializeData();
   }, [location.state, searchParams, navigate, user?.id]);
 
-  // Start SEQUENTIAL background processing - process one job at a time
-  // Flow: Submit job → Poll until complete → Submit next job
+  // ============================================================================
+  // STAGGERED PARALLEL PROCESSING (2026)
+  // Submit all jobs with 30s delay between each, then poll all in parallel
+  // This ensures: (1) Correct sequence, (2) Faster overall completion
+  // ============================================================================
   const startBackgroundProcessing = useCallback((sid: string) => {
     // Prevent multiple simultaneous processing loops
     if (isSequentialProcessingRef.current) {
-      console.log('[VideoGen] Sequential processing already running');
+      console.log('[VideoGen] Processing already running');
       return;
     }
     
     shouldStopProcessingRef.current = false;
     isSequentialProcessingRef.current = true;
     
-    const processSequentially = async () => {
-      console.log('[VideoGen] Starting sequential processing...');
+    const STAGGER_DELAY_MS = 30000; // 30 seconds between submissions
+    const POLL_INTERVAL_MS = 15000; // 15 seconds between status checks
+    const MAX_POLL_ATTEMPTS = 40;   // 10 minutes max per video
+    
+    // Track active jobs being polled
+    const activePollingJobs = new Map<string, { jobId: string; segmentId: string; segmentNumber: number }>();
+    
+    const processStaggered = async () => {
+      console.log('[VideoGen] 🚀 Starting staggered parallel processing...');
       
-      while (!shouldStopProcessingRef.current) {
-        if (!user) break;
+      if (!user) {
+        console.error('[VideoGen] No user - aborting');
+        isSequentialProcessingRef.current = false;
+        return;
+      }
+      
+      try {
+        // ================================================================
+        // PHASE 1: Get all PENDING jobs sorted by segment_number
+        // ================================================================
+        await ensureValidSession();
+        const { data: pendingJobs, error: fetchError } = await supabase
+          .from('video_generation_jobs')
+          .select('*')
+          .eq('session_id', sid)
+          .eq('user_id', user.id)
+          .eq('status', JOB_STATUS.PENDING)
+          .order('segment_number', { ascending: true });
         
-        try {
-          // Step 1: Submit single PENDING job to VEO (with retry)
-          console.log('[VideoGen] Submitting next pending job...');
+        if (fetchError) {
+          console.error('[VideoGen] Failed to fetch pending jobs:', fetchError);
+          setIsGeneratingAll(false);
+          setIsBackgroundMode(false);
+          isSequentialProcessingRef.current = false;
+          return;
+        }
+        
+        if (!pendingJobs || pendingJobs.length === 0) {
+          console.log('[VideoGen] No pending jobs to process');
+          setIsGeneratingAll(false);
+          setIsBackgroundMode(false);
+          isSequentialProcessingRef.current = false;
+          return;
+        }
+        
+        console.log(`[VideoGen] Found ${pendingJobs.length} pending jobs: ${pendingJobs.map(j => j.segment_type).join(' → ')}`);
+        
+        // ================================================================
+        // PHASE 2: Submit all jobs with 30s stagger (in sequence order)
+        // ================================================================
+        const submittedJobs: Array<{ jobId: string; uuid: string; segmentId: string; segmentNumber: number; segmentType: string }> = [];
+        
+        for (let i = 0; i < pendingJobs.length; i++) {
+          if (shouldStopProcessingRef.current) {
+            console.log('[VideoGen] ⛔ Stop signal received during submission');
+            break;
+          }
+          
+          const job = pendingJobs[i];
+          console.log(`[VideoGen] 📤 Submitting job ${i + 1}/${pendingJobs.length}: ${job.segment_type} (segment_number: ${job.segment_number})`);
+          
+          // Submit this job
           const { data, error } = await invokeWithRetry('generate-videos', {
             mode: 'process_single',
+            job_id: job.id, // Submit specific job by ID to ensure correct order
             session_id: sid,
             user_id: user.id
           });
           
           if (error) {
-            console.error('[VideoGen] Process error:', error);
-            // Don't break immediately on network errors, wait and retry loop
-            if (error.message?.includes('Session expired')) {
-              // Session expired, user needs to refresh
-              setIsGeneratingAll(false);
-              setIsBackgroundMode(false);
-              setShowBackgroundToast(false);
-              alert(language === 'id' ? 'Sesi habis. Silakan refresh halaman.' : 'Session expired. Please refresh the page.');
-              break;
-            }
-            // For other errors, wait 5s and continue loop to retry
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            continue;
+            console.error(`[VideoGen] ❌ Failed to submit ${job.segment_type}:`, error);
+            // Mark as failed in UI
+            setSegments(prev => prev.map(seg => 
+              seg.id === job.segment_id 
+                ? { ...seg, isGeneratingVideo: false, videoError: error.message || 'Submit failed' }
+                : seg
+            ));
+            setGenerationProgress(prev => ({ ...prev, failed: prev.failed + 1, current: prev.current + 1 }));
+            continue; // Try next job
           }
           
           const result = data?.data;
           
-          // Handle "waiting" response - another job is still processing
-          if (result?.waiting) {
-            console.log(`[VideoGen] ⏳ Waiting for ${result.processing_count} job(s) to complete...`);
-            // Wait 10 seconds before checking again
-            await new Promise(resolve => setTimeout(resolve, 10000));
-            continue; // Continue loop to check again
-          }
-          
-          // If no more pending jobs, we're done
-          if (result?.summary?.pending === 0 && !result?.job?.veo_uuid) {
-            console.log('[VideoGen] No more pending jobs - all done!');
+          // Check if job was submitted successfully
+          if (result?.job?.veo_uuid) {
+            const { id: jobId, veo_uuid: uuid, segment_id: segmentId, segment_number: segmentNumber } = result.job;
             
-            // Check for rate limit failures
-            if (result?.summary?.failed > 0) {
-              // Ensure session is valid before DB query
-              await ensureValidSession();
-              const { data: failedJobs } = await supabase
-                .from('video_generation_jobs')
-                .select('error_message')
-                .eq('session_id', sid)
-                .eq('status', JOB_STATUS.FAILED);
-              
-              const hasRateLimit = failedJobs?.some(j => 
-                j.error_message?.includes('RATE_LIMIT') ||
-                j.error_message?.includes('GEMINI_RATE_LIMIT') ||
-                j.error_message?.includes('high traffic')
-              );
-              
-              if (hasRateLimit) {
-                setRateLimitWarning(new Date().toISOString());
-              }
-            }
+            console.log(`[VideoGen] ✅ Job submitted: ${job.segment_type} → UUID: ${uuid}`);
             
-            // Update final progress
-            setGenerationProgress({
-              current: (result?.summary?.completed || 0) + (result?.summary?.failed || 0),
-              total: result?.summary?.total || 0,
-              completed: result?.summary?.completed || 0,
-              failed: result?.summary?.failed || 0
+            submittedJobs.push({ 
+              jobId, 
+              uuid, 
+              segmentId, 
+              segmentNumber,
+              segmentType: job.segment_type 
             });
             
-            setIsGeneratingAll(false);
-            setIsBackgroundMode(false);
-            setShowBackgroundToast(false);
-            break;
+            // Update UI to show processing
+            setSegments(prev => prev.map(seg => 
+              seg.id === segmentId || seg.jobId === jobId
+                ? { ...seg, veoUuid: uuid, isGeneratingVideo: true, jobId }
+                : seg
+            ));
+            
+            // Add to active polling map
+            activePollingJobs.set(uuid, { jobId, segmentId, segmentNumber });
+          } else if (result?.waiting) {
+            // If waiting (shouldn't happen with job_id param), still add to queue
+            console.log(`[VideoGen] ⏳ Job ${job.segment_type} queued (waiting)`);
           }
           
-          // If job was submitted, we have a UUID to poll
-          if (result?.job?.veo_uuid) {
-            const jobUuid = result.job.veo_uuid;
-            const jobId = result.job.id;
-            const segmentId = result.job.segment_id;
+          // Wait 30s before submitting next job (stagger)
+          if (i < pendingJobs.length - 1 && !shouldStopProcessingRef.current) {
+            console.log(`[VideoGen] ⏳ Waiting ${STAGGER_DELAY_MS / 1000}s before next submission...`);
+            await new Promise(resolve => setTimeout(resolve, STAGGER_DELAY_MS));
+          }
+        }
+        
+        console.log(`[VideoGen] 📤 All ${submittedJobs.length} jobs submitted. Starting parallel polling...`);
+        
+        // ================================================================
+        // PHASE 3: Poll all submitted jobs in parallel until all complete
+        // ================================================================
+        let pollAttempts = 0;
+        const completedUuids = new Set<string>();
+        const failedUuids = new Set<string>();
+        
+        while (
+          activePollingJobs.size > 0 && 
+          pollAttempts < MAX_POLL_ATTEMPTS && 
+          !shouldStopProcessingRef.current
+        ) {
+          pollAttempts++;
+          
+          // Get all UUIDs to check
+          const uuidsToCheck = Array.from(activePollingJobs.keys());
+          console.log(`[VideoGen] 🔄 Poll #${pollAttempts}: Checking ${uuidsToCheck.length} jobs...`);
+          
+          try {
+            const { data: statusData, error: statusError } = await invokeWithRetry('check-video-status', {
+              video_uuids: uuidsToCheck,
+              update_db: true
+            });
             
-            console.log(`[VideoGen] Job submitted: Segment=${segmentId}, UUID=${jobUuid}`);
-            
-            // Update segment UI as processing
-            setSegments(prev => prev.map(seg => {
-              if (seg.id === segmentId || seg.jobId === jobId) {
-                return {
-                  ...seg,
-                  veoUuid: jobUuid,
-                  isGeneratingVideo: true,
-                  jobId: jobId
-                };
-              }
-              return seg;
-            }));
-            
-            // Step 2: Poll this UUID until complete (every 15 seconds)
-            console.log(`[VideoGen] Polling UUID ${jobUuid} every 15s...`);
-            let isComplete = false;
-            let pollAttempts = 0;
-            const maxPollAttempts = 40; // 40 * 15s = 10 minutes max
-            
-            while (!isComplete && pollAttempts < maxPollAttempts && !shouldStopProcessingRef.current) {
-              // Wait 15 seconds before polling
-              await new Promise(resolve => setTimeout(resolve, 15000));
-              pollAttempts++;
-              
-              console.log(`[VideoGen] Poll attempt ${pollAttempts} for UUID ${jobUuid}`);
-              
-              try {
-                // Use invokeWithRetry to handle network errors
-                const { data: statusData, error: statusError } = await invokeWithRetry('check-video-status', { 
-                  video_uuids: [jobUuid], 
-                  update_db: true 
-                });
-                
-                if (statusError) {
-                  console.error('[VideoGen] Status check error:', statusError);
-                  // Continue polling even on error (retry logic is in invokeWithRetry)
-                  continue;
-                }
-                
-                const videoInfo = statusData?.data?.videos?.[0];
-                console.log(`[VideoGen] Status: ${videoInfo?.status}, URL: ${videoInfo?.video_url ? 'YES' : 'NO'}`);
+            if (statusError) {
+              console.error('[VideoGen] Status check error:', statusError);
+              // Continue polling
+            } else if (statusData?.data?.videos) {
+              for (const videoInfo of statusData.data.videos) {
+                const uuid = videoInfo.uuid;
+                const jobInfo = activePollingJobs.get(uuid);
+                if (!jobInfo) continue;
                 
                 // Status 2 = completed
-                if (videoInfo?.status === 2 && videoInfo?.video_url) {
-                  console.log(`[VideoGen] ✅ Video complete! URL: ${videoInfo.video_url}`);
+                if (videoInfo.status === 2 && videoInfo.video_url) {
+                  console.log(`[VideoGen] ✅ Video complete: Segment ${jobInfo.segmentNumber} → ${videoInfo.video_url.substring(0, 50)}...`);
                   
-                  // Update segment with video URL
-                  setSegments(prev => prev.map(seg => {
-                    if (seg.veoUuid === jobUuid || seg.id === segmentId) {
-                      return {
-                        ...seg,
-                        videoUrl: videoInfo.video_url,
-                        isGeneratingVideo: false,
-                        videoError: null
-                      };
-                    }
-                    return seg;
-                  }));
+                  // Update UI
+                  setSegments(prev => prev.map(seg => 
+                    seg.veoUuid === uuid || seg.id === jobInfo.segmentId
+                      ? { ...seg, videoUrl: videoInfo.video_url, isGeneratingVideo: false, videoError: null }
+                      : seg
+                  ));
                   
-                  // Update progress
                   setGenerationProgress(prev => ({
                     ...prev,
                     current: prev.completed + 1 + prev.failed,
                     completed: prev.completed + 1
                   }));
                   
-                  isComplete = true;
+                  completedUuids.add(uuid);
+                  activePollingJobs.delete(uuid);
                 }
                 // Status 3 = failed
-                else if (videoInfo?.status === 3) {
-                  console.log(`[VideoGen] ❌ Video failed: ${videoInfo.error_message}`);
+                else if (videoInfo.status === 3) {
+                  console.log(`[VideoGen] ❌ Video failed: Segment ${jobInfo.segmentNumber} - ${videoInfo.error_message}`);
                   
-                  // Update segment with error
-                  setSegments(prev => prev.map(seg => {
-                    if (seg.veoUuid === jobUuid || seg.id === segmentId) {
-                      return {
-                        ...seg,
-                        isGeneratingVideo: false,
-                        videoError: videoInfo.error_message || 'Video generation failed'
-                      };
-                    }
-                    return seg;
-                  }));
+                  // Update UI
+                  setSegments(prev => prev.map(seg => 
+                    seg.veoUuid === uuid || seg.id === jobInfo.segmentId
+                      ? { ...seg, isGeneratingVideo: false, videoError: videoInfo.error_message || 'Generation failed' }
+                      : seg
+                  ));
                   
-                  // Update progress
                   setGenerationProgress(prev => ({
                     ...prev,
                     current: prev.completed + prev.failed + 1,
                     failed: prev.failed + 1
                   }));
                   
-                  // Check for rate limit error
-                  if (videoInfo.error_message?.includes('RATE_LIMIT') || 
-                      videoInfo.error_message?.includes('high traffic')) {
+                  // Check for rate limit
+                  if (videoInfo.error_message?.includes('RATE_LIMIT') || videoInfo.error_message?.includes('high traffic')) {
                     setRateLimitWarning(new Date().toISOString());
-                    setIsBackgroundMode(false);
-                    setShowBackgroundToast(false);
-                    shouldStopProcessingRef.current = true;
                   }
                   
-                  isComplete = true;
+                  failedUuids.add(uuid);
+                  activePollingJobs.delete(uuid);
                 }
-                // Status 1 = still processing, continue polling
-                
-              } catch (pollErr) {
-                console.error('[VideoGen] Poll error:', pollErr);
+                // Status 1 = still processing, keep polling
+                else {
+                  console.log(`[VideoGen] ⏳ Segment ${jobInfo.segmentNumber}: ${videoInfo.status_percentage || 0}% complete`);
+                }
               }
             }
-            
-            // Timeout - mark as failed
-            if (!isComplete && pollAttempts >= maxPollAttempts) {
-              console.log(`[VideoGen] ⏱️ Timeout for UUID ${jobUuid}`);
-              
-              setSegments(prev => prev.map(seg => {
-                if (seg.veoUuid === jobUuid || seg.id === segmentId) {
-                  return {
-                    ...seg,
-                    isGeneratingVideo: false,
-                    videoError: 'Video generation timeout - please retry'
-                  };
-                }
-                return seg;
-              }));
-              
-              setGenerationProgress(prev => ({
-                ...prev,
-                current: prev.completed + prev.failed + 1,
-                failed: prev.failed + 1
-              }));
-            }
-            
-            // Add small delay before processing next segment to prevent rapid-fire
-            console.log('[VideoGen] ⏳ Waiting 3s before next segment...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
+          } catch (pollErr) {
+            console.error('[VideoGen] Poll error:', pollErr);
           }
           
-        } catch (err) {
-          console.error('[VideoGen] Sequential processing error:', err);
-          break;
+          // Wait before next poll
+          if (activePollingJobs.size > 0 && !shouldStopProcessingRef.current) {
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+          }
         }
+        
+        // ================================================================
+        // PHASE 4: Handle timeout for any remaining jobs
+        // ================================================================
+        if (activePollingJobs.size > 0) {
+          console.log(`[VideoGen] ⏱️ Timeout: ${activePollingJobs.size} jobs did not complete`);
+          
+          for (const [uuid, jobInfo] of activePollingJobs) {
+            setSegments(prev => prev.map(seg => 
+              seg.veoUuid === uuid || seg.id === jobInfo.segmentId
+                ? { ...seg, isGeneratingVideo: false, videoError: 'Video generation timeout - please retry' }
+                : seg
+            ));
+            
+            setGenerationProgress(prev => ({
+              ...prev,
+              current: prev.completed + prev.failed + 1,
+              failed: prev.failed + 1
+            }));
+          }
+        }
+        
+        // ================================================================
+        // DONE
+        // ================================================================
+        console.log(`[VideoGen] 🎉 Processing complete! Completed: ${completedUuids.size}, Failed: ${failedUuids.size}`);
+        
+      } catch (err) {
+        console.error('[VideoGen] Fatal processing error:', err);
+      } finally {
+        setIsGeneratingAll(false);
+        setIsBackgroundMode(false);
+        setShowBackgroundToast(false);
+        isSequentialProcessingRef.current = false;
+        console.log('[VideoGen] Processing ended');
       }
-      
-      // Cleanup
-      isSequentialProcessingRef.current = false;
-      console.log('[VideoGen] Sequential processing ended');
     };
     
-    // Start the sequential processing
-    processSequentially();
+    // Start processing
+    processStaggered();
   }, [user, language]);
 
   // Poll VEO status and update completed videos

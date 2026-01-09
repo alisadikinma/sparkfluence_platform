@@ -429,35 +429,17 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     )
   }
 
-  // RATE LIMIT PROTECTION: Check if there's already a job being processed
-  if (session_id && user_id) {
-    const { data: processingJobs } = await supabase
-      .from('video_generation_jobs')
-      .select('id, segment_number, created_at')
-      .eq('session_id', session_id)
-      .eq('user_id', user_id)
-      .eq('status', JOB_STATUS.PROCESSING)
-    
-    if (processingJobs && processingJobs.length > 0) {
-      console.log(`[PROCESS_SINGLE] ⏳ Waiting - ${processingJobs.length} job(s) still processing`)
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          data: { 
-            waiting: true,
-            processing_count: processingJobs.length,
-            message: 'Another job is still processing. Wait for it to complete before submitting new job.'
-          } 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-  }
-
+  // ============================================================================
+  // STAGGERED PARALLEL MODE (2026): Allow parallel processing when job_id specified
+  // Sequential mode (no job_id): Still blocks if another job is processing
+  // Parallel mode (with job_id): Process specific job regardless of others
+  // ============================================================================
+  
   // Find job to process
   let job: any = null
 
   if (job_id) {
+    // PARALLEL MODE: Process specific job by ID (frontend handles stagger timing)
     const { data, error } = await supabase
       .from('video_generation_jobs')
       .select('*')
@@ -470,9 +452,79 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
+    
+    // Check if job is already processing or completed
+    if (data.status === JOB_STATUS.PROCESSING) {
+      console.log(`[PROCESS_SINGLE] Job ${job_id} already processing, returning current state`)
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          data: { 
+            job: {
+              id: data.id,
+              segment_number: data.segment_number,
+              segment_type: data.segment_type,
+              segment_id: data.segment_id,
+              veo_uuid: data.veo_uuid,
+              status: JOB_STATUS.PROCESSING
+            },
+            already_processing: true
+          } 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    if (data.status === JOB_STATUS.COMPLETED) {
+      console.log(`[PROCESS_SINGLE] Job ${job_id} already completed`)
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          data: { 
+            job: {
+              id: data.id,
+              segment_number: data.segment_number,
+              segment_type: data.segment_type,
+              segment_id: data.segment_id,
+              veo_uuid: data.veo_uuid,
+              video_url: data.video_url,
+              status: JOB_STATUS.COMPLETED
+            },
+            already_completed: true
+          } 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
     job = data
+    console.log(`[PROCESS_SINGLE] 🎯 PARALLEL MODE: Processing specific job ${job_id} (${data.segment_type})`)
+    
   } else if (session_id && user_id) {
-    // Find next pending job
+    // SEQUENTIAL MODE: Check if another job is processing first
+    const { data: processingJobs } = await supabase
+      .from('video_generation_jobs')
+      .select('id, segment_number, created_at')
+      .eq('session_id', session_id)
+      .eq('user_id', user_id)
+      .eq('status', JOB_STATUS.PROCESSING)
+    
+    if (processingJobs && processingJobs.length > 0) {
+      console.log(`[PROCESS_SINGLE] ⏳ SEQUENTIAL MODE: Waiting - ${processingJobs.length} job(s) still processing`)
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          data: { 
+            waiting: true,
+            processing_count: processingJobs.length,
+            message: 'Another job is still processing. Wait for it to complete before submitting new job.'
+          } 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    // Find next pending job by segment_number
     const { data, error } = await supabase
       .from('video_generation_jobs')
       .select('*')
@@ -488,6 +540,8 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       return await getSessionStatus(supabase, session_id, user_id)
     }
     job = data
+    console.log(`[PROCESS_SINGLE] 🔄 SEQUENTIAL MODE: Processing next pending job (${data.segment_type})`)
+    
   } else {
     return new Response(
       JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Provide job_id or (session_id + user_id)' } }),
