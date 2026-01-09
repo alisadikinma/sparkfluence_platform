@@ -17,7 +17,6 @@ import {
   AlertCircle,
   CheckCircle2,
 } from "lucide-react";
-import { toast } from "sonner";
 
 interface LinkedAccount {
   id: string;
@@ -34,6 +33,11 @@ interface Platform {
   bgColor: string;
   description: string;
   implemented: boolean;
+}
+
+interface Notification {
+  type: "success" | "error" | "info";
+  message: string;
 }
 
 export const LinkedAccounts = (): JSX.Element => {
@@ -81,6 +85,15 @@ export const LinkedAccounts = (): JSX.Element => {
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [notification, setNotification] = useState<Notification | null>(null);
+
+  // Auto-dismiss notification
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   // Handle OAuth callback params
   useEffect(() => {
@@ -89,14 +102,13 @@ export const LinkedAccounts = (): JSX.Element => {
     const channel = searchParams.get("channel");
 
     if (success === "youtube_connected" && channel) {
-      toast.success(
-        language === 'id'
+      setNotification({
+        type: "success",
+        message: language === 'id'
           ? `Berhasil terhubung ke YouTube: ${channel}`
-          : `Successfully connected to YouTube: ${channel}`
-      );
-      // Clear params
+          : `Successfully connected to YouTube: ${channel}`,
+      });
       setSearchParams({});
-      // Refresh linked accounts
       fetchLinkedAccounts();
     }
 
@@ -109,7 +121,10 @@ export const LinkedAccounts = (): JSX.Element => {
         no_youtube_channel: language === 'id' ? "Tidak ada channel YouTube ditemukan" : "No YouTube channel found",
         database_error: language === 'id' ? "Gagal menyimpan ke database" : "Database error",
       };
-      toast.error(errorMessages[error] || error);
+      setNotification({
+        type: "error",
+        message: errorMessages[error] || error,
+      });
       setSearchParams({});
     }
   }, [searchParams, language]);
@@ -143,11 +158,12 @@ export const LinkedAccounts = (): JSX.Element => {
 
     const platform = platforms.find(p => p.id === platformId);
     if (!platform?.implemented) {
-      toast.info(
-        language === 'id'
+      setNotification({
+        type: "info",
+        message: language === 'id'
           ? `Integrasi ${platform?.name} akan segera hadir!`
-          : `${platform?.name} integration coming soon!`
-      );
+          : `${platform?.name} integration coming soon!`,
+      });
       return;
     }
 
@@ -155,7 +171,6 @@ export const LinkedAccounts = (): JSX.Element => {
 
     try {
       if (platformId === "youtube") {
-        // Call Edge Function to get OAuth URL
         const { data, error } = await supabase.functions.invoke("oauth-youtube/init", {
           body: { user_id: user.id },
         });
@@ -163,7 +178,6 @@ export const LinkedAccounts = (): JSX.Element => {
         if (error) throw error;
 
         if (data?.success && data?.data?.auth_url) {
-          // Redirect to Google OAuth
           window.location.href = data.data.auth_url;
         } else {
           throw new Error(data?.error?.message || "Failed to get auth URL");
@@ -171,11 +185,12 @@ export const LinkedAccounts = (): JSX.Element => {
       }
     } catch (err: any) {
       console.error("Error connecting platform:", err);
-      toast.error(
-        language === 'id'
+      setNotification({
+        type: "error",
+        message: language === 'id'
           ? `Gagal menghubungkan ${platformId}: ${err.message}`
-          : `Failed to connect ${platformId}: ${err.message}`
-      );
+          : `Failed to connect ${platformId}: ${err.message}`,
+      });
     } finally {
       setConnecting(null);
     }
@@ -199,18 +214,20 @@ export const LinkedAccounts = (): JSX.Element => {
         .eq("platform", platformId);
       if (error) throw error;
       setLinkedAccounts(prev => prev.filter(acc => acc.platform !== platformId));
-      toast.success(
-        language === 'id'
+      setNotification({
+        type: "success",
+        message: language === 'id'
           ? `Berhasil memutuskan ${platformId}`
-          : `Successfully disconnected ${platformId}`
-      );
+          : `Successfully disconnected ${platformId}`,
+      });
     } catch (err) {
       console.error("Error disconnecting platform:", err);
-      toast.error(
-        language === 'id'
+      setNotification({
+        type: "error",
+        message: language === 'id'
           ? "Gagal memutuskan koneksi"
-          : "Failed to disconnect"
-      );
+          : "Failed to disconnect",
+      });
     } finally {
       setConnecting(null);
     }
@@ -234,6 +251,32 @@ export const LinkedAccounts = (): JSX.Element => {
 
   return (
     <SettingsLayout title={t.settings.tabs.linkedAccounts}>
+      {/* Notification Banner */}
+      {notification && (
+        <div
+          className={`mb-6 p-4 rounded-lg flex items-center gap-3 ${
+            notification.type === "success"
+              ? "bg-green-500/10 border border-green-500/30 text-green-400"
+              : notification.type === "error"
+              ? "bg-red-500/10 border border-red-500/30 text-red-400"
+              : "bg-blue-500/10 border border-blue-500/30 text-blue-400"
+          }`}
+        >
+          {notification.type === "success" ? (
+            <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+          ) : (
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          )}
+          <span className="flex-1">{notification.message}</span>
+          <button
+            onClick={() => setNotification(null)}
+            className="p-1 hover:bg-white/10 rounded"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <p className="text-text-secondary mb-8">
         {language === 'id' 
           ? 'Hubungkan akun media sosial untuk mengaktifkan auto-posting' 
