@@ -10,6 +10,7 @@ import httpx
 from pathlib import Path
 from typing import Dict, Any, Optional
 import uuid
+import traceback
 
 logger = logging.getLogger('SubtitleProcessor')
 
@@ -74,6 +75,7 @@ class SubtitleProcessor:
                 resp.raise_for_status()
                 result = resp.json()
         
+        logger.info(f"Whisper response keys: {result.keys() if result else None}")
         segments = result.get('segments') or []
         word_count = sum(len(seg.get('words') or []) for seg in segments)
         logger.info(f"Transcription complete: {len(segments)} segments, {word_count} words")
@@ -212,6 +214,7 @@ class SubtitleProcessor:
             
         except Exception as e:
             logger.error(f"Subtitle processing error: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {
                 "success": False,
                 "error": str(e)
