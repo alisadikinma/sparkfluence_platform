@@ -5,7 +5,7 @@ import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play, Link2, ExternalLink } from "lucide-react";
 
 // Backend API URL - adjust based on environment
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
@@ -23,6 +23,13 @@ const DEFAULT_COMBINE_OPTIONS = {
 
 // Cache key for storing combined video results
 const getCacheKey = (sessionId: string) => `sparkfluence_combined_${sessionId}`;
+
+// Platform configuration
+const PLATFORM_CONFIG = {
+  youtube: { name: "YouTube", implemented: true },
+  instagram: { name: "Instagram", implemented: false },
+  tiktok: { name: "TikTok", implemented: false },
+};
 
 export const FullVideo: React.FC = () => {
   const navigate = useNavigate();
@@ -42,6 +49,11 @@ export const FullVideo: React.FC = () => {
   const [description, setDescription] = useState("");
   const [publishToPublic, setPublishToPublic] = useState(false);
   
+  // Linked accounts state
+  const [linkedAccounts, setLinkedAccounts] = useState<string[]>([]);
+  const [showConnectionWarning, setShowConnectionWarning] = useState(false);
+  const [warningPlatform, setWarningPlatform] = useState<string | null>(null);
+  
   // Combine video states
   const [isCombining, setIsCombining] = useState(false);
   const [combineError, setCombineError] = useState<string | null>(null);
@@ -58,10 +70,35 @@ export const FullVideo: React.FC = () => {
   const [subtitleProgress, setSubtitleProgress] = useState<string>("Initializing...");
   const [subtitlePercent, setSubtitlePercent] = useState(0);
   const [subtitleJobId, setSubtitleJobId] = useState<string | null>(null);
-  // Subtitle style hardcoded to 'tiktok' - no user selection needed
   const [videoWithoutSubtitle, setVideoWithoutSubtitle] = useState<string | null>(null);
   const [hasSubtitles, setHasSubtitles] = useState(false);
   const subtitlePollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch linked accounts
+  useEffect(() => {
+    const fetchLinkedAccounts = async () => {
+      if (!user) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from("linked_accounts")
+          .select("platform")
+          .eq("user_id", user.id);
+        
+        if (error) throw error;
+        
+        if (data) {
+          const platforms = data.map(acc => acc.platform);
+          setLinkedAccounts(platforms);
+          console.log('[FullVideo] Linked accounts:', platforms);
+        }
+      } catch (err) {
+        console.error('[FullVideo] Error fetching linked accounts:', err);
+      }
+    };
+    
+    fetchLinkedAccounts();
+  }, [user]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -521,9 +558,9 @@ export const FullVideo: React.FC = () => {
   };
 
   const platforms = [
-    { id: "tiktok", name: "TikTok" },
     { id: "youtube", name: "YouTube" },
     { id: "instagram", name: "Instagram" },
+    { id: "tiktok", name: "TikTok" },
   ];
 
   const getPlatformIcon = (platformId: string) => {
@@ -551,12 +588,40 @@ export const FullVideo: React.FC = () => {
     }
   };
 
+  // Check if platform is connected
+  const isPlatformConnected = (platformId: string) => {
+    return linkedAccounts.includes(platformId);
+  };
+
+  // Check if platform is implemented
+  const isPlatformImplemented = (platformId: string) => {
+    return PLATFORM_CONFIG[platformId as keyof typeof PLATFORM_CONFIG]?.implemented ?? false;
+  };
+
+  // Toggle platform with connection check
   const togglePlatform = (platformId: string) => {
-    setSelectedPlatforms((prev) =>
-      prev.includes(platformId)
-        ? prev.filter((id) => id !== platformId)
-        : [...prev, platformId]
-    );
+    // If already selected, allow deselection
+    if (selectedPlatforms.includes(platformId)) {
+      setSelectedPlatforms((prev) => prev.filter((id) => id !== platformId));
+      return;
+    }
+
+    // Check if platform is implemented
+    if (!isPlatformImplemented(platformId)) {
+      setWarningPlatform(platformId);
+      setShowConnectionWarning(true);
+      return;
+    }
+
+    // Check if platform is connected
+    if (!isPlatformConnected(platformId)) {
+      setWarningPlatform(platformId);
+      setShowConnectionWarning(true);
+      return;
+    }
+
+    // Platform is connected, allow selection
+    setSelectedPlatforms((prev) => [...prev, platformId]);
   };
 
   const handlePlanContent = async () => {
@@ -623,6 +688,91 @@ export const FullVideo: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0a12] p-8">
+      {/* Connection Warning Modal */}
+      {showConnectionWarning && warningPlatform && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-amber-500/50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center">
+                  <AlertCircle className="w-5 h-5 text-amber-500" />
+                </div>
+                <h3 className="text-white font-semibold text-lg">
+                  {isPlatformImplemented(warningPlatform) ? 'Account Not Connected' : 'Coming Soon'}
+                </h3>
+              </div>
+              <button 
+                onClick={() => setShowConnectionWarning(false)}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {isPlatformImplemented(warningPlatform) ? (
+              <>
+                <p className="text-white/70 text-sm mb-4">
+                  Kamu belum menghubungkan akun <span className="text-white font-medium">{PLATFORM_CONFIG[warningPlatform as keyof typeof PLATFORM_CONFIG]?.name}</span> ke Sparkfluence.
+                </p>
+                <p className="text-white/50 text-sm mb-5">
+                  Hubungkan akun terlebih dahulu untuk bisa publish video ke platform ini.
+                </p>
+                
+                <div className="bg-[#2b2b38] rounded-lg p-4 mb-5">
+                  <p className="text-white/60 text-xs mb-2">Cara menghubungkan:</p>
+                  <div className="flex items-center gap-2 text-white/80 text-sm">
+                    <span className="bg-[#7c3aed]/20 text-[#7c3aed] px-2 py-0.5 rounded text-xs">Settings</span>
+                    <span className="text-white/40">→</span>
+                    <span className="bg-[#7c3aed]/20 text-[#7c3aed] px-2 py-0.5 rounded text-xs">Linked Accounts</span>
+                    <span className="text-white/40">→</span>
+                    <span className="bg-[#7c3aed]/20 text-[#7c3aed] px-2 py-0.5 rounded text-xs">Connect</span>
+                  </div>
+                </div>
+                
+                <div className="flex gap-3">
+                  <Button
+                    onClick={() => navigate('/settings/linked-accounts')}
+                    className="flex-1 bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:from-[#6d28d9] hover:to-[#db2777] text-white h-11"
+                  >
+                    <Link2 className="w-4 h-4 mr-2" />
+                    Connect Account
+                  </Button>
+                  <Button
+                    onClick={() => setShowConnectionWarning(false)}
+                    variant="secondary"
+                    className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-white/70 text-sm mb-4">
+                  Integrasi <span className="text-white font-medium">{PLATFORM_CONFIG[warningPlatform as keyof typeof PLATFORM_CONFIG]?.name}</span> akan segera hadir!
+                </p>
+                <p className="text-white/50 text-sm mb-5">
+                  Saat ini hanya YouTube yang sudah tersedia. Instagram dan TikTok sedang dalam pengembangan dan memerlukan audit dari platform masing-masing.
+                </p>
+                
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-5">
+                  <p className="text-amber-400 text-sm">
+                    💡 Tip: Gunakan YouTube untuk sementara, lalu upload manual ke platform lain.
+                  </p>
+                </div>
+                
+                <Button
+                  onClick={() => setShowConnectionWarning(false)}
+                  className="w-full bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11"
+                >
+                  Got it
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Subtitle Modal - Centered Overlay */}
       {showSubtitleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -902,17 +1052,58 @@ export const FullVideo: React.FC = () => {
                 <div>
                   <label className="block text-white/60 text-sm mb-3 font-medium">Platform</label>
                   <div className="flex gap-2">
-                    {platforms.map((platform) => (
-                      <button
-                        key={platform.id}
-                        onClick={() => togglePlatform(platform.id)}
-                        className={"w-10 h-10 rounded-lg flex items-center justify-center transition-all " + (selectedPlatforms.includes(platform.id)
-                          ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
-                          : "bg-[#2b2b38] text-white/60 border-2 border-[#2b2b38] hover:border-[#7c3aed]/50 hover:text-white/80")}
-                      >
-                        {getPlatformIcon(platform.id)}
-                      </button>
-                    ))}
+                    {platforms.map((platform) => {
+                      const isConnected = isPlatformConnected(platform.id);
+                      const isImplemented = isPlatformImplemented(platform.id);
+                      const isSelected = selectedPlatforms.includes(platform.id);
+                      
+                      return (
+                        <div key={platform.id} className="relative">
+                          <button
+                            onClick={() => togglePlatform(platform.id)}
+                            className={"w-10 h-10 rounded-lg flex items-center justify-center transition-all " + (isSelected
+                              ? "bg-[#7c3aed] text-white border-2 border-[#7c3aed]"
+                              : isConnected && isImplemented
+                                ? "bg-[#2b2b38] text-white/60 border-2 border-[#2b2b38] hover:border-[#7c3aed]/50 hover:text-white/80"
+                                : "bg-[#2b2b38]/50 text-white/30 border-2 border-[#2b2b38]/50 cursor-not-allowed")}
+                            title={
+                              !isImplemented 
+                                ? `${platform.name} coming soon` 
+                                : !isConnected 
+                                  ? `${platform.name} not connected` 
+                                  : platform.name
+                            }
+                          >
+                            {getPlatformIcon(platform.id)}
+                          </button>
+                          
+                          {/* Status indicator */}
+                          {!isImplemented ? (
+                            <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-500 rounded-full border border-[#1a1a24]" title="Coming soon" />
+                          ) : !isConnected ? (
+                            <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-[#1a1a24]" title="Not connected" />
+                          ) : (
+                            <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border border-[#1a1a24]" title="Connected" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Platform status legend */}
+                  <div className="flex gap-3 mt-3 text-xs text-white/50">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                      Connected
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                      Not connected
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
+                      Coming soon
+                    </span>
                   </div>
                 </div>
 
