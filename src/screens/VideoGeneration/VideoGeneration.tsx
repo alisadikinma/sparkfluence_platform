@@ -281,16 +281,27 @@ export const VideoGeneration = (): JSX.Element => {
     };
   }, []);
 
-  // Sync jobs with segments
+  // Sync jobs with segments - ROBUST MATCHING (2026)
+  // Handles different ID formats between frontend state and database
   const syncJobsWithSegments = (jobs: any[], currentSegments: Segment[]): Segment[] => {
     return currentSegments.map((seg, index) => {
-      const job = jobs.find(j => 
-        j.segment_id === seg.id || 
-        j.segment_number === index + 1 ||
-        j.image_url === seg.imageUrl
-      );
+      const segmentNumber = index + 1;
+      
+      // Try multiple matching strategies (priority order)
+      const job = jobs.find(j => {
+        // 1. Exact segment_id match
+        if (j.segment_id === seg.id) return true;
+        // 2. segment_id as string number matches index+1
+        if (j.segment_id === String(segmentNumber)) return true;
+        // 3. segment_number matches
+        if (j.segment_number === segmentNumber) return true;
+        // 4. image_url matches (fallback)
+        if (j.image_url && seg.imageUrl && j.image_url === seg.imageUrl) return true;
+        return false;
+      });
       
       if (job) {
+        console.log(`[SYNC] Matched segment ${segmentNumber} (${seg.type}) with job ${job.id}, videoUrl: ${job.video_url ? 'YES' : 'NO'}`);
         return {
           ...seg,
           jobId: job.id,
@@ -401,9 +412,11 @@ export const VideoGeneration = (): JSX.Element => {
           videoError: null,
         }));
 
-        // Check existing jobs
+        // Check existing jobs and sync video URLs
         const existingJobs = await checkExistingJobs(sid);
         if (existingJobs && existingJobs.length > 0) {
+          console.log(`[INIT] Found ${existingJobs.length} existing jobs, syncing...`);
+          console.log(`[INIT] Jobs status: ${existingJobs.map(j => `${j.segment_type}:${j.status}${j.video_url ? '✓' : ''}`).join(', ')}`);
           initialSegments = syncJobsWithSegments(existingJobs, initialSegments);
           
           // Check if there are pending/processing jobs to resume
