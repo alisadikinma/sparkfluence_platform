@@ -208,7 +208,7 @@ export const MonthlyView: React.FC<MonthlyViewProps> = ({ searchQuery }) => {
                           {language === 'id' ? 'No video' : 'No video'}
                         </span>
                       )}
-                      <PlatformIcons platforms={item.platforms} size="sm" maxShow={1} />
+                      <PlatformIcons platforms={item.platforms} size="sm" maxShow={3} />
                       <span className="truncate flex-1">{item.title}</span>
                       <ArrowUpRight className="w-3 h-3 shrink-0" />
                     </button>
