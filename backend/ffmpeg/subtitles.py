@@ -404,41 +404,41 @@ SUBTITLE_PRESETS = {
     
     'tiktok': SubtitleStyle(
         font_name="Montserrat",
-        font_size=60,  # Large for mobile
+        font_size=80,  # Larger for mobile readability
         bold=True,
-        outline=4,
-        shadow=2,
+        outline=5,
+        shadow=3,
         primary_color="&HFFFFFF",  # White
         highlight_color="&H00FFFF",  # Yellow/Cyan
         outline_color="&H000000",  # Black
-        alignment=SubtitlePosition.MIDDLE_CENTER,
-        margin_v=250,  # Below center
+        alignment=SubtitlePosition.BOTTOM_CENTER,
+        margin_v=450,  # Lower center area
         words_per_group=2  # 2 words at a time
     ),
     
     'reels': SubtitleStyle(
         font_name="Poppins",
-        font_size=56,
+        font_size=76,
         bold=True,
-        outline=3,
+        outline=4,
         shadow=2,
         primary_color="&HFFFFFF",
         highlight_color="&H00FF00",  # Green highlight
-        alignment=SubtitlePosition.MIDDLE_CENTER,
-        margin_v=220,
+        alignment=SubtitlePosition.BOTTOM_CENTER,
+        margin_v=420,
         words_per_group=3
     ),
     
     'shorts': SubtitleStyle(
         font_name="Roboto",
-        font_size=52,
+        font_size=72,
         bold=True,
-        outline=3,
-        shadow=1,
+        outline=4,
+        shadow=2,
         primary_color="&HFFFFFF",
         highlight_color="&HFF00FF",  # Magenta
-        alignment=SubtitlePosition.MIDDLE_CENTER,
-        margin_v=200,
+        alignment=SubtitlePosition.BOTTOM_CENTER,
+        margin_v=400,
         words_per_group=3
     ),
     
@@ -457,28 +457,28 @@ SUBTITLE_PRESETS = {
     
     'dramatic': SubtitleStyle(
         font_name="Montserrat",
-        font_size=72,  # Extra large
+        font_size=88,  # Extra large
         bold=True,
-        outline=5,
+        outline=6,
         shadow=3,
         primary_color="&HFFFFFF",
         highlight_color="&H0000FF",  # Red highlight (BGR)
-        alignment=SubtitlePosition.MIDDLE_CENTER,
-        margin_v=150,
+        alignment=SubtitlePosition.BOTTOM_CENTER,
+        margin_v=400,
         words_per_group=2
     ),
     
     'viral': SubtitleStyle(
         font_name="Montserrat",
-        font_size=64,
+        font_size=84,
         bold=True,
-        outline=4,
-        shadow=2,
+        outline=5,
+        shadow=3,
         primary_color="&HFFFFFF",  # White
         highlight_color="&H00D7FF",  # Orange-Yellow (BGR)
         outline_color="&H000000",
-        alignment=SubtitlePosition.MIDDLE_CENTER,
-        margin_v=280,
+        alignment=SubtitlePosition.BOTTOM_CENTER,
+        margin_v=480,
         words_per_group=2
     )
 }
