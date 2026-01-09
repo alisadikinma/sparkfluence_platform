@@ -1274,7 +1274,18 @@ function generateVoiceCharacter(language: string, creatorAppearance?: string): V
   return profiles[gender]
 }
 
-function buildVoiceCharacterAnchor(voiceChar: VoiceCharacter): string {
+function buildVoiceCharacterAnchor(voiceChar: VoiceCharacter, isSora: boolean = false): string {
+  // For Sora: Skip age to avoid content moderation flags
+  if (isSora) {
+    return `VOICE CHARACTER:
+Gender: ${voiceChar.gender}
+Accent: ${voiceChar.accent}
+Tone: ${voiceChar.tone}
+Pace: ${voiceChar.pace}
+
+Maintain this voice character throughout the video.`
+  }
+  
   return `═══════════════════════════════════════════════════════════════
 VOICE CHARACTER ANCHOR (MUST MAINTAIN ACROSS ALL SEGMENTS)
 ═══════════════════════════════════════════════════════════════
@@ -1288,6 +1299,75 @@ Pace: ${voiceChar.pace}
 CRITICAL: This EXACT voice character must be used for ALL audio in this video.
 Do NOT change voice characteristics between segments.
 ═══════════════════════════════════════════════════════════════`
+}
+
+// ============================================================================
+// SORA CONTENT MODERATION BYPASS (2026)
+// Sanitize prompts to avoid false positive content flags
+// ============================================================================
+function sanitizeForSora(text: string): string {
+  if (!text) return ''
+  
+  // Remove or replace words that may trigger Sora content moderation
+  let sanitized = text
+  
+  // Remove detailed physical descriptions that may trigger flags
+  const physicalPatterns = [
+    /\b(skin\s*(tone|color|undertone)|complexion|pores|texture)\b/gi,
+    /\b(\d+[\s-]*(year|tahun)[\s-]*(old|lama))\b/gi, // age references
+    /\b(sexy|seductive|sensual|intimate|romantic)\b/gi,
+    /\b(body|physique|figure|curves)\b/gi,
+    /\b(revealing|exposed|bare|naked)\b/gi,
+  ]
+  
+  for (const pattern of physicalPatterns) {
+    sanitized = sanitized.replace(pattern, '')
+  }
+  
+  // Clean up extra spaces
+  sanitized = sanitized.replace(/\s+/g, ' ').trim()
+  
+  return sanitized
+}
+
+// Simplify character description for Sora to avoid content flags
+function simplifyCharacterForSora(description: string, gender: 'male' | 'female'): string {
+  if (!description) {
+    return gender === 'male' 
+      ? 'Professional male presenter with glasses, clean appearance'
+      : 'Professional female presenter, clean appearance'
+  }
+  
+  // Extract only safe descriptors
+  const safeDescriptors: string[] = []
+  
+  // Keep glasses reference if present
+  if (/glasses|kacamata|spectacles/i.test(description)) {
+    safeDescriptors.push('wearing glasses')
+  }
+  
+  // Keep hair style if mentioned (but not color/texture details)
+  if (/bald|botak|shaved head/i.test(description)) {
+    safeDescriptors.push('bald head')
+  } else if (/short hair/i.test(description)) {
+    safeDescriptors.push('short hair')
+  } else if (/long hair/i.test(description)) {
+    safeDescriptors.push('long hair')
+  }
+  
+  // Keep clothing if professional
+  if (/blazer|suit|jacket|professional/i.test(description)) {
+    safeDescriptors.push('professional attire')
+  }
+  
+  const genderWord = gender === 'male' ? 'male' : 'female'
+  const base = `Professional ${genderWord} content creator`
+  
+  if (safeDescriptors.length > 0) {
+    return `${base}, ${safeDescriptors.join(', ')}`
+  }
+  
+  return base
 }
 
 function buildCinematicVideoPrompt(params: VideoPromptParams): string {
@@ -1310,6 +1390,9 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     creatorGender = 'male',
     characterDescription: charDescParam = ''
   } = params
+  
+  // Check if using Sora (needs sanitization)
+  const isSoraModel = platform.startsWith('sora-')
 
   // Extract segment data
   const visualDirection = segment.visual_direction || segment.visualDirection || ''
@@ -1325,7 +1408,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const voiceChar = voiceCharacterParam 
     ? JSON.parse(voiceCharacterParam) as VoiceCharacter
     : generateVoiceCharacter(detectedLanguage, creatorAppearance)
-  const voiceAnchor = buildVoiceCharacterAnchor(voiceChar)
+  const voiceAnchor = buildVoiceCharacterAnchor(voiceChar, isSoraModel)
   
   // ========================================================================
   // CRITICAL: Determine if this is a CREATOR SHOT or B-ROLL
@@ -1350,18 +1433,23 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   
   if (isCreatorSegment && actualHasProfileImage) {
     // Generate face anchor using imported function
+    // For Sora: use simplified character description
     faceAnchorBlock = generateFaceAnchor({
       hasProfileImage: true,
       profileImageUrl: actualProfileImageUrl,
       gender: actualCreatorGender,
-      characterDescription: actualCharacterDescription
+      characterDescription: isSoraModel 
+        ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
+        : actualCharacterDescription
     })
   } else if (isCreatorSegment && actualCharacterDescription) {
     // Fallback to character description if no profile image
     faceAnchorBlock = generateFaceAnchor({
       hasProfileImage: false,
       gender: actualCreatorGender,
-      characterDescription: actualCharacterDescription
+      characterDescription: isSoraModel
+        ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
+        : actualCharacterDescription
     })
   }
   
@@ -1380,7 +1468,11 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // ========================================================================
   if (isCreatorSegment) {
     const characterName = segment.character_name || 'Creator'
-    const characterDescription = actualCharacterDescription || undefined
+    
+    // SORA SANITIZATION: Use simplified character description to avoid content flags
+    const characterDescription = isSoraModel 
+      ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
+      : actualCharacterDescription || undefined
     
     // Use consistent voice from anchor (voiceChar already contains all voice info)
     
@@ -1454,6 +1546,11 @@ ${segmentTypeUpper === 'HOOK' ? 'Grab attention immediately. Create curiosity an
 
 EXCLUSIONS:
 No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
+    
+    // SORA FINAL SANITIZATION: Remove any remaining problematic patterns
+    if (isSoraModel) {
+      prompt = sanitizeForSora(prompt)
+    }
     
     return prompt
   }

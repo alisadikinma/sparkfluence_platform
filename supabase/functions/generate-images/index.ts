@@ -57,6 +57,36 @@ const JOB_STATUS = {
   FAILED: 3
 }
 
+// ============================================================================
+// IMAGE PROVIDER SELECTION (2026 - Cost Optimized)
+// ============================================================================
+// Priority: Nano Banana (FREE) is PRIMARY for ALL segments
+// Fallbacks:
+//   - CREATOR (HOOK/CTA): Nano Banana → GPT-Image-1
+//   - B-ROLL: Nano Banana → FLUX
+// ============================================================================
+
+interface ProviderSelection {
+  primary: ImageModelKey;
+  fallback: ImageModelKey;
+}
+
+function selectImageProvider(isCreatorShot: boolean): ProviderSelection {
+  if (isCreatorShot) {
+    // HOOK/CTA segments - need face consistency
+    return {
+      primary: 'nano-banana-pro',
+      fallback: 'gpt-image-1'
+    }
+  } else {
+    // B-ROLL segments - no face needed
+    return {
+      primary: 'nano-banana-pro', 
+      fallback: 'flux-schnell'
+    }
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -147,7 +177,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     topic, 
     style = 'cinematic', 
     aspect_ratio = '9:16',
-    provider: defaultProvider = 'auto', // 'auto' = hybrid mode (gpt-image-1 for CREATOR, huggingface for B-ROLL)
+    provider: defaultProvider = 'auto', // 'auto' = Nano Banana primary for all
     character_description = '',
     character_ref_png = '' // Avatar URL for face consistency
   } = requestBody
@@ -170,10 +200,9 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     const segmentType = segment.segment_type || segment.type || `segment_${index}`
     const shotType = segment.shot_type || 'B-ROLL'
     const emotion = segment.emotion || 'authority'
-    const visualPrompt = segment.visual_prompt || segment.visual_direction || ''
     const charDesc = segment.character_description || character_description
 
-    // Build the image prompt
+    // Build the CINEMATIC image prompt (uses full knowledge tables)
     const imagePrompt = buildCinematicPrompt({
       segment,
       style,
@@ -184,25 +213,24 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       emotion
     })
 
-    // Determine if this segment needs character reference (CREATOR shots only)
-    const isCreatorShot = shotType === 'CREATOR'
+    // Determine if this is a CREATOR shot (has face)
+    const isCreatorShot = shotType === 'CREATOR' || 
+      ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
-    // HYBRID PROVIDER LOGIC (Cost-optimized):
-    // - HOOK/CTA (CREATOR): Nano Banana (FREE) → GPT-Image-1 (face fallback)
-    // - B-ROLL: FLUX (FREE) → Nano Banana (fallback)
+    // ========================================================================
+    // PROVIDER SELECTION (2026 - Cost Optimized)
+    // Nano Banana PRIMARY for ALL → fallback based on shot type
+    // ========================================================================
     let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
+    let fallbackProvider: ImageModelKey = 'flux-schnell'
+    
     if (defaultProvider === 'auto') {
-      // Use selectImageModel helper from config
-      const selectedModel = selectImageModel({
-        needsFaceConsistency: isCreatorShot && !!(segment.character_ref_png || character_ref_png),
-        hasReferenceImage: !!(segment.character_ref_png || character_ref_png),
-        preferFree: true, // Always prefer FREE first
-        isCreatorShot
-      })
-      segmentProvider = selectedModel.key as ImageModelKey
+      const providerChoice = selectImageProvider(isCreatorShot)
+      segmentProvider = providerChoice.primary
+      fallbackProvider = providerChoice.fallback
     }
     
-    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} ${isCreatorShot ? '(CREATOR)' : '(B-ROLL)'}`)
+    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} (fallback: ${fallbackProvider})`)
     
     return {
       user_id,
@@ -216,6 +244,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       style,
       aspect_ratio,
       provider: segmentProvider,
+      fallback_provider: fallbackProvider, // Store fallback for retry
       topic,
       character_description: charDesc,
       character_ref_png: isCreatorShot ? (segment.character_ref_png || character_ref_png) : null,
@@ -257,6 +286,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 
 async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined) {
   const { job_id, session_id, user_id } = requestBody
+  const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
 
   // Find job to process - either by job_id or find next pending in session
   let job: any = null
@@ -324,36 +354,6 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
     )
   }
 
-  // Check API keys based on provider config
-  const provider = (job.provider || 'imagen-pro') as ImageModelKey
-  const providerConfig = IMAGE_MODELS[provider]
-  
-  // Determine which API key is needed based on provider
-  const needsOpenAI = providerConfig?.provider === 'openai'
-  const needsHuggingFace = providerConfig?.provider === 'huggingface'
-  const needsGeminiGen = providerConfig?.provider === 'geminigen'
-  
-  const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
-  
-  if (needsOpenAI && !openaiApiKey) {
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'OPENAI_API_KEY not configured' } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
-  if (needsHuggingFace && !hfApiKey) {
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'HUGGINGFACE_API_KEY not configured' } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
-  if (needsGeminiGen && !geminiGenApiKey) {
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'VEO_API_KEY (GeminiGen) not configured' } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
-
   console.log(`[PROCESS_SINGLE] Processing job ${job.id} - Segment ${job.segment_number} (${job.segment_type})`)
 
   // Update status to processing
@@ -362,41 +362,85 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
     .update({ status: JOB_STATUS.PROCESSING, updated_at: new Date().toISOString() })
     .eq('id', job.id)
 
-  try {
-    let imageUrl: string | null = null
-    const aspectRatio = (job.aspect_ratio || '9:16') as AspectRatio
+  // ========================================================================
+  // GENERATE IMAGE WITH AUTOMATIC FALLBACK
+  // Try primary provider first, then fallback if fails
+  // ========================================================================
+  const primaryProvider = (job.provider || 'nano-banana-pro') as ImageModelKey
+  const fallbackProvider = (job.fallback_provider || 'flux-schnell') as ImageModelKey
+  const aspectRatio = (job.aspect_ratio || '9:16') as AspectRatio
+  
+  let imageUrl: string | null = null
+  let usedProvider: string = primaryProvider
+  let errorMessages: string[] = []
 
-    // ========================================================================
-    // GENERATE IMAGE USING CENTRALIZED CONFIG
-    // ========================================================================
-    console.log(`[PROCESS_SINGLE] Provider: ${provider}, Config: ${providerConfig?.displayName || 'unknown'}`)
+  // Helper function to generate image with a specific provider
+  const generateWithProvider = async (providerKey: ImageModelKey): Promise<string | null> => {
+    const providerConfig = IMAGE_MODELS[providerKey]
+    if (!providerConfig) {
+      throw new Error(`Unknown provider: ${providerKey}`)
+    }
     
-    if (providerConfig?.provider === 'openai') {
-      if (provider === 'dall-e-3') {
-        imageUrl = await generateWithDalle(openaiApiKey!, job.visual_prompt, aspectRatio, supabase)
+    console.log(`[PROCESS_SINGLE] Trying provider: ${providerKey} (${providerConfig.displayName})`)
+    
+    if (providerConfig.provider === 'openai') {
+      if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
+      if (providerKey === 'dall-e-3') {
+        return await generateWithDalle(openaiApiKey, job.visual_prompt, aspectRatio, supabase)
       } else {
-        // gpt-image-1 with optional reference
-        imageUrl = await generateWithGptImage1(
-          openaiApiKey!, 
+        return await generateWithGptImage1(
+          openaiApiKey, 
           job.visual_prompt, 
           aspectRatio, 
           supabase,
           job.character_ref_png || undefined
         )
       }
-    } else if (providerConfig?.provider === 'geminigen') {
-      // Nano Banana / Imagen models via GeminiGen API
-      imageUrl = await generateWithGeminiGen(
-        geminiGenApiKey!,
+    } else if (providerConfig.provider === 'geminigen') {
+      if (!geminiGenApiKey) throw new Error('VEO_API_KEY (GeminiGen) not configured')
+      return await generateWithGeminiGen(
+        geminiGenApiKey,
         job.visual_prompt,
         aspectRatio,
-        provider,
+        providerKey,
         supabase,
         job.character_ref_png || undefined
       )
-    } else {
-      // HuggingFace FLUX (fallback)
-      imageUrl = await generateWithFlux(hfApiKey!, job.visual_prompt, aspectRatio, supabase)
+    } else if (providerConfig.provider === 'huggingface') {
+      if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
+      return await generateWithFlux(hfApiKey, job.visual_prompt, aspectRatio, supabase)
+    }
+    
+    throw new Error(`Unsupported provider type: ${providerConfig.provider}`)
+  }
+
+  try {
+    // Try PRIMARY provider first
+    try {
+      imageUrl = await generateWithProvider(primaryProvider)
+      usedProvider = primaryProvider
+      console.log(`[PROCESS_SINGLE] ✅ Primary provider (${primaryProvider}) succeeded`)
+    } catch (primaryError) {
+      const primaryErrorMsg = primaryError instanceof Error ? primaryError.message : 'Unknown error'
+      console.warn(`[PROCESS_SINGLE] ⚠️ Primary provider (${primaryProvider}) failed: ${primaryErrorMsg}`)
+      errorMessages.push(`Primary (${primaryProvider}): ${primaryErrorMsg}`)
+      
+      // Try FALLBACK provider
+      if (fallbackProvider && fallbackProvider !== primaryProvider) {
+        console.log(`[PROCESS_SINGLE] Trying fallback provider: ${fallbackProvider}`)
+        try {
+          imageUrl = await generateWithProvider(fallbackProvider)
+          usedProvider = fallbackProvider
+          console.log(`[PROCESS_SINGLE] ✅ Fallback provider (${fallbackProvider}) succeeded`)
+        } catch (fallbackError) {
+          const fallbackErrorMsg = fallbackError instanceof Error ? fallbackError.message : 'Unknown error'
+          console.error(`[PROCESS_SINGLE] ❌ Fallback provider (${fallbackProvider}) also failed: ${fallbackErrorMsg}`)
+          errorMessages.push(`Fallback (${fallbackProvider}): ${fallbackErrorMsg}`)
+          throw new Error(`All providers failed: ${errorMessages.join(' | ')}`)
+        }
+      } else {
+        throw primaryError
+      }
     }
 
     // Update job as completed
@@ -405,11 +449,12 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
       .update({ 
         status: JOB_STATUS.COMPLETED, 
         image_url: imageUrl,
+        provider: usedProvider, // Update with actual provider used
         updated_at: new Date().toISOString()
       })
       .eq('id', job.id)
 
-    console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} completed`)
+    console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} completed with provider: ${usedProvider}`)
 
     // Check if all jobs for session are done
     const { data: remainingJobs } = await supabase
@@ -440,6 +485,7 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
             segment_number: job.segment_number,
             segment_type: job.segment_type,
             image_url: imageUrl,
+            provider: usedProvider,
             status: JOB_STATUS.COMPLETED
           },
           summary: { total, completed, failed, pending, processing },
@@ -530,23 +576,16 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   const segments = requestBody.segments
   const style = requestBody.style || 'cinematic'
   const aspectRatio: '9:16' | '16:9' | '1:1' = requestBody.aspect_ratio || '9:16'
-  const defaultProvider = requestBody.provider || 'auto' // 'auto' = hybrid mode
+  const defaultProvider = requestBody.provider || 'auto' // 'auto' = Nano Banana primary
   const topic = requestBody.topic || ''
   const characterDescription = requestBody.character_description || ''
   const characterRefPng = requestBody.character_ref_png || '' // Avatar URL for face consistency
+  const geminiGenApiKey = Deno.env.get('VEO_API_KEY')
 
   if (!segments || !Array.isArray(segments) || segments.length === 0) {
     return new Response(
       JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing or invalid segments array' } }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
-
-  // Check API keys - need at least one provider available
-  if (!openaiApiKey && !hfApiKey) {
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'No image generation API keys configured' } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 
@@ -556,6 +595,61 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   console.log(`[LEGACY] Starting generation for ${segments.length} segments`)
   console.log(`[LEGACY] Provider mode: ${defaultProvider}, Style: ${style}, Aspect: ${aspectRatio}`)
 
+  // Helper function to generate image with a specific provider (with fallback)
+  const generateWithProviderAndFallback = async (
+    primaryProvider: ImageModelKey,
+    fallbackProvider: ImageModelKey,
+    prompt: string,
+    refImage?: string
+  ): Promise<{ imageUrl: string | null; usedProvider: string; error: string | null }> => {
+    
+    const tryProvider = async (providerKey: ImageModelKey): Promise<string> => {
+      const config = IMAGE_MODELS[providerKey]
+      if (!config) throw new Error(`Unknown provider: ${providerKey}`)
+      
+      console.log(`[LEGACY] Trying provider: ${providerKey}`)
+      
+      if (config.provider === 'openai') {
+        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
+        if (providerKey === 'dall-e-3') {
+          return await generateWithDalle(openaiApiKey, prompt, aspectRatio, supabase)
+        } else {
+          return await generateWithGptImage1(openaiApiKey, prompt, aspectRatio, supabase, refImage)
+        }
+      } else if (config.provider === 'geminigen') {
+        if (!geminiGenApiKey) throw new Error('VEO_API_KEY (GeminiGen) not configured')
+        return await generateWithGeminiGen(geminiGenApiKey, prompt, aspectRatio, providerKey, supabase, refImage)
+      } else if (config.provider === 'huggingface') {
+        if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
+        return await generateWithFlux(hfApiKey, prompt, aspectRatio, supabase)
+      }
+      throw new Error(`Unsupported provider: ${config.provider}`)
+    }
+    
+    // Try PRIMARY first
+    try {
+      const imageUrl = await tryProvider(primaryProvider)
+      return { imageUrl, usedProvider: primaryProvider, error: null }
+    } catch (primaryErr) {
+      const primaryError = primaryErr instanceof Error ? primaryErr.message : 'Unknown error'
+      console.warn(`[LEGACY] ⚠️ Primary (${primaryProvider}) failed: ${primaryError}`)
+      
+      // Try FALLBACK
+      if (fallbackProvider && fallbackProvider !== primaryProvider) {
+        try {
+          const imageUrl = await tryProvider(fallbackProvider)
+          console.log(`[LEGACY] ✅ Fallback (${fallbackProvider}) succeeded`)
+          return { imageUrl, usedProvider: fallbackProvider, error: null }
+        } catch (fallbackErr) {
+          const fallbackError = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error'
+          console.error(`[LEGACY] ❌ Fallback (${fallbackProvider}) also failed: ${fallbackError}`)
+          return { imageUrl: null, usedProvider: primaryProvider, error: `Primary: ${primaryError} | Fallback: ${fallbackError}` }
+        }
+      }
+      return { imageUrl: null, usedProvider: primaryProvider, error: primaryError }
+    }
+  }
+
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i]
     const segmentType = segment.segment_type || segment.type || `segment_${i}`
@@ -563,24 +657,23 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
     const emotion = segment.emotion || 'authority'
     
     // Determine if this is a CREATOR shot (has face)
-    const isCreatorShot = shotType === 'CREATOR'
+    const isCreatorShot = shotType === 'CREATOR' || 
+      ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
-    // HYBRID PROVIDER LOGIC (Cost-optimized):
-    // - HOOK/CTA (CREATOR): Nano Banana (FREE) → GPT-Image-1 (face fallback)
-    // - B-ROLL: FLUX (FREE) → Nano Banana (fallback)
-    let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
+    // ========================================================================
+    // PROVIDER SELECTION (2026 - Cost Optimized)
+    // Nano Banana PRIMARY for ALL → fallback based on shot type
+    // ========================================================================
+    let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
+    let fallbackProvider: ImageModelKey = 'flux-schnell'
+    
     if (defaultProvider === 'auto') {
-      const selectedModel = selectImageModel({
-        needsFaceConsistency: isCreatorShot && !!(segment.character_ref_png || characterRefPng),
-        hasReferenceImage: !!(segment.character_ref_png || characterRefPng),
-        preferFree: true, // Always prefer FREE first
-        isCreatorShot
-      })
-      segmentProvider = selectedModel.key as ImageModelKey
+      const providerChoice = selectImageProvider(isCreatorShot)
+      primaryProvider = providerChoice.primary
+      fallbackProvider = providerChoice.fallback
     }
     
-    const providerConfig = IMAGE_MODELS[segmentProvider]
-    
+    // Build the CINEMATIC image prompt (uses full knowledge tables)
     const imagePrompt = buildCinematicPrompt({
       segment,
       style,
@@ -591,67 +684,32 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       emotion
     })
     
-    console.log(`[${segmentProvider.toUpperCase()}] Generating ${i + 1}/${segments.length}: ${segmentType} (${shotType}) ${isCreatorShot ? '[CREATOR]' : '[B-ROLL]'}`)
+    // Reference image for CREATOR shots only
+    const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng || undefined) : undefined
+    
+    console.log(`[LEGACY] ${i + 1}/${segments.length}: ${segmentType} (${shotType}) → ${primaryProvider} (fallback: ${fallbackProvider})`)
 
-    try {
-      let imageUrl: string | null = null
-      const geminiGenApiKey = Deno.env.get('VEO_API_KEY')
+    // Generate with automatic fallback
+    const result = await generateWithProviderAndFallback(primaryProvider, fallbackProvider, imagePrompt, refImage)
+    
+    const providerConfig = IMAGE_MODELS[result.usedProvider as ImageModelKey]
+    const providerString = providerConfig?.displayName || result.usedProvider
+    
+    images.push({
+      segment_number: segment.segment_number,
+      segment_type: segmentType,
+      shot_type: shotType,
+      emotion: emotion,
+      prompt: imagePrompt,
+      image_url: result.imageUrl,
+      provider: providerString,
+      error: result.error
+    })
 
-      // ========================================================================
-      // GENERATE IMAGE USING CENTRALIZED CONFIG
-      // ========================================================================
-      if (providerConfig?.provider === 'openai') {
-        if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
-        if (segmentProvider === 'dall-e-3') {
-          imageUrl = await generateWithDalle(openaiApiKey, imagePrompt, aspectRatio, supabase)
-        } else {
-          // gpt-image-1 with optional reference
-          const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng) : undefined
-          imageUrl = await generateWithGptImage1(openaiApiKey, imagePrompt, aspectRatio, supabase, refImage || undefined)
-        }
-      } else if (providerConfig?.provider === 'geminigen') {
-        if (!geminiGenApiKey) throw new Error('VEO_API_KEY (GeminiGen) not configured')
-        // Nano Banana / Imagen models
-        const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng) : undefined
-        imageUrl = await generateWithGeminiGen(geminiGenApiKey, imagePrompt, aspectRatio, segmentProvider, supabase, refImage || undefined)
-      } else {
-        if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
-        imageUrl = await generateWithFlux(hfApiKey, imagePrompt, aspectRatio, supabase)
-      }
-
-      // Determine provider string for response (using config displayName)
-      const providerString = providerConfig?.displayName || segmentProvider
-
-      images.push({
-        segment_number: segment.segment_number,
-        segment_type: segmentType,
-        shot_type: shotType,
-        emotion: emotion,
-        prompt: imagePrompt,
-        image_url: imageUrl,
-        provider: providerString,
-        error: null
-      })
-
-      console.log(`[${segmentProvider.toUpperCase()}] ✅ Success: ${segmentType}`)
-
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      console.error(`[${segmentProvider.toUpperCase()}] ❌ Failed: ${errorMessage}`)
-      
-      // Use provider displayName for error response
-      const errorProviderString = providerConfig?.displayName || segmentProvider
-
-      images.push({
-        segment_number: segment.segment_number,
-        segment_type: segmentType,
-        shot_type: shotType,
-        emotion: emotion,
-        prompt: imagePrompt,
-        image_url: null,
-        provider: errorProviderString,
-        error: errorMessage
-      })
+    if (result.imageUrl) {
+      console.log(`[LEGACY] ✅ Success: ${segmentType} via ${result.usedProvider}`)
+    } else {
+      console.error(`[LEGACY] ❌ Failed: ${segmentType} - ${result.error}`)
     }
 
     if (i < segments.length - 1) {
@@ -671,7 +729,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
           success: successCount, 
           failed: images.length - successCount 
         },
-        provider_mode: defaultProvider, // 'auto' = hybrid mode
+        provider_mode: defaultProvider, // 'auto' = Nano Banana primary
         metadata: { topic, costume, aspectRatio, style }
       } 
     }),
@@ -768,75 +826,46 @@ function buildCinematicPrompt(params: PromptParams): string {
     'ECU': 'ECU'
   }
   
-  // Get shot type from content defaults or use MCU as fallback
+  // Get shot type from content defaults or use CU for hooks, MS for B-roll
   const contentDefaults = CONTENT_TYPE_DEFAULTS[segmentType.toLowerCase()] || CONTENT_TYPE_DEFAULTS.hook
-  const mappedShotType = shotTypeMapping[contentDefaults.shot.split(' ')[0]] || 'MCU'
-  
-  // Style modifiers for additional enhancement
-  const styleModifiers: Record<string, string> = {
-    cinematic: 'Shot on ARRI Alexa, cinematic photorealistic, Hollywood production value',
-    realistic: 'Documentary style, natural authentic, high detail photorealistic',
-    animated: 'Digital illustration, vibrant stylized, modern graphic design',
-    '3d': '3D render, Octane render, professional studio lighting, hyperrealistic'
-  }
-  const styleGuide = styleModifiers[style] || styleModifiers.cinematic
+  const defaultShot = ['HOOK', 'CTA', 'LOOP-END'].includes(segmentType.toUpperCase()) ? 'CU' : 'MS'
+  const mappedShotType = shotTypeMapping[contentDefaults.shot.split(' ')[0]] || defaultShot
 
   // CREATOR SHOT - Use buildCreatorPrompt from knowledge file
   if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())) {
-    // Note: Face consistency is handled by GPT-Image-1 Edit API with character_ref_png
-    // character_description is optional text fallback for prompt context
     const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
     
-    // Use knowledge file function for creator prompt
+    // Use knowledge file function for creator prompt WITH segmentType
     const basePrompt = buildCreatorPrompt({
       characterDescription: charDesc,
       emotion: emotion,
       topic: topic,
       shotType: mappedShotType,
-      aspectRatio: aspectRatio
+      aspectRatio: aspectRatio,
+      segmentType: segmentType.toUpperCase() // Pass segment type for composition
     })
     
-    // Enhance with costume and style
-    const costumeEnhancement = costume ? `\n\nWARDROBE OVERRIDE:\nOutfit: ${costume}\nGrooming: Professional, camera-ready` : ''
-    const styleEnhancement = `\n\nPRODUCTION STYLE:\n${styleGuide}`
+    // Add costume override if provided
+    const costumeOverride = costume && costume !== TOPIC_COSTUME_MAP.default 
+      ? `\n\nWARDROBE OVERRIDE: ${costume}` 
+      : ''
     
-    // ========================================================================
-    // CHARACTER IDENTITY ANCHOR (Prompt guidance - actual face from reference image)
-    // ========================================================================
-    const segmentUpperCase = segmentType.toUpperCase()
-    const isCreatorFaceSegment = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentUpperCase)
-    
-    let characterAnchor = ''
-    if (isCreatorFaceSegment) {
-      characterAnchor = `\n\n` +
-        `══════════════════════════════════════════════════════════════\n` +
-        `SEGMENT: ${segmentUpperCase}\n` +
-        `══════════════════════════════════════════════════════════════\n` +
-        `${segmentUpperCase === 'HOOK' ? 'Opening shot - establish character identity clearly' : ''}` +
-        `${segmentUpperCase === 'CTA' ? 'Closing shot - maintain character consistency from HOOK' : ''}` +
-        `${segmentUpperCase === 'LOOP-END' ? 'Loop transition - seamless match to HOOK frame' : ''}` +
-        `${segmentUpperCase === 'ENDING_CTA' ? 'Final CTA - maintain full character consistency' : ''}\n` +
-        `══════════════════════════════════════════════════════════════`
-    }
-    
-    return basePrompt + costumeEnhancement + styleEnhancement + characterAnchor
+    return basePrompt + costumeOverride
   }
   
-  // B-ROLL SHOT - Use buildBrollPrompt from knowledge file
-  const visual = visualDirection || `Professional ${topic} concept visualization`
+  // B-ROLL SHOT - Use buildBrollPrompt from knowledge file WITH segmentType
+  const visual = visualDirection || `Professional ${topic} concept visualization - striking cinematic imagery`
   
   const basePrompt = buildBrollPrompt({
     visualDirection: visual,
     topic: topic,
     emotion: emotion,
     shotType: mappedShotType,
-    aspectRatio: aspectRatio
+    aspectRatio: aspectRatio,
+    segmentType: segmentType.toUpperCase() // Pass segment type for visual approach
   })
   
-  // Enhance with style
-  const styleEnhancement = `\n\nPRODUCTION STYLE:\n${styleGuide}`
-  
-  return basePrompt + styleEnhancement
+  return basePrompt
 }
 
 // ============================================================================

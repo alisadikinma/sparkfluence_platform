@@ -703,7 +703,8 @@ export function getContentTypeDefaults(contentType: string): {
 }
 
 /**
- * Build complete image prompt for creator shot
+ * Build complete CINEMATIC image prompt for creator shot
+ * Uses FULL knowledge tables for Hollywood-grade output
  */
 export function buildCreatorPrompt(params: {
   characterDescription: string;
@@ -711,42 +712,152 @@ export function buildCreatorPrompt(params: {
   topic: string;
   shotType?: string;
   aspectRatio?: '9:16' | '16:9';
+  segmentType?: string; // HOOK, CTA, etc.
 }): string {
   const {
     characterDescription,
     emotion,
     topic,
-    shotType = 'MCU',
-    aspectRatio = '9:16'
+    shotType = 'CU',
+    aspectRatio = '9:16',
+    segmentType = 'HOOK'
   } = params;
   
   const emotionMap = getEmotionMapping(emotion);
   const costume = getCostumeForTopic(topic);
-  const shotInfo = SHOT_TYPES[shotType] || SHOT_TYPES.MCU;
+  const shotInfo = SHOT_TYPES[shotType] || SHOT_TYPES.CU;
   const resolution = aspectRatio === '9:16' ? '1024x1792' : '1792x1024';
   const orientation = aspectRatio === '9:16' ? 'Portrait' : 'Landscape';
   
-  return `A photorealistic cinematic ${shotInfo.promptPhrase} of ${characterDescription}.
+  // ========================================================================
+  // CINEMATIC ENHANCEMENT - Select film stock & color grade based on emotion
+  // ========================================================================
+  const filmStockMap: Record<string, { stock: string; grade: string }> = {
+    shock: { stock: 'Kodak Vision3 500T tungsten', grade: 'high contrast, desaturated, bleach bypass look' },
+    intrigue: { stock: 'CineStill 800T halation', grade: 'moody teal shadows, warm highlights' },
+    curiosity: { stock: 'Kodak Portra 400 warm skin tones', grade: 'natural warmth, lifted shadows' },
+    tension: { stock: 'Kodak Vision3 500T', grade: 'bleach bypass, crushed blacks, cold midtones' },
+    awe: { stock: 'Kodak Portra 400', grade: 'golden hour warmth, soft contrast' },
+    authority: { stock: 'Kodak Vision3 500T tungsten', grade: 'rich cinematic, teal-orange complementary' },
+    excitement: { stock: 'Kodak Ektar vivid saturated', grade: 'punchy contrast, vibrant colors' },
+    determination: { stock: 'Kodak Vision3 500T', grade: 'strong contrast, desaturated, powerful' },
+    hope: { stock: 'Kodak Portra 400', grade: 'warm golden tones, soft lifted blacks' },
+    urgency: { stock: 'CineStill 800T', grade: 'high contrast, cool shadows, warm highlights' }
+  };
+  const emotionKey = (emotion || 'authority').toLowerCase();
+  const filmChoice = filmStockMap[emotionKey] || filmStockMap.authority;
+  
+  // ========================================================================
+  // LIGHTING ENHANCEMENT - Detailed setup based on emotion
+  // ========================================================================
+  const lightingSetupMap: Record<string, string> = {
+    shock: 'Hard Rembrandt lighting from camera-left at 45°, 8:1 contrast ratio, minimal fill, deep shadows carving the face',
+    intrigue: 'Low-key lighting, single strong rim light from behind, mysterious shadows obscuring half the face',
+    curiosity: 'Soft butterfly lighting from above with gentle fill, 4:1 ratio, catchlights in eyes, inviting warmth',
+    tension: 'Split lighting from hard side source, half face in complete shadow, 8:1 ratio, chiaroscuro drama',
+    awe: 'Rim lighting with volumetric rays from behind, soft key fill, ethereal glow, 3:1 gentle contrast',
+    authority: 'Classic Rembrandt from 45° camera-left, defined triangle shadow on cheek, 4:1 ratio, professional warmth 3200K',
+    excitement: 'High-key vibrant lighting, strong key with bounced fill, energetic catchlights, 2:1 open ratio',
+    determination: 'Low angle key light emphasizing jaw, minimal fill, heroic shadows, 6:1 dramatic ratio',
+    hope: 'Soft golden hour wrap-around light, warm practical glow, gentle 3:1 ratio, lifted shadows',
+    urgency: 'Hard dramatic key with cool rim separation, 6:1 contrast, tension in shadows'
+  };
+  const lightingSetup = lightingSetupMap[emotionKey] || lightingSetupMap.authority;
+  
+  // ========================================================================
+  // ATMOSPHERE ENHANCEMENT - Based on segment type and emotion
+  // ========================================================================
+  const atmosphereMap: Record<string, string> = {
+    shock: 'heavy atmospheric haze catching harsh light beams, dust particles suspended in air',
+    intrigue: 'thick mysterious fog rolling at floor level, volumetric light shafts',
+    curiosity: 'subtle golden dust particles floating in warm light, clean background',
+    tension: 'smoky noir atmosphere, hard light cutting through haze, oppressive mood',
+    awe: 'ethereal volumetric god rays streaming through, magical floating particles',
+    authority: 'professional studio atmosphere with subtle haze for depth, clean production',
+    excitement: 'dynamic energy, slight motion blur suggestion, vibrant clean air',
+    determination: 'subtle smoke wisps, dramatic atmosphere, powerful presence',
+    hope: 'warm golden hour particles, soft diffused atmosphere, uplifting glow',
+    urgency: 'atmospheric tension, slight haze, dramatic shadows'
+  };
+  const atmosphere = atmosphereMap[emotionKey] || atmosphereMap.authority;
+  
+  // ========================================================================
+  // COMPOSITION ENHANCEMENT
+  // ========================================================================
+  const compositionMap: Record<string, string> = {
+    HOOK: 'Subject positioned using golden ratio, slightly off-center left, negative space right for visual breathing room, direct eye contact with lens',
+    CTA: 'Centered composition for intimacy, close framing, direct engagement with viewer, warm inviting space',
+    ENDING_CTA: 'Centered composition for intimacy, close framing, direct engagement with viewer, warm inviting space',
+    'LOOP-END': 'Match exact HOOK composition for seamless loop, identical framing and positioning'
+  };
+  const segmentKey = (segmentType || 'HOOK').toUpperCase();
+  const composition = compositionMap[segmentKey] || compositionMap.HOOK;
+  
+  return `[DALL-E 3 — CINEMATIC CREATOR SHOT]
 
-Expression: ${emotionMap.facial}
-Body language: ${emotionMap.body}
-Wardrobe: ${costume}
+A stunning photorealistic cinematic ${shotInfo.promptPhrase} of ${characterDescription}.
 
-Camera: ${shotInfo.frame}, ${shotInfo.lens}, eye-level
-Composition: rule of thirds, subject slightly off-center
+══════════════════════════════════════════════════════════════
+PERFORMANCE DIRECTION
+══════════════════════════════════════════════════════════════
+Facial Expression: ${emotionMap.facial}
+Body Language: ${emotionMap.body}
+Energy: ${emotionKey.charAt(0).toUpperCase() + emotionKey.slice(1)} - commanding presence
+Eye Contact: Direct to camera lens, piercing connection with viewer
 
-Lighting: ${emotionMap.lighting}
-Color: Kodak Vision3 500T, cinematic grade
-Atmosphere: light atmospheric haze
+══════════════════════════════════════════════════════════════
+WARDROBE & STYLING
+══════════════════════════════════════════════════════════════
+Costume: ${costume}
+Grooming: Impeccable, camera-ready, professional finish
+Accessories: Contextually appropriate for ${topic}
 
-Style: Shot on ARRI Alexa, cinematic photorealistic, natural skin texture, Hollywood production value.
+══════════════════════════════════════════════════════════════
+CINEMATOGRAPHY
+══════════════════════════════════════════════════════════════
+Shot Type: ${shotInfo.frame}
+Lens: ${shotInfo.lens}, creating beautiful bokeh separation
+Camera Angle: Eye-level for equal engagement, slight hero angle
+Composition: ${composition}
+Depth of Field: Shallow, subject razor-sharp, background creamy blur
 
-Technical: ${orientation} orientation (${resolution}), HD quality.
-Clean frame, sharp focus, no text overlays, no watermarks.`;
+══════════════════════════════════════════════════════════════
+LIGHTING DESIGN
+══════════════════════════════════════════════════════════════
+${lightingSetup}
+Color Temperature: 3200K warm tungsten key, balanced fill
+Catchlights: Visible in both eyes, positioned at 10 o'clock
+Skin Rendering: Natural texture with visible pores, not plastic
+
+══════════════════════════════════════════════════════════════
+COLOR SCIENCE
+══════════════════════════════════════════════════════════════
+Film Stock: ${filmChoice.stock}
+Color Grade: ${filmChoice.grade}
+Skin Tones: True-to-life, warm undertones, healthy glow
+Contrast: Cinematic S-curve, rich blacks, clean highlights
+
+══════════════════════════════════════════════════════════════
+ATMOSPHERE & ENVIRONMENT
+══════════════════════════════════════════════════════════════
+${atmosphere}
+Background: Professional studio with deep bokeh, contextual to ${topic}
+Production Value: Hollywood A-list quality, premium finish
+
+══════════════════════════════════════════════════════════════
+TECHNICAL SPECIFICATIONS
+══════════════════════════════════════════════════════════════
+Camera: ARRI Alexa 65, anamorphic characteristics
+Format: ${orientation} ${resolution}
+Quality: HD, crystal-clear sharp focus on subject
+Frame: Clean, no text overlays, no watermarks, no distractions
+
+DELIVER: A frame worthy of a Hollywood movie poster.`;
 }
 
 /**
- * Build complete image prompt for B-roll shot
+ * Build complete CINEMATIC B-roll image prompt
+ * Uses FULL knowledge tables for Hollywood-grade visual storytelling
  */
 export function buildBrollPrompt(params: {
   visualDirection: string;
@@ -754,40 +865,182 @@ export function buildBrollPrompt(params: {
   emotion?: string;
   shotType?: string;
   aspectRatio?: '9:16' | '16:9';
+  segmentType?: string; // BODY, FORE, PEAK, etc.
 }): string {
   const {
     visualDirection,
     topic,
-    emotion = 'neutral',
+    emotion = 'authority',
     shotType = 'MS',
-    aspectRatio = '9:16'
+    aspectRatio = '9:16',
+    segmentType = 'BODY'
   } = params;
   
-  const emotionMap = getEmotionMapping(emotion);
   const shotInfo = SHOT_TYPES[shotType] || SHOT_TYPES.MS;
   const resolution = aspectRatio === '9:16' ? '1024x1792' : '1792x1024';
   const orientation = aspectRatio === '9:16' ? 'Portrait' : 'Landscape';
   
-  return `A photorealistic cinematic ${shotInfo.promptPhrase} of ${visualDirection}.
-Topic context: ${topic}
+  // ========================================================================
+  // CINEMATIC B-ROLL ENHANCEMENT - Based on emotion/mood
+  // ========================================================================
+  const brollMoodMap: Record<string, {
+    filmStock: string;
+    colorGrade: string;
+    lighting: string;
+    atmosphere: string;
+    visualStyle: string;
+  }> = {
+    shock: {
+      filmStock: 'Kodak Vision3 500T',
+      colorGrade: 'high contrast, desaturated, cold teal shadows with harsh highlights',
+      lighting: 'Hard dramatic side lighting, deep shadows, 8:1 contrast ratio, stark pools of light',
+      atmosphere: 'Heavy atmospheric haze with dust particles catching harsh light beams',
+      visualStyle: 'Jarring visual impact, uncomfortable beauty, tension in every element'
+    },
+    intrigue: {
+      filmStock: 'CineStill 800T halation glow',
+      colorGrade: 'moody teal-cyan shadows, warm amber highlights, mysterious color separation',
+      lighting: 'Low-key noir lighting, single source creating long shadows, 6:1 mysterious contrast',
+      atmosphere: 'Thick fog rolling through scene, volumetric light shafts piercing darkness',
+      visualStyle: 'Mysterious and alluring, hidden details in shadows, visual secrets'
+    },
+    curiosity: {
+      filmStock: 'Kodak Portra 400 natural warmth',
+      colorGrade: 'warm inviting tones, lifted shadows, natural color science',
+      lighting: 'Soft diffused key light, gentle wrap-around fill, 3:1 inviting ratio',
+      atmosphere: 'Golden dust particles floating in warm light, clean inviting space',
+      visualStyle: 'Welcoming and engaging, draws viewer in, discovery feeling'
+    },
+    tension: {
+      filmStock: 'Kodak Vision3 500T bleach bypass',
+      colorGrade: 'crushed blacks, desaturated midtones, cold clinical feel',
+      lighting: 'Split lighting with hard edges, chiaroscuro drama, 8:1+ extreme contrast',
+      atmosphere: 'Smoky noir atmosphere, oppressive shadows, claustrophobic feeling',
+      visualStyle: 'Uncomfortable pressure, visual weight, impending confrontation'
+    },
+    awe: {
+      filmStock: 'Kodak Portra 400 with golden warmth',
+      colorGrade: 'ethereal golden tones, soft lifted blacks, heavenly glow',
+      lighting: 'Rim lighting with volumetric god rays, soft ethereal fill, magical 3:1',
+      atmosphere: 'Ethereal volumetric rays streaming through, magical floating particles',
+      visualStyle: 'Breathtaking wonder, scale and majesty, transcendent beauty'
+    },
+    authority: {
+      filmStock: 'Kodak Vision3 500T tungsten',
+      colorGrade: 'rich cinematic teal-orange complementary, confident color palette',
+      lighting: 'Professional Rembrandt setup, defined shadows, 4:1 authoritative contrast',
+      atmosphere: 'Clean professional atmosphere with subtle depth haze',
+      visualStyle: 'Commanding presence, premium production, confident visual statement'
+    },
+    excitement: {
+      filmStock: 'Kodak Ektar 100 vivid saturation',
+      colorGrade: 'punchy vibrant colors, dynamic contrast, energetic palette',
+      lighting: 'High-key energetic lighting, multiple sources, 2:1 open vibrant ratio',
+      atmosphere: 'Clean dynamic air, sense of motion and energy',
+      visualStyle: 'Dynamic and alive, visual excitement, celebration of subject'
+    },
+    resolution: {
+      filmStock: 'Kodak Portra 400 balanced',
+      colorGrade: 'satisfying warm tones, resolved contrast, complete feeling',
+      lighting: 'Balanced 3-point lighting, warm key, gentle fill, 3:1 satisfying ratio',
+      atmosphere: 'Clear resolved atmosphere, sense of completion',
+      visualStyle: 'Conclusive and satisfying, visual resolution, answered questions'
+    },
+    hope: {
+      filmStock: 'Kodak Portra 400 golden warmth',
+      colorGrade: 'warm golden hour tones, soft lifted blacks, optimistic glow',
+      lighting: 'Golden hour wrap-around warmth, soft diffused glow, 3:1 uplifting ratio',
+      atmosphere: 'Warm golden particles, soft diffused light, uplifting feeling',
+      visualStyle: 'Optimistic and uplifting, new beginnings, visual promise'
+    },
+    urgency: {
+      filmStock: 'CineStill 800T high contrast',
+      colorGrade: 'high contrast, cool shadows with warm urgent highlights',
+      lighting: 'Hard dramatic key, cool rim separation, 6:1 urgent contrast',
+      atmosphere: 'Tense atmospheric haze, dynamic light quality',
+      visualStyle: 'Pressing importance, visual urgency, immediate attention'
+    }
+  };
+  const emotionKey = (emotion || 'authority').toLowerCase();
+  const moodSetup = brollMoodMap[emotionKey] || brollMoodMap.authority;
+  
+  // ========================================================================
+  // SEGMENT-SPECIFIC VISUAL APPROACH
+  // ========================================================================
+  const segmentApproachMap: Record<string, string> = {
+    FORE: 'FORESHADOWING: Teasing visual that hints without revealing. Create anticipation through partial views, silhouettes, or mysterious angles. The viewer should sense something important is coming.',
+    FORESHADOW: 'FORESHADOWING: Teasing visual that hints without revealing. Create anticipation through partial views, silhouettes, or mysterious angles. The viewer should sense something important is coming.',
+    BODY: 'SUPPORTING VISUAL: Strong visual storytelling that illustrates the concept. Clear, impactful imagery that reinforces the narrative without distraction.',
+    'BODY-1': 'FIRST KEY POINT: Visual evidence for the first main argument. Concrete, tangible imagery that proves the point being made.',
+    'BODY-2': 'SECOND KEY POINT: Visual continuation that builds on previous. Complementary imagery that advances the story.',
+    'BODY-3': 'THIRD KEY POINT: Visual escalation toward climax. Increasing intensity and importance in the imagery.',
+    PEAK: 'CLIMACTIC REVEAL: Maximum visual impact moment. This is the most striking, memorable frame. Hero shot that demands attention.',
+    TWIST: 'REVELATION MOMENT: The visual that changes everything. Surprising angle or unexpected element that reframes understanding.',
+    ENDING: 'RESOLUTION VISUAL: Satisfying conclusion imagery. Complete, resolved feeling that provides closure.'
+  };
+  const segmentKey = (segmentType || 'BODY').toUpperCase();
+  const segmentApproach = segmentApproachMap[segmentKey] || segmentApproachMap.BODY;
+  
+  return `[DALL-E 3 — CINEMATIC B-ROLL]
 
-Camera: ${shotInfo.frame}, ${shotInfo.lens}, eye-level
-Composition: rule of thirds, balanced frame
+${segmentApproach}
 
-Lighting: ${emotionMap.lighting}
-Color: Kodak Vision3 500T, cinematic grade
-Atmosphere: atmospheric depth
+══════════════════════════════════════════════════════════════
+VISUAL SUBJECT
+══════════════════════════════════════════════════════════════
+A stunning photorealistic cinematic ${shotInfo.promptPhrase} of:
+${visualDirection}
 
-Style: Cinematic, Hollywood production value, professional photography.
+Topic Context: ${topic}
+Visual Mood: ${emotionKey.charAt(0).toUpperCase() + emotionKey.slice(1)}
 
-Technical: ${orientation} orientation (${resolution}), HD quality.
-Clean frame, sharp focus, pure product/concept visualization.
+══════════════════════════════════════════════════════════════
+CINEMATOGRAPHY
+══════════════════════════════════════════════════════════════
+Shot Type: ${shotInfo.frame}
+Lens: ${shotInfo.lens}, creating cinematic depth
+Camera Angle: Dramatic angle that enhances the subject's importance
+Composition: Rule of thirds with strong visual weight, leading lines to subject
+Depth of Field: Selective focus drawing eye to key element
 
-IMPORTANT - VISUAL FOCUS:
-- Empty scene with ONLY objects, products, or environments
-- Isolated subject matter, uninhabited spaces
-- Pure concept visualization without people
-- Focus entirely on topic elements, textures, and atmosphere`;
+══════════════════════════════════════════════════════════════
+LIGHTING DESIGN
+══════════════════════════════════════════════════════════════
+${moodSetup.lighting}
+Light Quality: Motivated, cinematic, purposeful shadows
+Specular Highlights: Controlled, adding dimension and texture
+
+══════════════════════════════════════════════════════════════
+COLOR SCIENCE
+══════════════════════════════════════════════════════════════
+Film Stock: ${moodSetup.filmStock}
+Color Grade: ${moodSetup.colorGrade}
+Contrast: Cinematic S-curve, rich shadows, controlled highlights
+Color Harmony: Intentional palette supporting the ${emotionKey} mood
+
+══════════════════════════════════════════════════════════════
+ATMOSPHERE & ENVIRONMENT
+══════════════════════════════════════════════════════════════
+${moodSetup.atmosphere}
+Environmental Context: ${topic}-relevant setting with production design
+Production Value: Hollywood blockbuster quality, premium finish
+
+══════════════════════════════════════════════════════════════
+VISUAL STYLE DIRECTIVE
+══════════════════════════════════════════════════════════════
+${moodSetup.visualStyle}
+
+══════════════════════════════════════════════════════════════
+TECHNICAL SPECIFICATIONS
+══════════════════════════════════════════════════════════════
+Camera: ARRI Alexa 65 or RED V-Raptor, cinema-grade
+Format: ${orientation} ${resolution}
+Quality: HD, tack-sharp where intended, beautiful bokeh elsewhere
+Frame: Clean, uninhabited by humans, pure visual storytelling
+
+CRITICAL: NO HUMAN FACES OR PEOPLE. Pure object/concept/environment visualization.
+
+DELIVER: A frame that could be a movie still or museum-quality photograph.`;
 }
 
 /**
