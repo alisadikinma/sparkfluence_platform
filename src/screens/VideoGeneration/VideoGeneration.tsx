@@ -271,6 +271,85 @@ export const VideoGeneration = (): JSX.Element => {
     minutes: language === 'id' ? 'menit' : 'minutes',
   };
 
+  // AUTO-SYNC from database after component loads
+  // This runs AFTER initial render to ensure video URLs are synced from DB
+  useEffect(() => {
+    if (!isLoaded || !sessionId || !user) return;
+    
+    const autoSyncFromDB = async () => {
+      console.log('[AUTO-SYNC] 🔄 Running auto-sync after load...');
+      console.log('[AUTO-SYNC] sessionId:', sessionId);
+      
+      try {
+        const { data: jobs, error } = await supabase
+          .from('video_generation_jobs')
+          .select('*')
+          .eq('session_id', sessionId)
+          .eq('user_id', user.id)
+          .order('segment_number', { ascending: true });
+        
+        if (error) {
+          console.error('[AUTO-SYNC] DB error:', error);
+          return;
+        }
+        
+        if (!jobs || jobs.length === 0) {
+          console.log('[AUTO-SYNC] No jobs found');
+          return;
+        }
+        
+        console.log('[AUTO-SYNC] Found', jobs.length, 'jobs');
+        jobs.forEach((j, i) => {
+          console.log(`[AUTO-SYNC] Job ${i+1}: seg#${j.segment_number}, status=${j.status}, video=${j.video_url ? 'YES' : 'NO'}`);
+        });
+        
+        // Force update segments with DB data
+        setSegments(prev => {
+          const updated = prev.map((seg, index) => {
+            const segmentNumber = index + 1;
+            const job = jobs.find(j => j.segment_number === segmentNumber);
+            
+            if (job && job.video_url && !seg.videoUrl) {
+              console.log(`[AUTO-SYNC] ✅ Updating segment ${segmentNumber} with video URL`);
+              return {
+                ...seg,
+                jobId: job.id,
+                veoUuid: job.veo_uuid,
+                videoUrl: job.video_url,
+                videoError: job.status === 3 ? job.error_message : null,
+                isGeneratingVideo: job.status === 1
+              };
+            } else if (job) {
+              // Still update other fields even if video exists
+              return {
+                ...seg,
+                jobId: job.id,
+                veoUuid: job.veo_uuid || seg.veoUuid,
+                videoUrl: job.video_url || seg.videoUrl,
+                videoError: job.status === 3 ? job.error_message : null,
+                isGeneratingVideo: job.status === 1
+              };
+            }
+            return seg;
+          });
+          
+          // Log final state
+          const withVideo = updated.filter(s => s.videoUrl).length;
+          console.log(`[AUTO-SYNC] Result: ${withVideo}/${updated.length} segments have video`);
+          
+          return updated;
+        });
+        
+      } catch (err) {
+        console.error('[AUTO-SYNC] Error:', err);
+      }
+    };
+    
+    // Small delay to ensure state is settled
+    const timer = setTimeout(autoSyncFromDB, 300);
+    return () => clearTimeout(timer);
+  }, [isLoaded, sessionId, user]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
