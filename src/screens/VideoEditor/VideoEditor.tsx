@@ -34,7 +34,7 @@ interface VideoSettings {
   aspectRatio: '9:16' | '16:9';
   resolution: '720p' | '1080p';
   language?: string;
-  model?: 'auto' | 'sora2' | 'veo31';
+  model?: 'sora2';
 }
 
 interface ImageJob {
