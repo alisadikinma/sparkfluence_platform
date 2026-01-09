@@ -75,14 +75,14 @@ function selectImageProvider(isCreatorShot: boolean): ProviderSelection {
   if (isCreatorShot) {
     // HOOK/CTA segments - need face consistency
     return {
-      primary: 'nano-banana-pro',
-      fallback: 'gpt-image-1'
+      primary: 'imagen-pro',      // Nano Banana Pro (FREE via GeminiGen)
+      fallback: 'gpt-image-1'     // OpenAI fallback for face consistency
     }
   } else {
     // B-ROLL segments - no face needed
     return {
-      primary: 'nano-banana-pro', 
-      fallback: 'flux-schnell'
+      primary: 'imagen-pro',      // Nano Banana Pro (FREE via GeminiGen)
+      fallback: 'flux-schnell'    // HuggingFace FLUX fallback
     }
   }
 }
