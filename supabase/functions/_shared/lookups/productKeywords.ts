@@ -156,6 +156,42 @@ const MODEL_PATTERNS: RegExp[] = [
   
   // Crypto wallets: Ledger Nano X, Trezor Model T
   /(?:ledger\s*nano|trezor\s*model)\s*[a-z]/gi,
+  
+  // ========================================================================
+  // STANDALONE MODEL PATTERNS (without brand prefix)
+  // These catch "M4 Pro", "X5 Pro", "GT Neo" etc. WITHOUT brand
+  // ========================================================================
+  // Pattern: Letter + Number + Pro/Ultra/Max/Plus (e.g., M4 Pro, X5 Pro, F5 Pro)
+  /\b[A-Z]\d+\s*(pro|ultra|max|plus|lite)\b/gi,
+  
+  // Pattern: GT/ROG/Find/Reno + optional Neo + Number (e.g., GT 5, GT Neo 5, Find X7)
+  /\b(GT|ROG|ZenFone|Find|Reno)\s*(?:Neo\s*)?\d+\s*(pro|ultra|plus)?/gi,
+  
+  // Pattern: Note + Number (e.g., Note 12, Note 13 Pro) - standalone
+  /\bNote\s*\d+\s*(pro|ultra|plus|lite)?/gi,
+];
+
+// ============================================================================
+// SMARTPHONE CONTEXT KEYWORDS
+// If these words appear, increase confidence that model is a smartphone
+// ============================================================================
+
+const SMARTPHONE_CONTEXT_KEYWORDS: string[] = [
+  // Camera specs
+  'camera', 'mp', 'megapixel', '200mp', '108mp', '50mp', '64mp', '48mp',
+  'selfie', 'ultrawide', 'telephoto', 'zoom', 'ois',
+  // Battery specs  
+  'battery', 'mah', '5000mah', '6000mah', '4500mah', 'charging', 'watt',
+  'fast charging', 'quick charge',
+  // Display specs
+  'amoled', 'oled', 'lcd', 'display', 'screen', 'refresh rate', 'hz',
+  '120hz', '90hz', 'fhd', 'qhd',
+  // Performance specs
+  'snapdragon', 'dimensity', 'mediatek', 'exynos', 'bionic', 'processor',
+  'ram', 'storage', 'gb',
+  // Phone-specific terms
+  'smartphone', 'phone', 'handphone', 'hp', 'mobile', 'unboxing', 'review',
+  'flagship', 'mid-range', 'budget phone',
 ];
 
 // ============================================================================

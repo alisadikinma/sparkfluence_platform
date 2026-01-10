@@ -29,6 +29,9 @@ import {
   enhanceAllVisuals,
   addFFmpegSpecs
 } from '../_shared/prompts/visualEnhancer.ts'
+// P0: Product Naming - Entity Check & Fix
+import { injectProductNamingRule } from '../_shared/prompts/productNamingRule.ts'
+import { checkAndFixEntities } from '../_shared/entityCheck.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -149,7 +152,9 @@ serve(async (req) => {
     const dnaStyles = use_dna_tone && creative_dna && Array.isArray(creative_dna) ? creative_dna : null
     console.log(`[Script] DNA Tone: ${use_dna_tone ? 'ENABLED' : 'disabled'}${dnaStyles ? ` (${dnaStyles.length} styles)` : ''}`)
     
-    const systemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles)
+    const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles)
+    // P0: Inject product naming rule for tech topics
+    const systemPrompt = injectProductNamingRule(baseSystemPrompt)
     const userPrompt = buildUserPrompt(
       input_type,
       content,
@@ -216,10 +221,41 @@ serve(async (req) => {
     console.log(`[LLM] Final source: ${llmSource}`)
 
     // ============================================================
+    // P0: ENTITY CHECK & FIX (Product names)
+    // ============================================================
+    
+    // Create a simple LLM wrapper for entity fix
+    const callLLMForFix = async (prompt: string): Promise<string> => {
+      const result = await callGeminiHybrid(
+        supabase,
+        [{ role: 'user', content: prompt }],
+        { model: 'gemini-2.0-flash', temperature: 0.3, maxTokens: 4096 }
+      )
+      if (result.success && result.content) {
+        return result.content
+      }
+      throw new Error(result.error || 'LLM call failed')
+    }
+    
+    // Check and fix incomplete product names (e.g., "M4 Pro" → "POCO M4 Pro")
+    const entityCheckResult = await checkAndFixEntities(generatedText, callLLMForFix)
+    
+    if (entityCheckResult.wasFixed) {
+      console.log(`[EntityCheck] Fixed ${entityCheckResult.issuesFound} incomplete product names:`)
+      entityCheckResult.issuesFixed.forEach(fix => console.log(`  - ${fix}`))
+      generatedText = entityCheckResult.script
+    }
+
+    // ============================================================
     // PARSE OUTPUT
     // ============================================================
     
     let scriptData = parseScriptOutput(generatedText, selectedDuration, content, selectedLanguage)
+    
+    // Add entity check metadata
+    if (entityCheckResult.wasFixed && scriptData.metadata) {
+      scriptData.metadata.entity_fixes = entityCheckResult.issuesFixed
+    }
 
     // Add video settings to metadata
     if (scriptData.metadata) {
