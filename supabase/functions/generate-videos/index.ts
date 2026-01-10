@@ -1806,6 +1806,24 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
     hasVoiceover ? scriptText : ''
   )
   
+  // ========================================================================
+  // NEW: Generate environment-specific motion sections for richer animation
+  // ========================================================================
+  const envCategory = detectEnvironmentCategoryForMotion(visualDesc)
+  const envMotion = ENVIRONMENT_MOTION_LIBRARY[envCategory] || ENVIRONMENT_MOTION_LIBRARY.default
+  const subjectMotions = getRandomMotionItems(envMotion.subjectMotions, 3)
+  const ambientMotions = getRandomMotionItems(envMotion.ambientMotions, 3)
+  
+  const subjectMotionSection = `SUBJECT MOTION (what specifically animates in this scene):
+- Primary: ${subjectMotions[0]}
+- Secondary: ${subjectMotions[1]}
+- Tertiary: ${subjectMotions[2] || 'subtle environmental movement'}`
+  
+  const ambientMotionSection = `AMBIENT MOTION (background atmospheric elements):
+- ${ambientMotions[0]}
+- ${ambientMotions[1]}
+- ${ambientMotions[2] || 'light quality shifts subtly'}`
+  
   // Platform-specific prompt (check if Sora model)
   const isSoraModel = platform.startsWith('sora-')
   if (isSoraModel) {
@@ -1819,23 +1837,28 @@ STARTING FRAME:
 Continue from the provided image — ${visualDesc}. ${propsLine} Visual focus on topic/subject matter. NO human face visible.
 
 CAMERA:
-${cameraMove.promptPhrase}. Stable, cinematic movement.
+${cameraMove.promptPhrase}. ${envMotion.cameraEnhancement}. Stable, cinematic movement.
 
 SETTING & LIGHTING:
 ${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
+
+${subjectMotionSection}
+
+${ambientMotionSection}
+
+PHYSICS:
+${envMotion.physicsNotes}. Single camera movement per shot.
 
 ACTION SEQUENCE:
 ${actionBeatsFormatted}
 
 ${brollAudioDirective}
 
-PHYSICS:
-Natural motion, realistic timing. Single camera movement per shot.
-
 CONTINUITY NOTES:
 - Maintain exact lighting and color grade from reference image
 - NO human face should appear - this is B-roll footage
 - Visual focus on topic/subject/product, NOT on people
+- Every frame must have visible motion - no static shots
 
 TRANSITION:
 ${getTransition(transition)}
@@ -1844,7 +1867,7 @@ OUTPUT INTENT:
 ${actualOutputIntent}
 
 EXCLUSIONS:
-No text overlays, no human faces, no people on screen, no morphing, no artifacts.`
+No text overlays, no human faces, no people on screen, no morphing, no artifacts, no static boring frames.`
   }
   
   // VEO 3.1 B-roll prompt
@@ -1858,10 +1881,17 @@ STARTING FRAME:
 Continue from the provided image — ${visualDesc}. ${propsLine} Visual focus on topic/subject matter. NO human face visible.
 
 CAMERA:
-${cameraMove.promptPhrase}. Stable tripod, cinematic movement. All key elements remain in frame.
+${cameraMove.promptPhrase}. ${envMotion.cameraEnhancement}. Stable tripod, cinematic movement. All key elements remain in frame.
 
 SETTING & LIGHTING:
 ${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment clearly visible.
+
+${subjectMotionSection}
+
+${ambientMotionSection}
+
+PHYSICS:
+${envMotion.physicsNotes}
 
 ACTION SEQUENCE:
 ${actionBeatsFormatted}
@@ -1872,6 +1902,7 @@ CONTINUITY NOTES:
 - Maintain exact lighting and color grade from reference image
 - NO human face should appear - this is B-roll footage
 - Visual focus on topic/subject/product, NOT on people
+- Every frame must have visible motion - no static shots
 
 TRANSITION:
 ${getTransition(transition)}
@@ -1880,7 +1911,222 @@ OUTPUT INTENT:
 ${actualOutputIntent}
 
 NEGATIVE:
-No blurry elements, no distortion, no artifacts, no text overlays, no human faces, no people on screen.`
+No blurry elements, no distortion, no artifacts, no text overlays, no human faces, no people on screen, no static boring frames.`
+}
+
+// ============================================================================
+// ENVIRONMENT-SPECIFIC MOTION LIBRARY (2026)
+// Concrete motion descriptions - fixes boring "zoom only" B-roll videos
+// ============================================================================
+
+interface EnvironmentMotion {
+  subjectMotions: string[]
+  ambientMotions: string[]
+  physicsNotes: string
+  cameraEnhancement: string
+}
+
+const ENVIRONMENT_MOTION_LIBRARY: Record<string, EnvironmentMotion> = {
+  tech: {
+    subjectMotions: [
+      'holographic data streams flow upward with glowing cyan particles',
+      'code lines scroll rapidly across floating translucent screens',
+      'digital interface elements pulse and expand with incoming information',
+      'circuit pathways illuminate sequentially like neural network activations',
+      'data visualization bars animate upward showing real-time growth',
+      '3D wireframe models rotate slowly revealing complex geometric detail',
+      'binary numbers cascade downward like digital rain',
+      'glowing nodes connect with animated light beams'
+    ],
+    ambientMotions: [
+      'subtle blue and cyan light pulses ripple across reflective surfaces',
+      'floating holographic particles drift through the scene',
+      'soft lens flares shift as virtual light sources activate',
+      'digital grid lines shimmer with processing activity',
+      'ambient glow intensifies and dims with data flow rhythm'
+    ],
+    physicsNotes: 'Digital elements float weightlessly, data flows like liquid light',
+    cameraEnhancement: 'subtle parallax drift revealing depth layers'
+  },
+  data: {
+    subjectMotions: [
+      'bar chart columns rise sequentially with bounce animation',
+      'pie chart segments separate and rotate to highlight portions',
+      'line graph traces animate from left to right showing trends',
+      'percentage numbers count up rapidly to final values',
+      'dashboard widgets flip with new information',
+      'infographic icons pop in with bounce animation',
+      'progress bars fill smoothly with gradient color shift'
+    ],
+    ambientMotions: [
+      'subtle grid background pulses with data rhythm',
+      'connecting lines draw between data points',
+      'soft glow emanates from active chart elements',
+      'floating numbers drift subtly in background'
+    ],
+    physicsNotes: 'Elements animate with ease-out curves, numbers increment smoothly',
+    cameraEnhancement: 'gentle push toward key data point'
+  },
+  nature: {
+    subjectMotions: [
+      'tree leaves rustle and sway gently in the breeze',
+      'flower petals flutter and drift through the air',
+      'grass blades bend and wave in wind patterns',
+      'water surface ripples expand outward from center',
+      'clouds drift slowly, edges morphing softly',
+      'sunbeams shift through canopy creating moving shadows',
+      'birds take flight with realistic wing flaps',
+      'butterflies flutter in figure-eight paths'
+    ],
+    ambientMotions: [
+      'dust motes float through shafts of sunlight',
+      'pollen drifts lazily on air currents',
+      'dappled light shifts as leaves move overhead',
+      'morning mist slowly dissipates revealing scene'
+    ],
+    physicsNotes: 'Wind affects lighter elements more, gravity pulls water naturally',
+    cameraEnhancement: 'gentle breathing motion - subtle in/out rhythm'
+  },
+  urban: {
+    subjectMotions: [
+      'car headlights streak past creating light trails',
+      'pedestrians walk with natural gait across crosswalks',
+      'neon signs flicker and pulse with electric energy',
+      'traffic lights cycle through colors in sequence',
+      'building windows light up sequentially at dusk',
+      'steam rises dramatically from food carts',
+      'metro train rushes past with motion blur',
+      'cyclists weave through traffic smoothly'
+    ],
+    ambientMotions: [
+      'city light bokeh shifts with camera movement',
+      'steam rises from subway grates into cold air',
+      'rain drops streak down glass windows',
+      'pedestrian shadows sweep across walls'
+    ],
+    physicsNotes: 'Traffic follows lane patterns, people walk 3-4 mph, lights flicker naturally',
+    cameraEnhancement: 'subtle handheld micro-shake for documentary feel'
+  },
+  office: {
+    subjectMotions: [
+      'computer screens display scrolling content and notifications',
+      'coffee steam rises in gentle spiraling wisps',
+      'papers shuffle and organize on desk surface',
+      'keyboard keys press with typing rhythm',
+      'chair swivels slightly indicating recent activity',
+      'desk lamp adjusts casting new shadows',
+      'phone screen lights up with notification',
+      'pen rolls slowly on angled desk surface'
+    ],
+    ambientMotions: [
+      'natural light shifts through window blinds',
+      'dust particles float in sunbeam from window',
+      'HVAC air current moves light papers',
+      'monitor glow pulses with screen changes'
+    ],
+    physicsNotes: 'Objects have realistic weight, steam rises then dissipates naturally',
+    cameraEnhancement: 'slow drift across desk revealing workspace'
+  },
+  product: {
+    subjectMotions: [
+      'product rotates slowly on display showing all angles',
+      'packaging unfolds elegantly revealing product',
+      'product features highlight with glowing accents',
+      'hands interact demonstrating functionality',
+      'components separate showing internal design',
+      'liquid pours with realistic fluid dynamics',
+      'fabric drapes showing material quality',
+      'device powers on with boot animation'
+    ],
+    ambientMotions: [
+      'studio lighting shifts to highlight features',
+      'subtle reflections move across glossy surfaces',
+      'soft shadows rotate as light orbits product',
+      'floating dust catches rim lighting'
+    ],
+    physicsNotes: 'Premium slow motion, materials behave realistically - metal reflects, fabric flows',
+    cameraEnhancement: 'smooth cinematic orbit emphasizing premium quality'
+  },
+  food: {
+    subjectMotions: [
+      'steam rises in billowing clouds from hot dish',
+      'sauce drizzles slowly with viscous flow',
+      'cheese stretches in satisfying strings',
+      'vegetables sizzle and pop in hot oil',
+      'beverage pours with bubbles rising',
+      'knife slices through ingredients with precision',
+      'garnish sprinkles down onto plated dish',
+      'bread tears revealing soft interior texture'
+    ],
+    ambientMotions: [
+      'warm kitchen lighting creates appetizing glow',
+      'background shows bustling kitchen activity',
+      'flame flickers under cooking pan',
+      'steam wisps drift toward camera'
+    ],
+    physicsNotes: 'Liquids have proper viscosity, steam rises and dissipates, sizzle creates splatter',
+    cameraEnhancement: 'slow push-in toward hero dish with shallow depth of field'
+  },
+  abstract: {
+    subjectMotions: [
+      'geometric shapes morph and transform fluidly',
+      'color gradients shift and blend into new combinations',
+      'particle systems explode then reconverge',
+      'liquid metal flows into new shapes',
+      'fractal patterns zoom revealing infinite detail',
+      'light beams refract through crystal creating rainbows',
+      'organic forms pulse with life energy',
+      'typography animates letter by letter'
+    ],
+    ambientMotions: [
+      'background colors shift through spectrum',
+      'floating orbs drift with physics-defying motion',
+      'light leaks sweep across frame',
+      'bokeh shapes morph and multiply'
+    ],
+    physicsNotes: 'Physics stylized - slower for drama, impossible movements acceptable',
+    cameraEnhancement: 'dynamic movement matching visual energy'
+  },
+  default: {
+    subjectMotions: [
+      'main subject shifts position showing dimension',
+      'foreground moves at different speed than background',
+      'key element animates to draw attention',
+      'secondary elements provide supporting motion',
+      'subtle movement indicates life and energy'
+    ],
+    ambientMotions: [
+      'atmospheric particles drift through light',
+      'shadows shift indicating time passage',
+      'background has gentle motion parallax',
+      'light quality changes gradually'
+    ],
+    physicsNotes: 'Natural realistic physics, gravity applies, wind affects light objects',
+    cameraEnhancement: 'subtle drift or gentle push for visual interest'
+  }
+}
+
+function detectEnvironmentCategoryForMotion(visualDirection: string): string {
+  const text = (visualDirection || '').toLowerCase()
+  const patterns: Record<string, string[]> = {
+    tech: ['code', 'screen', 'computer', 'laptop', 'software', 'ai', 'robot', 'digital', 'algorithm', 'server', 'programming', 'neural', 'hologram', 'interface', 'circuit', 'cyber', 'virtual', 'tech', 'smartphone', 'app'],
+    data: ['chart', 'graph', 'statistics', 'analytics', 'dashboard', 'percentage', 'metric', 'visualization', 'infographic', 'numbers', 'growth', 'trend', 'report', 'kpi'],
+    nature: ['nature', 'outdoor', 'forest', 'mountain', 'beach', 'sky', 'tree', 'landscape', 'garden', 'flower', 'ocean', 'river', 'sunset', 'cloud', 'rain', 'leaf', 'plant'],
+    urban: ['city', 'street', 'building', 'traffic', 'downtown', 'mall', 'urban', 'night', 'neon', 'car', 'road', 'pedestrian', 'subway', 'metro', 'skyscraper'],
+    office: ['office', 'desk', 'meeting', 'business', 'corporate', 'workspace', 'keyboard', 'coffee', 'chair', 'whiteboard', 'presentation'],
+    product: ['product', 'unbox', 'package', 'brand', 'gadget', 'device', 'showcase', 'demo', 'premium', 'luxury', 'retail', 'hero'],
+    food: ['food', 'cook', 'kitchen', 'dish', 'recipe', 'restaurant', 'chef', 'delicious', 'tasty', 'ingredient', 'meal', 'cuisine'],
+    abstract: ['abstract', 'concept', 'idea', 'metaphor', 'artistic', 'creative', 'imagination', 'dream', 'surreal', 'geometric', 'pattern']
+  }
+  for (const [category, keywords] of Object.entries(patterns)) {
+    if (keywords.some(kw => text.includes(kw))) return category
+  }
+  return 'default'
+}
+
+function getRandomMotionItems<T>(array: T[], count: number): T[] {
+  const shuffled = [...array].sort(() => 0.5 - Math.random())
+  return shuffled.slice(0, Math.min(count, array.length))
 }
 
 function generateBrollActionBeats(params: {
@@ -1895,53 +2141,49 @@ function generateBrollActionBeats(params: {
   const beat1End = Math.floor(duration * 0.33)
   const beat2End = Math.floor(duration * 0.66)
   
-  const typeUpper = segmentType.toUpperCase()
+  // KEY FIX: Detect environment from visual direction
+  const envCategory = detectEnvironmentCategoryForMotion(visualDirection || '')
+  const envMotion = ENVIRONMENT_MOTION_LIBRARY[envCategory] || ENVIRONMENT_MOTION_LIBRARY.default
   
-  // B-roll action beats (no character, pure visual motion)
-  const brollBeats: Record<string, Array<{ timeRange: string; action: string }>> = {
-    'FORE': [
-      { timeRange: `0s-${beat1End}s`, action: 'Camera slowly reveals scene, ambient motion begins' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Environment elements move naturally, light shifts subtly' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Scene settles, atmospheric particles drift through frame' }
-    ],
-    'FORESHADOW': [
-      { timeRange: `0s-${beat1End}s`, action: 'Slow reveal of key visual element' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Subtle motion builds anticipation' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Hold on mysterious detail, light flickers' }
-    ],
-    'BODY': [
-      { timeRange: `0s-${beat1End}s`, action: visualDirection || 'Scene establishes with subtle ambient motion' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Key visual elements animate naturally' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Motion continues smoothly, environment breathes' }
-    ],
-    'BODY-1': [
-      { timeRange: `0s-${beat1End}s`, action: 'First key concept visualized through motion' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Supporting visual elements animate' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Scene holds with subtle ambient movement' }
-    ],
-    'BODY-2': [
-      { timeRange: `0s-${beat1End}s`, action: 'Second concept visualization begins' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Visual demonstration continues' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Smooth transition preparation' }
-    ],
-    'BODY-3': [
-      { timeRange: `0s-${beat1End}s`, action: 'Final supporting visual' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Culminating motion' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Scene resolves with ${emotion} energy' }
-    ],
-    'PEAK': [
-      { timeRange: `0s-${beat1End}s`, action: 'Dramatic reveal begins, high impact visual' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Peak moment, maximum visual energy' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Impact settles, powerful stillness' }
-    ],
-    'ENDING': [
-      { timeRange: `0s-${beat1End}s`, action: 'Scene begins gentle resolve' },
-      { timeRange: `${beat1End}s-${beat2End}s`, action: 'Atmosphere softens, warm conclusion' },
-      { timeRange: `${beat2End}s-${duration}s`, action: 'Final hold, satisfying visual closure' }
-    ]
+  // Get SPECIFIC motions for this environment
+  const subjectMotions = getRandomMotionItems(envMotion.subjectMotions, 3)
+  const ambientMotions = getRandomMotionItems(envMotion.ambientMotions, 2)
+  
+  const typeUpper = segmentType.toUpperCase()
+  const beats: Array<{ timeRange: string; action: string }> = []
+  
+  switch (typeUpper) {
+    case 'FORE':
+    case 'FORESHADOW':
+      beats.push(
+        { timeRange: `0s-${beat1End}s`, action: `Scene reveals: ${subjectMotions[0]}. ${ambientMotions[0]}.` },
+        { timeRange: `${beat1End}s-${beat2End}s`, action: `Motion builds: ${subjectMotions[1]}. ${envMotion.cameraEnhancement}.` },
+        { timeRange: `${beat2End}s-${duration}s`, action: `${ambientMotions[1]}. Hold with anticipation.` }
+      )
+      break
+    case 'PEAK':
+      beats.push(
+        { timeRange: `0s-${beat1End}s`, action: `IMPACT: ${subjectMotions[0]} with maximum intensity. ${envMotion.cameraEnhancement}.` },
+        { timeRange: `${beat1End}s-${beat2End}s`, action: `Peak energy: ${subjectMotions[1]}. ${ambientMotions[0]}.` },
+        { timeRange: `${beat2End}s-${duration}s`, action: `Settle: ${ambientMotions[1]}. Powerful stillness.` }
+      )
+      break
+    case 'ENDING':
+      beats.push(
+        { timeRange: `0s-${beat1End}s`, action: `Resolution: ${subjectMotions[0]} with decreasing energy.` },
+        { timeRange: `${beat1End}s-${beat2End}s`, action: `Gentle: ${ambientMotions[0]}. Warm atmosphere.` },
+        { timeRange: `${beat2End}s-${duration}s`, action: `Final hold: ${ambientMotions[1]}. Closure.` }
+      )
+      break
+    default:
+      beats.push(
+        { timeRange: `0s-${beat1End}s`, action: `${subjectMotions[0]}. ${envMotion.cameraEnhancement}.` },
+        { timeRange: `${beat1End}s-${beat2End}s`, action: `${subjectMotions[1]}. ${ambientMotions[0]}.` },
+        { timeRange: `${beat2End}s-${duration}s`, action: `${subjectMotions[2] || ambientMotions[1]}. Scene breathes naturally.` }
+      )
   }
   
-  return brollBeats[typeUpper] || brollBeats['BODY']
+  return beats
 }
 
 function generateBrollOutputIntent(segmentType: string): string {
