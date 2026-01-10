@@ -8,7 +8,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { 
   Play, RefreshCw, Check, X, Loader2, Video, 
   ChevronRight, AlertCircle, Cloud, CheckCircle2, Maximize2,
-  Mic, Camera, Volume2
+  Mic, Camera, Volume2, Download
 } from "lucide-react";
 
 interface Segment {
@@ -1507,6 +1507,43 @@ export const VideoGeneration = (): JSX.Element => {
     return hints[type] || (isCreator ? '🎤 AI Voiceover' : '🔊 Ambient sounds');
   };
 
+  // Download helper functions
+  const handleDownloadImage = async (imageUrl: string, segmentType: string, segmentId: string) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${currentTopic.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}_${segmentType}_${segmentId}_image.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Image download failed:', err);
+      window.open(imageUrl, '_blank');
+    }
+  };
+
+  const handleDownloadVideo = async (videoUrl: string, segmentType: string, segmentId: string) => {
+    try {
+      const response = await fetch(videoUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${currentTopic.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}_${segmentType}_${segmentId}_video.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Video download failed:', err);
+      window.open(videoUrl, '_blank');
+    }
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-[#0a0a12] flex items-center justify-center">
@@ -1754,14 +1791,27 @@ export const VideoGeneration = (): JSX.Element => {
                           className="w-full h-full object-cover cursor-pointer"
                           onClick={() => setPreviewImage(segment.imageUrl)}
                         />
-                        {/* Expand overlay */}
+                        {/* Hover overlay with actions */}
                         <div 
-                          className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer"
-                          onClick={() => setPreviewImage(segment.imageUrl)}
+                          className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100"
                         >
-                          <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
-                            <Maximize2 className="w-5 h-5 text-white" />
-                          </div>
+                          <button
+                            onClick={() => setPreviewImage(segment.imageUrl)}
+                            className="p-2 bg-white/20 rounded-lg backdrop-blur-sm"
+                            title="Preview"
+                          >
+                            <Maximize2 className="w-4 h-4 text-white" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (segment.imageUrl) handleDownloadImage(segment.imageUrl, segment.type || segment.element || 'segment', segment.id);
+                            }}
+                            className="p-2 bg-green-600 rounded-lg"
+                            title="Download Image"
+                          >
+                            <Download className="w-4 h-4 text-white" />
+                          </button>
                         </div>
                       </>
                     ) : (
@@ -1941,10 +1991,21 @@ export const VideoGeneration = (): JSX.Element => {
                             {uiText.preview}
                           </Button>
                           <Button
+                            onClick={() => {
+                              if (segment.videoUrl) handleDownloadVideo(segment.videoUrl, segment.type || segment.element || 'segment', segment.id);
+                            }}
+                            variant="outline"
+                            className="border-green-500/50 bg-green-600 hover:bg-green-700 text-white"
+                            title="Download Video"
+                          >
+                            <Download className="w-4 h-4" />
+                          </Button>
+                          <Button
                             onClick={() => handleRegenerateVideo(segment.id)}
                             variant="outline"
                             disabled={isBackgroundMode}
                             className="border-[#2b2b38] bg-white hover:bg-white/80"
+                            title="Regenerate"
                           >
                             <RefreshCw className="w-4 h-4 text-black" />
                           </Button>
@@ -2003,12 +2064,24 @@ export const VideoGeneration = (): JSX.Element => {
           className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 sm:p-8"
           onClick={() => setPreviewVideo(null)}
         >
-          <button
-            onClick={() => setPreviewVideo(null)}
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
-          >
-            <X className="w-6 h-6 text-white" />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (previewVideo) handleDownloadVideo(previewVideo, 'preview', Date.now().toString());
+              }}
+              className="p-2 bg-green-600 hover:bg-green-700 rounded-full transition-colors"
+              title="Download Video"
+            >
+              <Download className="w-6 h-6 text-white" />
+            </button>
+            <button
+              onClick={() => setPreviewVideo(null)}
+              className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </div>
           <div 
             className="max-w-2xl w-full"
             onClick={(e) => e.stopPropagation()}
@@ -2029,12 +2102,24 @@ export const VideoGeneration = (): JSX.Element => {
           className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 sm:p-8"
           onClick={() => setPreviewImage(null)}
         >
-          <button
-            onClick={() => setPreviewImage(null)}
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors z-10"
-          >
-            <X className="w-6 h-6 text-white" />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (previewImage) handleDownloadImage(previewImage, 'preview', Date.now().toString());
+              }}
+              className="p-2 bg-green-600 hover:bg-green-700 rounded-full transition-colors"
+              title="Download Image"
+            >
+              <Download className="w-6 h-6 text-white" />
+            </button>
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </div>
           <img
             src={previewImage}
             alt="Preview"

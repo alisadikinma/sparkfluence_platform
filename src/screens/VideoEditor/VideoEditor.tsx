@@ -8,7 +8,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { 
   RefreshCw, ImageIcon, Loader2, 
   Sparkles, X, Maximize2, Play, AlertCircle,
-  CloudOff, Cloud, CheckCircle2, Info
+  CloudOff, Cloud, CheckCircle2, Info, Download
 } from "lucide-react";
 
 interface Segment {
@@ -692,6 +692,26 @@ export const VideoEditor = (): JSX.Element => {
   const allHaveImages = segments.every(seg => seg.imageUrl);
   const imagesGenerated = segments.filter(s => s.imageUrl).length;
 
+  // Download helper function
+  const handleDownloadImage = async (imageUrl: string, segmentType: string, segmentId: string) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${currentTopic.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}_${segmentType}_${segmentId}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      // Fallback: open in new tab
+      window.open(imageUrl, '_blank');
+    }
+  };
+
   const groupedSegments = segments.reduce((acc, segment, index) => {
     const baseType = segment.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
     const isBody = baseType === 'BODY' || segment.type.startsWith('BODY');
@@ -958,6 +978,16 @@ export const VideoEditor = (): JSX.Element => {
                                     <Maximize2 className="w-4 h-4 text-white" />
                                   </button>
                                   <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (segment.imageUrl) handleDownloadImage(segment.imageUrl, segment.type, segment.id);
+                                    }}
+                                    className="p-2 bg-green-600 rounded-lg"
+                                    title="Download"
+                                  >
+                                    <Download className="w-4 h-4 text-white" />
+                                  </button>
+                                  <button
                                     onClick={() => handleGenerateImage(segment.id)}
                                     className="p-2 bg-primary rounded-lg"
                                     title="Regenerate"
@@ -1033,12 +1063,24 @@ export const VideoEditor = (): JSX.Element => {
           className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 sm:p-8"
           onClick={() => setPreviewImage(null)}
         >
-          <button
-            onClick={() => setPreviewImage(null)}
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
-          >
-            <X className="w-6 h-6 text-white" />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (previewImage) handleDownloadImage(previewImage, 'preview', Date.now().toString());
+              }}
+              className="p-2 bg-green-600 hover:bg-green-700 rounded-full transition-colors"
+              title="Download"
+            >
+              <Download className="w-6 h-6 text-white" />
+            </button>
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </div>
           <img
             src={previewImage}
             alt="Preview"
