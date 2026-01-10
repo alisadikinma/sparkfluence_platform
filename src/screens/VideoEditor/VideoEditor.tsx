@@ -419,6 +419,7 @@ export const VideoEditor = (): JSX.Element => {
           emotion: seg.emotion,
           visual_prompt: seg.visualDirection || seg.script,
           visual_direction: seg.visualDirection,
+          script_text: seg.script, // ✅ CRITICAL: Script text for stock image search & visual brief extraction
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null
         };
@@ -513,6 +514,7 @@ export const VideoEditor = (): JSX.Element => {
           emotion: seg.emotion,
           visual_prompt: seg.visualDirection || seg.script,
           visual_direction: seg.visualDirection,
+          script_text: seg.script, // ✅ CRITICAL: Script text for stock image search & visual brief extraction
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null
         };
@@ -584,6 +586,7 @@ export const VideoEditor = (): JSX.Element => {
           creator_avatar_url: avatarUrl,
           emotion: segment.emotion,
           segment_type: segment.type,
+          script_text: segment.script, // ✅ CRITICAL: Script text for stock image search & visual brief extraction
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: referenceImage
         }],

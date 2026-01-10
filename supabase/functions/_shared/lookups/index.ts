@@ -124,6 +124,7 @@ export {
   CRYPTO_TERMS,
   GENERIC_KEYWORDS,
   MODEL_PATTERNS,
+  BRAND_SEARCH_QUERIES,
   detectProductEntities,
   shouldUseStockImage,
   getProductSearchQuery,

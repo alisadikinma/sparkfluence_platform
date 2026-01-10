@@ -277,13 +277,64 @@ function detectGenericKeywords(text: string): Array<{ term: string; category: st
   return detected;
 }
 
+// ============================================================================
+// BRAND-SPECIFIC SEARCH QUERIES
+// When only brand is mentioned (no model), use these optimized queries
+// ============================================================================
+
+const BRAND_SEARCH_QUERIES: Record<string, string> = {
+  // Smartphones
+  'apple': 'iPhone Apple smartphone',
+  'samsung': 'Samsung Galaxy smartphone',
+  'xiaomi': 'Xiaomi smartphone',
+  'poco': 'POCO smartphone',
+  'oppo': 'OPPO smartphone',
+  'vivo': 'Vivo smartphone',
+  'realme': 'Realme smartphone',
+  'oneplus': 'OnePlus smartphone',
+  'google': 'Google Pixel phone',
+  'huawei': 'Huawei smartphone',
+  'honor': 'Honor smartphone',
+  'motorola': 'Motorola phone',
+  'nokia': 'Nokia smartphone',
+  'asus': 'ASUS ROG phone',
+  'infinix': 'Infinix smartphone',
+  'tecno': 'Tecno smartphone',
+  'nothing': 'Nothing Phone',
+  'sony': 'Sony Xperia phone',
+  
+  // Laptops
+  'macbook': 'MacBook laptop Apple',
+  'thinkpad': 'ThinkPad laptop Lenovo',
+  'dell': 'Dell laptop',
+  'hp': 'HP laptop',
+  'acer': 'Acer laptop',
+  'msi': 'MSI gaming laptop',
+  'razer': 'Razer Blade laptop',
+  'lenovo': 'Lenovo laptop',
+  
+  // Wearables
+  'garmin': 'Garmin smartwatch',
+  'fitbit': 'Fitbit fitness tracker',
+  
+  // Audio
+  'airpods': 'Apple AirPods',
+  'bose': 'Bose headphones',
+  'jbl': 'JBL speaker',
+  
+  // Gaming
+  'playstation': 'PlayStation PS5 console',
+  'xbox': 'Xbox console',
+  'nintendo': 'Nintendo Switch',
+};
+
 /**
  * Main detection function - comprehensive product entity detection
  */
 export function detectProductEntities(text: string): ProductEntity[] {
   const entities: ProductEntity[] = [];
   
-  // 1. HIGH PRIORITY: Specific product models
+  // 1. HIGH PRIORITY: Specific product models (e.g., "Galaxy S24", "iPhone 15 Pro")
   const models = extractProductModels(text);
   for (const model of models) {
     const brands = detectBrands(model);
@@ -298,7 +349,31 @@ export function detectProductEntities(text: string): ProductEntity[] {
     });
   }
   
-  // 2. MEDIUM PRIORITY: Crypto terms (specific enough)
+  // 2. MEDIUM-HIGH PRIORITY: Brand-only mentions (e.g., "Samsung", "Apple")
+  // Only if no specific model already detected for that brand
+  const detectedBrands = detectBrands(text);
+  for (const brandInfo of detectedBrands) {
+    // Skip if we already have a specific model for this brand
+    const hasModelForBrand = entities.some(e => 
+      e.term.toLowerCase().includes(brandInfo.brand.toLowerCase())
+    );
+    
+    if (!hasModelForBrand) {
+      // Get optimized search query for this brand
+      const searchQuery = BRAND_SEARCH_QUERIES[brandInfo.brand.toLowerCase()] || 
+        `${brandInfo.brand} ${brandInfo.category}`;
+      
+      entities.push({
+        term: brandInfo.brand,
+        category: brandInfo.category,
+        searchQuery: searchQuery,
+        useStockImage: true,
+        confidence: 'medium'  // Brand-only is medium confidence
+      });
+    }
+  }
+  
+  // 3. MEDIUM PRIORITY: Crypto terms (specific enough)
   const cryptoTerms = detectCryptoTerms(text);
   for (const crypto of cryptoTerms) {
     // Skip if already detected as part of a model
@@ -313,7 +388,7 @@ export function detectProductEntities(text: string): ProductEntity[] {
     }
   }
   
-  // 3. LOW PRIORITY: Generic keywords (only if nothing specific found)
+  // 4. LOW PRIORITY: Generic keywords (only if nothing specific found)
   if (entities.length === 0) {
     const genericTerms = detectGenericKeywords(text);
     for (const generic of genericTerms) {
@@ -442,6 +517,7 @@ export {
   CRYPTO_TERMS,
   GENERIC_KEYWORDS,
   MODEL_PATTERNS,
+  BRAND_SEARCH_QUERIES,
   extractProductModels,
   detectBrands,
   detectCryptoTerms,

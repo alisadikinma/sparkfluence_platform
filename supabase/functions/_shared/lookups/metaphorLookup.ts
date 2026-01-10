@@ -270,32 +270,140 @@ const PRIORITY_KEYWORDS = [
   'smartphone', 'phone', 'laptop', 'tablet', 'bitcoin', 'ethereum', 'crypto'
 ];
 
+// Context detection patterns for smarter prompts
+const CONTEXT_PATTERNS = {
+  comparison: {
+    patterns: ['vs', 'versus', 'compare', 'comparison', 'better', 'best', 'which', 'from.*to', 'or'],
+    visualStyle: 'side-by-side comparison layout',
+    shotType: 'wide shot'
+  },
+  ranking: {
+    patterns: ['top', 'best', 'worst', '#1', 'number one', 'ranking', 'winner'],
+    visualStyle: 'podium or trophy display',
+    shotType: 'medium shot'
+  },
+  ai_tech: {
+    patterns: ['ai', 'artificial intelligence', 'smart', 'intelligent', 'machine learning', 'neural'],
+    visualStyle: 'futuristic AI interface with glowing elements',
+    shotType: 'close-up'
+  },
+  trend: {
+    patterns: ['trend', 'bandwagon', 'everyone', 'popular', 'viral', 'hype'],
+    visualStyle: 'trending upward graph or wave pattern',
+    shotType: 'dynamic angle'
+  },
+  reveal: {
+    patterns: ['secret', 'hidden', 'reveal', 'discover', 'find out', 'truth'],
+    visualStyle: 'unveiling or spotlight reveal',
+    shotType: 'dramatic lighting'
+  },
+  warning: {
+    patterns: ['danger', 'warning', 'careful', 'stop', 'avoid', 'mistake'],
+    visualStyle: 'warning signs or caution elements',
+    shotType: 'urgent framing'
+  }
+};
+
+// Shot type variations to avoid monotony
+const SHOT_VARIATIONS = [
+  { shot: 'Cinematic close-up', desc: 'detailed view' },
+  { shot: 'Cinematic medium shot', desc: 'contextual view' },
+  { shot: 'Cinematic wide establishing shot', desc: 'environmental context' },
+  { shot: 'Dramatic low-angle shot', desc: 'powerful perspective' },
+  { shot: 'Bird\'s eye view', desc: 'overhead perspective' },
+  { shot: 'Dynamic Dutch angle', desc: 'energetic framing' },
+];
+
+// Lighting variations
+const LIGHTING_VARIATIONS = [
+  'soft ambient lighting with blue accents',
+  'dramatic Rembrandt lighting with deep shadows',
+  'high-key bright lighting with minimal shadows',
+  'warm golden hour lighting',
+  'cool futuristic neon lighting',
+  'moody chiaroscuro lighting',
+];
+
+/**
+ * Detect context from script to generate appropriate visuals
+ */
+function detectContext(text: string): { context: string; style: string; shot: string } | null {
+  const textLower = text.toLowerCase();
+  
+  for (const [contextName, config] of Object.entries(CONTEXT_PATTERNS)) {
+    for (const pattern of config.patterns) {
+      const regex = new RegExp(pattern, 'i');
+      if (regex.test(textLower)) {
+        return {
+          context: contextName,
+          style: config.visualStyle,
+          shot: config.shotType
+        };
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Get varied shot based on script hash (deterministic but varied)
+ */
+function getVariedShot(scriptText: string): { shot: string; desc: string } {
+  // Simple hash to get consistent but varied results
+  let hash = 0;
+  for (let i = 0; i < scriptText.length; i++) {
+    hash = ((hash << 5) - hash) + scriptText.charCodeAt(i);
+    hash = hash & hash;
+  }
+  const index = Math.abs(hash) % SHOT_VARIATIONS.length;
+  return SHOT_VARIATIONS[index];
+}
+
+/**
+ * Get varied lighting based on script hash
+ */
+function getVariedLighting(scriptText: string): string {
+  let hash = 0;
+  for (let i = 0; i < scriptText.length; i++) {
+    hash = ((hash << 3) + hash) + scriptText.charCodeAt(i);
+    hash = hash & hash;
+  }
+  const index = Math.abs(hash) % LIGHTING_VARIATIONS.length;
+  return LIGHTING_VARIATIONS[index];
+}
+
 export function buildVisualBrief(scriptText: string, topic: string): VisualBrief {
   const scriptLower = scriptText.toLowerCase();
   const topicLower = topic.toLowerCase();
   
-  // 1. FIRST: Check for priority keywords (brands/products)
+  // 0. DETECT CONTEXT first (comparison, AI, trend, etc.)
+  const contextInfo = detectContext(scriptText);
+  
+  // 1. Check for priority keywords (brands/products)
   const priorityVisuals: string[] = [];
+  const detectedBrands: string[] = [];
+  
   for (const keyword of PRIORITY_KEYWORDS) {
     if (scriptLower.includes(keyword) || topicLower.includes(keyword)) {
       const visuals = METAPHOR_MAP[keyword];
       if (visuals && visuals.length > 0) {
         priorityVisuals.push(...visuals);
+        detectedBrands.push(keyword);
       }
     }
   }
   
-  // 2. THEN: Get topic-based and text-based visuals
+  // 2. Get topic-based and text-based visuals
   const abstracts = identifyAbstractConcepts(scriptText);
   const topicVisuals = getTopicVisuals(topic);
   const textVisuals = extractVisualsFromText(scriptText);
   
-  // 3. Combine: PRIORITY first, then topic, then generic
-  // Dedupe while preserving order
+  // 3. Combine with deduplication
   const seen = new Set<string>();
   const allVisuals: string[] = [];
   
-  // Add priority visuals first (brands/products)
+  // Add priority visuals first
   for (const v of priorityVisuals) {
     const key = v.toLowerCase();
     if (!seen.has(key)) {
@@ -313,11 +421,10 @@ export function buildVisualBrief(scriptText: string, topic: string): VisualBrief
     }
   }
   
-  // Then text-extracted visuals (but filter out generic security if we have products)
+  // Then text-extracted (filter generic security if products exist)
   const hasProductVisuals = priorityVisuals.length > 0;
   for (const v of textVisuals) {
     const key = v.toLowerCase();
-    // Skip generic security visuals if we already have product/brand visuals
     if (hasProductVisuals && (key.includes('padlock') || key.includes('shield') || key.includes('vault'))) {
       continue;
     }
@@ -327,27 +434,62 @@ export function buildVisualBrief(scriptText: string, topic: string): VisualBrief
     }
   }
   
-  const primary = allVisuals[0] || 'modern technology visualization';
+  // 4. Build contextual primary visual
+  let primary = allVisuals[0] || 'modern technology visualization';
+  let contextualModifier = '';
+  
+  // Apply context-specific modifications
+  if (contextInfo) {
+    if (contextInfo.context === 'comparison' && detectedBrands.length >= 2) {
+      // Multiple brands in comparison context
+      primary = `side-by-side ${detectedBrands[0]} and ${detectedBrands[1]} smartphones comparison display`;
+      contextualModifier = 'arranged in versus layout';
+    } else if (contextInfo.context === 'ai_tech') {
+      // AI/tech context - add futuristic elements
+      contextualModifier = 'with AI neural network overlay and glowing interface elements';
+    } else if (contextInfo.context === 'trend') {
+      // Trend/bandwagon context
+      if (hasProductVisuals) {
+        primary = `array of flagship smartphones showcasing ${topic || 'latest technology trends'}`;
+      }
+      contextualModifier = 'with trending indicators and wave patterns';
+    } else if (contextInfo.context === 'ranking') {
+      contextualModifier = 'with podium or ranking visualization';
+    } else if (contextInfo.context === 'reveal') {
+      contextualModifier = 'with dramatic spotlight and unveiling effect';
+    } else if (contextInfo.context === 'warning') {
+      contextualModifier = 'with warning indicators and cautionary elements';
+    }
+  }
+  
   const secondary = allVisuals.slice(1, 4);
   
-  // Log for debugging
-  console.log(`[buildVisualBrief] Script: "${scriptText.substring(0, 80)}..."`);
-  console.log(`[buildVisualBrief] Priority keywords found: ${priorityVisuals.length > 0 ? priorityVisuals.slice(0, 3).join(', ') : 'none'}`);
-  console.log(`[buildVisualBrief] Primary visual: "${primary}"`);
+  // 5. Get VARIED shot and lighting (avoid monotony)
+  const shotInfo = getVariedShot(scriptText);
+  const lighting = getVariedLighting(scriptText);
   
-  // Build cinematic image prompt from visual elements
+  // Logging
+  console.log(`[buildVisualBrief] Script: "${scriptText.substring(0, 80)}..."`);
+  console.log(`[buildVisualBrief] Context detected: ${contextInfo?.context || 'none'}`);
+  console.log(`[buildVisualBrief] Brands found: ${detectedBrands.join(', ') || 'none'}`);
+  console.log(`[buildVisualBrief] Primary visual: "${primary}"`);
+  console.log(`[buildVisualBrief] Shot type: ${shotInfo.shot}`);
+  
+  // 6. Build contextual cinematic prompt
   const secondaryStr = secondary.length > 0 
-    ? `Secondary elements: ${secondary.join(', ')}.` 
+    ? `Supporting elements: ${secondary.slice(0, 2).join(', ')}.`
     : '';
   
-  const image_prompt = `Cinematic close-up of ${primary}.
+  const contextStr = contextualModifier ? `${contextualModifier}.` : '';
+  
+  const image_prompt = `${shotInfo.shot} of ${primary}. ${contextStr}
 ${secondaryStr}
-Environment: Modern tech setting with soft ambient lighting.
-Film stock: Vision3 500T. Color: Teal-orange grade.
-Professional cinematography, 8K quality.
+Environment: Modern tech studio with ${lighting}.
+Film stock: Vision3 500T. Color: Cinematic teal-orange grade.
+Professional cinematography, ${shotInfo.desc}, 8K quality.
 ABSOLUTELY NO human face, NO person, NO hands, NO body parts visible.
-Focus ONLY on objects, technology, and environment.
-Clean frame, no text, no watermarks.`;
+Focus ONLY on products, technology, and environment.
+Clean frame, no text overlays, no watermarks.`;
   
   return {
     topic_keywords: topic.split(/\s+/).filter(w => w.length > 3),
