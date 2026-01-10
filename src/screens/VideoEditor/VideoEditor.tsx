@@ -697,10 +697,36 @@ export const VideoEditor = (): JSX.Element => {
     try {
       const response = await fetch(imageUrl);
       const blob = await response.blob();
+      
+      // Detect actual content type and set correct extension
+      const contentType = blob.type || response.headers.get('content-type') || '';
+      let extension = 'png'; // default
+      
+      if (contentType.includes('jpeg') || contentType.includes('jpg')) {
+        extension = 'jpg';
+      } else if (contentType.includes('png')) {
+        extension = 'png';
+      } else if (contentType.includes('webp')) {
+        extension = 'webp';
+      } else if (contentType.includes('gif')) {
+        extension = 'gif';
+      } else if (contentType.includes('mp4') || contentType.includes('video')) {
+        // This is a video, not an image - warn user
+        console.warn('URL contains video, not image:', imageUrl);
+        extension = 'mp4';
+      }
+      
+      // Also check URL extension as fallback
+      const urlLower = imageUrl.toLowerCase();
+      if (urlLower.includes('.mp4') || urlLower.includes('video')) {
+        console.warn('URL appears to be video:', imageUrl);
+        extension = 'mp4';
+      }
+      
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${currentTopic.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}_${segmentType}_${segmentId}.png`;
+      link.download = `${currentTopic.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}_${segmentType}_${segmentId}.${extension}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
