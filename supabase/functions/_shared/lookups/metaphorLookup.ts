@@ -216,6 +216,7 @@ export function identifyAbstractConcepts(text: string): string[] {
 
 /**
  * Build visual brief from script text
+ * Two-stage extraction: Script → Visual Brief → Cinematic Prompt
  */
 export interface VisualBrief {
   topic_keywords: string[];
@@ -223,6 +224,7 @@ export interface VisualBrief {
   visual_elements: string[];
   primary_visual: string;
   secondary_elements: string[];
+  image_prompt: string;  // Generated cinematic prompt
 }
 
 export function buildVisualBrief(scriptText: string, topic: string): VisualBrief {
@@ -233,12 +235,30 @@ export function buildVisualBrief(scriptText: string, topic: string): VisualBrief
   // Combine and dedupe
   const allVisuals = [...new Set([...topicVisuals, ...textVisuals])];
   
+  const primary = allVisuals[0] || 'abstract data visualization';
+  const secondary = allVisuals.slice(1, 4);
+  
+  // Build cinematic image prompt from visual elements
+  const secondaryStr = secondary.length > 0 
+    ? `Secondary elements: ${secondary.join(', ')}.` 
+    : '';
+  
+  const image_prompt = `Cinematic close-up of ${primary}.
+${secondaryStr}
+Environment: Modern tech setting with soft ambient lighting.
+Film stock: Vision3 500T. Color: Teal-orange grade.
+Professional cinematography, 8K quality.
+ABSOLUTELY NO human face, NO person, NO hands, NO body parts visible.
+Focus ONLY on objects, technology, and environment.
+Clean frame, no text, no watermarks.`;
+  
   return {
     topic_keywords: topic.split(/\s+/).filter(w => w.length > 3),
     abstract_concepts: abstracts,
     visual_elements: allVisuals,
-    primary_visual: allVisuals[0] || 'abstract visualization',
-    secondary_elements: allVisuals.slice(1, 4),
+    primary_visual: primary,
+    secondary_elements: secondary,
+    image_prompt,
   };
 }
 
@@ -255,8 +275,12 @@ export const NEGATIVE_PROMPTS = {
 };
 
 /**
- * Get complete negative prompt for B-roll
+ * Get negative prompt for B-roll by type
+ * @param type - Type of negative prompt: 'general' | 'no_humans' | 'no_text' | 'no_style' | 'combined'
+ * @returns Negative prompt string for fal.ai wan/v2.6
  */
-export function getBRollNegativePrompt(): string {
-  return NEGATIVE_PROMPTS.combined;
+export function getBRollNegativePrompt(
+  type: keyof typeof NEGATIVE_PROMPTS = 'combined'
+): string {
+  return NEGATIVE_PROMPTS[type] || NEGATIVE_PROMPTS.combined;
 }

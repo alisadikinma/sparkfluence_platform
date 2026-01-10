@@ -33,7 +33,20 @@ import {
   buildVisualBrief,
   getBRollNegativePrompt,
   type VisualBrief,
+  // Product detection for stock images
+  decideImageSource,
+  type ProductSearchDecision,
 } from '../_shared/lookups/index.ts'
+
+// ============================================================================
+// STOCK IMAGE SEARCH SERVICE (2026-01-11)
+// Unsplash + Pexels for real product images
+// ============================================================================
+import {
+  searchProductImage,
+  downloadAndUploadSearchImage,
+  type ImageSearchResult,
+} from '../_shared/services/imageSearch.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -58,10 +71,11 @@ const JOB_STATUS = {
 }
 
 // ============================================================================
-// IMAGE PROVIDER SELECTION (2026-01-10 Updated)
+// IMAGE PROVIDER SELECTION (2026-01-11 Updated with /edit endpoint)
 // ============================================================================
 // PRIORITY:
-//   - CREATOR (HOOK/CTA): fal-nano-banana (face consistency) → GPT-Image-1 → FLUX
+//   - CREATOR (HOOK/CTA) WITH ref: fal-nano-banana-edit (face consistency via image_urls)
+//   - CREATOR (HOOK/CTA) NO ref: fal-nano-banana (text-to-image)
 //   - B-ROLL: fal-wan-t2i (negative prompt for no humans) → fal-nano-banana → FLUX
 // ============================================================================
 
@@ -70,12 +84,21 @@ interface ProviderSelection {
   fallback: ImageModelKey;
 }
 
-function selectImageProvider(isCreatorShot: boolean): ProviderSelection {
+function selectImageProvider(isCreatorShot: boolean, hasReferenceImage: boolean = false): ProviderSelection {
   if (isCreatorShot) {
     // HOOK/CTA segments - need face consistency
-    return {
-      primary: 'fal-nano-banana',  // fal.ai Nano Banana Pro (best face consistency)
-      fallback: 'gpt-image-1'      // OpenAI fallback for face consistency
+    if (hasReferenceImage) {
+      // With reference: use /edit endpoint for face consistency
+      return {
+        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (face consistency via image_urls)
+        fallback: 'gpt-image-1'            // OpenAI fallback for face consistency
+      }
+    } else {
+      // Without reference: use text-to-image
+      return {
+        primary: 'fal-nano-banana',  // fal.ai Nano Banana Pro T2I
+        fallback: 'gpt-image-1'      // OpenAI fallback
+      }
     }
   } else {
     // B-ROLL segments - no face needed, use negative prompt
@@ -117,6 +140,11 @@ serve(async (req) => {
     const hfApiKey = Deno.env.get('HUGGINGFACE_API_KEY')
     const falApiKey = Deno.env.get('FAL_AI_API_KEY') // fal.ai API key
     
+    // Stock image search keys (2026-01-11)
+    const unsplashKey = Deno.env.get('UNSPLASH_ACCESS_KEY')
+    const pexelsKey = Deno.env.get('PEXELS_API_KEY')
+    const pixabayKey = Deno.env.get('PIXABAY_API_KEY')
+    
     if (!supabaseUrl || !supabaseKey) {
       return new Response(
         JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'Supabase not configured' } }),
@@ -140,7 +168,7 @@ serve(async (req) => {
     // MODE: PROCESS_SINGLE - Process one job by ID
     // ========================================================================
     if (mode === 'process_single') {
-      return await handleProcessSingle(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey)
+      return await handleProcessSingle(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey, unsplashKey, pexelsKey, pixabayKey)
     }
 
     // ========================================================================
@@ -153,7 +181,7 @@ serve(async (req) => {
     // ========================================================================
     // MODE: LEGACY - Original synchronous processing (backward compatible)
     // ========================================================================
-    return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey)
+    return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey, unsplashKey, pexelsKey, pixabayKey)
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -217,20 +245,26 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     const isCreatorShot = shotType === 'CREATOR' || 
       ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
+    // Reference image for CREATOR shots
+    const refImage = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
+    const hasReferenceImage = !!refImage
+    
     // ========================================================================
-    // PROVIDER SELECTION (2026 - Cost Optimized)
-    // Nano Banana PRIMARY for ALL → fallback based on shot type
+    // PROVIDER SELECTION (2026-01-11 - Updated with /edit endpoint)
+    // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
+    // CREATOR no ref: fal-nano-banana → gpt-image-1
+    // B-ROLL: fal-wan-t2i → fal-nano-banana
     // ========================================================================
     let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
     let fallbackProvider: ImageModelKey = 'flux-schnell'
     
     if (defaultProvider === 'auto') {
-      const providerChoice = selectImageProvider(isCreatorShot)
+      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage)
       segmentProvider = providerChoice.primary
       fallbackProvider = providerChoice.fallback
     }
     
-    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} (fallback: ${fallbackProvider})`)
+    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} (ref: ${hasReferenceImage}, fallback: ${fallbackProvider})`)
     
     return {
       user_id,
@@ -284,7 +318,16 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   )
 }
 
-async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined, falApiKey: string | undefined) {
+async function handleProcessSingle(
+  supabase: any, 
+  requestBody: any, 
+  openaiApiKey: string | undefined, 
+  hfApiKey: string | undefined, 
+  falApiKey: string | undefined,
+  unsplashKey: string | undefined,
+  pexelsKey: string | undefined,
+  pixabayKey: string | undefined
+) {
   const { job_id, session_id, user_id } = requestBody
   const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
 
@@ -363,7 +406,107 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
     .eq('id', job.id)
 
   // ========================================================================
-  // GENERATE IMAGE WITH AUTOMATIC FALLBACK
+  // STOCK IMAGE SEARCH FOR B-ROLL PRODUCT SHOTS (2026-01-11)
+  // Try stock images FIRST for B-roll with product entities → skip AI if found
+  // ========================================================================
+  const shotType = job.shot_type || 'B-ROLL'
+  const segmentType = (job.segment_type || '').toUpperCase()
+  const isCreatorShot = shotType === 'CREATOR' || 
+    ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)
+  
+  // For B-ROLL segments, check if we can use stock images instead of AI
+  if (!isCreatorShot && (unsplashKey || pexelsKey)) {
+    const scriptText = job.visual_prompt || ''
+    const topic = job.topic || ''
+    
+    // Check for product entities in the content
+    const imageSourceDecision = decideImageSource(scriptText, topic)
+    
+    if (imageSourceDecision.useStockImage && imageSourceDecision.searchQuery) {
+      console.log(`[PROCESS_SINGLE] 📦 Product detected: ${imageSourceDecision.category}`)
+      console.log(`[PROCESS_SINGLE] 🔍 Searching stock images: "${imageSourceDecision.searchQuery}"`)
+      
+      try {
+        // Search stock images (Pexels → Unsplash → Pixabay)
+        const stockResult = await searchProductImage(
+          imageSourceDecision.searchQuery,
+          unsplashKey,
+          pexelsKey,
+          pixabayKey
+        )
+        
+        if (stockResult) {
+          console.log(`[PROCESS_SINGLE] ✅ Stock image found from ${stockResult.source}`)
+          
+          // Download and upload to Supabase storage
+          const stockImageUrl = await downloadAndUploadSearchImage(
+            stockResult,
+            supabase,
+            unsplashKey // For Unsplash download tracking
+          )
+          
+          if (stockImageUrl) {
+            // Success! Update job and return early
+            await supabase
+              .from('image_generation_jobs')
+              .update({ 
+                status: JOB_STATUS.COMPLETED, 
+                image_url: stockImageUrl,
+                provider: `stock-${stockResult.source}`,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', job.id)
+
+            console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} completed with stock image (${stockResult.source})`)
+
+            // Check session completion status
+            const { data: remainingJobs } = await supabase
+              .from('image_generation_jobs')
+              .select('id, status')
+              .eq('session_id', job.session_id)
+              .eq('user_id', job.user_id)
+
+            const pending = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.PENDING).length || 0
+            const processing = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.PROCESSING).length || 0
+            const completed = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.COMPLETED).length || 0
+            const failed = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.FAILED).length || 0
+            const total = remainingJobs?.length || 0
+            const allComplete = pending === 0 && processing === 0
+
+            if (allComplete && total > 0) {
+              await createCompletionNotification(supabase, job.user_id, job.session_id, completed, failed, total)
+            }
+
+            return new Response(
+              JSON.stringify({ 
+                success: true, 
+                data: { 
+                  job: {
+                    id: job.id,
+                    segment_number: job.segment_number,
+                    segment_type: job.segment_type,
+                    image_url: stockImageUrl,
+                    provider: `stock-${stockResult.source}`,
+                    status: JOB_STATUS.COMPLETED
+                  },
+                  summary: { total, completed, failed, pending, processing },
+                  all_complete: allComplete
+                } 
+              }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+          }
+        }
+        
+        console.log(`[PROCESS_SINGLE] ⚠️ No stock image found, falling back to AI generation`)
+      } catch (stockError) {
+        console.warn(`[PROCESS_SINGLE] ⚠️ Stock search error: ${stockError}, falling back to AI generation`)
+      }
+    }
+  }
+
+  // ========================================================================
+  // GENERATE IMAGE WITH AI (FALLBACK OR PRIMARY)
   // Try primary provider first, then fallback if fails
   // ========================================================================
   const primaryProvider = (job.provider || 'nano-banana-pro') as ImageModelKey
@@ -581,7 +724,16 @@ async function handleCheckStatus(supabase: any, requestBody: any) {
   )
 }
 
-async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined, falApiKey: string | undefined) {
+async function handleLegacyMode(
+  supabase: any, 
+  requestBody: any, 
+  openaiApiKey: string | undefined, 
+  hfApiKey: string | undefined, 
+  falApiKey: string | undefined,
+  unsplashKey: string | undefined,
+  pexelsKey: string | undefined,
+  pixabayKey: string | undefined
+) {
   // Original synchronous processing for backward compatibility
   const segments = requestBody.segments
   const style = requestBody.style || 'cinematic'
@@ -673,15 +825,21 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
     const isCreatorShot = shotType === 'CREATOR' || 
       ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
+    // Reference image for CREATOR shots only
+    const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng || undefined) : undefined
+    const hasReferenceImage = !!refImage
+    
     // ========================================================================
-    // PROVIDER SELECTION (2026 - Cost Optimized)
-    // Nano Banana PRIMARY for ALL → fallback based on shot type
+    // PROVIDER SELECTION (2026-01-11 - Updated with /edit endpoint)
+    // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
+    // CREATOR no ref: fal-nano-banana → gpt-image-1
+    // B-ROLL: fal-wan-t2i → fal-nano-banana
     // ========================================================================
     let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
     let fallbackProvider: ImageModelKey = 'flux-schnell'
     
     if (defaultProvider === 'auto') {
-      const providerChoice = selectImageProvider(isCreatorShot)
+      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage)
       primaryProvider = providerChoice.primary
       fallbackProvider = providerChoice.fallback
     }
@@ -697,12 +855,81 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       emotion
     })
     
-    // Reference image for CREATOR shots only
-    const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng || undefined) : undefined
-    
-    console.log(`[LEGACY] ${i + 1}/${segments.length}: ${segmentType} (${shotType}) → ${primaryProvider} (fallback: ${fallbackProvider})`)
+    console.log(`[LEGACY] ${i + 1}/${segments.length}: ${segmentType} (${shotType}) → ${primaryProvider} (ref: ${hasReferenceImage}, fallback: ${fallbackProvider})`)
 
-    // Generate with automatic fallback
+    // ========================================================================
+    // STOCK IMAGE SEARCH FOR B-ROLL PRODUCT SHOTS (2026-01-11)
+    // Try stock images FIRST for B-roll with product entities → skip AI if found
+    // ========================================================================
+    let stockImageUsed = false
+    let stockImageUrl: string | null = null
+    let stockProvider: string | null = null
+    
+    if (!isCreatorShot && (unsplashKey || pexelsKey)) {
+      const scriptText = segment.script_text || segment.voiceover || segment.visual_prompt || ''
+      
+      // Check for product entities in the content
+      const imageSourceDecision = decideImageSource(scriptText, topic)
+      
+      if (imageSourceDecision.useStockImage && imageSourceDecision.searchQuery) {
+        console.log(`[LEGACY] 📦 Product detected: ${imageSourceDecision.category}`)
+        console.log(`[LEGACY] 🔍 Searching stock images: "${imageSourceDecision.searchQuery}"`)
+        
+        try {
+          // Search stock images (Pexels → Unsplash → Pixabay)
+          const stockResult = await searchProductImage(
+            imageSourceDecision.searchQuery,
+            unsplashKey,
+            pexelsKey,
+            pixabayKey
+          )
+          
+          if (stockResult) {
+            console.log(`[LEGACY] ✅ Stock image found from ${stockResult.source}`)
+            
+            // Download and upload to Supabase storage
+            stockImageUrl = await downloadAndUploadSearchImage(
+              stockResult,
+              supabase,
+              unsplashKey // For Unsplash download tracking
+            )
+            
+            if (stockImageUrl) {
+              stockImageUsed = true
+              stockProvider = `stock-${stockResult.source}`
+              console.log(`[LEGACY] ✅ Using stock image for ${segmentType}`)
+            }
+          } else {
+            console.log(`[LEGACY] ⚠️ No stock image found, falling back to AI generation`)
+          }
+        } catch (stockError) {
+          console.warn(`[LEGACY] ⚠️ Stock search error: ${stockError}, falling back to AI generation`)
+        }
+      }
+    }
+    
+    // If stock image found, skip AI generation
+    if (stockImageUsed && stockImageUrl) {
+      images.push({
+        segment_number: segment.segment_number,
+        segment_type: segmentType,
+        shot_type: shotType,
+        emotion: emotion,
+        prompt: imagePrompt,
+        image_url: stockImageUrl,
+        provider: stockProvider || 'stock',
+        error: null
+      })
+      
+      console.log(`[LEGACY] ✅ Success: ${segmentType} via ${stockProvider}`)
+      
+      if (i < segments.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500)) // Shorter delay for stock
+      }
+      continue // Skip AI generation
+    }
+
+    // Generate with automatic fallback (AI generation)
     const result = await generateWithProviderAndFallback(primaryProvider, fallbackProvider, imagePrompt, refImage)
     
     const providerConfig = IMAGE_MODELS[result.usedProvider as ImageModelKey]
@@ -1281,8 +1508,9 @@ async function downloadAndUploadImage(
 }
 
 // ============================================================================
-// FAL.AI IMAGE GENERATION (2026-01-10)
-// fal-nano-banana: Best for CREATOR shots (face consistency, style presets)
+// FAL.AI IMAGE GENERATION (2026-01-11 Updated)
+// fal-nano-banana: Text-to-image (NO reference image support!)
+// fal-nano-banana-edit: Image edit with image_urls array (face consistency)
 // fal-wan-t2i: Best for B-ROLL (supports negative prompt for no humans)
 // ============================================================================
 
@@ -1303,6 +1531,7 @@ async function generateWithFalAi(
   const dimensions = getDimensions(modelConfig, aspectRatio) || { width: 1024, height: 1792 }
   
   console.log(`[FAL.AI] Model: ${modelConfig.apiModelName}`)
+  console.log(`[FAL.AI] Endpoint: ${modelConfig.endpoint}`)
   console.log(`[FAL.AI] Size: ${dimensions.width}x${dimensions.height}`)
   console.log(`[FAL.AI] Prompt length: ${prompt.length} chars`)
   
@@ -1319,16 +1548,33 @@ async function generateWithFalAi(
   }
   
   // Model-specific configurations
-  if (modelKey === 'fal-nano-banana') {
-    // Nano Banana Pro - supports style presets and reference images
-    requestBody.style = 'Portrait Cinematic' // Best for video content
-    
-    if (referenceImageUrl) {
-      requestBody.image_url = referenceImageUrl // Face consistency
-      console.log(`[FAL.AI] Using reference image for face consistency`)
+  if (modelKey === 'fal-nano-banana-edit') {
+    // ========================================================================
+    // NANO BANANA PRO /EDIT - Supports image_urls array for face consistency
+    // This is the KEY endpoint for CREATOR shots with avatar reference
+    // ========================================================================
+    if (!referenceImageUrl) {
+      console.warn(`[FAL.AI] fal-nano-banana-edit called without reference image - falling back to T2I behavior`)
+    } else {
+      // image_urls is an ARRAY of reference images (up to 14)
+      requestBody.image_urls = [referenceImageUrl]
+      console.log(`[FAL.AI] Using /edit endpoint with image_urls for face consistency`)
+      console.log(`[FAL.AI] Reference: ${referenceImageUrl.substring(0, 80)}...`)
     }
+  } else if (modelKey === 'fal-nano-banana') {
+    // ========================================================================
+    // NANO BANANA PRO T2I - Text-to-image only (NO reference image support!)
+    // IMPORTANT: This endpoint ignores image_url parameter!
+    // ========================================================================
+    if (referenceImageUrl) {
+      console.warn(`[FAL.AI] fal-nano-banana T2I does NOT support reference images! Use fal-nano-banana-edit instead.`)
+      // Don't add image_url - it will be ignored anyway
+    }
+    // No style presets for T2I endpoint
   } else if (modelKey === 'fal-wan-t2i') {
-    // Wan 2.6 - supports negative prompt (critical for B-roll without faces)
+    // ========================================================================
+    // WAN 2.6 T2I - supports negative prompt (critical for B-roll without faces)
+    // ========================================================================
     requestBody.negative_prompt = getBRollNegativePrompt('combined')
     requestBody.num_inference_steps = 30
     requestBody.guidance_scale = 6.0
@@ -1337,8 +1583,8 @@ async function generateWithFalAi(
     console.log(`[FAL.AI] Using negative prompt to exclude humans`)
   }
   
-  // Make API request
-  const response = await fetch(`${FAL_AI_BASE_URL}/${modelConfig.apiModelName}`, {
+  // Make API request to the correct endpoint
+  const response = await fetch(modelConfig.endpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Key ${apiKey}`,
@@ -1357,7 +1603,7 @@ async function generateWithFalAi(
   // fal.ai returns images array
   if (responseData.images && responseData.images.length > 0) {
     const imageUrl = responseData.images[0].url
-    console.log(`[FAL.AI] ✅ Image generated successfully`)
+    console.log(`[FAL.AI] ✅ Image generated successfully via ${modelKey}`)
     return await downloadAndUploadImage(imageUrl, modelKey.replace('fal-', ''), supabase)
   }
   

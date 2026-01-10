@@ -457,39 +457,70 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   },
 
   // ==========================================================================
-  // FAL.AI NANO BANANA PRO - CREATOR shots (face consistency)
+  // FAL.AI NANO BANANA PRO - Text-to-Image (NO reference image support!)
+  // Use for text-only generation when no avatar reference is available
   // ==========================================================================
   'fal-nano-banana': {
     key: 'fal-nano-banana',
-    displayName: 'Nano Banana Pro (fal.ai)',
+    displayName: 'Nano Banana Pro T2I (fal.ai)',
     provider: 'fal',
     endpoint: 'https://fal.run/fal-ai/nano-banana-pro',
     apiModelName: 'fal-ai/nano-banana-pro',
     aspectRatios: {
-      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
-      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
-      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
-      '4:3': { apiValue: 'custom', dimensions: { width: 1024, height: 768 } },
-      '3:4': { apiValue: 'custom', dimensions: { width: 768, height: 1024 } },
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
     },
     qualityOptions: undefined,
-    styleOptions: [
-      'None', 'Photorealistic', 'Portrait', 'Portrait Cinematic',
-      'Portrait Fashion', 'Ray Traced', 'Dynamic', 'Creative',
-      '3D Render', 'Stock Photo'
-    ],
-    refImageParam: 'image_url', // Reference image for face consistency
+    styleOptions: undefined, // T2I doesn't use style presets
+    refImageParam: null, // IMPORTANT: Text-to-image does NOT support reference images!
     supportsNegativePrompt: false,
     maxPromptLength: 4000,
     responseFormat: 'url',
-    costPerImage: 0.02,
+    costPerImage: 0.15,
     isFree: false,
     rateLimit: 0,
-    strengths: ['face consistency', 'style presets', 'cinematic quality', 'reference image'],
-    weaknesses: ['no negative prompt', 'paid'],
-    bestFor: ['CREATOR shots', 'HOOK/CTA', 'portraits', 'face consistency'],
+    strengths: ['semantic understanding', 'typography', 'cinematic quality'],
+    weaknesses: ['no reference image', 'no negative prompt', 'paid'],
+    bestFor: ['Text-to-image', 'when no avatar reference available'],
     enabled: true,
-    notes: 'PRIMARY for CREATOR shots - best face consistency with reference image',
+    notes: 'Text-to-image only - use fal-nano-banana-edit for face consistency!',
+  },
+
+  // ==========================================================================
+  // FAL.AI NANO BANANA PRO EDIT - Image Edit (WITH reference image support!)
+  // PRIMARY for CREATOR shots with avatar reference for face consistency
+  // Supports up to 14 reference images via image_urls array
+  // ==========================================================================
+  'fal-nano-banana-edit': {
+    key: 'fal-nano-banana-edit',
+    displayName: 'Nano Banana Pro Edit (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/nano-banana-pro/edit',
+    apiModelName: 'fal-ai/nano-banana-pro/edit',
+    aspectRatios: {
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined, // Edit endpoint doesn't use style presets
+    refImageParam: 'image_urls', // Array of reference image URLs (up to 14)
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.15,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['face consistency', 'character preservation', 'multi-image reference', 'up to 14 refs'],
+    weaknesses: ['no negative prompt', 'paid', 'requires reference image'],
+    bestFor: ['CREATOR shots with avatar', 'HOOK/CTA', 'face consistency required'],
+    enabled: true,
+    notes: 'PRIMARY for CREATOR shots - best face consistency via image_urls array',
   },
 
   // ==========================================================================
@@ -717,8 +748,9 @@ export function selectVideoModel(params: {
 /**
  * Select best image model based on requirements
  * 
- * PRIORITY (2026-01-10 Updated):
- * - CREATOR (HOOK/CTA): fal-nano-banana (face consistency) → GPT-Image-1 → FLUX
+ * PRIORITY (2026-01-11 Updated with /edit endpoint):
+ * - CREATOR (HOOK/CTA) WITH reference: fal-nano-banana-edit (face consistency via image_urls)
+ * - CREATOR (HOOK/CTA) WITHOUT reference: fal-nano-banana (text-to-image)
  * - B-ROLL: fal-wan-t2i (negative prompt) → fal-nano-banana → FLUX
  */
 export function selectImageModel(params: {
@@ -734,13 +766,13 @@ export function selectImageModel(params: {
   const creatorSegments = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA', 'THUMBNAIL'];
   const isCreator = isCreatorShot || (segmentType && creatorSegments.includes(segmentType.toUpperCase()));
   
-  // CREATOR shots: fal-nano-banana (best face consistency with style presets)
+  // CREATOR shots with reference image: use /edit endpoint for face consistency
   if (isCreator) {
-    // Primary: fal.ai Nano Banana Pro with Portrait Cinematic style
     if (hasReferenceImage) {
-      return IMAGE_MODELS['fal-nano-banana'];
+      // PRIMARY: fal.ai Nano Banana Pro EDIT - supports image_urls for face reference
+      return IMAGE_MODELS['fal-nano-banana-edit'];
     }
-    // Fallback without reference: GPT-Image-1 or imagen-pro
+    // Without reference: use text-to-image (less reliable for face consistency)
     return IMAGE_MODELS['fal-nano-banana'];
   }
   
@@ -752,20 +784,22 @@ export function selectImageModel(params: {
 /**
  * Get image model fallback chain
  * 
- * PRIORITY (2026-01-10 Updated with fal.ai):
- * - CREATOR: fal-nano-banana → GPT-Image-1 → imagen-pro → FLUX
+ * PRIORITY (2026-01-11 Updated with /edit endpoint):
+ * - CREATOR with ref: fal-nano-banana-edit → gpt-image-1 → imagen-pro → FLUX
+ * - CREATOR no ref: fal-nano-banana → gpt-image-1 → FLUX
  * - B-ROLL: fal-wan-t2i → fal-nano-banana → FLUX
  */
 export function getImageModelFallbackChain(primaryModel: string, isCreatorShot: boolean = false): string[] {
-  // CREATOR shots: fal-nano-banana → GPT-Image-1 → imagen-pro → FLUX
+  // CREATOR shots with reference: fal-nano-banana-edit → gpt-image-1 → imagen-pro → FLUX
   if (isCreatorShot) {
     const creatorChains: Record<string, string[]> = {
-      'fal-nano-banana': ['gpt-image-1', 'imagen-pro', 'flux-schnell'],
-      'gpt-image-1': ['fal-nano-banana', 'imagen-pro', 'flux-schnell'],
-      'imagen-pro': ['fal-nano-banana', 'gpt-image-1', 'flux-schnell'],
-      'dall-e-3': ['fal-nano-banana', 'gpt-image-1', 'imagen-pro', 'flux-schnell'],
+      'fal-nano-banana-edit': ['gpt-image-1', 'imagen-pro', 'flux-schnell'],
+      'fal-nano-banana': ['fal-nano-banana-edit', 'gpt-image-1', 'flux-schnell'],
+      'gpt-image-1': ['fal-nano-banana-edit', 'imagen-pro', 'flux-schnell'],
+      'imagen-pro': ['fal-nano-banana-edit', 'gpt-image-1', 'flux-schnell'],
+      'dall-e-3': ['fal-nano-banana-edit', 'gpt-image-1', 'imagen-pro', 'flux-schnell'],
     };
-    return creatorChains[primaryModel] || ['gpt-image-1', 'imagen-pro', 'flux-schnell'];
+    return creatorChains[primaryModel] || ['fal-nano-banana-edit', 'gpt-image-1', 'flux-schnell'];
   }
   
   // B-ROLL: fal-wan-t2i → fal-nano-banana → FLUX

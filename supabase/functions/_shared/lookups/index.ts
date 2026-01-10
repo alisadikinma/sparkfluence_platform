@@ -117,3 +117,15 @@ export {
   type AudioDirectiveParams,
   type VideoPromptParams,
 } from './videoSpecs.ts';
+
+// Product Keywords Lookup - Entity Detection for Stock Image Search
+export {
+  PRODUCT_KEYWORDS,
+  detectProductEntities,
+  shouldUseStockImage,
+  getProductSearchQuery,
+  getProductCategory,
+  decideImageSource,
+  type ProductEntity,
+  type ProductSearchDecision,
+} from './productKeywords.ts';
