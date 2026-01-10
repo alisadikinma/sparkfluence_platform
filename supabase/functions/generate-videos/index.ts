@@ -1473,12 +1473,13 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // VOICEOVER DURATION FIX (2026): Truncate script to fit duration
   // This prevents voiceover from exceeding video length
   // ========================================================================
-  const maxWords = calculateMaxWords(duration, language)
+  const safeDuration = (typeof duration === 'number' && !isNaN(duration) && duration > 0) ? duration : 10
+  const maxWords = calculateMaxWords(safeDuration, language)
   const truncationResult = truncateScript(rawScriptText || '', maxWords)
   const scriptText = truncationResult.truncated
   
   if (truncationResult.wasModified) {
-    console.log(`[VIDEO-PROMPT] ⚠️ Script truncated: ${truncationResult.originalWords} → ${scriptText.split(/\s+/).length} words (max: ${maxWords} for ${duration}s ${language})`)
+    console.log(`[VIDEO-PROMPT] ⚠️ Script truncated: ${truncationResult.originalWords} → ${scriptText.split(/\s+/).length} words (max: ${maxWords} for ${safeDuration}s ${language})`)
   }
 
   // Extract segment data
@@ -1597,10 +1598,10 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
     
     // Build custom prompt with VOICE_ANCHOR and FACE_ANCHOR blocks
-    const isSoraModel = platform.startsWith('sora-')
+    // NOTE: isSoraModel already declared at function scope - DO NOT redeclare
     const platformLabel = isSoraModel ? 'SORA 2' : 'VEO 3.1'
     const modelConfig = VIDEO_MODELS[platform]
-    const actualDuration = modelConfig ? getClosestDuration(modelConfig, duration) : duration
+    const actualDuration = modelConfig ? getClosestDuration(modelConfig, duration) : (duration || 10)
     
     // Get camera movement
     const cameraMove = getCameraMovement(segmentType, emotion)
