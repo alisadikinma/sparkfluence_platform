@@ -38,6 +38,7 @@ export const ScriptLab = (): JSX.Element => {
     duration: string;
     language: string;
     useDnaTone: boolean;
+    creativeDna: string[] | null;
     characterDescription: string | null;
   }) => {
     if (!formData.prompt.trim()) return;
@@ -95,7 +96,10 @@ export const ScriptLab = (): JSX.Element => {
           aspect_ratio: formData.ratio,
           platform: formData.ratio === "9:16" ? 'tiktok' : 'youtube',
           language: langMap[formData.language] || 'indonesian',
-          user_id: user?.id
+          user_id: user?.id,
+          // DNA Tone: When enabled, use creative_dna styles for script generation
+          use_dna_tone: formData.useDnaTone,
+          creative_dna: formData.creativeDna
         }
       });
 
@@ -137,7 +141,8 @@ export const ScriptLab = (): JSX.Element => {
           videoSettings: {
             duration: formData.duration,
             aspectRatio: formData.ratio,
-            language: langMap[formData.language] || 'indonesian'
+            language: langMap[formData.language] || 'indonesian',
+            model: formData.model
           },
           characterDescription: formData.characterDescription,
           fromScriptLab: true,

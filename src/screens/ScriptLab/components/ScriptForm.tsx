@@ -30,6 +30,7 @@ interface ScriptFormProps {
     duration: string;
     language: string;
     useDnaTone: boolean;
+    creativeDna: string[] | null;
     characterDescription: string | null;
   }) => void;
   loading: boolean;
@@ -52,9 +53,9 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
-  const [model, setModel] = useState("sora2");
+  const [model, setModel] = useState("auto");
   const [ratio, setRatio] = useState("9:16");
-  const [duration, setDuration] = useState("30s");
+  const [duration, setDuration] = useState("60s");
   const [useDnaTone, setUseDnaTone] = useState(true);
   const [scriptLang, setScriptLang] = useState("en");
 
@@ -404,6 +405,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       duration,
       language: scriptLang,
       useDnaTone: hasDnaTone && useDnaTone,
+      creativeDna: hasDnaTone && useDnaTone ? onboardingData?.creative_dna || null : null,
       characterDescription,
     });
   };
@@ -416,6 +418,8 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   };
 
   const modelOptions = [
+    { value: "auto", label: "AUTO" },
+    { value: "veo31", label: "VEO 3.1" },
     { value: "sora2", label: "SORA 2.0" },
   ];
 
