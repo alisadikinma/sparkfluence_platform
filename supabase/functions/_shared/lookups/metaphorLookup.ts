@@ -15,6 +15,30 @@
 
 export const METAPHOR_MAP: Record<string, string[]> = {
   // ========================================
+  // SMARTPHONE BRANDS & PRODUCTS (2026-01-11)
+  // For product comparison videos
+  // ========================================
+  samsung: ['Samsung Galaxy smartphone', 'Samsung phone display', 'Galaxy series lineup', 'Samsung device', 'Galaxy phone'],
+  apple: ['iPhone smartphone', 'Apple device', 'iPhone display', 'iOS interface', 'Apple phone'],
+  iphone: ['iPhone smartphone', 'iPhone display', 'Apple device', 'iOS interface'],
+  galaxy: ['Samsung Galaxy phone', 'Galaxy display', 'Samsung smartphone', 'Galaxy device'],
+  xiaomi: ['Xiaomi smartphone', 'Xiaomi device', 'Mi phone display'],
+  poco: ['POCO smartphone', 'POCO phone', 'POCO device display'],
+  oppo: ['OPPO smartphone', 'OPPO phone display', 'OPPO device'],
+  vivo: ['Vivo smartphone', 'Vivo phone display', 'Vivo device'],
+  realme: ['Realme smartphone', 'Realme phone', 'Realme device'],
+  oneplus: ['OnePlus smartphone', 'OnePlus phone display', 'OnePlus device'],
+  google: ['Google Pixel phone', 'Pixel smartphone', 'Google device'],
+  pixel: ['Google Pixel smartphone', 'Pixel display', 'Pixel device'],
+  smartphone: ['modern smartphone display', 'mobile phone screen', 'smartphone lineup', 'phone comparison'],
+  phone: ['smartphone display', 'mobile device', 'phone screen', 'modern phone'],
+  
+  // Smartphone comparison context
+  brand: ['smartphone lineup', 'phone comparison', 'device showcase', 'brand logos'],
+  comparison: ['side-by-side devices', 'product comparison layout', 'versus display'],
+  bandwagon: ['trending devices', 'popular smartphones', 'tech trend visualization'],
+  
+  // ========================================
   // TECHNOLOGY & DIGITAL
   // ========================================
   security: ['padlock', 'shield icon', 'vault door', 'fingerprint scanner', 'fortress', 'encrypted lock'],
@@ -118,6 +142,18 @@ export const METAPHOR_MAP: Record<string, string[]> = {
 // ============================================================================
 
 export const TOPIC_VISUALS: Record<string, string[]> = {
+  // Smartphone & Product Reviews (2026-01-11)
+  'smartphone comparison': ['smartphone lineup', 'phone comparison display', 'side-by-side devices', 'flagship phones'],
+  'phone review': ['smartphone display', 'phone unboxing', 'device showcase', 'phone camera'],
+  'ai smartphone': ['AI-powered phone', 'smartphone AI features', 'intelligent device display', 'smart camera'],
+  'ai powered': ['AI-enhanced device', 'smart technology', 'intelligent features display', 'neural processing'],
+  'unboxing': ['product unboxing', 'new device reveal', 'package opening', 'first impressions'],
+  'flagship': ['premium smartphone', 'flagship device', 'high-end phone', 'top-tier device'],
+  'best phone': ['smartphone comparison', 'phone lineup', 'device showcase', 'top phones'],
+  'samsung vs apple': ['Samsung Galaxy vs iPhone', 'phone comparison', 'flagship comparison', 'brand rivalry'],
+  'phone camera': ['smartphone camera module', 'phone photography', 'camera comparison', 'lens array'],
+  'phone specs': ['phone specification display', 'tech specs visualization', 'processor benchmark'],
+  
   // Cybersecurity
   'password management': ['padlock', 'key', 'secure vault', 'password field UI', 'key ring'],
   'two-factor auth': ['phone with code', 'fingerprint', 'dual locks', 'verification screen'],
@@ -227,16 +263,77 @@ export interface VisualBrief {
   image_prompt: string;  // Generated cinematic prompt
 }
 
+// Priority keywords that should be checked FIRST (brands, products)
+const PRIORITY_KEYWORDS = [
+  'samsung', 'apple', 'iphone', 'galaxy', 'xiaomi', 'poco', 'oppo', 'vivo',
+  'realme', 'oneplus', 'google', 'pixel', 'huawei', 'honor', 'motorola',
+  'smartphone', 'phone', 'laptop', 'tablet', 'bitcoin', 'ethereum', 'crypto'
+];
+
 export function buildVisualBrief(scriptText: string, topic: string): VisualBrief {
+  const scriptLower = scriptText.toLowerCase();
+  const topicLower = topic.toLowerCase();
+  
+  // 1. FIRST: Check for priority keywords (brands/products)
+  const priorityVisuals: string[] = [];
+  for (const keyword of PRIORITY_KEYWORDS) {
+    if (scriptLower.includes(keyword) || topicLower.includes(keyword)) {
+      const visuals = METAPHOR_MAP[keyword];
+      if (visuals && visuals.length > 0) {
+        priorityVisuals.push(...visuals);
+      }
+    }
+  }
+  
+  // 2. THEN: Get topic-based and text-based visuals
   const abstracts = identifyAbstractConcepts(scriptText);
   const topicVisuals = getTopicVisuals(topic);
   const textVisuals = extractVisualsFromText(scriptText);
   
-  // Combine and dedupe
-  const allVisuals = [...new Set([...topicVisuals, ...textVisuals])];
+  // 3. Combine: PRIORITY first, then topic, then generic
+  // Dedupe while preserving order
+  const seen = new Set<string>();
+  const allVisuals: string[] = [];
   
-  const primary = allVisuals[0] || 'abstract data visualization';
+  // Add priority visuals first (brands/products)
+  for (const v of priorityVisuals) {
+    const key = v.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      allVisuals.push(v);
+    }
+  }
+  
+  // Then topic visuals
+  for (const v of topicVisuals) {
+    const key = v.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      allVisuals.push(v);
+    }
+  }
+  
+  // Then text-extracted visuals (but filter out generic security if we have products)
+  const hasProductVisuals = priorityVisuals.length > 0;
+  for (const v of textVisuals) {
+    const key = v.toLowerCase();
+    // Skip generic security visuals if we already have product/brand visuals
+    if (hasProductVisuals && (key.includes('padlock') || key.includes('shield') || key.includes('vault'))) {
+      continue;
+    }
+    if (!seen.has(key)) {
+      seen.add(key);
+      allVisuals.push(v);
+    }
+  }
+  
+  const primary = allVisuals[0] || 'modern technology visualization';
   const secondary = allVisuals.slice(1, 4);
+  
+  // Log for debugging
+  console.log(`[buildVisualBrief] Script: "${scriptText.substring(0, 80)}..."`);
+  console.log(`[buildVisualBrief] Priority keywords found: ${priorityVisuals.length > 0 ? priorityVisuals.slice(0, 3).join(', ') : 'none'}`);
+  console.log(`[buildVisualBrief] Primary visual: "${primary}"`);
   
   // Build cinematic image prompt from visual elements
   const secondaryStr = secondary.length > 0 

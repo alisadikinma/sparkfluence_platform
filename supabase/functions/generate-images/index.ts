@@ -275,6 +275,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       shot_type: shotType,
       emotion,
       visual_prompt: imagePrompt,
+      script_text: segment.script_text || segment.voiceover || '',  // Actual spoken script for product detection
       style,
       aspect_ratio,
       provider: segmentProvider,
@@ -416,8 +417,11 @@ async function handleProcessSingle(
   
   // For B-ROLL segments, check if we can use stock images instead of AI
   if (!isCreatorShot && (unsplashKey || pexelsKey)) {
-    const scriptText = job.visual_prompt || ''
+    // CRITICAL: Use script_text (spoken words) for product detection, NOT visual_prompt!
+    const scriptText = job.script_text || ''
     const topic = job.topic || ''
+    
+    console.log(`[PROCESS_SINGLE] 🔍 Product detection using script_text: "${scriptText.substring(0, 100)}..."`)
     
     // Check for product entities in the content
     const imageSourceDecision = decideImageSource(scriptText, topic)
@@ -866,7 +870,10 @@ async function handleLegacyMode(
     let stockProvider: string | null = null
     
     if (!isCreatorShot && (unsplashKey || pexelsKey)) {
-      const scriptText = segment.script_text || segment.voiceover || segment.visual_prompt || ''
+      // CRITICAL: Use script_text (spoken words) for product detection, NOT visual_prompt!
+      const scriptText = segment.script_text || segment.voiceover || ''
+      
+      console.log(`[LEGACY] 🔍 Product detection using script_text: "${scriptText.substring(0, 100)}..."`)
       
       // Check for product entities in the content
       const imageSourceDecision = decideImageSource(scriptText, topic)
@@ -1084,18 +1091,31 @@ function buildCinematicPrompt(params: PromptParams): string {
   }
   
   // B-ROLL SHOT - Use Visual Brief extraction for contextual imagery
-  const scriptText = segment.script_text || segment.voiceover || visualDirection || ''
+  // CRITICAL: Script text should be the SPOKEN words, NOT visual direction!
+  // Priority: script_text > voiceover > text (NEVER visualDirection - that's for different purpose)
+  const scriptText = segment.script_text || segment.voiceover || segment.text || ''
+  
+  // Debug logging
+  console.log(`[buildCinematicPrompt] Segment: ${segmentType}, Shot: ${shotType}`)
+  console.log(`[buildCinematicPrompt] script_text field: "${(segment.script_text || '').substring(0, 50)}..."`) 
+  console.log(`[buildCinematicPrompt] voiceover field: "${(segment.voiceover || '').substring(0, 50)}..."`) 
+  console.log(`[buildCinematicPrompt] Final scriptText: "${scriptText.substring(0, 80)}..."`) 
+  console.log(`[buildCinematicPrompt] Topic: "${topic}"`)
   
   // Use Visual Brief for B-roll (two-stage extraction)
   const visualBrief = buildVisualBrief(scriptText, topic)
   
   // Use the generated image_prompt from Visual Brief
   if (visualBrief.image_prompt) {
+    console.log(`[buildCinematicPrompt] ✅ Using Visual Brief prompt`)
     return visualBrief.image_prompt
   }
   
-  // Fallback: Build basic B-roll prompt
-  const visual = visualDirection || `Professional ${topic} concept visualization - striking cinematic imagery`
+  // Fallback: Build basic B-roll prompt from topic (NOT visualDirection!)
+  console.log(`[buildCinematicPrompt] ⚠️ Visual Brief empty, using topic-based fallback`)
+  const visual = topic 
+    ? `Professional ${topic} concept visualization - modern technology scene`
+    : 'Modern technology concept - clean professional imagery'
   
   return `Cinematic ${mappedShotType} of ${visual}.
 No human face, no person. Focus on objects and environment.
