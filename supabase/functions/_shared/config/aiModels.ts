@@ -109,7 +109,7 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     weaknesses: ['720p only', 'lip-sync not best'],
     bestFor: ['B-roll', 'longer segments', 'narrative sequences'],
     enabled: true,
-    notes: 'Default model for most use cases',
+    notes: 'Use for segments > 8s duration',
   },
 
   // ==========================================================================
@@ -198,7 +198,7 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     weaknesses: ['8s max', '720p for portrait'],
     bestFor: ['Creator talking head', 'dialogue-heavy', 'lip-sync critical'],
     enabled: true,
-    notes: 'Legacy model - use Sora 2 for most cases',
+    notes: 'DEFAULT model - best lip-sync quality for HOOK/CTA segments',
   },
 };
 
@@ -619,6 +619,7 @@ export function buildImageFormData(
 
 /**
  * Select best video model based on requirements
+ * DEFAULT: VEO 3.1 Fast for best lip-sync and consistent quality
  */
 export function selectVideoModel(params: {
   duration: number;
@@ -633,18 +634,18 @@ export function selectVideoModel(params: {
     return VIDEO_MODELS['sora-2-pro-hd'];
   }
   
-  // If lip-sync critical and <= 8s, consider VEO
-  if (needsLipSync && duration <= 8) {
-    return VIDEO_MODELS['veo-3.1-fast'];
-  }
-  
   // If very long (>15s), use sora-2-pro
   if (duration > 15) {
     return VIDEO_MODELS['sora-2-pro'];
   }
   
-  // Default: sora-2 (best balance)
-  return VIDEO_MODELS['sora-2'];
+  // If duration > 8s but <= 15s, use sora-2
+  if (duration > 8) {
+    return VIDEO_MODELS['sora-2'];
+  }
+  
+  // Default: VEO 3.1 Fast (best lip-sync, up to 8s)
+  return VIDEO_MODELS['veo-3.1-fast'];
 }
 
 /**

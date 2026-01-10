@@ -39,7 +39,7 @@ interface VideoSettings {
   aspectRatio: '9:16' | '16:9';
   resolution: '720p' | '1080p';
   language?: string;
-  model?: 'auto' | 'sora2' | 'veo31';
+  model?: 'auto' | 'veo31' | 'sora2'; // auto = VEO 3.1 (default)
 }
 
 // Job status constants

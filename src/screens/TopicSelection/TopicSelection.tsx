@@ -41,7 +41,9 @@ const DURATION_OPTIONS = [
 ];
 
 const MODEL_OPTIONS = [
-  { value: 'sora2', label: 'SORA 2.0' },
+  { value: 'auto', label: 'Auto (VEO 3.1)' },     // Best lip-sync, 8s max
+  { value: 'veo31', label: 'VEO 3.1 Fast' },      // Best for HOOK/CTA
+  { value: 'sora2', label: 'Sora 2 (10-15s)' },   // Longer segments
 ];
 
 const TOPICS_CACHE_KEY = 'sparkfluence_cached_topics';
@@ -109,7 +111,7 @@ export const TopicSelection = (): JSX.Element => {
   // Form state
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
-  const [model, setModel] = useState("sora2");
+  const [model, setModel] = useState("auto"); // Default to VEO 3.1
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("30s");
   const [outputLang, setOutputLang] = useState<string>(uiLang);

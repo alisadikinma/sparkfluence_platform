@@ -236,15 +236,15 @@ async function handlePreviewPrompts(requestBody: any) {
   const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
 
   // Map user selection to actual platform key
-  // DEFAULT = SORA 2 for best quality with AI voiceover (10s/15s, 720p)
+  // DEFAULT = VEO 3.1 for best lip-sync quality (8s, 720p/1080p)
   const platformMap: Record<string, VideoModelKey> = {
-    'veo31': 'veo-3.1-fast',
+    'veo31': 'veo-3.1-fast',     // VEO 3.1 Fast (8s, best lip-sync)
     'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
     'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
     'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
-    'auto': 'sora-2'             // Default to standard Sora 2
+    'auto': 'veo-3.1-fast'       // Default to VEO 3.1 for consistent quality
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'sora-2'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast'
 
   const prompts: Array<{
     segment_id: string
@@ -374,15 +374,15 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   console.log(`[CREATE_JOBS] Creating ${segments.length} video jobs for session: ${session_id}, preferred_platform: ${preferred_platform}`)
 
   // Map user selection to actual platform key
-  // DEFAULT = SORA 2 for best quality with AI voiceover (10s/15s, 720p)
+  // DEFAULT = VEO 3.1 for best lip-sync quality (8s, 720p/1080p)
   const platformMap: Record<string, VideoModelKey> = {
-    'veo31': 'veo-3.1-fast',
+    'veo31': 'veo-3.1-fast',     // VEO 3.1 Fast (8s, best lip-sync)
     'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
     'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
     'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
-    'auto': 'sora-2'             // Default to standard Sora 2
+    'auto': 'veo-3.1-fast'       // Default to VEO 3.1 for consistent quality
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'sora-2'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast'
 
   // ========================================================================
   // VOICE CHARACTER CONSISTENCY FIX:
@@ -655,8 +655,8 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     const isCreatorShot = shotType === 'CREATOR'
     const hasDialogue = scriptText.length > 0
 
-    // Select platform - USE PREFERRED_PLATFORM from job (already resolved, defaults to SORA 2)
-    const selectedPlatform: VideoModelKey = (job.preferred_platform as VideoModelKey) || 'sora-2-hd'
+    // Select platform - USE PREFERRED_PLATFORM from job (already resolved, defaults to VEO 3.1)
+    const selectedPlatform: VideoModelKey = (job.preferred_platform as VideoModelKey) || 'veo-3.1-fast'
     console.log(`[PROCESS_SINGLE] Using platform: ${selectedPlatform}`)
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
@@ -1000,8 +1000,8 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
     const isCreatorShot = shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     const hasDialogue = scriptText.length > 0
 
-    // Always use SORA 2 for best quality with AI voiceover (unless explicitly overridden)
-    const selectedPlatform: VideoModelKey = prefer_platform || 'sora-2'
+    // Always use VEO 3.1 for best lip-sync quality (unless explicitly overridden)
+    const selectedPlatform: VideoModelKey = prefer_platform || 'veo-3.1-fast'
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
