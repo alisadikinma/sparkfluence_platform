@@ -17,24 +17,23 @@ import {
   type AspectRatio,
 } from '../_shared/config/aiModels.ts'
 
-// Legacy imports for prompt building
+// ============================================================================
+// NEW LOOKUP MODULES (2026-01-10) - O(1) Direct Access
+// Replaces RAG queries for structured data
+// ============================================================================
 import {
-  IMAGE_PROJECT_INSTRUCTION,
-  EMOTION_EXPRESSION_MAP,
-  LIGHTING_PATTERNS,
-  SHOT_TYPES,
-  FILM_STOCKS,
-  ATMOSPHERE_TYPES,
-  MOOD_SETUPS,
-  CONTENT_TYPE_DEFAULTS,
-  TOPIC_COSTUME_MAP,
+  // Cinematography
+  getEmotionSpecs,
+  getSegmentDefaults,
   getCostumeForTopic,
-  getEmotionMapping,
-  getLightingForMood,
-  buildCreatorPrompt,
-  buildBrollPrompt,
-  buildThumbnailPrompt
-} from '../_shared/prompts/cinematicImageKnowledge.ts'
+  buildCinematographyPrompt,
+  SEGMENT_DEFAULTS,
+  TOPIC_COSTUMES,
+  // Metaphor for B-roll
+  buildVisualBrief,
+  getBRollNegativePrompt,
+  type VisualBrief,
+} from '../_shared/lookups/index.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -44,10 +43,11 @@ const corsHeaders = {
 const TIMEOUT = 120000
 
 // ============================================================================
-// GEMINIGEN API ENDPOINT (Nano Banana / Imagen models)
+// API ENDPOINTS
 // ============================================================================
 const GEMINIGEN_IMAGE_ENDPOINT = 'https://api.geminigen.ai/uapi/v1/generate_image'
 const GEMINIGEN_HISTORY_ENDPOINT = 'https://api.geminigen.ai/uapi/v1/history'
+const FAL_AI_BASE_URL = 'https://fal.run'
 
 // Job status constants
 const JOB_STATUS = {
@@ -58,12 +58,11 @@ const JOB_STATUS = {
 }
 
 // ============================================================================
-// IMAGE PROVIDER SELECTION (2026 - Cost Optimized)
+// IMAGE PROVIDER SELECTION (2026-01-10 Updated)
 // ============================================================================
-// Priority: Nano Banana (FREE) is PRIMARY for ALL segments
-// Fallbacks:
-//   - CREATOR (HOOK/CTA): Nano Banana → GPT-Image-1
-//   - B-ROLL: Nano Banana → FLUX
+// PRIORITY:
+//   - CREATOR (HOOK/CTA): fal-nano-banana (face consistency) → GPT-Image-1 → FLUX
+//   - B-ROLL: fal-wan-t2i (negative prompt for no humans) → fal-nano-banana → FLUX
 // ============================================================================
 
 interface ProviderSelection {
@@ -75,14 +74,14 @@ function selectImageProvider(isCreatorShot: boolean): ProviderSelection {
   if (isCreatorShot) {
     // HOOK/CTA segments - need face consistency
     return {
-      primary: 'imagen-pro',      // Nano Banana Pro (FREE via GeminiGen)
-      fallback: 'gpt-image-1'     // OpenAI fallback for face consistency
+      primary: 'fal-nano-banana',  // fal.ai Nano Banana Pro (best face consistency)
+      fallback: 'gpt-image-1'      // OpenAI fallback for face consistency
     }
   } else {
-    // B-ROLL segments - no face needed
+    // B-ROLL segments - no face needed, use negative prompt
     return {
-      primary: 'imagen-pro',      // Nano Banana Pro (FREE via GeminiGen)
-      fallback: 'flux-schnell'    // HuggingFace FLUX fallback
+      primary: 'fal-wan-t2i',      // fal.ai Wan 2.6 (supports negative prompt)
+      fallback: 'fal-nano-banana'  // fal.ai Nano Banana fallback
     }
   }
 }
@@ -116,6 +115,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
     const hfApiKey = Deno.env.get('HUGGINGFACE_API_KEY')
+    const falApiKey = Deno.env.get('FAL_AI_API_KEY') // fal.ai API key
     
     if (!supabaseUrl || !supabaseKey) {
       return new Response(
@@ -140,7 +140,7 @@ serve(async (req) => {
     // MODE: PROCESS_SINGLE - Process one job by ID
     // ========================================================================
     if (mode === 'process_single') {
-      return await handleProcessSingle(supabase, requestBody, openaiApiKey, hfApiKey)
+      return await handleProcessSingle(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey)
     }
 
     // ========================================================================
@@ -153,7 +153,7 @@ serve(async (req) => {
     // ========================================================================
     // MODE: LEGACY - Original synchronous processing (backward compatible)
     // ========================================================================
-    return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey)
+    return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey)
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -193,7 +193,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   console.log(`[CREATE_JOBS] Provider mode: ${defaultProvider}`)
 
   // Get costume based on topic
-  const costume = topic ? getCostumeForTopic(topic) : TOPIC_COSTUME_MAP.default
+  const costume = topic ? getCostumeForTopic(topic) : 'Navy blazer over white crew-neck tee'
 
   // Create job records
   const jobRecords = segments.map((segment: any, index: number) => {
@@ -284,7 +284,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   )
 }
 
-async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined) {
+async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined, falApiKey: string | undefined) {
   const { job_id, session_id, user_id } = requestBody
   const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
 
@@ -409,6 +409,16 @@ async function handleProcessSingle(supabase: any, requestBody: any, openaiApiKey
     } else if (providerConfig.provider === 'huggingface') {
       if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
       return await generateWithFlux(hfApiKey, job.visual_prompt, aspectRatio, supabase)
+    } else if (providerConfig.provider === 'fal') {
+      if (!falApiKey) throw new Error('FAL_AI_API_KEY not configured')
+      return await generateWithFalAi(
+        falApiKey,
+        job.visual_prompt,
+        aspectRatio,
+        providerKey,
+        supabase,
+        job.character_ref_png || undefined
+      )
     }
     
     throw new Error(`Unsupported provider type: ${providerConfig.provider}`)
@@ -571,12 +581,12 @@ async function handleCheckStatus(supabase: any, requestBody: any) {
   )
 }
 
-async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined) {
+async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: string | undefined, hfApiKey: string | undefined, falApiKey: string | undefined) {
   // Original synchronous processing for backward compatibility
   const segments = requestBody.segments
   const style = requestBody.style || 'cinematic'
   const aspectRatio: '9:16' | '16:9' | '1:1' = requestBody.aspect_ratio || '9:16'
-  const defaultProvider = requestBody.provider || 'auto' // 'auto' = Nano Banana primary
+  const defaultProvider = requestBody.provider || 'auto' // 'auto' = fal.ai primary
   const topic = requestBody.topic || ''
   const characterDescription = requestBody.character_description || ''
   const characterRefPng = requestBody.character_ref_png || '' // Avatar URL for face consistency
@@ -590,7 +600,7 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
   }
 
   const images: ImageResult[] = []
-  const costume = topic ? getCostumeForTopic(topic) : TOPIC_COSTUME_MAP.default
+  const costume = topic ? getCostumeForTopic(topic) : 'Navy blazer over white crew-neck tee'
 
   console.log(`[LEGACY] Starting generation for ${segments.length} segments`)
   console.log(`[LEGACY] Provider mode: ${defaultProvider}, Style: ${style}, Aspect: ${aspectRatio}`)
@@ -622,6 +632,9 @@ async function handleLegacyMode(supabase: any, requestBody: any, openaiApiKey: s
       } else if (config.provider === 'huggingface') {
         if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
         return await generateWithFlux(hfApiKey, prompt, aspectRatio, supabase)
+      } else if (config.provider === 'fal') {
+        if (!falApiKey) throw new Error('FAL_AI_API_KEY not configured')
+        return await generateWithFalAi(falApiKey, prompt, aspectRatio, providerKey, supabase, refImage)
       }
       throw new Error(`Unsupported provider: ${config.provider}`)
     }
@@ -805,67 +818,63 @@ interface PromptParams {
 }
 
 // ============================================================================
-// CINEMATIC PROMPT BUILDER (Using Knowledge File Functions)
+// CINEMATIC PROMPT BUILDER (2026-01-10 - Using New Lookup Modules)
 // ============================================================================
 
 function buildCinematicPrompt(params: PromptParams): string {
   const { segment, style, aspectRatio, topic, costume, characterDescription, emotion } = params
   
   const shotType = segment.shot_type || 'B-ROLL'
-  const segmentType = segment.segment_type || segment.type || ''
+  const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
   const visualDirection = segment.visual_prompt || segment.visual_direction || ''
   
-  // Determine shot type mapping for knowledge file
-  const shotTypeMapping: Record<string, string> = {
-    'CU': 'CU',
-    'MCU': 'MCU', 
-    'MS': 'MS',
-    'MWS': 'MWS',
-    'WS': 'WS',
-    'EWS': 'EWS',
-    'ECU': 'ECU'
-  }
-  
-  // Get shot type from content defaults or use CU for hooks, MS for B-roll
-  const contentDefaults = CONTENT_TYPE_DEFAULTS[segmentType.toLowerCase()] || CONTENT_TYPE_DEFAULTS.hook
-  const defaultShot = ['HOOK', 'CTA', 'LOOP-END'].includes(segmentType.toUpperCase()) ? 'CU' : 'MS'
-  const mappedShotType = shotTypeMapping[contentDefaults.shot.split(' ')[0]] || defaultShot
+  // Get segment defaults from new lookup module
+  const segmentDefaults = getSegmentDefaults(segmentType) || getSegmentDefaults('BODY')
+  const defaultShot = ['HOOK', 'CTA', 'LOOP-END'].includes(segmentType) ? 'CU' : 'MS'
+  const mappedShotType = segmentDefaults?.shotType || defaultShot
 
-  // CREATOR SHOT - Use buildCreatorPrompt from knowledge file
-  if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())) {
+  // CREATOR SHOT - Use cinematography lookup for building prompt
+  if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)) {
     const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
     
-    // Use knowledge file function for creator prompt WITH segmentType
-    const basePrompt = buildCreatorPrompt({
+    // Use new lookup-based prompt builder
+    const basePrompt = buildCinematographyPrompt({
       characterDescription: charDesc,
-      emotion: emotion,
+      emotion: emotion as any,
       topic: topic,
       shotType: mappedShotType,
+      segmentType: segmentType,
       aspectRatio: aspectRatio,
-      segmentType: segmentType.toUpperCase() // Pass segment type for composition
     })
     
     // Add costume override if provided
-    const costumeOverride = costume && costume !== TOPIC_COSTUME_MAP.default 
-      ? `\n\nWARDROBE OVERRIDE: ${costume}` 
+    const defaultCostume = 'Navy blazer over white crew-neck tee'
+    const costumeOverride = costume && costume !== defaultCostume 
+      ? `\n\nWARDROBE: ${costume}` 
       : ''
     
     return basePrompt + costumeOverride
   }
   
-  // B-ROLL SHOT - Use buildBrollPrompt from knowledge file WITH segmentType
+  // B-ROLL SHOT - Use Visual Brief extraction for contextual imagery
+  const scriptText = segment.script_text || segment.voiceover || visualDirection || ''
+  
+  // Use Visual Brief for B-roll (two-stage extraction)
+  const visualBrief = buildVisualBrief(scriptText, topic)
+  
+  // Use the generated image_prompt from Visual Brief
+  if (visualBrief.image_prompt) {
+    return visualBrief.image_prompt
+  }
+  
+  // Fallback: Build basic B-roll prompt
   const visual = visualDirection || `Professional ${topic} concept visualization - striking cinematic imagery`
   
-  const basePrompt = buildBrollPrompt({
-    visualDirection: visual,
-    topic: topic,
-    emotion: emotion,
-    shotType: mappedShotType,
-    aspectRatio: aspectRatio,
-    segmentType: segmentType.toUpperCase() // Pass segment type for visual approach
-  })
-  
-  return basePrompt
+  return `Cinematic ${mappedShotType} of ${visual}.
+No human face, no person. Focus on objects and environment.
+Film stock: Vision3 500T. Color: Teal-orange grade.
+Professional cinematography, 8K quality.
+Clean frame, no text, no watermarks.`
 }
 
 // ============================================================================
@@ -1269,4 +1278,88 @@ async function downloadAndUploadImage(
 
   const { data: urlData } = supabase.storage.from('generated-images').getPublicUrl(filename)
   return urlData.publicUrl
+}
+
+// ============================================================================
+// FAL.AI IMAGE GENERATION (2026-01-10)
+// fal-nano-banana: Best for CREATOR shots (face consistency, style presets)
+// fal-wan-t2i: Best for B-ROLL (supports negative prompt for no humans)
+// ============================================================================
+
+async function generateWithFalAi(
+  apiKey: string,
+  prompt: string,
+  aspectRatio: AspectRatio,
+  modelKey: ImageModelKey,
+  supabase: any,
+  referenceImageUrl?: string
+): Promise<string> {
+  const modelConfig = IMAGE_MODELS[modelKey]
+  if (!modelConfig || modelConfig.provider !== 'fal') {
+    throw new Error(`Invalid fal.ai model: ${modelKey}`)
+  }
+  
+  // Get dimensions based on aspect ratio
+  const dimensions = getDimensions(modelConfig, aspectRatio) || { width: 1024, height: 1792 }
+  
+  console.log(`[FAL.AI] Model: ${modelConfig.apiModelName}`)
+  console.log(`[FAL.AI] Size: ${dimensions.width}x${dimensions.height}`)
+  console.log(`[FAL.AI] Prompt length: ${prompt.length} chars`)
+  
+  // Build request body based on model type
+  const requestBody: Record<string, any> = {
+    prompt: prompt,
+    image_size: {
+      width: dimensions.width,
+      height: dimensions.height
+    },
+    num_inference_steps: 25,
+    guidance_scale: 5.0,
+    output_format: 'png'
+  }
+  
+  // Model-specific configurations
+  if (modelKey === 'fal-nano-banana') {
+    // Nano Banana Pro - supports style presets and reference images
+    requestBody.style = 'Portrait Cinematic' // Best for video content
+    
+    if (referenceImageUrl) {
+      requestBody.image_url = referenceImageUrl // Face consistency
+      console.log(`[FAL.AI] Using reference image for face consistency`)
+    }
+  } else if (modelKey === 'fal-wan-t2i') {
+    // Wan 2.6 - supports negative prompt (critical for B-roll without faces)
+    requestBody.negative_prompt = getBRollNegativePrompt('combined')
+    requestBody.num_inference_steps = 30
+    requestBody.guidance_scale = 6.0
+    requestBody.shift = 5.0
+    requestBody.sampler = 'unipc'
+    console.log(`[FAL.AI] Using negative prompt to exclude humans`)
+  }
+  
+  // Make API request
+  const response = await fetch(`${FAL_AI_BASE_URL}/${modelConfig.apiModelName}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(requestBody)
+  })
+  
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`fal.ai API error: ${response.status} - ${errorText}`)
+  }
+  
+  const responseData = await response.json()
+  
+  // fal.ai returns images array
+  if (responseData.images && responseData.images.length > 0) {
+    const imageUrl = responseData.images[0].url
+    console.log(`[FAL.AI] ✅ Image generated successfully`)
+    return await downloadAndUploadImage(imageUrl, modelKey.replace('fal-', ''), supabase)
+  }
+  
+  throw new Error('fal.ai API returned no images')
 }

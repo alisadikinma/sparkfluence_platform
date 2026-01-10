@@ -20,7 +20,7 @@
 // ============================================================================
 
 export type AspectRatio = '9:16' | '16:9' | '1:1' | '4:3' | '3:4';
-export type Provider = 'geminigen' | 'openai' | 'huggingface' | 'runway' | 'pika';
+export type Provider = 'geminigen' | 'openai' | 'huggingface' | 'fal' | 'runway' | 'pika';
 
 export interface ApiMapping<T = string> {
   /** Our internal value */
@@ -455,6 +455,72 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     enabled: true,
     notes: 'Use as fallback when other providers fail',
   },
+
+  // ==========================================================================
+  // FAL.AI NANO BANANA PRO - CREATOR shots (face consistency)
+  // ==========================================================================
+  'fal-nano-banana': {
+    key: 'fal-nano-banana',
+    displayName: 'Nano Banana Pro (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/nano-banana-pro',
+    apiModelName: 'fal-ai/nano-banana-pro',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: [
+      'None', 'Photorealistic', 'Portrait', 'Portrait Cinematic',
+      'Portrait Fashion', 'Ray Traced', 'Dynamic', 'Creative',
+      '3D Render', 'Stock Photo'
+    ],
+    refImageParam: 'image_url', // Reference image for face consistency
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.02,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['face consistency', 'style presets', 'cinematic quality', 'reference image'],
+    weaknesses: ['no negative prompt', 'paid'],
+    bestFor: ['CREATOR shots', 'HOOK/CTA', 'portraits', 'face consistency'],
+    enabled: true,
+    notes: 'PRIMARY for CREATOR shots - best face consistency with reference image',
+  },
+
+  // ==========================================================================
+  // FAL.AI WAN 2.6 T2I - B-ROLL shots (environments, no faces)
+  // ==========================================================================
+  'fal-wan-t2i': {
+    key: 'fal-wan-t2i',
+    displayName: 'Wan 2.6 T2I (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/wan/v2.6/text-to-image',
+    apiModelName: 'wan/v2.6/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined, // Native cinematic
+    refImageParam: null, // Not supported
+    supportsNegativePrompt: true, // KEY FEATURE for B-roll
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.02,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['negative prompt support', 'cinematic environments', 'tech visuals', 'no faces'],
+    weaknesses: ['no reference image', 'no style presets'],
+    bestFor: ['B-ROLL', 'environments', 'tech visuals', 'product shots'],
+    enabled: true,
+    notes: 'PRIMARY for B-ROLL - supports negative prompt to exclude humans',
+  },
 };
 
 // ============================================================================
@@ -651,61 +717,69 @@ export function selectVideoModel(params: {
 /**
  * Select best image model based on requirements
  * 
- * PRIORITY (Cost-optimized):
- * - HOOK/CTA (CREATOR): Nano Banana (FREE) → GPT-Image-1 (fallback for face)
- * - B-ROLL: FLUX (FREE) → Nano Banana (fallback)
+ * PRIORITY (2026-01-10 Updated):
+ * - CREATOR (HOOK/CTA): fal-nano-banana (face consistency) → GPT-Image-1 → FLUX
+ * - B-ROLL: fal-wan-t2i (negative prompt) → fal-nano-banana → FLUX
  */
 export function selectImageModel(params: {
   needsFaceConsistency?: boolean;
   hasReferenceImage?: boolean;
   preferFree?: boolean;
   isCreatorShot?: boolean;
+  segmentType?: string;
 }): ImageModelConfig {
-  const { needsFaceConsistency, hasReferenceImage, preferFree = true, isCreatorShot } = params;
+  const { hasReferenceImage, isCreatorShot, segmentType } = params;
   
-  // CREATOR shots (HOOK/CTA): Nano Banana first, GPT-Image-1 if face consistency critical
-  if (isCreatorShot) {
-    // If face consistency is CRITICAL and has reference → GPT-Image-1
-    if (needsFaceConsistency && hasReferenceImage) {
-      return IMAGE_MODELS['gpt-image-1'];
+  // Determine if CREATOR shot based on segment type
+  const creatorSegments = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA', 'THUMBNAIL'];
+  const isCreator = isCreatorShot || (segmentType && creatorSegments.includes(segmentType.toUpperCase()));
+  
+  // CREATOR shots: fal-nano-banana (best face consistency with style presets)
+  if (isCreator) {
+    // Primary: fal.ai Nano Banana Pro with Portrait Cinematic style
+    if (hasReferenceImage) {
+      return IMAGE_MODELS['fal-nano-banana'];
     }
-    // Default for CREATOR: Nano Banana (FREE, supports reference)
-    return IMAGE_MODELS['imagen-pro'];
+    // Fallback without reference: GPT-Image-1 or imagen-pro
+    return IMAGE_MODELS['fal-nano-banana'];
   }
   
-  // B-ROLL: FLUX first (FREE), Nano Banana fallback
-  // FLUX is fastest and completely free with no rate limit
-  return IMAGE_MODELS['flux-schnell'];
+  // B-ROLL shots: fal-wan-t2i (supports negative prompt to exclude humans)
+  // KEY: Use Visual Brief extraction BEFORE calling this
+  return IMAGE_MODELS['fal-wan-t2i'];
 }
 
 /**
  * Get image model fallback chain
  * 
- * PRIORITY (Cost-optimized):
- * - HOOK/CTA: Nano Banana → GPT-Image-1 → FLUX
- * - B-ROLL: FLUX → Nano Banana
+ * PRIORITY (2026-01-10 Updated with fal.ai):
+ * - CREATOR: fal-nano-banana → GPT-Image-1 → imagen-pro → FLUX
+ * - B-ROLL: fal-wan-t2i → fal-nano-banana → FLUX
  */
 export function getImageModelFallbackChain(primaryModel: string, isCreatorShot: boolean = false): string[] {
-  // CREATOR shots: Nano Banana → GPT-Image-1 → FLUX
+  // CREATOR shots: fal-nano-banana → GPT-Image-1 → imagen-pro → FLUX
   if (isCreatorShot) {
     const creatorChains: Record<string, string[]> = {
-      'imagen-pro': ['gpt-image-1', 'flux-schnell'],
-      'gpt-image-1': ['imagen-pro', 'flux-schnell'],
-      'dall-e-3': ['gpt-image-1', 'imagen-pro', 'flux-schnell'],
+      'fal-nano-banana': ['gpt-image-1', 'imagen-pro', 'flux-schnell'],
+      'gpt-image-1': ['fal-nano-banana', 'imagen-pro', 'flux-schnell'],
+      'imagen-pro': ['fal-nano-banana', 'gpt-image-1', 'flux-schnell'],
+      'dall-e-3': ['fal-nano-banana', 'gpt-image-1', 'imagen-pro', 'flux-schnell'],
     };
-    return creatorChains[primaryModel] || ['gpt-image-1', 'flux-schnell'];
+    return creatorChains[primaryModel] || ['gpt-image-1', 'imagen-pro', 'flux-schnell'];
   }
   
-  // B-ROLL: FLUX → Nano Banana
+  // B-ROLL: fal-wan-t2i → fal-nano-banana → FLUX
   const brollChains: Record<string, string[]> = {
-    'flux-schnell': ['imagen-pro'],
-    'imagen-pro': ['flux-schnell'],
-    'imagen-4-fast': ['imagen-pro', 'flux-schnell'],
-    'imagen-4-ultra': ['imagen-4-fast', 'imagen-pro', 'flux-schnell'],
-    'dall-e-3': ['imagen-pro', 'flux-schnell'],
+    'fal-wan-t2i': ['fal-nano-banana', 'flux-schnell'],
+    'fal-nano-banana': ['fal-wan-t2i', 'flux-schnell'],
+    'flux-schnell': ['fal-wan-t2i', 'fal-nano-banana'],
+    'imagen-pro': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
+    'imagen-4-fast': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
+    'imagen-4-ultra': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
+    'dall-e-3': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
   };
   
-  return brollChains[primaryModel] || ['imagen-pro'];
+  return brollChains[primaryModel] || ['fal-nano-banana', 'flux-schnell'];
 }
 
 // ============================================================================
