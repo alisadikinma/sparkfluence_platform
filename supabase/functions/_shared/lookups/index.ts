@@ -120,12 +120,17 @@ export {
 
 // Product Keywords Lookup - Entity Detection for Stock Image Search
 export {
-  PRODUCT_KEYWORDS,
+  TECH_BRANDS,
+  CRYPTO_TERMS,
+  GENERIC_KEYWORDS,
+  MODEL_PATTERNS,
   detectProductEntities,
   shouldUseStockImage,
   getProductSearchQuery,
   getProductCategory,
   decideImageSource,
+  extractProductModels,
+  detectBrands,
   type ProductEntity,
   type ProductSearchDecision,
 } from './productKeywords.ts';
