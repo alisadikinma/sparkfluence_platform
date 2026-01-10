@@ -248,7 +248,7 @@ export const VideoGeneration = (): JSX.Element => {
     generating: language === 'id' ? 'Generating...' : 'Generating...',
     ready: language === 'id' ? 'Siap' : 'Ready',
     processing: language === 'id' ? 'Memproses...' : 'Processing...',
-    backToDashboard: language === 'id' ? 'Kembali ke Dashboard' : 'Back to Dashboard',
+    backToDashboard: language === 'id' ? 'Sebelumnya' : 'Previous',
     next: language === 'id' ? 'Combine Video' : 'Combine Video',
     generateFirst: language === 'id' ? 'Combine Video' : 'Combine Video',
     loading: language === 'id' ? 'Memuat video...' : 'Loading videos...',
@@ -1426,7 +1426,16 @@ export const VideoGeneration = (): JSX.Element => {
   };
 
   const handleBackToDashboard = () => {
-    navigate("/dashboard");
+    // Navigate back to video-editor (previous step)
+    navigate("/video-editor", {
+      state: {
+        sessionId,
+        segments,
+        topic: currentTopic,
+        videoSettings,
+        returning: true
+      }
+    });
   };
 
   const handleNext = () => {

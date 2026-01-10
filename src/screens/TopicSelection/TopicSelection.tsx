@@ -41,9 +41,9 @@ const DURATION_OPTIONS = [
 ];
 
 const MODEL_OPTIONS = [
-  { value: 'auto', label: 'Auto (VEO 3.1)' },     // Best lip-sync, 8s max
-  { value: 'veo31', label: 'VEO 3.1 Fast' },      // Best for HOOK/CTA
-  { value: 'sora2', label: 'Sora 2 (10-15s)' },   // Longer segments
+  { value: 'auto', label: 'AUTO' },       // Auto-select best model per segment
+  { value: 'veo31', label: 'VEO 3.1' },   // Best lip-sync, 8s max
+  { value: 'sora2', label: 'SORA 2.0' },  // Longer segments up to 15s
 ];
 
 const TOPICS_CACHE_KEY = 'sparkfluence_cached_topics';
@@ -113,7 +113,7 @@ export const TopicSelection = (): JSX.Element => {
   const [inputType, setInputType] = useState<InputType>("topic");
   const [model, setModel] = useState("auto"); // Default to VEO 3.1
   const [ratio, setRatio] = useState("9:16");
-  const [duration, setDuration] = useState("30s");
+  const [duration, setDuration] = useState("60s"); // Default 60s for better content
   const [outputLang, setOutputLang] = useState<string>(uiLang);
   const [useDnaTone, setUseDnaTone] = useState(true);
   const [generatingPhase, setGeneratingPhase] = useState(0);
@@ -461,7 +461,10 @@ export const TopicSelection = (): JSX.Element => {
           aspect_ratio: ratio,
           platform: onboardingData.platforms?.[0] || 'tiktok',
           language: langMap[outputLang] || 'indonesian',
-          user_id: user?.id
+          user_id: user?.id,
+          // DNA Tone: When enabled, use creative_dna styles for script generation
+          use_dna_tone: useDnaTone && hasDnaTone,
+          creative_dna: useDnaTone && hasDnaTone ? dbOnboardingData?.creative_dna : null
         }
       });
 

@@ -107,7 +107,10 @@ serve(async (req) => {
       platform, 
       language, 
       user_id,
-      segment_type
+      segment_type,
+      // DNA Tone parameters (from TopicSelection)
+      use_dna_tone,
+      creative_dna
       // NOTE: character_description is handled by VideoEditor -> generate-images
       // No need to pass avatar URL here anymore
     } = await req.json()
@@ -142,7 +145,11 @@ serve(async (req) => {
     // BUILD PROMPTS WITH STATIC KNOWLEDGE (NO DB QUERIES!)
     // ============================================================
     
-    const systemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration)
+    // Build DNA style guide if enabled
+    const dnaStyles = use_dna_tone && creative_dna && Array.isArray(creative_dna) ? creative_dna : null
+    console.log(`[Script] DNA Tone: ${use_dna_tone ? 'ENABLED' : 'disabled'}${dnaStyles ? ` (${dnaStyles.length} styles)` : ''}`)
+    
+    const systemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles)
     const userPrompt = buildUserPrompt(
       input_type,
       content,
@@ -331,7 +338,7 @@ serve(async (req) => {
 // PROMPT BUILDERS (Using Static Knowledge)
 // ============================================================================
 
-function buildSystemPrompt(language: string, duration: string): string {
+function buildSystemPrompt(language: string, duration: string, dnaStyles: string[] | null = null): string {
   const langConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG['indonesian']
   // SORA 2.0 OPTIMIZED: Fewer segments with longer durations (10s/15s)
   // HOOK always 5s (non-negotiable scroll-stopper)
@@ -485,6 +492,22 @@ ${language === 'hindi' ? '5. Include fillers: yaar, na, matlab, arre (≥2 per s
 ${language === 'english' ? '4. Use UNIVERSAL slang only (no regional: "no cap", "innit", "finna")' : ''}
 ${language === 'english' ? '5. Avoid outdated emoji: 😂 is CRINGE (use 💀 or 😭 for laughing)' : ''}
 
+${dnaStyles && dnaStyles.length > 0 ? `
+═══════════════════════════════════════════════════════════════
+🧬 CREATOR DNA STYLE (APPLY TO ALL SCRIPTS)
+═══════════════════════════════════════════════════════════════
+
+The creator has defined their unique voice/style. APPLY these characteristics:
+
+${dnaStyles.map((style, i) => `${i + 1}. **${style}**`).join('\n')}
+
+**HOW TO APPLY DNA:**
+- Hook should reflect these style traits
+- Script tone should match the DNA personality
+- Visual direction should complement the DNA vibe
+- CTA should feel authentic to this creator's style
+
+` : ''}
 ═══════════════════════════════════════════════════════════════
 🎬 CINEMATIC VISUAL DIRECTION (CRITICAL FOR QUALITY)
 ═══════════════════════════════════════════════════════════════
