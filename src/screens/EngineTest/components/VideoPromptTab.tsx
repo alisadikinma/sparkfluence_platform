@@ -117,6 +117,35 @@ function estimateDuration(scriptText: string, segmentType: string): number {
   return duration;
 }
 
+// Extract AUDIO section from full prompt
+function extractAudioFromPrompt(prompt: string): string {
+  // Look for AUDIO: section or similar patterns
+  const audioMatch = prompt.match(/(?:AUDIO[:\s]*|AUDIO DIRECTIVE[:\s]*)([\s\S]*?)(?=\n\n[A-Z]|\nCONTINUITY|\nTRANSITION|\nOUTPUT|\nEXCLUSIONS|\nNEGATIVE|$)/i);
+  if (audioMatch) {
+    return audioMatch[1].trim();
+  }
+  
+  // Fallback: look for Ambient/Dialogue patterns
+  const ambientMatch = prompt.match(/Ambient:[\s\S]*?(?:Exclude:[^\n]*)?/i);
+  if (ambientMatch) {
+    return ambientMatch[0].trim();
+  }
+  
+  return "No audio directive found";
+}
+
+// Extract CAMERA section from prompt
+function extractCameraFromPrompt(prompt: string): string | undefined {
+  const match = prompt.match(/CAMERA[:\s]*\n?([^\n]+)/i);
+  return match ? match[1].trim() : undefined;
+}
+
+// Extract TRANSITION from prompt
+function extractTransitionFromPrompt(prompt: string): string | undefined {
+  const match = prompt.match(/TRANSITION[:\s]*\n?([^\n]+)/i);
+  return match ? match[1].trim() : undefined;
+}
+
 export const VideoPromptTab: React.FC = () => {
   // Form state - simplified
   const [imagePromptsOutput, setImagePromptsOutput] = useState("");
@@ -176,8 +205,7 @@ export const VideoPromptTab: React.FC = () => {
         segment_type: seg.segment_type,
         shot_type: seg.shot_type,
         script_text: seg.script_text,
-        duration: estimateDuration(seg.script_text, seg.segment_type),
-        image_prompt: seg.image_prompt,
+        duration_seconds: estimateDuration(seg.script_text, seg.segment_type),
         // image_url would come from actual generation, not preview
       }));
 
@@ -186,17 +214,31 @@ export const VideoPromptTab: React.FC = () => {
         body: {
           mode: 'preview_prompts',
           segments,
+          language: voiceLanguage,
           aspect_ratio: aspectRatio,
-          voice_gender: voiceGender,
-          voice_language: voiceLanguage,
-          platform: 'auto',
+          preferred_platform: 'auto',
+          creator_gender: voiceGender,
         }
       });
 
       if (fnError) throw fnError;
       
-      if (data?.success && data?.data?.segments) {
-        setSparkfluenceOutput(data.data.segments);
+      // API returns `prompts` array with different field names
+      if (data?.success && data?.data?.prompts) {
+        // Map API response to our VideoPromptResult format
+        const mappedResults: VideoPromptResult[] = data.data.prompts.map((p: any) => ({
+          segment_number: p.segment_number,
+          segment_type: p.segment_type,
+          shot_type: p.shot_type,
+          duration: p.duration,
+          platform: p.platform_name || p.platform,
+          video_prompt: p.prompt,  // API returns 'prompt', we use 'video_prompt'
+          audio_directive: extractAudioFromPrompt(p.prompt), // Extract AUDIO section
+          dialogue_validation: p.dialogue_validation,
+          camera_motion: extractCameraFromPrompt(p.prompt),
+          transition: extractTransitionFromPrompt(p.prompt),
+        }));
+        setSparkfluenceOutput(mappedResults);
       } else {
         throw new Error(data?.error?.message || "Failed to generate video prompts");
       }
@@ -517,7 +559,7 @@ A photorealistic cinematic...
                           {segment.segment_type}
                         </span>
                         <span className={`px-2 py-0.5 text-xs font-medium rounded ${
-                          segment.platform?.includes("veo") 
+                          segment.platform?.toLowerCase().includes("veo") 
                             ? "bg-green-500/20 text-green-600" 
                             : "bg-blue-500/20 text-blue-600"
                         }`}>
