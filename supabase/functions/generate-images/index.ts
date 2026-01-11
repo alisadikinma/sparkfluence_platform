@@ -179,6 +179,13 @@ serve(async (req) => {
     }
 
     // ========================================================================
+    // MODE: DEBUG_PROMPTS - Generate all prompts without executing (for debugging)
+    // ========================================================================
+    if (mode === 'debug_prompts') {
+      return await handleDebugPrompts(requestBody)
+    }
+
+    // ========================================================================
     // MODE: LEGACY - Original synchronous processing (backward compatible)
     // ========================================================================
     return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey, unsplashKey, pexelsKey, pixabayKey)
@@ -728,6 +735,239 @@ async function handleCheckStatus(supabase: any, requestBody: any) {
   )
 }
 
+// ============================================================================
+// DEBUG_PROMPTS MODE - Generate all prompts without executing (for debugging)
+// Returns detailed breakdown of prompt generation logic per segment
+// ============================================================================
+
+interface DebugSegmentResult {
+  segment_number: number
+  segment_type: string
+  shot_type: string
+  emotion: string
+  is_creator_shot: boolean
+  has_reference_image: boolean
+  
+  // Input data
+  script_text: string
+  visual_direction: string
+  
+  // Provider selection
+  provider_selection: {
+    primary: string
+    fallback: string
+    selection_reason: string
+  }
+  
+  // Stock image decision
+  stock_image_decision: {
+    use_stock_image: boolean
+    category: string | null
+    search_query: string | null
+    reason: string
+  }
+  
+  // Visual Brief extraction (for B-roll)
+  visual_brief: {
+    topic_keywords: string[]
+    abstract_concepts: string[]
+    primary_visual: string | null
+    secondary_elements: string[]
+    environment: string | null
+  } | null
+  
+  // Final prompts
+  final_image_prompt: string
+  negative_prompt: string | null
+  
+  // Cinematography details (for CREATOR shots)
+  cinematography: {
+    shot_size: string
+    lighting: string
+    emotion_expression: string
+  } | null
+}
+
+async function handleDebugPrompts(requestBody: any): Promise<Response> {
+  const { 
+    segments, 
+    topic, 
+    style = 'cinematic', 
+    aspect_ratio = '9:16',
+    provider: defaultProvider = 'auto',
+    character_description = '',
+    character_ref_png = ''
+  } = requestBody
+
+  if (!segments || !Array.isArray(segments) || segments.length === 0) {
+    return new Response(
+      JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing or invalid segments array' } }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  console.log(`[DEBUG_PROMPTS] Processing ${segments.length} segments for debugging`)
+  console.log(`[DEBUG_PROMPTS] Topic: "${topic}", Style: ${style}, Aspect: ${aspect_ratio}`)
+
+  const costume = topic ? getCostumeForTopic(topic) : 'Navy blazer over white crew-neck tee'
+  const debugResults: DebugSegmentResult[] = []
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i]
+    const segmentType = segment.segment_type || segment.type || `segment_${i}`
+    const shotType = segment.shot_type || 'B-ROLL'
+    const emotion = segment.emotion || 'authority'
+    const charDesc = segment.character_description || character_description
+
+    // Determine if CREATOR shot
+    const isCreatorShot = shotType === 'CREATOR' || 
+      ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
+    
+    // Reference image
+    const refImage = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
+    const hasReferenceImage = !!refImage
+
+    // Provider selection
+    let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
+    let fallbackProvider: ImageModelKey = 'flux-schnell'
+    let selectionReason = ''
+    
+    if (defaultProvider === 'auto') {
+      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage)
+      primaryProvider = providerChoice.primary
+      fallbackProvider = providerChoice.fallback
+      
+      if (isCreatorShot) {
+        if (hasReferenceImage) {
+          selectionReason = 'CREATOR shot WITH reference → fal-nano-banana-edit (face consistency via image_urls)'
+        } else {
+          selectionReason = 'CREATOR shot WITHOUT reference → fal-nano-banana (text-to-image)'
+        }
+      } else {
+        selectionReason = 'B-ROLL shot → fal-wan-t2i (supports negative prompt for quality control)'
+      }
+    } else {
+      selectionReason = `Manual provider override: ${defaultProvider}`
+    }
+
+    // Get script text for analysis
+    const scriptText = segment.script_text || segment.voiceover || segment.text || ''
+    const visualDirection = segment.visual_prompt || segment.visual_direction || ''
+
+    // Stock image decision (for B-roll only)
+    let stockDecision = {
+      use_stock_image: false,
+      category: null as string | null,
+      search_query: null as string | null,
+      reason: 'N/A - CREATOR shot' as string
+    }
+    
+    if (!isCreatorShot) {
+      const imageSourceDecision = decideImageSource(scriptText, topic)
+      stockDecision = {
+        use_stock_image: imageSourceDecision.useStockImage,
+        category: imageSourceDecision.category || null,
+        search_query: imageSourceDecision.searchQuery || null,
+        reason: imageSourceDecision.useStockImage 
+          ? `Product entity detected: ${imageSourceDecision.category}`
+          : 'No recognizable product entity in script_text'
+      }
+    }
+
+    // Visual Brief extraction (for B-roll only)
+    let visualBriefResult = null
+    if (!isCreatorShot) {
+      const visualBrief = buildVisualBrief(scriptText, topic)
+      visualBriefResult = {
+        topic_keywords: visualBrief.topic_keywords || [],
+        abstract_concepts: visualBrief.abstract_concepts || [],
+        primary_visual: visualBrief.primary_subject?.element || null,
+        secondary_elements: visualBrief.secondary_elements || [],
+        environment: visualBrief.environment?.setting || null
+      }
+    }
+
+    // Build the actual image prompt
+    const imagePrompt = buildCinematicPrompt({
+      segment,
+      style,
+      aspectRatio: aspect_ratio,
+      topic,
+      costume,
+      characterDescription: charDesc,
+      emotion
+    })
+
+    // Get negative prompt (for B-roll with fal-wan-t2i)
+    let negativePrompt: string | null = null
+    if (!isCreatorShot && primaryProvider === 'fal-wan-t2i') {
+      negativePrompt = getBRollNegativePrompt('combined')
+    }
+
+    // Cinematography details (for CREATOR shots)
+    let cinematographyDetails = null
+    if (isCreatorShot) {
+      const segmentDefaults = getSegmentDefaults(segmentType.toUpperCase())
+      const emotionSpecs = getEmotionSpecs(emotion as any)
+      
+      cinematographyDetails = {
+        shot_size: segmentDefaults?.shotType || 'CU',
+        lighting: emotionSpecs?.lighting || 'Rembrandt 4:1',
+        emotion_expression: emotionSpecs?.expression || 'engaged expression'
+      }
+    }
+
+    debugResults.push({
+      segment_number: segment.segment_number || i + 1,
+      segment_type: segmentType,
+      shot_type: shotType,
+      emotion,
+      is_creator_shot: isCreatorShot,
+      has_reference_image: hasReferenceImage,
+      
+      script_text: scriptText,
+      visual_direction: visualDirection,
+      
+      provider_selection: {
+        primary: primaryProvider,
+        fallback: fallbackProvider,
+        selection_reason: selectionReason
+      },
+      
+      stock_image_decision: stockDecision,
+      visual_brief: visualBriefResult,
+      
+      final_image_prompt: imagePrompt,
+      negative_prompt: negativePrompt,
+      cinematography: cinematographyDetails
+    })
+  }
+
+  console.log(`[DEBUG_PROMPTS] ✅ Generated debug data for ${debugResults.length} segments`)
+
+  return new Response(
+    JSON.stringify({ 
+      success: true, 
+      data: { 
+        segments: debugResults,
+        metadata: {
+          topic,
+          style,
+          aspect_ratio,
+          costume,
+          character_description,
+          character_ref_png: character_ref_png ? `${character_ref_png.substring(0, 50)}...` : null,
+          provider_mode: defaultProvider,
+          total_segments: debugResults.length,
+          creator_shots: debugResults.filter(s => s.is_creator_shot).length,
+          broll_shots: debugResults.filter(s => !s.is_creator_shot).length
+        }
+      } 
+    }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
 async function handleLegacyMode(
   supabase: any, 
   requestBody: any, 
@@ -1118,7 +1358,6 @@ function buildCinematicPrompt(params: PromptParams): string {
     : 'Modern technology concept - clean professional imagery'
   
   return `Cinematic ${mappedShotType} of ${visual}.
-No human face, no person. Focus on objects and environment.
 Film stock: Vision3 500T. Color: Teal-orange grade.
 Professional cinematography, 8K quality.
 Clean frame, no text, no watermarks.`
@@ -1600,7 +1839,7 @@ async function generateWithFalAi(
     requestBody.guidance_scale = 6.0
     requestBody.shift = 5.0
     requestBody.sampler = 'unipc'
-    console.log(`[FAL.AI] Using negative prompt to exclude humans`)
+    console.log(`[FAL.AI] Using negative prompt for quality (humans allowed)`)
   }
   
   // Make API request to the correct endpoint

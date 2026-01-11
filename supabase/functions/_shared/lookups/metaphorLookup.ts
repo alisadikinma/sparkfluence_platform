@@ -487,8 +487,6 @@ ${secondaryStr}
 Environment: Modern tech studio with ${lighting}.
 Film stock: Vision3 500T. Color: Cinematic teal-orange grade.
 Professional cinematography, ${shotInfo.desc}, 8K quality.
-ABSOLUTELY NO human face, NO person, NO hands, NO body parts visible.
-Focus ONLY on products, technology, and environment.
 Clean frame, no text overlays, no watermarks.`;
   
   return {
@@ -506,16 +504,20 @@ Clean frame, no text overlays, no watermarks.`;
 // ============================================================================
 
 export const NEGATIVE_PROMPTS = {
+  // Quality issues only (DEFAULT - humans allowed)
   general: 'blurry, low quality, distorted, artifacts, noise, grain, pixelated, compression artifacts',
-  no_humans: 'human, person, face, body, hands, fingers, portrait, selfie, crowd, people, figure, silhouette',
+  // Text/watermark exclusion
   no_text: 'text, watermark, logo, signature, username, label, caption, subtitle, overlay, UI elements',
+  // Style exclusion (keep photorealistic)
   no_style: 'cartoon, anime, illustration, painting, drawing, sketch, 3D render, CGI, digital art',
-  combined: 'blurry, low quality, distorted, artifacts, human face, person, text, watermark, logo, cartoon, anime, illustration, painting, oversaturated, underexposed, flat lighting, cheap CGI, generic stock photo',
+  // Combined quality + text + style (NO human exclusion - humans allowed in all segments)
+  combined: 'blurry, low quality, distorted, artifacts, text, watermark, logo, cartoon, anime, illustration, painting, oversaturated, underexposed, flat lighting, cheap CGI',
 };
 
 /**
- * Get negative prompt for B-roll by type
- * @param type - Type of negative prompt: 'general' | 'no_humans' | 'no_text' | 'no_style' | 'combined'
+ * Get negative prompt for B-roll
+ * NOTE: Humans are ALLOWED in all segments. Only creator face differs (HOOK/CTA use reference image).
+ * @param type - Type of negative prompt: 'general' | 'no_text' | 'no_style' | 'combined'
  * @returns Negative prompt string for fal.ai wan/v2.6
  */
 export function getBRollNegativePrompt(

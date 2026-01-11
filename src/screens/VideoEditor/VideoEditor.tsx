@@ -8,7 +8,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { 
   RefreshCw, ImageIcon, Loader2, 
   Sparkles, X, Maximize2, Play, AlertCircle,
-  CloudOff, Cloud, CheckCircle2, Info, Download
+  CloudOff, Cloud, CheckCircle2, Info, Download, FileText
 } from "lucide-react";
 
 interface Segment {
@@ -560,6 +560,151 @@ export const VideoEditor = (): JSX.Element => {
     }
   };
 
+  // ============================================================================
+  // DEBUG: Generate All Prompts - Export to Markdown file for inspection
+  // ============================================================================
+  const handleGeneratePromptsDebug = async () => {
+    if (!user || !sessionId) return;
+    
+    try {
+      // Use character_ref_png if available, otherwise fallback to avatar_url
+      const referenceImage = characterRefPng || userAvatarUrl || '';
+      
+      const segmentsData = segments.map((seg, index) => {
+        const isCreatorShot = seg.shotType === 'CREATOR';
+        return {
+          segment_id: seg.segmentId,
+          segment_number: index + 1,
+          segment_type: seg.type,
+          shot_type: seg.shotType,
+          emotion: seg.emotion,
+          visual_prompt: seg.visualDirection || seg.script,
+          visual_direction: seg.visualDirection,
+          script_text: seg.script, // ✅ The voiceover text
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: isCreatorShot ? referenceImage : null
+        };
+      });
+
+      // Call edge function in debug mode
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: {
+          mode: 'debug_prompts', // New debug mode
+          user_id: user.id,
+          session_id: sessionId,
+          segments: segmentsData,
+          topic: currentTopic,
+          style: 'cinematic',
+          aspect_ratio: videoSettings?.aspectRatio || '9:16',
+          provider: 'auto',
+          character_description: characterDescription,
+          character_ref_png: referenceImage
+        }
+      });
+
+      if (error) throw error;
+
+      // Generate Markdown content from backend response
+      // Backend returns: { success: true, data: { segments: DebugSegmentResult[], metadata: {...} } }
+      const debugSegments = data?.data?.segments || [];
+      const metadata = data?.data?.metadata || {};
+      
+      let markdown = `# Image Generation Debug Report\n`;
+      markdown += `**Session ID:** ${sessionId}\n`;
+      markdown += `**Topic:** ${currentTopic}\n`;
+      markdown += `**Aspect Ratio:** ${videoSettings?.aspectRatio || '9:16'}\n`;
+      markdown += `**Character Description:** ${characterDescription || '(none)'}\n`;
+      markdown += `**Reference Image:** ${referenceImage ? 'Yes' : 'No'}\n`;
+      markdown += `**Total Segments:** ${metadata.total_segments || segments.length}\n`;
+      markdown += `**CREATOR Shots:** ${metadata.creator_shots || 0}\n`;
+      markdown += `**B-ROLL Shots:** ${metadata.broll_shots || 0}\n`;
+      markdown += `**Costume:** ${metadata.costume || '(default)'}\n`;
+      markdown += `**Provider Mode:** ${metadata.provider_mode || 'auto'}\n`;
+      markdown += `**Generated:** ${new Date().toISOString()}\n\n`;
+      markdown += `---\n\n`;
+
+      // Use debug segments from backend (contains full analysis)
+      debugSegments.forEach((debug: any, index: number) => {
+        const frontendSeg = segments[index] || {};
+        
+        markdown += `## Segment ${debug.segment_number || index + 1}: ${debug.segment_type}\n\n`;
+        markdown += `| Property | Value |\n`;
+        markdown += `|----------|-------|\n`;
+        markdown += `| Shot Type | ${debug.shot_type} |\n`;
+        markdown += `| Is Creator Shot | ${debug.is_creator_shot ? '✅ Yes' : '❌ No'} |\n`;
+        markdown += `| Has Reference Image | ${debug.has_reference_image ? '✅ Yes' : '❌ No'} |\n`;
+        markdown += `| Emotion | ${debug.emotion || '(none)'} |\n`;
+        markdown += `| Timing | ${frontendSeg.timing || '(unknown)'} |\n`;
+        markdown += `| Duration | ${frontendSeg.durationSeconds || '?'}s |\n`;
+        markdown += `\n`;
+        
+        markdown += `### Script Text (VO) - Input for Visual Brief\n`;
+        markdown += `\`\`\`\n${debug.script_text || '(empty)'}\n\`\`\`\n\n`;
+        
+        markdown += `### Visual Direction (from script generator)\n`;
+        markdown += `\`\`\`\n${debug.visual_direction || '(empty)'}\n\`\`\`\n\n`;
+        
+        // Provider Selection (always present)
+        markdown += `### Provider Selection\n`;
+        markdown += `- **Primary:** ${debug.provider_selection?.primary || '(unknown)'}\n`;
+        markdown += `- **Fallback:** ${debug.provider_selection?.fallback || '(unknown)'}\n`;
+        markdown += `- **Selection Reason:** ${debug.provider_selection?.selection_reason || '(unknown)'}\n\n`;
+        
+        // Stock Image Decision (for B-roll)
+        markdown += `### Stock Image Decision\n`;
+        markdown += `- **Use Stock Image:** ${debug.stock_image_decision?.use_stock_image ? '✅ Yes' : '❌ No'}\n`;
+        markdown += `- **Category:** ${debug.stock_image_decision?.category || '(none)'}\n`;
+        markdown += `- **Search Query:** ${debug.stock_image_decision?.search_query || '(none)'}\n`;
+        markdown += `- **Reason:** ${debug.stock_image_decision?.reason || '(none)'}\n\n`;
+        
+        // Visual Brief (for B-roll only)
+        if (debug.visual_brief) {
+          markdown += `### Visual Brief (B-Roll Extraction)\n`;
+          markdown += `- **Topic Keywords:** ${debug.visual_brief.topic_keywords?.join(', ') || '(none)'}\n`;
+          markdown += `- **Abstract Concepts:** ${debug.visual_brief.abstract_concepts?.join(', ') || '(none)'}\n`;
+          markdown += `- **Primary Visual:** ${debug.visual_brief.primary_visual || '(none)'}\n`;
+          markdown += `- **Secondary Elements:** ${debug.visual_brief.secondary_elements?.join(', ') || '(none)'}\n`;
+          markdown += `- **Environment:** ${debug.visual_brief.environment || '(none)'}\n\n`;
+        }
+        
+        // Cinematography (for CREATOR shots)
+        if (debug.cinematography) {
+          markdown += `### Cinematography (CREATOR Shot)\n`;
+          markdown += `- **Shot Size:** ${debug.cinematography.shot_size}\n`;
+          markdown += `- **Lighting:** ${debug.cinematography.lighting}\n`;
+          markdown += `- **Emotion Expression:** ${debug.cinematography.emotion_expression}\n\n`;
+        }
+        
+        markdown += `### Final Image Prompt\n`;
+        markdown += `\`\`\`\n${debug.final_image_prompt || '(not generated)'}\n\`\`\`\n\n`;
+        
+        if (debug.negative_prompt) {
+          markdown += `### Negative Prompt\n`;
+          markdown += `\`\`\`\n${debug.negative_prompt}\n\`\`\`\n\n`;
+        }
+        
+        markdown += `---\n\n`;
+      });
+
+      // Download as markdown file
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `debug_prompts_${sessionId}_${Date.now()}.md`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      alert('Debug file downloaded! Check the prompts in the markdown file.');
+      
+    } catch (err: any) {
+      console.error('Error generating debug prompts:', err);
+      alert(`Error: ${err.message}`);
+    }
+  };
+
   const handleGenerateImage = useCallback(async (segmentId: string): Promise<boolean> => {
     const segment = segments.find(s => s.id === segmentId);
     if (!segment) return false;
@@ -846,32 +991,45 @@ export const VideoEditor = (): JSX.Element => {
             </div>
             
             {/* Generate All Images Button - always visible and clickable */}
-            <Button
-              onClick={allHaveImages ? handleRegenerateAll : handleGenerateAllBackground}
-              disabled={isGeneratingAll || isBackgroundMode}
-              className={`h-12 px-6 font-medium flex items-center gap-2 ${
-                isBackgroundMode
-                  ? "bg-blue-600 hover:bg-blue-700"
-                  : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
-              } text-white`}
-            >
-              {isBackgroundMode ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>{generationProgress.completed}/{generationProgress.total}</span>
-                </>
-              ) : allHaveImages ? (
-                <>
-                  <RefreshCw className="w-5 h-5" />
-                  <span>{language === 'id' ? 'Regenerate Semua' : 'Regenerate All'} ({segments.length})</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
-                </>
-              )}
-            </Button>
+            <div className="flex gap-2">
+              {/* DEBUG: Generate Prompts Button */}
+              <Button
+                onClick={handleGeneratePromptsDebug}
+                variant="outline"
+                className="h-12 px-4 font-medium border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
+                title="Debug: Export all prompts to markdown file"
+              >
+                <FileText className="w-5 h-5 mr-2" />
+                Debug Prompts
+              </Button>
+              
+              <Button
+                onClick={allHaveImages ? handleRegenerateAll : handleGenerateAllBackground}
+                disabled={isGeneratingAll || isBackgroundMode}
+                className={`h-12 px-6 font-medium flex items-center gap-2 ${
+                  isBackgroundMode
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
+                } text-white`}
+              >
+                {isBackgroundMode ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>{generationProgress.completed}/{generationProgress.total}</span>
+                  </>
+                ) : allHaveImages ? (
+                  <>
+                    <RefreshCw className="w-5 h-5" />
+                    <span>{language === 'id' ? 'Regenerate Semua' : 'Regenerate All'} ({segments.length})</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
 
