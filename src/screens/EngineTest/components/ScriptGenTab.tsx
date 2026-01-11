@@ -17,23 +17,86 @@ import {
 } from "lucide-react";
 
 interface ScriptSegment {
-  segment_type: string;
-  segment_number: number;
-  start_time: number;
-  end_time: number;
-  duration: number;
+  // Actual API fields
+  segment_id: string;
+  type: string;
+  timing: string;
+  duration_seconds: number;
+  shot_type?: string;
+  emotion: string;
+  transition: string;
   script_text: string;
   visual_direction: string;
-  emotional_label?: string;
-  scene_transition?: string;
-  shot_type?: string;
+  creator_costume?: string;
+  creator_appearance?: string;
+  visual_details?: string;
+  _enhancement?: {
+    original_length: number;
+    enhanced_length: number;
+    specs_added: string[];
+    category?: string;
+  };
+  ffmpeg_transition?: {
+    type: string;
+    duration: string;
+    ffmpeg_filter: string;
+  };
+  subtitle_style?: {
+    font: string;
+    size: number;
+    position: string;
+    animation: string;
+    effect: string;
+  };
 }
 
 interface GeneratedScript {
-  title: string;
   segments: ScriptSegment[];
-  total_duration: number;
-  language: string;
+  metadata: {
+    total_duration: number;
+    language: string;
+    platform: string;
+    expected_items?: number;
+    body_segment_count?: number;
+    content_complete?: boolean;
+    entity_fixes?: string[];
+    aspect_ratio: string;
+    resolution: string;
+    llm_source?: string;
+  };
+  quality_report?: {
+    slang_validation?: {
+      current_slang: string[];
+      outdated_slang: string[];
+      particles: string[];
+      score: number;
+      warnings: string[];
+      suggestions: string[];
+    };
+    quality_score: number;
+    timestamp: string;
+    validation?: {
+      valid: boolean;
+      score: number;
+      issues_count: number;
+      auto_fixes_applied: number;
+      virality_factors: string[];
+      virality_passed: boolean;
+    };
+    issues?: Array<{
+      segment_id: string;
+      field: string;
+      severity: string;
+      message: string;
+      auto_fixed: boolean;
+      fix_applied: string;
+    }>;
+    visual_enhancement?: {
+      segments_enhanced: number;
+      specs_added: Record<string, number>;
+    };
+    final_score: number;
+  };
 }
 
 interface GapAnalysisResult {
@@ -141,20 +204,22 @@ export const ScriptGenTab: React.FC = () => {
 
   const generateAnalysis = (output: GeneratedScript, reference: string): GapAnalysisResult => {
     const segments = output.segments || [];
+    const metadata = output.metadata;
+    const qualityReport = output.quality_report;
     
-    // Analyze hook quality
-    const hookSegment = segments.find(s => s.segment_type?.toUpperCase() === 'HOOK');
+    // Analyze hook quality - use 'type' field (not segment_type)
+    const hookSegment = segments.find(s => s.type?.toUpperCase() === 'HOOK');
     const hasHook = !!hookSegment;
     const hookHasQuestion = hookSegment?.script_text?.includes('?') || false;
     const hookHasTrigger = hookSegment?.script_text?.toLowerCase().match(/(gila|shocking|rahasia|stop|jangan|kenapa)/i);
     
     // Analyze foreshadow
-    const foreSegment = segments.find(s => s.segment_type?.toUpperCase().includes('FORE'));
+    const foreSegment = segments.find(s => s.type?.toUpperCase().includes('FORE'));
     const hasForeshadow = !!foreSegment;
     const foreshadowHasLock = foreSegment?.script_text?.toLowerCase().match(/(sampai habis|terakhir|ketiga|akhir)/i);
     
     // Analyze CTA
-    const ctaSegment = segments.find(s => s.segment_type?.toUpperCase() === 'CTA');
+    const ctaSegment = segments.find(s => s.type?.toUpperCase() === 'CTA');
     const hasCta = !!ctaSegment;
     const ctaHasAction = ctaSegment?.script_text?.toLowerCase().match(/(follow|share|comment|like|save)/i);
     
@@ -171,16 +236,23 @@ export const ScriptGenTab: React.FC = () => {
     const visualHasCamera = segments.some(s => s.visual_direction?.toLowerCase().match(/(cu|mcu|ms|ws|close-up|medium|wide)/i));
     const visualHasLighting = segments.some(s => s.visual_direction?.toLowerCase().match(/(lighting|rembrandt|loop|butterfly)/i));
     
+    // Get language from metadata
+    const lang = metadata?.language || language;
+    
     // Calculate scores
     const hookScore = hasHook ? (hookHasQuestion ? 8 : 6) + (hookHasTrigger ? 2 : 0) : 2;
     const foreshadowScore = hasForeshadow ? (foreshadowHasLock ? 9 : 5) : 2;
-    const bodyScore = segments.filter(s => s.segment_type?.toUpperCase().includes('BODY')).length >= 2 ? 8 : 5;
+    const bodyCount = segments.filter(s => s.type?.toUpperCase().includes('BODY')).length;
+    const bodyScore = bodyCount >= 2 ? 8 : 5;
     const ctaScore = hasCta ? (ctaHasAction ? 8 : 5) : 2;
     
-    // Slang score (Indonesian specific)
-    const slangScore = language === 'indonesian' 
-      ? Math.min(10, (hasGue > 0 ? 3 : 0) + (hasLo > 0 ? 3 : 0) + (hasParticles > 0 ? 2 : 0) + (hasSaya === 0 && hasKamu === 0 ? 2 : 0))
-      : 7; // Default for other languages
+    // Slang score (Indonesian specific) - also check quality_report if available
+    const apiSlangScore = qualityReport?.slang_validation?.score;
+    const slangScore = apiSlangScore !== undefined 
+      ? Math.round(apiSlangScore / 10) 
+      : (lang === 'indonesian'
+        ? Math.min(10, (hasGue > 0 ? 3 : 0) + (hasLo > 0 ? 3 : 0) + (hasParticles > 0 ? 2 : 0) + (hasSaya === 0 && hasKamu === 0 ? 2 : 0))
+        : 7);
     
     const visualScore = avgVisualLength > 100 ? 7 : avgVisualLength > 50 ? 5 : 3;
     const visualDetailScore = (visualHasCamera ? 3 : 0) + (visualHasLighting ? 3 : 0) + 2;
@@ -221,7 +293,7 @@ export const ScriptGenTab: React.FC = () => {
           name: "Body Structure",
           score: bodyScore,
           max_score: 10,
-          gap_details: `${segments.filter(s => s.segment_type?.toUpperCase().includes('BODY')).length} body segments. Should have 2-4 for good pacing.`,
+          gap_details: `${bodyCount} body segments. Should have 2-4 for good pacing.`,
           status: bodyScore >= 7 ? "pass" : bodyScore >= 5 ? "warning" : "fail"
         },
         {
@@ -239,9 +311,9 @@ export const ScriptGenTab: React.FC = () => {
           name: "Slang Compliance",
           score: slangScore,
           max_score: 10,
-          gap_details: language === 'indonesian'
-            ? `gue: ${hasGue}x, lo: ${hasLo}x, particles: ${hasParticles}x. ${hasSaya > 0 || hasKamu > 0 ? '⚠️ Found saya/kamu - should use gue/lo' : '✓ No saya/kamu'}`
-            : `Language: ${language} - slang validation enabled.`,
+          gap_details: lang === 'indonesian'
+            ? `gue: ${hasGue}x, lo: ${hasLo}x, particles: ${hasParticles}x. ${hasSaya > 0 || hasKamu > 0 ? '⚠️ Found saya/kamu - should use gue/lo' : '✓ No saya/kamu'}${apiSlangScore !== undefined ? ` (API score: ${apiSlangScore}/100)` : ''}`
+            : `Language: ${lang} - slang validation enabled.`,
           status: slangScore >= 7 ? "pass" : slangScore >= 5 ? "warning" : "fail"
         },
         {
@@ -255,9 +327,10 @@ export const ScriptGenTab: React.FC = () => {
       recommendations: [
         ...(hookScore < 7 ? ["Add psychological trigger to hook (curiosity gap, controversy, or FOMO)"] : []),
         ...(foreshadowScore < 7 ? ["Include numbered tease: '...dan yang terakhir paling gila. Tonton sampai habis!'"] : []),
-        ...(slangScore < 7 && language === 'indonesian' ? ["Replace saya/kamu with gue/lo. Add particles (sih, tuh, gitu)."] : []),
+        ...(slangScore < 7 && lang === 'indonesian' ? ["Replace saya/kamu with gue/lo. Add particles (sih, tuh, gitu)."] : []),
         ...(visualScore < 7 ? ["Enhance visual_direction with camera specs (CU/MCU/MS, lens, angle)"] : []),
         ...(ctaScore < 7 ? ["Make CTA more specific with engagement verb"] : []),
+        ...(qualityReport?.slang_validation?.suggestions || []),
       ],
       summary: overallScore >= 80 
         ? "Script has solid viral structure. Ready for image prompt testing."
@@ -287,23 +360,47 @@ export const ScriptGenTab: React.FC = () => {
   const formatSparkfluenceOutput = () => {
     if (!sparkfluenceOutput) return "";
     
-    let output = `# ${sparkfluenceOutput.title}\n\n`;
-    output += `**Language:** ${sparkfluenceOutput.language}\n`;
-    output += `**Total Duration:** ${sparkfluenceOutput.total_duration}s\n\n`;
-    output += `---\n\n`;
+    const metadata = sparkfluenceOutput.metadata;
+    const qualityReport = sparkfluenceOutput.quality_report;
+    
+    let output = `# Script Output\n\n`;
+    output += `**Language:** ${metadata?.language || 'N/A'}\n`;
+    output += `**Platform:** ${metadata?.platform || 'N/A'}\n`;
+    output += `**Total Duration:** ${metadata?.total_duration || 0}s\n`;
+    output += `**Aspect Ratio:** ${metadata?.aspect_ratio || 'N/A'}\n`;
+    if (qualityReport) {
+      output += `**Quality Score:** ${qualityReport.final_score || qualityReport.quality_score}/100\n`;
+    }
+    output += `\n---\n\n`;
     
     sparkfluenceOutput.segments.forEach((seg) => {
-      output += `### ${seg.segment_type} (${seg.start_time}s - ${seg.end_time}s)\n\n`;
+      output += `### ${seg.type} (${seg.timing})\n`;
+      output += `**ID:** ${seg.segment_id} | **Duration:** ${seg.duration_seconds}s | **Shot:** ${seg.shot_type || 'N/A'}\n\n`;
       output += `**Script:**\n"${seg.script_text}"\n\n`;
       output += `**Visual Direction:**\n${seg.visual_direction}\n\n`;
-      if (seg.emotional_label) {
-        output += `**Emotion:** ${seg.emotional_label}\n`;
+      if (seg.emotion) {
+        output += `**Emotion:** ${seg.emotion}\n`;
       }
-      if (seg.scene_transition) {
-        output += `**Transition:** ${seg.scene_transition}\n`;
+      if (seg.transition) {
+        output += `**Transition:** ${seg.transition}\n`;
+      }
+      if (seg.creator_costume) {
+        output += `**Costume:** ${seg.creator_costume}\n`;
       }
       output += `---\n\n`;
     });
+    
+    // Add quality report summary
+    if (qualityReport?.slang_validation) {
+      output += `## Slang Validation\n`;
+      output += `**Score:** ${qualityReport.slang_validation.score}/100\n\n`;
+      if (qualityReport.slang_validation.warnings?.length > 0) {
+        output += `**Warnings:**\n`;
+        qualityReport.slang_validation.warnings.forEach(w => {
+          output += `- ${w}\n`;
+        });
+      }
+    }
     
     return output;
   };
