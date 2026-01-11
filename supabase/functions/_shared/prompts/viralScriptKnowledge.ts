@@ -715,15 +715,16 @@ export function getStructureByDuration(duration: string, videoModel?: string): s
   // VEO 3.1 OPTIMIZED structures (max 8s per segment)
   const veoStructures: Record<string, string> = {
     '30s': `
-4 segments for 30s video (VEO 3.1 - max 8s per segment):
+5 segments for 30s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
 | BODY-1 | 5-13s | 8s | B-ROLL |
 | BODY-2 | 13-21s | 8s | B-ROLL |
-| CTA | 21-29s | 8s | CREATOR |
+| PEAK | 21-26s | 5s | B-ROLL |
+| CTA | 26-31s | 5s | CREATOR |
 
-CRITICAL: Max 8s per segment for VEO 3.1. HOOK must be 5s for scroll-stopping.`,
+CRITICAL: Max 8s per segment for VEO 3.1. HOOK and CTA must be 5s for optimal pacing.`,
     
     '60s': `
 6 segments for 60s video (VEO 3.1 - max 8s per segment):

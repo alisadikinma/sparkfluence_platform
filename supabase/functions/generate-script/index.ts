@@ -387,10 +387,10 @@ function buildSystemPrompt(language: string, duration: string, dnaStyles: string
   
   let segmentCount: number
   if (isVEO) {
-    // VEO 3.1: More segments with shorter durations
-    segmentCount = duration === '30s' ? 4 : duration === '60s' ? 6 : 10
+    // VEO 3.1: More segments with shorter durations (max 8s/segment)
+    segmentCount = duration === '30s' ? 5 : duration === '60s' ? 6 : 10
   } else {
-    // Sora 2.0: Fewer segments with longer durations
+    // Sora 2.0: Fewer segments with longer durations (max 15s/segment)
     segmentCount = duration === '30s' ? 4 : duration === '60s' ? 5 : 7
   }
   

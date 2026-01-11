@@ -99,7 +99,9 @@ export const ScriptLab = (): JSX.Element => {
           user_id: user?.id,
           // DNA Tone: When enabled, use creative_dna styles for script generation
           use_dna_tone: formData.useDnaTone,
-          creative_dna: formData.creativeDna
+          creative_dna: formData.creativeDna,
+          // Video model for segment duration constraints: veo31 (max 8s) vs sora2 (max 15s)
+          video_model: formData.model === 'auto' ? 'veo31' : formData.model
         }
       });
 
