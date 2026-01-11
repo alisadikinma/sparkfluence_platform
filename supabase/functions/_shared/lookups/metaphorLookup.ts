@@ -475,19 +475,49 @@ export function buildVisualBrief(scriptText: string, topic: string): VisualBrief
   console.log(`[buildVisualBrief] Primary visual: "${primary}"`);
   console.log(`[buildVisualBrief] Shot type: ${shotInfo.shot}`);
   
-  // 6. Build contextual cinematic prompt
+  // 6. Build contextual cinematic prompt (ENHANCED 2026-01-11 - target 400+ chars)
   const secondaryStr = secondary.length > 0 
-    ? `Supporting elements: ${secondary.slice(0, 2).join(', ')}.`
+    ? `Supporting visual elements include ${secondary.slice(0, 3).join(', ')}, creating depth and context.`
     : '';
   
-  const contextStr = contextualModifier ? `${contextualModifier}.` : '';
+  const contextStr = contextualModifier ? `Scene composition ${contextualModifier}.` : '';
   
-  const image_prompt = `${shotInfo.shot} of ${primary}. ${contextStr}
+  // Camera specs based on shot type
+  const cameraSpecs = shotInfo.shot.includes('close-up')
+    ? '85mm f/1.8 lens, shallow depth of field'
+    : shotInfo.shot.includes('wide')
+      ? '35mm anamorphic lens, deep focus'
+      : '50mm f/2.8 lens, moderate depth of field';
+  
+  // Lighting setup based on context
+  const lightingSetup = contextInfo?.context === 'ai_tech'
+    ? 'Cyan and blue accent lighting with subtle rim light separation, tech noir atmosphere'
+    : contextInfo?.context === 'warning'
+      ? 'High contrast dramatic lighting with red accent warnings'
+      : `${lighting}, professional three-point setup with soft fill`;
+  
+  const image_prompt = `${shotInfo.shot} of ${primary}.
+${contextStr}
 ${secondaryStr}
-Environment: Modern tech studio with ${lighting}.
-Film stock: Vision3 500T. Color: Cinematic teal-orange grade.
-Professional cinematography, ${shotInfo.desc}, 8K quality.
-Clean frame, no text overlays, no watermarks.`;
+
+Camera: ${cameraSpecs}, ${shotInfo.desc}
+Composition: Rule of thirds, visual hierarchy emphasizing main subject
+
+Lighting: ${lightingSetup}
+Color temperature: 5600K neutral with creative color accents
+
+Film Stock: Kodak Vision3 500T tungsten
+Color Grade: Cinematic teal-orange with lifted shadows
+Atmosphere: ${contextInfo?.context === 'mystery' ? 'Atmospheric haze with volumetric rays' : 'Clean professional with subtle depth haze'}
+
+Environment: Modern tech studio appropriate for ${topic || 'technology content'}
+Background: Contextual elements with moderate bokeh separation
+
+Style: Cinematic photorealistic, Hollywood production quality.
+Technical: Portrait 1024×1792, 8K detail.
+Clean frame, no text overlays, no watermarks, no UI elements.`;
+  
+  console.log(`[buildVisualBrief] Generated prompt length: ${image_prompt.length} chars`);
   
   return {
     topic_keywords: topic.split(/\s+/).filter(w => w.length > 3),

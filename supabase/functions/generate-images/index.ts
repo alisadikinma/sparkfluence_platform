@@ -27,6 +27,7 @@ import {
   getSegmentDefaults,
   getCostumeForTopic,
   buildCinematographyPrompt,
+  buildFullCinematographyPrompt,
   SEGMENT_DEFAULTS,
   TOPIC_COSTUMES,
   // Metaphor for B-roll
@@ -1305,29 +1306,26 @@ function buildCinematicPrompt(params: PromptParams): string {
   // Get segment defaults from new lookup module
   const segmentDefaults = getSegmentDefaults(segmentType) || getSegmentDefaults('BODY')
   const defaultShot = ['HOOK', 'CTA', 'LOOP-END'].includes(segmentType) ? 'CU' : 'MS'
-  const mappedShotType = segmentDefaults?.shotType || defaultShot
+  const mappedShotType = segmentDefaults?.shot || defaultShot
 
-  // CREATOR SHOT - Use cinematography lookup for building prompt
+  // CREATOR SHOT - Use ENHANCED cinematography prompt builder (400+ chars)
   if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)) {
     const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
     
-    // Use new lookup-based prompt builder
-    const basePrompt = buildCinematographyPrompt({
+    // Use FULL prompt builder (2026-01-11 enhanced)
+    const fullPrompt = buildFullCinematographyPrompt({
       characterDescription: charDesc,
-      emotion: emotion as any,
+      emotion: emotion,
       topic: topic,
       shotType: mappedShotType,
       segmentType: segmentType,
       aspectRatio: aspectRatio,
+      costume: costume,
+      visualReference: undefined // Can add film reference if needed
     })
     
-    // Add costume override if provided
-    const defaultCostume = 'Navy blazer over white crew-neck tee'
-    const costumeOverride = costume && costume !== defaultCostume 
-      ? `\n\nWARDROBE: ${costume}` 
-      : ''
-    
-    return basePrompt + costumeOverride
+    console.log(`[buildCinematicPrompt] CREATOR shot prompt length: ${fullPrompt.length} chars`)
+    return fullPrompt
   }
   
   // B-ROLL SHOT - Use Visual Brief extraction for contextual imagery

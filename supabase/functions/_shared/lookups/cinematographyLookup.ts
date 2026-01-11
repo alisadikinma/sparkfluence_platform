@@ -521,7 +521,8 @@ export const TRANSITIONS: Record<string, { veoInstruction: string; when: string 
 // ============================================================================
 
 /**
- * Build complete cinematography string for prompt
+ * Build complete cinematography string for prompt (BASIC - deprecated)
+ * Use buildFullCinematographyPrompt() for rich 400+ char prompts
  */
 export function buildCinematographyPrompt(params: {
   emotion: string;
@@ -533,6 +534,105 @@ export function buildCinematographyPrompt(params: {
   const shotType = getShotType(segmentDefaults.shot);
   
   return `${shotType.promptPhrase}. ${emotionSpecs.promptPhrase}. ${segmentDefaults.lighting}. ${segmentDefaults.atmosphere}.`;
+}
+
+// ============================================================================
+// ENHANCED PROMPT BUILDER (2026-01-11)
+// Target: 400+ chars with full cinematography specs
+// Source: 07-Prompt-Templates.md, 06-Cinematography-Lookup.md
+// ============================================================================
+
+export interface FullPromptParams {
+  characterDescription: string;
+  emotion: string;
+  topic: string;
+  shotType?: string;        // CU, MCU, MS, etc.
+  segmentType: string;      // HOOK, CTA, BODY, etc.
+  aspectRatio: string;      // 9:16, 16:9, 1:1
+  costume?: string;         // Override costume
+  visualReference?: string; // Film reference (Blade Runner, etc.)
+}
+
+/**
+ * Build RICH cinematography prompt (400+ chars target)
+ * Includes: Camera specs, lighting ratios, film stock, atmosphere, character
+ */
+export function buildFullCinematographyPrompt(params: FullPromptParams): string {
+  const {
+    characterDescription,
+    emotion,
+    topic,
+    segmentType,
+    aspectRatio,
+    costume,
+    visualReference
+  } = params;
+  
+  // Get specs from lookup tables
+  const emotionSpecs = getEmotionSpecs(emotion);
+  const segmentDefaults = getSegmentDefaults(segmentType);
+  const shotTypeKey = params.shotType || segmentDefaults.shot || 'MCU';
+  const shotType = getShotType(shotTypeKey);
+  
+  // Determine mood setup based on segment type
+  let moodSetup: MoodSetup;
+  if (['HOOK', 'TWIST'].includes(segmentType.toUpperCase())) {
+    moodSetup = MOOD_SETUPS.dramatic_authority;
+  } else if (['CTA', 'ENDING'].includes(segmentType.toUpperCase())) {
+    moodSetup = MOOD_SETUPS.warm_inspiring;
+  } else if (['PEAK'].includes(segmentType.toUpperCase())) {
+    moodSetup = MOOD_SETUPS.epic_reveal;
+  } else {
+    moodSetup = MOOD_SETUPS.tech_modern;
+  }
+  
+  const filmStock = FILM_STOCKS[moodSetup.filmStock] || FILM_STOCKS.vision3_500t;
+  
+  // Get costume (override or topic-based)
+  const finalCostume = costume || getCostumeForTopic(topic);
+  
+  // Determine lighting pattern and ratio
+  const lightingRatio = emotionSpecs.ratio || '4:1';
+  const lightingPattern = segmentDefaults.lighting.split(' ')[0] || 'Rembrandt';
+  const keyPosition = ['HOOK', 'CTA'].includes(segmentType.toUpperCase()) 
+    ? 'camera left' 
+    : 'camera right';
+  
+  // Get atmosphere type
+  const atmosphereType = ATMOSPHERE_TYPES[segmentDefaults.atmosphere] || ATMOSPHERE_TYPES.haze;
+  
+  // Resolution based on aspect ratio
+  const resolution = aspectRatio === '9:16' 
+    ? 'Portrait 1024×1792' 
+    : aspectRatio === '16:9'
+      ? 'Landscape 1792×1024'
+      : 'Square 1024×1024';
+  
+  // Build the FULL prompt (target 400+ chars)
+  const prompt = `A photorealistic cinematic ${shotType.frame} of ${characterDescription}.
+
+Expression: ${emotionSpecs.promptPhrase}
+Pose: ${emotionSpecs.body}, engaged with camera
+Wardrobe: ${finalCostume}
+
+Camera: ${shotTypeKey}, ${shotType.lens}, eye-level to slight low angle
+Composition: Rule of thirds, subject positioned off-center
+
+Lighting: ${lightingPattern} lighting, ${lightingRatio} ratio, key from ${keyPosition}
+Color temperature: ${moodSetup.lighting.includes('3200') ? '3200K warm tungsten' : '5600K neutral daylight'}
+
+Film Stock: ${filmStock.promptPhrase}
+Color Grade: ${moodSetup.color}
+Atmosphere: ${atmosphereType.promptPhrase}
+
+Environment: Modern professional studio setting appropriate for ${topic || 'content creation'}
+Background: Moderate depth bokeh, subtle contextual elements
+
+Style: Cinematic photorealistic, natural skin texture, Hollywood production quality.
+Technical: ${resolution}, HD quality.
+Clean frame, no text overlays, no watermarks, no UI elements.${visualReference ? `\nVisual reference: ${visualReference} inspired lighting and color palette.` : ''}`;
+
+  return prompt;
 }
 
 /**
