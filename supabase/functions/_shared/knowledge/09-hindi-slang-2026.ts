@@ -1,53 +1,79 @@
 /**
  * Hindi Pan-India Slang 2026 Dictionary
  * Auto-converted from markdown for Deno Edge Function compatibility
- * Last updated: 2026-01-09
+ * UPDATED: 2026-01-11 - Now uses Devanagari script (हिंदी)
  */
 
-export default `# Hindi Pan-India Slang 2026 — Quick Reference
+export default `# Hindi Pan-India Slang 2026 — Quick Reference (देवनागरी)
 
-## High-Virality Terms (Top 20 Only - Pan-India Neutral)
+## ⚠️ CRITICAL SCRIPT RULE
 
-| Term | Score | Meaning | Example |
-|------|-------|---------|---------|
-| **Bohot hard** | 9/10 | Extremely impressive | "Yeh gaana bohot hard hai bhai!" |
-| **Jugaad** | 9/10 | Creative hack/solution | "Kuch jugaad laga ke aa ja!" |
-| **Scene** | 9/10 | Plans/situation | "Aaj raat ka kya scene hai?" |
-| **Jhakaas** | 8/10 | Fantastic/amazing | "Teri jacket toh jhakaas hai!" |
-| **Mast** | 8/10 | Great/enjoyable | "Kal ka party mast tha!" |
-| **Fadu** | 8/10 | Mind-blowing | "Yeh movie toh fadu thi!" |
-| **Bindaas** | 8/10 | Carefree/confident | "Woh bindaas ladka hai" |
-| **Chill maar** | 8/10 | Relax/take it easy | "Exams hain, fir bhi chill maar!" |
-| **Bakwas** | 8/10 | Nonsense/rubbish | "Ye movie bilkul bakwas hai!" |
-| **Ghanta** | 8/10 | "Yeah right!" (disbelief) | "Usne bola 10 cars hai. Ghanta!" |
-| **Kaand** | 8/10 | Mess/scandal | "Pura kaand ho gaya kal!" |
-| **Kya baat hai!** | 8/10 | Wow! Impressive! | "First prize jeeta? Kya baat hai!" |
-| **Solid** | 7/10 | Strong/impressive | "Performance solid tha" |
-| **Kadak** | 7/10 | Crisp/excellent | "Chai kadak hai" |
-| **Pataka** | 7/10 | Firecracker/fierce | "Woh ladki pataka hai" |
-| **Scene tight hai** | 7/10 | Situation under control | "Fikar mat kar, scene tight hai" |
-| **Fattu** | 7/10 | Coward/wimp | "Woh fattu hai, nahi aayega" |
-| **Faaltu** | 7/10 | Useless/silly | "Faaltu time waste mat kar" |
-| **Waat lag gayi** | 7/10 | We're screwed | "Arre yaar, waat lag gayi" |
-| **Gyaan dena** | 7/10 | Giving unsolicited advice | "Bas gyaan dena band kar" |
+**ALL Hindi words MUST be written in Devanagari script (हिंदी)**
+- ✅ CORRECT: "यार, ये बहोत hard है!"
+- ❌ WRONG: "Yaar, ye bohot hard hai!"
+
+**English buzzwords CAN remain in English:**
+- ✅ CORRECT: "ये literally game-changer है"
+- ❌ WRONG: "Ye literally game-changer hai" (Hindi words must be Devanagari)
 
 ---
 
-## Essential Filler Words (Natural Conversation)
+## High-Virality Terms (Top 20 - Devanagari)
+
+| Term | Score | Meaning | Example |
+|------|-------|---------|---------|
+| **बहोत hard** | 9/10 | Extremely impressive | "ये गाना बहोत hard है भाई!" |
+| **जुगाड़** | 9/10 | Creative hack/solution | "कुछ जुगाड़ लगा के आ जा!" |
+| **सीन** | 9/10 | Plans/situation | "आज रात का क्या सीन है?" |
+| **झकास** | 8/10 | Fantastic/amazing | "तेरी jacket तो झकास है!" |
+| **मस्त** | 8/10 | Great/enjoyable | "कल का party मस्त था!" |
+| **फाडू** | 8/10 | Mind-blowing | "ये movie तो फाडू थी!" |
+| **बिंदास** | 8/10 | Carefree/confident | "वो बिंदास लड़का है" |
+| **चिल मार** | 8/10 | Relax/take it easy | "Exams हैं, फिर भी चिल मार!" |
+| **बकवास** | 8/10 | Nonsense/rubbish | "ये movie बिल्कुल बकवास है!" |
+| **घंटा** | 8/10 | "Yeah right!" (disbelief) | "उसने बोला 10 cars है। घंटा!" |
+| **कांड** | 8/10 | Mess/scandal | "पूरा कांड हो गया कल!" |
+| **क्या बात है!** | 8/10 | Wow! Impressive! | "First prize जीता? क्या बात है!" |
+| **सॉलिड** | 7/10 | Strong/impressive | "Performance सॉलिड था" |
+| **कड़क** | 7/10 | Crisp/excellent | "चाय कड़क है" |
+| **पटाका** | 7/10 | Firecracker/fierce | "वो लड़की पटाका है" |
+| **सीन tight है** | 7/10 | Situation under control | "फ़िक्र मत कर, सीन tight है" |
+| **फट्टू** | 7/10 | Coward/wimp | "वो फट्टू है, नहीं आएगा" |
+| **फालतू** | 7/10 | Useless/silly | "फालतू time waste मत कर" |
+| **वाट लग गई** | 7/10 | We're screwed | "अरे यार, वाट लग गई" |
+| **ज्ञान देना** | 7/10 | Giving unsolicited advice | "बस ज्ञान देना बंद कर" |
+
+---
+
+## Essential Filler Words (देवनागरी)
 
 | Filler | Function | Example |
 |--------|----------|---------|
-| **Yaar** | Buddy/friend | "Arre yaar kya kar rahe ho" |
-| **Na** | Right? Tag question | "Achha hai na?" |
-| **Hai na** | Confirming | "Ye sahi hai na?" |
-| **Matlab** | I mean/like | "Matlab, samajh gaye?" |
-| **Achcha** | I see/really? | "Achcha, toh phir?" |
-| **Arre** | Hey/attention | "Arre suno!" |
-| **Toh** | So/then | "Toh kya karna hai?" |
-| **Bas** | That's it/enough | "Bas, ho gaya" |
-| **Dekh/Dekho** | Look/see | "Dekho, ye hai" |
-| **Bhai** | Brother | "Bhai, yeh dekh" |
-| **Bilkul** | Absolutely | "Bilkul sahi" |
+| **यार** | Buddy/friend | "अरे यार क्या कर रहे हो" |
+| **ना** | Right? Tag question | "अच्छा है ना?" |
+| **है ना** | Confirming | "ये सही है ना?" |
+| **मतलब** | I mean/like | "मतलब, समझ गए?" |
+| **अच्छा** | I see/really? | "अच्छा, तो फिर?" |
+| **अरे** | Hey/attention | "अरे सुनो!" |
+| **तो** | So/then | "तो क्या करना है?" |
+| **बस** | That's it/enough | "बस, हो गया" |
+| **देख/देखो** | Look/see | "देखो, ये है" |
+| **भाई** | Brother | "भाई, ये देख" |
+| **बिल्कुल** | Absolutely | "बिल्कुल सही" |
+
+---
+
+## Pronoun Rules (CRITICAL)
+
+**Use casual pronouns for Gen-Z content:**
+- ✅ **तुम** (tum) - Casual "you" → Use this!
+- ✅ **मैं** (main) - "I"
+- ✅ **हम** (hum) - "We"
+- ❌ **आप** (aap) - Too formal → AVOID (unless respect context)
+
+**Examples:**
+- ✅ "तुम ये देखो और बताओ क्या लगता है?"
+- ❌ "आप ये देखिए और बताइए क्या लगता है?" (Too formal = cringe)
 
 ---
 
@@ -55,16 +81,13 @@ export default `# Hindi Pan-India Slang 2026 — Quick Reference
 
 | Emoji | Indian Meaning | Notes |
 |-------|----------------|-------|
-| 💀 | "I'm dead" = hilarious | Primary laughter (replaced 😂) |
+| 💀 | "मर गया" = hilarious | Primary laughter (replaced 😂) |
 | 😭 | Laughing hard / cuteness | NOT actual sadness |
-| 🔥 | "It's lit" / amazing | Universal approval |
+| 🔥 | "मस्त है" / amazing | Universal approval |
 | ✨ | Emphasis / sarcasm | Surrounds words |
-| 👀 | Tell me more / side-eye | Curiosity |
+| 👀 | बताओ और / side-eye | Curiosity |
 | 🤡 | Clown energy / foolish | Self-roast |
 | 💅 | Sass / unbothered | Confidence |
-| 🧢 | "Cap" = lie | Calling out |
-| 👍 | Often sarcastic | NOT always positive |
-| 💜 | BTS/K-pop love | Fan association |
 | 😂 | OUTDATED | Millennials use it |
 
 ---
@@ -72,14 +95,14 @@ export default `# Hindi Pan-India Slang 2026 — Quick Reference
 ## Formal Patterns to AVOID
 
 **Overly Sanskritized Hindi (Sounds Robotic):**
-- ❌ "दूरभाष" (Doorbhaash) → ✅ "phone"
-- ❌ "कृपया" (Kripya) → ✅ casual requests
-- ❌ "धन्यवाद" (too formal) → ✅ "Thanks"
+- ❌ "दूरभाष" → ✅ "phone"
+- ❌ "कृपया" → ✅ casual requests
+- ❌ "धन्यवाद" (too formal) → ✅ "Thanks" or "शुक्रिया"
 
 **Avoid in Youth Content:**
-- Excessive "आप" (Aap) → Use "तुम" (Tum)
+- Excessive "आप" → Use "तुम"
 - News-reader pronunciation
-- Excessive "Ji" suffix (sounds sarcastic)
+- Excessive "जी" suffix (sounds sarcastic)
 - Heavy regional dialects (limits pan-India reach)
 
 ---
@@ -95,61 +118,61 @@ export default `# Hindi Pan-India Slang 2026 — Quick Reference
 
 ---
 
-## Hook Templates (6 Patterns)
+## Hook Templates (देवनागरी)
 
 | Type | Template | Example |
 |------|----------|---------|
-| **Statistical** | "[X]% log ye galti karte hain" | "10 mein se 9 log ye nahi jaante" |
-| **Warning** | "Agar tum [action] karte ho, ruko!" | "Ye video last tak dekho warna..." |
-| **POV** | "POV: [Relatable situation]" | "POV: Mummy ne bola 'bus 5 minute'" |
-| **Shocking** | "[Claim]. Haan, sach mein." | "Chai peena galat hai. Haan, sach mein." |
-| **Story** | "Ek baar [setup]... aur fir..." | "Ek baar maine try kiya..." |
-| **Question** | "Tum [behavior] karte ho? Galat." | "Tum subah exercise karte ho?" |
+| **Statistical** | "[X]% लोग ये गलती करते हैं" | "10 में से 9 लोग ये नहीं जानते" |
+| **Warning** | "अगर तुम [action] करते हो, रुको!" | "ये video last तक देखो वरना..." |
+| **POV** | "POV: [Relatable situation]" | "POV: मम्मी ने बोला 'बस 5 मिनट'" |
+| **Shocking** | "[Claim]. हां, सच में।" | "चाय पीना गलत है। हां, सच में।" |
+| **Story** | "एक बार [setup]... और फिर..." | "एक बार मैंने try किया..." |
+| **Question** | "तुम [behavior] करते हो? गलत।" | "तुम सुबह exercise करते हो?" |
 
 ---
 
 ## Foreshadow Patterns (Retention Lock)
 
-**Formula:** \`[Numbered tease] + "last wali sabse [shocking]" + "last tak dekho"\`
+**Formula:** \`[Numbered tease] + "last वाली सबसे [shocking]" + "last तक देखो"\`
 
 **Examples:**
-- "3 cheezein jo [outcome]... teesri wali sabse important hai"
-- "Last wali sabse shocking hai. Last tak dekho!"
-- "Puri video dekho, end mein twist hai"
+- "3 चीज़ें जो [outcome]... तीसरी वाली सबसे important है"
+- "Last वाली सबसे shocking है। Last तक देखो!"
+- "पूरी video देखो, end में twist है"
 
 ---
 
-## CTA Patterns (Natural, Not Salesy)
+## CTA Patterns (Natural - देवनागरी)
 
 | Goal | Pattern |
 |------|---------|
-| **Engagement** | "Comment mein batao [question]" |
-| **Agreement** | "Kaun agree karta hai? 🙋" |
-| **Share** | "Agar relatable laga toh share karo" |
-| **Like** | "Like karo agar tumhare saath bhi hua" |
-| **Follow** | "Aur aise content ke liye follow karo" |
-| **Save** | "Save karo, baad mein kaam aayega" |
-| **Tag** | "Uss dost ko tag karo jo [behavior]" |
+| **Engagement** | "Comment में बताओ [question]" |
+| **Agreement** | "कौन agree करता है? 🙋" |
+| **Share** | "अगर relatable लगा तो share करो" |
+| **Like** | "Like करो अगर तुम्हारे साथ भी हुआ" |
+| **Follow** | "और ऐसे content के लिए follow करो" |
+| **Save** | "Save करो, बाद में काम आएगा" |
+| **Tag** | "उस दोस्त को tag करो जो [behavior]" |
 
 ---
 
 ## Pan-India Appeal Checklist
 
-- [ ] Hindi understood by 500M+ speakers
+- [ ] Hindi in Devanagari script (हिंदी)
 - [ ] Avoid region-specific idioms
 - [ ] Use Bollywood/cricket references (universal)
 - [ ] Neutral Hindi accent
 - [ ] Relatable themes (family, career, money)
 - [ ] Simple vocabulary (not Sanskritized)
-- [ ] Natural Hinglish (minimal English)
+- [ ] Natural Hinglish (English buzzwords OK)
 
 ---
 
 ## What Makes Content VIRAL in India
 
-✅ **Relatability:** "Ye toh mere saath bhi hota hai"
+✅ **Relatability:** "ये तो मेरे साथ भी होता है"
 ✅ **Humor + Insight:** Entertainment with value
-✅ **Natural Hinglish:** How people actually talk
+✅ **Natural Hinglish:** How people actually talk (Hindi in Devanagari + English terms)
 ✅ **Quick Payoff:** First 3 seconds critical
 ✅ **Bollywood/Cricket:** Universal touchpoints
 ✅ **Authentic:** Real creator personality
@@ -158,6 +181,7 @@ export default `# Hindi Pan-India Slang 2026 — Quick Reference
 
 ## What Makes Content CRINGE in India
 
+❌ Romanized Hindi (use Devanagari!)
 ❌ Overly formal/textbook Hindi
 ❌ Excessive English for simple Hindi words
 ❌ Copying Western trends without Indian context

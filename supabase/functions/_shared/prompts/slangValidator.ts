@@ -16,10 +16,11 @@ const CURRENT_SLANG: Record<string, string[]> = {
     'vibes', 'bucin', 'no cap', "it's giving", 'sus', 'brain rot'
   ],
   hindi: [
-    'bohot hard', 'jugaad', 'scene', 'jhakaas', 'mast', 'fadu',
-    'bindaas', 'chill maar', 'bakwas', 'ghanta', 'kaand', 'kya baat hai',
-    'solid', 'kadak', 'pataka', 'scene tight hai', 'fattu', 'faaltu',
-    'waat lag gayi', 'gyaan dena'
+    // Devanagari + Romanized for detection
+    'बहोत hard', 'bohot hard', 'जुगाड़', 'jugaad', 'सीन', 'scene', 'झकास', 'jhakaas',
+    'मस्त', 'mast', 'फाडू', 'fadu', 'बिंदास', 'bindaas', 'बकवास', 'bakwas',
+    'घंटा', 'ghanta', 'कांड', 'kaand', 'क्या बात है', 'kya baat hai',
+    'सॉलिड', 'solid', 'कड़क', 'kadak', 'पटाका', 'pataka'
   ],
   english: [
     'slay', 'rizz', 'fire', 'ate', 'cooked', 'lock in', 'delulu',
@@ -36,7 +37,11 @@ const OUTDATED_SLANG: Record<string, string[]> = {
 
 const ESSENTIAL_PARTICLES: Record<string, string[]> = {
   indonesian: ['sih', 'tuh', 'gitu', 'dong', 'deh', 'nih', 'kan', 'banget', 'parah', 'bet'],
-  hindi: ['yaar', 'na', 'hai na', 'matlab', 'achcha', 'arre', 'toh', 'bas', 'bhai'],
+  hindi: [
+    // Devanagari + Romanized
+    'यार', 'yaar', 'ना', 'na', 'है ना', 'hai na', 'मतलब', 'matlab',
+    'अच्छा', 'achcha', 'अरे', 'arre', 'तो', 'toh', 'बस', 'bas', 'भाई', 'bhai'
+  ],
   english: ['like', 'literally', 'basically', 'honestly', 'actually', 'so', 'i mean']
 };
 
@@ -138,18 +143,26 @@ export function validateSlangUsage(
   }
 
   if (language === 'hindi') {
-    // Check for excessive formal language
-    const excessiveAap = text.match(/\bआप\b/gi);
+    // Check for excessive formal language (Devanagari + romanized)
+    const excessiveAap = text.match(/(आप|\baap\b)/gi);
     if (excessiveAap && excessiveAap.length > 2) {
       warnings.push('Too much formal "आप" - use "तुम" for youth content');
-      suggestions.push('Replace with casual "tum" pronoun');
+      suggestions.push('Replace with casual "तुम" pronoun');
       score -= 10;
+    }
+    
+    // Check if script is using Devanagari (should have at least some Hindi characters)
+    const devanagariChars = text.match(/[\u0900-\u097F]/g);
+    if (!devanagariChars || devanagariChars.length < 10) {
+      warnings.push('Hindi script should use Devanagari (हिंदी) characters, not romanized');
+      suggestions.push('Write Hindi words in Devanagari script: यार, मैं, तुम, क्या, etc.');
+      score -= 30; // Heavy penalty for not using Devanagari
     }
 
     // Check fillers (need ≥2)
     if (particles.length < 2) {
       warnings.push(`Only ${particles.length}/2 Hindi fillers - sounds robotic`);
-      suggestions.push('Add more fillers: yaar, na, matlab, arre');
+      suggestions.push('Add more fillers: यार, ना, मतलब, अरे');
       score -= 10;
     }
   }

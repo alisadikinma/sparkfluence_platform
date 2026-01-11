@@ -76,16 +76,16 @@ const LANGUAGE_CONFIG: Record<string, {
   },
   hindi: {
     name: 'Hindi',
-    style: 'Hinglish (Hindi-English mix) - casual conversational tone, uses common Hindi slang and English buzzwords',
-    example: 'Yaar, maine bhi yeh try kiya aur literally life change ho gayi!',
+    style: 'Hindi in Devanagari script (हिंदी) - casual Gen-Z tone, mix with English tech/trending terms allowed but Hindi words MUST be in Devanagari script',
+    example: 'यार, मैंने भी ये try किया और literally लाइफ change हो गई!',
     foreshadow: {
-      tease: '...aur last wala sabse [crazy/important/game-changer] hai',
-      urgency: 'End tak dekho / Last tak ruko',
-      example: 'Main tumhe 3 tarike bataunga, aur teesra wala sabse crazy hai. End tak dekho!'
+      tease: '...और last वाला सबसे [crazy/important/game-changer] है',
+      urgency: 'End तक देखो / Last तक रुको',
+      example: 'मैं तुम्हें 3 तरीके बताऊंगा, और तीसरा वाला सबसे crazy है। End तक देखो!'
     },
     hook: {
       pattern: 'Relatable problem + solution tease',
-      example: 'Yaar, 90% log [X] mein fail kyun hote hain? Reason sirf ek hai...'
+      example: 'यार, 90% लोग [X] में fail क्यों होते हैं? Reason सिर्फ एक है...'
     }
   }
 }
