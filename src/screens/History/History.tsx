@@ -98,10 +98,14 @@ export const History = (): JSX.Element => {
   }, [user]);
 
   const fetchProjects = async () => {
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
     try {
       setLoading(true);
+      console.log('[History] Fetching projects for user:', user.id);
       
       // Fetch video generation jobs with metadata
       const { data: videoJobs, error: videoError } = await supabase
@@ -111,6 +115,8 @@ export const History = (): JSX.Element => {
         .order("updated_at", { ascending: false });
 
       if (videoError) throw videoError;
+      
+      console.log('[History] Video jobs loaded:', videoJobs?.length || 0);
 
       // Fetch image generation jobs for better status info
       const { data: imageJobs } = await supabase
@@ -118,14 +124,17 @@ export const History = (): JSX.Element => {
         .select("session_id, topic, status, image_url")
         .eq("user_id", user.id);
 
-      // Create image jobs map by session_id
+      // Create image jobs map by session_id - with null safety
       const imageJobsMap = new Map<string, { topic: string | null; hasImages: boolean }>();
-      if (imageJobs) {
+      if (imageJobs && Array.isArray(imageJobs)) {
         imageJobs.forEach((job: any) => {
+          // Skip invalid jobs
+          if (!job || !job.session_id) return;
+          
           const existing = imageJobsMap.get(job.session_id);
           if (!existing) {
             imageJobsMap.set(job.session_id, { 
-              topic: job.topic, 
+              topic: job.topic || null, 
               hasImages: !!job.image_url 
             });
           } else if (job.topic && !existing.topic) {
@@ -140,20 +149,25 @@ export const History = (): JSX.Element => {
         .select("id, title, video_data, final_video_url, thumbnail_url, scheduled_date, scheduled_time, platforms, description")
         .eq("user_id", user.id);
 
-      // Map session IDs to planned content
+      // Map session IDs to planned content - with null safety
       const sessionToPlanned = new Map<string, any>();
-      if (plannedData) {
+      if (plannedData && Array.isArray(plannedData)) {
         plannedData.forEach(p => {
-          if (p.video_data?.sessionId) {
+          if (p && p.video_data?.sessionId) {
             sessionToPlanned.set(p.video_data.sessionId, p);
           }
         });
       }
 
       if (videoJobs && videoJobs.length > 0) {
-        // Group by session_id
+        // Group by session_id - with null safety
         const sessionMap = new Map<string, VideoJob[]>();
         videoJobs.forEach((job: any) => {
+          // Skip invalid jobs
+          if (!job || !job.session_id) {
+            console.warn('[History] Skipping invalid job:', job);
+            return;
+          }
           const existing = sessionMap.get(job.session_id) || [];
           existing.push(job);
           sessionMap.set(job.session_id, existing);
@@ -161,25 +175,33 @@ export const History = (): JSX.Element => {
 
         const projectList: ProjectGroup[] = [];
         sessionMap.forEach((segments, sessionId) => {
-          const imagesReady = segments.filter(s => s.image_url).length;
-          const videosReady = segments.filter(s => s.video_url || s.status === JOB_STATUS.COMPLETED).length;
-          const videosFailed = segments.filter(s => s.status === JOB_STATUS.FAILED).length;
-          const videosProcessing = segments.filter(s => s.status === JOB_STATUS.PROCESSING).length;
-          const videosPending = segments.filter(s => s.status === JOB_STATUS.PENDING).length;
-          const isComplete = videosReady === segments.length && segments.length > 0;
+          // Filter out any null/undefined segments and ensure status exists
+          const validSegments = segments.filter(s => s && typeof s.status === 'number');
+          
+          if (validSegments.length === 0) {
+            console.warn('[History] No valid segments for session:', sessionId);
+            return; // Skip this session entirely
+          }
+          
+          const imagesReady = validSegments.filter(s => s.image_url).length;
+          const videosReady = validSegments.filter(s => s.video_url || s.status === JOB_STATUS.COMPLETED).length;
+          const videosFailed = validSegments.filter(s => s.status === JOB_STATUS.FAILED).length;
+          const videosProcessing = validSegments.filter(s => s.status === JOB_STATUS.PROCESSING).length;
+          const videosPending = validSegments.filter(s => s.status === JOB_STATUS.PENDING).length;
+          const isComplete = videosReady === validSegments.length && validSegments.length > 0;
           const hasFailed = videosFailed > 0 && videosProcessing === 0 && videosPending === 0; // Only failed if nothing is processing/pending
           const isProcessing = videosProcessing > 0 || (videosPending > 0 && videosReady > 0); // Processing if any job is running OR resuming
           const planned = sessionToPlanned.get(sessionId);
 
           // Get topic from multiple sources (priority order)
-          const topicFromJob = segments[0]?.topic;
+          const topicFromJob = validSegments[0]?.topic;
           const topicFromImageJob = imageJobsMap.get(sessionId)?.topic;
           const topicFromPlannedData = planned?.video_data?.topic;
           const topicFromPlannedTitle = planned?.title;
           const topicTitle = topicFromJob || topicFromImageJob || topicFromPlannedData || topicFromPlannedTitle || `Video Project ${sessionId.slice(0, 8)}`;
 
           // Get metadata from first segment OR from planned_content.video_data
-          const firstSeg = segments[0];
+          const firstSeg = validSegments[0];
           const videoData = planned?.video_data || {};
           
           // Try segment first, then video_data, then defaults
@@ -187,7 +209,7 @@ export const History = (): JSX.Element => {
           const projectResolution = firstSeg?.resolution || videoData?.resolution || '1080p';
           const projectModel = firstSeg?.preferred_platform || videoData?.model || 'veo31';
           const segmentDuration = firstSeg?.duration_seconds || videoData?.duration_seconds || 8;
-          const totalDuration = segments.length * segmentDuration;
+          const totalDuration = validSegments.length * segmentDuration;
 
           // Calculate status text - PRIORITY: Processing > Failed > Pending
           let statusText = '';
@@ -195,20 +217,24 @@ export const History = (): JSX.Element => {
             statusText = t.common.done || 'Complete';
           } else if (isProcessing) {
             // Show processing status with progress
-            statusText = `${t.videoEditor.status.processing || 'Processing'} ${videosReady}/${segments.length}`;
+            statusText = `${t.videoEditor.status.processing || 'Processing'} ${videosReady}/${validSegments.length}`;
           } else if (hasFailed) {
             statusText = `${videosFailed} ${t.common.failed || 'failed'}`;
-          } else if (imagesReady < segments.length) {
-            statusText = `${t.videoEditor.status.images || 'Images'} ${imagesReady}/${segments.length}`;
+          } else if (imagesReady < validSegments.length) {
+            statusText = `${t.videoEditor.status.images || 'Images'} ${imagesReady}/${validSegments.length}`;
           } else {
-            statusText = `${t.videoEditor.status.videos || 'Videos'} ${videosReady}/${segments.length}`;
+            statusText = `${t.videoEditor.status.videos || 'Videos'} ${videosReady}/${validSegments.length}`;
           }
 
           projectList.push({
             session_id: sessionId,
             topic_title: topicTitle,
-            segments: segments.sort((a, b) => parseInt(a.segment_id) - parseInt(b.segment_id)),
-            total_segments: segments.length,
+            segments: validSegments.sort((a, b) => {
+              const aId = parseInt(a.segment_id) || 0;
+              const bId = parseInt(b.segment_id) || 0;
+              return aId - bId;
+            }),
+            total_segments: validSegments.length,
             images_ready: imagesReady,
             videos_ready: videosReady,
             videos_failed: videosFailed,
@@ -218,11 +244,11 @@ export const History = (): JSX.Element => {
             has_failed: hasFailed,
             is_processing: isProcessing,
             status_text: statusText,
-            created_at: segments[0].created_at,
-            updated_at: segments[0].updated_at,
+            created_at: validSegments[0]?.created_at || new Date().toISOString(),
+            updated_at: validSegments[0]?.updated_at || new Date().toISOString(),
             planned_content_id: planned?.id,
             final_video_url: planned?.final_video_url || undefined,
-            thumbnail_url: planned?.thumbnail_url || segments.find(s => s.image_url)?.image_url,
+            thumbnail_url: planned?.thumbnail_url || validSegments.find(s => s.image_url)?.image_url,
             scheduled_date: planned?.scheduled_date,
             scheduled_time: planned?.scheduled_time,
             platforms: planned?.platforms || [],
@@ -240,10 +266,18 @@ export const History = (): JSX.Element => {
           new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
         );
 
+        console.log('[History] Projects loaded:', projectList.length);
         setProjects(projectList);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error fetching projects:", err);
+      console.error("Error details:", {
+        message: err?.message,
+        stack: err?.stack,
+        name: err?.name
+      });
+      // Don't crash the page - just show empty state
+      setProjects([]);
     } finally {
       setLoading(false);
     }
