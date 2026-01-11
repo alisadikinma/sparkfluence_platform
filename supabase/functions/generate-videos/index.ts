@@ -101,6 +101,28 @@ function truncateScript(scriptText: string, maxWords: number): { truncated: stri
   return { truncated, wasModified: true, originalWords }
 }
 
+// ============================================================================
+// SAFE DURATION PARSER - Handles null, undefined, NaN, invalid values
+// ============================================================================
+function safeParseDuration(value: any, fallback: number = 8): number {
+  // Handle null, undefined
+  if (value === null || value === undefined) return fallback
+  
+  // Handle string numbers
+  if (typeof value === 'string') {
+    const parsed = parseFloat(value)
+    if (!isNaN(parsed) && parsed > 0) return parsed
+    return fallback
+  }
+  
+  // Handle numbers
+  if (typeof value === 'number' && !isNaN(value) && value > 0) {
+    return value
+  }
+  
+  return fallback
+}
+
 // Helper: Validate dialogue length for video model
 function validateDialogueLength(scriptText: string, platform: VideoModelKey, duration?: number, language?: string): { 
   valid: boolean; 
@@ -268,9 +290,8 @@ async function handlePreviewPrompts(requestBody: any) {
     const segmentId = segment.segment_id || segment.id || String(i + 1)
     const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${i + 1}`
     const scriptText = segment.script_text || segment.script || ''
-    // DURATION FIX: Ensure valid number, fallback to 8
-    const rawDuration = segment.duration_seconds || segment.duration || 8
-    const duration = typeof rawDuration === 'number' && !isNaN(rawDuration) && rawDuration > 0 ? rawDuration : 8
+    // DURATION FIX: Use safe parser to handle null/undefined/NaN
+    const duration = safeParseDuration(segment.duration_seconds || segment.duration, 8)
     const emotion = segment.emotion || 'authority'
     const shotType = segment.shot_type || 'B-ROLL'
     const imageUrl = segment.image_url || segment.imageUrl || null
@@ -305,6 +326,7 @@ async function handlePreviewPrompts(requestBody: any) {
       environment,
       platform: selectedPlatform,
       duration: actualDuration,
+      topic, // Pass topic for contextual B-ROLL
       // ========================================================================
       // NEW: Face Anchor params (2026)
       // ========================================================================
@@ -441,9 +463,12 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${index + 1}`
     const scriptText = segment.script_text || segment.script || ''
     const imageUrl = segment.image_url || segment.imageUrl
-    const duration = segment.duration_seconds || 8
+    // DURATION FIX: Use safe parser
+    const duration = safeParseDuration(segment.duration_seconds, 8)
     const emotion = segment.emotion || 'authority'
     const shotType = segment.shot_type || 'B-ROLL'
+    // VISUAL DIRECTION: Extract from segment or generate from script
+    const visualDirection = segment.visual_direction || segment.visualDirection || ''
 
     return {
       user_id,
@@ -454,6 +479,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       shot_type: shotType,
       emotion,
       script_text: scriptText,
+      visual_direction: visualDirection, // Store visual direction
       image_url: imageUrl,
       duration_seconds: duration,
       language,
@@ -669,11 +695,11 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     // Build video prompt
     const emotion = job.emotion || 'authority'
     const scriptText = job.script_text || ''
-    const duration = job.duration_seconds || 8
+    // DURATION FIX: Use safe parser
+    const duration = safeParseDuration(job.duration_seconds, 8)
     const segmentType = job.segment_type || ''
     const shotType = job.shot_type || 'B-ROLL'
-    const isCreatorShot = shotType === 'CREATOR'
-    const hasDialogue = scriptText.length > 0
+    const visualDirection = job.visual_direction || ''
 
     // Select platform - USE PREFERRED_PLATFORM from job (already resolved, defaults to VEO 3.1)
     const selectedPlatform: VideoModelKey = (job.preferred_platform as VideoModelKey) || 'veo-3.1-fast'
@@ -684,7 +710,10 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     // Build prompt - USE STORED VOICE CHARACTER for consistency across all segments
     // Also pass Face Anchor params from job record (2026)
     const videoPrompt = buildCinematicVideoPrompt({
-      segment: job,
+      segment: {
+        ...job,
+        visual_direction: visualDirection
+      },
       segmentType,
       emotion,
       scriptText,
@@ -693,6 +722,7 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       environment: job.environment || 'studio',
       platform: selectedPlatform,
       duration: Math.min(duration, modelSpecs.maxDuration),
+      topic: job.topic || '',
       voiceCharacter: job.voice_character, // Use stored voice character from session
       // ========================================================================
       // NEW: Face Anchor params from job record (2026)
@@ -999,7 +1029,8 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
     const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${i + 1}`
     const emotion = segment.emotion || 'authority'
     const scriptText = segment.script_text || segment.script || ''
-    const duration = segment.duration_seconds || 8
+    // DURATION FIX: Use safe parser
+    const duration = safeParseDuration(segment.duration_seconds, 8)
     
     const imageUrl = useOldFormat 
       ? images[i].image_url 
@@ -1016,10 +1047,6 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
       continue
     }
 
-    const shotType = segment.shot_type || 'B-ROLL'
-    const isCreatorShot = shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
-    const hasDialogue = scriptText.length > 0
-
     // Always use VEO 3.1 for best lip-sync quality (unless explicitly overridden)
     const selectedPlatform: VideoModelKey = prefer_platform || 'veo-3.1-fast'
 
@@ -1034,7 +1061,8 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
       aspectRatio: aspect_ratio as '9:16' | '16:9',
       environment,
       platform: selectedPlatform,
-      duration: Math.min(duration, modelSpecs.maxDuration)
+      duration: Math.min(duration, modelSpecs.maxDuration),
+      topic
     })
 
     try {
@@ -1228,6 +1256,7 @@ interface VideoPromptParams {
   environment: string
   platform: VideoModelKey
   duration: number
+  topic?: string // Topic for contextual B-ROLL
   // NEW: Voice character for consistency across all segments
   voiceCharacter?: string
   // ========================================================================
@@ -1465,6 +1494,274 @@ function simplifyCharacterForSora(description: string, gender: 'male' | 'female'
   return base
 }
 
+// ============================================================================
+// VISUAL BRIEF EXTRACTION FOR B-ROLL (2026)
+// Converts script text → contextual visual descriptions
+// Reference: 12-broll-visual-extraction.md
+// ============================================================================
+
+interface VisualBrief {
+  topicKeywords: string[]
+  abstractConcepts: string[]
+  emotionalTone: string
+  primarySubject: {
+    element: string
+    attributes: string[]
+    action: string
+  }
+  secondaryElements: string[]
+  environmentType: string
+}
+
+// Abstract → Concrete Visual Metaphor Mapping
+const ABSTRACT_METAPHORS: Record<string, string[]> = {
+  // Technology & Digital
+  'security': ['glowing padlock', 'shield with digital pattern', 'vault door with light'],
+  'password': ['floating key with lock', 'digital keypad', 'encrypted text on screen'],
+  'encryption': ['data scrambling visualization', 'secure tunnel of light', 'lock with binary code'],
+  'data': ['flowing streams of cyan light', 'server racks with pulsing LEDs', 'holographic data nodes'],
+  'ai': ['neural network nodes', 'brain with circuit patterns', 'AI core with flowing data'],
+  'algorithm': ['flowing code streams', 'decision tree visualization', 'processing nodes'],
+  'cloud': ['floating data cubes', 'server farm with lights', 'interconnected cloud nodes'],
+  'hacking': ['red warning matrix', 'breaking digital chains', 'dark terminal with code'],
+  'privacy': ['eye with protective shield', 'data behind curtain', 'hidden document'],
+  
+  // Finance & Business
+  'cryptocurrency': ['glowing Bitcoin coin', 'blockchain visualization', 'digital wallet'],
+  'investment': ['growing plant with coins', 'upward golden graph', 'golden seedling'],
+  'profit': ['rising bar chart with glow', 'stacking gold coins', 'expanding circles'],
+  'growth': ['bar chart ascending', 'sprouting golden seed', 'sunrise over graph'],
+  'trading': ['candlestick chart animation', 'dual trading screens', 'fast ticker display'],
+  'wealth': ['gold bars stacked', 'treasure chest glowing', 'luxury items'],
+  'debt': ['chain and weight', 'sinking anchor', 'red descending numbers'],
+  
+  // Concepts & Ideas
+  'innovation': ['light bulb igniting', 'gears turning with sparks', 'rocket launching'],
+  'success': ['mountain peak with flag', 'trophy with glow', 'finish line ribbon'],
+  'failure': ['cracked ground', 'fallen chess piece', 'wilting plant'],
+  'time': ['hourglass flowing', 'clock gears turning', 'calendar pages flying'],
+  'speed': ['motion blur streaks', 'lightning bolt', 'wind trail particles'],
+  'connection': ['bridge spanning gap', 'linked glowing chains', 'network nodes connecting'],
+  'problem': ['tangled knots', 'maze from above', 'puzzle with missing piece'],
+  'solution': ['key entering lock', 'light through doorway', 'puzzle completing'],
+  
+  // Trends & Social
+  'trend': ['rising graph with sparkles', 'viral wave spreading', 'upward arrow with momentum'],
+  'viral': ['spreading network effect', 'multiplying nodes', 'wave of engagement'],
+  'followers': ['growing community visualization', 'rising counter', 'network expansion'],
+  'engagement': ['heart icons floating up', 'comment bubbles appearing', 'interaction pulses'],
+}
+
+// Extract visual brief from script and topic
+function extractVisualBrief(scriptText: string, topic: string, emotion: string): VisualBrief {
+  const combinedText = `${topic} ${scriptText}`.toLowerCase()
+  
+  // Extract topic keywords (concrete nouns)
+  const topicKeywords: string[] = []
+  const abstractConcepts: string[] = []
+  
+  // Check for abstract concepts and collect keywords
+  for (const [concept, metaphors] of Object.entries(ABSTRACT_METAPHORS)) {
+    if (combinedText.includes(concept)) {
+      abstractConcepts.push(concept)
+    }
+  }
+  
+  // Extract concrete nouns from topic
+  const concreteNounPatterns = /\b(tiktok|instagram|reels|youtube|shorts|video|content|creator|phone|smartphone|laptop|computer|camera|microphone|screen|dashboard|chart|graph|data|code|app|website|product|brand|money|coin|trend|viral|follower|engagement)\b/gi
+  const matches = combinedText.match(concreteNounPatterns)
+  if (matches) {
+    topicKeywords.push(...[...new Set(matches.map(m => m.toLowerCase()))])
+  }
+  
+  // Determine primary subject based on extracted concepts
+  let primarySubject = {
+    element: 'abstract data visualization',
+    attributes: ['glowing', 'dynamic'],
+    action: 'pulsing with energy'
+  }
+  
+  // Pick the most relevant metaphor
+  if (abstractConcepts.length > 0) {
+    const primaryConcept = abstractConcepts[0]
+    const metaphors = ABSTRACT_METAPHORS[primaryConcept]
+    if (metaphors && metaphors.length > 0) {
+      // Pick random metaphor for variety
+      const selectedMetaphor = metaphors[Math.floor(Math.random() * metaphors.length)]
+      primarySubject = {
+        element: selectedMetaphor,
+        attributes: ['cinematic', 'detailed'],
+        action: 'animating with subtle motion'
+      }
+    }
+  } else if (topicKeywords.length > 0) {
+    // Use first concrete keyword as primary subject
+    const keyword = topicKeywords[0]
+    primarySubject = {
+      element: keyword,
+      attributes: ['modern', 'high-quality'],
+      action: 'displayed prominently'
+    }
+  }
+  
+  // Determine environment type
+  const envPatterns: Record<string, string[]> = {
+    tech: ['code', 'software', 'ai', 'algorithm', 'data', 'programming', 'app', 'tech'],
+    social: ['tiktok', 'instagram', 'youtube', 'reels', 'shorts', 'viral', 'trend', 'creator', 'content', 'follower'],
+    finance: ['crypto', 'money', 'invest', 'trading', 'profit', 'wealth', 'coin', 'stock'],
+    nature: ['nature', 'outdoor', 'forest', 'mountain', 'landscape'],
+    urban: ['city', 'street', 'building', 'urban'],
+    product: ['product', 'brand', 'device', 'gadget'],
+  }
+  
+  let environmentType = 'tech' // default
+  for (const [env, keywords] of Object.entries(envPatterns)) {
+    if (keywords.some(kw => combinedText.includes(kw))) {
+      environmentType = env
+      break
+    }
+  }
+  
+  // Generate secondary elements based on environment
+  const secondaryElementsByEnv: Record<string, string[]> = {
+    tech: ['floating code particles', 'holographic interface elements', 'data stream visualizations'],
+    social: ['engagement icons floating', 'notification bubbles', 'viral wave effects'],
+    finance: ['golden particles', 'chart elements', 'currency symbols floating'],
+    nature: ['floating leaves', 'light rays', 'atmospheric particles'],
+    urban: ['city light bokeh', 'neon reflections', 'urban atmosphere'],
+    product: ['studio lighting', 'subtle reflections', 'premium atmosphere'],
+  }
+  
+  const secondaryElements = secondaryElementsByEnv[environmentType] || secondaryElementsByEnv.tech
+  
+  return {
+    topicKeywords,
+    abstractConcepts,
+    emotionalTone: emotion,
+    primarySubject,
+    secondaryElements,
+    environmentType
+  }
+}
+
+// Generate specific motion descriptions from visual brief
+function generateContextualMotions(brief: VisualBrief, segmentType: string): {
+  subjectMotions: string[]
+  ambientMotions: string[]
+  cameraEnhancement: string
+} {
+  const { primarySubject, secondaryElements, environmentType, emotionalTone } = brief
+  
+  // Environment-specific motion libraries
+  const envMotions: Record<string, { subject: string[], ambient: string[], camera: string }> = {
+    tech: {
+      subject: [
+        `${primarySubject.element} pulses with processing activity`,
+        'holographic interface elements shift and update',
+        'code streams flow through the scene with cyan glow',
+        'data visualization animates showing real-time changes',
+        'digital nodes connect with flowing light beams'
+      ],
+      ambient: [
+        'floating digital particles drift through volumetric light',
+        'subtle blue ambient glow pulses rhythmically',
+        'holographic elements shimmer with scan-line effects',
+        'data stream particles flow in background'
+      ],
+      camera: 'subtle parallax drift revealing depth layers'
+    },
+    social: {
+      subject: [
+        `${primarySubject.element} animates with viral energy`,
+        'engagement icons float upward with momentum',
+        'notification bubbles appear and pulse',
+        'counter numbers increment rapidly',
+        'content thumbnails materialize with sparkle effects'
+      ],
+      ambient: [
+        'social icons drift through atmosphere',
+        'subtle glow pulses with engagement rhythm',
+        'particle effects suggest viral spreading',
+        'light streaks indicate momentum and growth'
+      ],
+      camera: 'dynamic tracking following energy flow'
+    },
+    finance: {
+      subject: [
+        `${primarySubject.element} glows with value`,
+        'chart lines animate upward with trailing glow',
+        'golden particles accumulate showing growth',
+        'currency symbols rotate revealing detail',
+        'investment visualization updates in real-time'
+      ],
+      ambient: [
+        'golden light particles drift through scene',
+        'subtle wealth atmosphere with warm glow',
+        'premium lighting shifts emphasizing value',
+        'prosperity particles catch light beams'
+      ],
+      camera: 'slow confident push-in toward focal point'
+    },
+    nature: {
+      subject: [
+        'leaves rustle and sway in gentle breeze',
+        'water surface creates expanding ripples',
+        'sunbeams shift through atmospheric haze',
+        'organic elements grow and expand naturally'
+      ],
+      ambient: [
+        'dust motes float through shafts of sunlight',
+        'dappled light shifts as clouds pass',
+        'atmospheric haze drifts slowly',
+        'natural particles drift on air currents'
+      ],
+      camera: 'gentle breathing motion - subtle in/out rhythm'
+    },
+    urban: {
+      subject: [
+        'city lights create bokeh patterns',
+        'neon signs pulse with electric energy',
+        'traffic creates light trail streaks',
+        'urban elements animate with city rhythm'
+      ],
+      ambient: [
+        'city light bokeh shifts with camera movement',
+        'atmospheric haze catches neon glow',
+        'steam rises from street elements',
+        'urban particles drift through scene'
+      ],
+      camera: 'subtle handheld micro-shake for documentary feel'
+    },
+    product: {
+      subject: [
+        `${primarySubject.element} rotates slowly revealing detail`,
+        'product surface catches shifting specular highlights',
+        'premium materials show quality through motion',
+        'features highlight with subtle animation'
+      ],
+      ambient: [
+        'studio lighting shifts to emphasize features',
+        'subtle reflections move across surfaces',
+        'premium dust particles catch rim lighting',
+        'soft shadows rotate with product'
+      ],
+      camera: 'smooth cinematic orbit emphasizing premium quality'
+    },
+  }
+  
+  const motions = envMotions[environmentType] || envMotions.tech
+  
+  // Pick 3 subject motions and 3 ambient motions
+  const shuffledSubject = [...motions.subject].sort(() => Math.random() - 0.5)
+  const shuffledAmbient = [...motions.ambient].sort(() => Math.random() - 0.5)
+  
+  return {
+    subjectMotions: shuffledSubject.slice(0, 3),
+    ambientMotions: shuffledAmbient.slice(0, 3),
+    cameraEnhancement: motions.camera
+  }
+}
+
 function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const {
     segment,
@@ -1476,6 +1773,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     environment,
     platform,
     duration,
+    topic = '',
     voiceCharacter: voiceCharacterParam,
     // ========================================================================
     // NEW: Face Anchor params (2026)
@@ -1496,8 +1794,8 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // ========================================================================
   const modelConfig = VIDEO_MODELS[platform]
   const safeDuration = modelConfig 
-    ? getClosestDuration(modelConfig, duration || 8)
-    : (typeof duration === 'number' && !isNaN(duration) && duration > 0) ? duration : 8
+    ? getClosestDuration(modelConfig, safeParseDuration(duration, 8))
+    : safeParseDuration(duration, 8)
   
   console.log(`[VIDEO-PROMPT] Platform: ${platform}, Input duration: ${duration}, Safe duration: ${safeDuration}s`)
   
@@ -1541,10 +1839,6 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   // ========================================================================
   // FACE ANCHOR - Only for CREATOR segments (2026)
   // Uses generateFaceAnchor from audioDirective.ts
-  // 
-  // SORA GUARDRAILS FIX: Sora rejects real human face uploads as reference.
-  // For CREATOR shots with Sora: use character description only, not profile image URL.
-  // The reference image (from DALL-E/Nano Banana) should be AI-generated, not real photo.
   // ========================================================================
   let faceAnchorBlock = ''
   let skipReferenceImageForSora = false
@@ -1556,32 +1850,21 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const actualCharacterDescription = segment.character_description || charDescParam || creatorAppearance
   
   if (isCreatorSegment && actualHasProfileImage) {
-    // ========================================================================
-    // SORA GUARDRAILS: If using Sora + real profile image detected, warn user
-    // Sora may reject reference images containing real human faces
-    // ========================================================================
     if (isSoraModel && actualProfileImageUrl) {
-      // Check if profile image looks like real photo (contains 'profile', 'avatar', 'photo' in URL)
       const looksLikeRealPhoto = /profile|avatar|photo|user|face/i.test(actualProfileImageUrl)
       if (looksLikeRealPhoto) {
-        console.warn(`[VIDEO-PROMPT] ⚠️ SORA GUARDRAILS WARNING: CREATOR segment ${segmentType} has profile image URL that may be a real photo. Sora may reject this.`)
-        console.warn(`[VIDEO-PROMPT] 💡 TIP: Use AI-generated character image (from DALL-E/Nano Banana) as reference, not real photo.`)
-        // Don't include profile image URL in face anchor for Sora - rely on description only
+        console.warn(`[VIDEO-PROMPT] ⚠️ SORA GUARDRAILS WARNING: CREATOR segment ${segmentType} has profile image URL that may be a real photo.`)
         skipReferenceImageForSora = true
       }
     }
     
-    // Generate face anchor - but for Sora, skip profile image URL if it's a real photo
     if (isSoraModel && skipReferenceImageForSora) {
-      // Use character description only (no profile image URL)
       faceAnchorBlock = generateFaceAnchor({
-        hasProfileImage: false, // Force to description mode
+        hasProfileImage: false,
         gender: actualCreatorGender,
         characterDescription: simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
       })
-      console.log(`[VIDEO-PROMPT] 🔄 Using character description instead of profile image for Sora`)
     } else {
-      // Normal mode: use profile image URL (for non-Sora or AI-generated images)
       faceAnchorBlock = generateFaceAnchor({
         hasProfileImage: true,
         profileImageUrl: actualProfileImageUrl,
@@ -1592,7 +1875,6 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
       })
     }
   } else if (isCreatorSegment && actualCharacterDescription) {
-    // Fallback to character description if no profile image
     faceAnchorBlock = generateFaceAnchor({
       hasProfileImage: false,
       gender: actualCreatorGender,
@@ -1602,7 +1884,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     })
   }
   
-  console.log(`[VIDEO-PROMPT] Segment: ${segmentType}, isCreatorSegment: ${isCreatorSegment}, voiceGender: ${voiceChar.gender}, hasProfileImage: ${actualHasProfileImage}`)
+  console.log(`[VIDEO-PROMPT] Segment: ${segmentType}, isCreatorSegment: ${isCreatorSegment}, voiceGender: ${voiceChar.gender}, hasDialogue: ${scriptText.length > 0}`)
   
   // Extract enhanced data (new fields)
   const propsDescription = segment.props_description || segment.propsDescription || undefined
@@ -1618,7 +1900,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   if (isCreatorSegment) {
     const characterName = segment.character_name || 'Creator'
     
-    // SORA SANITIZATION: Use simplified character description to avoid content flags
+    // SORA SANITIZATION: Use simplified character description
     const characterDescription = isSoraModel 
       ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
       : actualCharacterDescription || undefined
@@ -1626,16 +1908,23 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     // Resolution based on aspect ratio (dynamic)
     const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
     
-    // Use safeDuration calculated at function scope (already validated)
-    const actualDuration = safeDuration
-    
     // Get camera movement
     const cameraMove = getCameraMovement(segmentType, emotion)
+    
+    // ========================================================================
+    // FIX: Include actual dialogue in audio directive
+    // ========================================================================
+    const creatorAudioDirective = getCreatorAudioDirective(
+      detectedLanguage,
+      scriptText, // Pass the actual script text
+      segmentTypeUpper,
+      emotion
+    )
     
     // Build the custom prompt with anchors
     let prompt = `[${platformLabel} PROMPT — ${segmentTypeUpper}.${segmentNumber}]
 
-DURATION: ${actualDuration} seconds
+DURATION: ${safeDuration} seconds
 RESOLUTION: ${resolution}
 ASPECT: ${aspectRatio}
 
@@ -1644,20 +1933,10 @@ ASPECT: ${aspectRatio}
     // Add VOICE ANCHOR
     prompt += voiceAnchor + '\n\n'
     
-    // Add FACE ANCHOR if available (only for CREATOR shots with profile image)
+    // Add FACE ANCHOR if available
     if (faceAnchorBlock) {
       prompt += faceAnchorBlock + '\n\n'
     }
-    
-    // ========================================================================
-    // Enhanced Audio Directive (2026) - Emotion-based SFX + Volume Priority
-    // ========================================================================
-    const creatorAudioDirective = getCreatorAudioDirective(
-      detectedLanguage,
-      scriptText || '',
-      segmentTypeUpper,
-      emotion
-    )
     
     // Add rest of prompt
     prompt += `STARTING FRAME:
@@ -1670,9 +1949,9 @@ SETTING & LIGHTING:
 ${timeOfDay}, professional ${environment} lighting. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
 
 ACTION SEQUENCE:
-- (0s-${Math.floor(actualDuration * 0.3)}s): ${characterName} begins speaking, establishes ${emotion} expression
-- (${Math.floor(actualDuration * 0.3)}s-${Math.floor(actualDuration * 0.7)}s): Natural hand gestures while delivering key message
-- (${Math.floor(actualDuration * 0.7)}s-${actualDuration}s): Concluding expression, maintains eye contact
+- (0s-${Math.floor(safeDuration * 0.25)}s): ${characterName} begins speaking, establishes ${emotion} expression
+- (${Math.floor(safeDuration * 0.25)}s-${Math.floor(safeDuration * 0.7)}s): Natural hand gestures while delivering key message
+- (${Math.floor(safeDuration * 0.7)}s-${safeDuration}s): Concluding expression, maintains eye contact
 
 ${creatorAudioDirective}
 
@@ -1691,7 +1970,7 @@ ${segmentTypeUpper === 'HOOK' ? 'Grab attention immediately. Create curiosity an
 EXCLUSIONS:
 No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
     
-    // SORA FINAL SANITIZATION: Remove any remaining problematic patterns
+    // SORA FINAL SANITIZATION
     if (isSoraModel) {
       prompt = sanitizeForSora(prompt)
     }
@@ -1700,13 +1979,18 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
   }
   
   // ========================================================================
-  // B-ROLL SEGMENT (FORE, BODY, PEAK, etc.) - NO creator face, NO dialogue
-  // Pure visual motion based on image reference
+  // B-ROLL SEGMENT (FORE, BODY, PEAK, etc.) - NO creator face
+  // ENHANCED: Use Visual Brief extraction for contextual motion descriptions
   // ========================================================================
   
-  // Build B-roll specific prompt (voiceover narration + visual fokus topik)
-  // Use safeDuration calculated at function scope (already validated)
-  const brollPrompt = buildBrollVideoPrompt({
+  // Extract Visual Brief from script and topic
+  const visualBrief = extractVisualBrief(scriptText || topic, topic, emotion)
+  
+  // Generate contextual motions based on visual brief
+  const contextualMotions = generateContextualMotions(visualBrief, segmentType)
+  
+  // Build B-roll specific prompt
+  const brollPrompt = buildEnhancedBrollVideoPrompt({
     segmentId,
     segmentNumber,
     duration: safeDuration,
@@ -1726,18 +2010,22 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
     // NEW: Include script for voiceover narration
     scriptText,
     language: detectedLanguage,
-    // Voice character for consistency
-    voiceCharacter: voiceChar
+    voiceCharacter: voiceChar,
+    // NEW: Visual Brief data
+    visualBrief,
+    contextualMotions,
+    topic
   })
   
   return brollPrompt
 }
 
 // ============================================================================
-// B-ROLL VIDEO PROMPT BUILDER (No creator face, no dialogue)
+// ENHANCED B-ROLL VIDEO PROMPT BUILDER (2026)
+// Uses Visual Brief extraction for contextual, specific motion descriptions
 // ============================================================================
 
-interface BrollPromptParams {
+interface EnhancedBrollPromptParams {
   segmentId: string
   segmentNumber: number
   duration: number
@@ -1754,14 +2042,19 @@ interface BrollPromptParams {
   outputIntent?: string
   transition: string
   platform: VideoModelKey
-  // Script text for voiceover narration
   scriptText?: string
   language?: string
-  // Voice character for consistency across segments
   voiceCharacter?: VoiceCharacter
+  visualBrief: VisualBrief
+  contextualMotions: {
+    subjectMotions: string[]
+    ambientMotions: string[]
+    cameraEnhancement: string
+  }
+  topic: string
 }
 
-function buildBrollVideoPrompt(params: BrollPromptParams): string {
+function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): string {
   const {
     segmentId,
     segmentNumber,
@@ -1781,14 +2074,14 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
     platform,
     scriptText = '',
     language = 'english',
-    voiceCharacter
+    voiceCharacter,
+    visualBrief,
+    contextualMotions,
+    topic
   } = params
   
   // Build voiceover section if script exists
   const hasVoiceover = scriptText && scriptText.trim().length > 0
-  
-  // Get emotion-based motion settings
-  const emotionMotion = getEmotionMotion(emotion)
   
   // Get camera movement for segment type
   const cameraMove = getCameraMovement(segmentType, emotion)
@@ -1796,8 +2089,10 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
   // Resolution based on aspect ratio
   const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
   
-  // Build visual description from reference image
-  const visualDesc = visualDirection || backgroundDescription || `${environment} scene with ${emotion} atmosphere`
+  // Build visual description from visual brief
+  const primaryVisual = visualBrief.primarySubject.element
+  const visualDesc = visualDirection || 
+    `${primaryVisual} ${visualBrief.primarySubject.action} in ${visualBrief.environmentType} setting`
   
   // Build props line
   const propsLine = propsDescription ? `Props: ${propsDescription}.` : ''
@@ -1808,21 +2103,26 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
   // Generate output intent if not provided
   const actualOutputIntent = outputIntent || generateBrollOutputIntent(segmentType)
   
-  // Build B-roll specific action beats (no character, pure visual motion)
-  const actionBeats = generateBrollActionBeats({
-    duration,
-    segmentType,
-    emotion,
-    visualDirection,
-    emotionMotion
-  })
+  // Build action beats with contextual motions
+  const beat1End = Math.floor(duration * 0.33)
+  const beat2End = Math.floor(duration * 0.66)
   
-  const actionBeatsFormatted = actionBeats.map(beat => `- (${beat.timeRange}): ${beat.action}`).join('\n')
+  const actionBeatsFormatted = `- (0s-${beat1End}s): ${contextualMotions.subjectMotions[0]}. ${contextualMotions.cameraEnhancement}.
+- (${beat1End}s-${beat2End}s): ${contextualMotions.subjectMotions[1]}. ${contextualMotions.ambientMotions[0]}.
+- (${beat2End}s-${duration}s): ${contextualMotions.subjectMotions[2] || contextualMotions.ambientMotions[1]}. Scene breathes naturally.`
   
-  // ========================================================================
-  // Enhanced Audio Directive (2026) - Emotion-based SFX + Volume Priority
-  // Detect B-roll category from visual direction for appropriate ambient
-  // ========================================================================
+  // Build subject motion section with contextual motions
+  const subjectMotionSection = `SUBJECT MOTION (specific to ${topic || 'topic'}):
+- Primary: ${contextualMotions.subjectMotions[0]}
+- Secondary: ${contextualMotions.subjectMotions[1]}
+- Tertiary: ${contextualMotions.subjectMotions[2] || 'subtle environmental response'}`
+  
+  const ambientMotionSection = `AMBIENT MOTION:
+- ${contextualMotions.ambientMotions[0]}
+- ${contextualMotions.ambientMotions[1]}
+- ${contextualMotions.ambientMotions[2] || 'light quality shifts subtly'}`
+  
+  // Get audio directive
   const brollCategory = detectBRollCategory(visualDesc)
   const brollAudioDirective = getBRollAudioDirective(
     brollCategory,
@@ -1831,92 +2131,46 @@ function buildBrollVideoPrompt(params: BrollPromptParams): string {
     hasVoiceover ? scriptText : ''
   )
   
-  // ========================================================================
-  // NEW: Generate environment-specific motion sections for richer animation
-  // ========================================================================
-  const envCategory = detectEnvironmentCategoryForMotion(visualDesc)
-  const envMotion = ENVIRONMENT_MOTION_LIBRARY[envCategory] || ENVIRONMENT_MOTION_LIBRARY.default
-  const subjectMotions = getRandomMotionItems(envMotion.subjectMotions, 3)
-  const ambientMotions = getRandomMotionItems(envMotion.ambientMotions, 3)
-  
-  const subjectMotionSection = `SUBJECT MOTION (what specifically animates in this scene):
-- Primary: ${subjectMotions[0]}
-- Secondary: ${subjectMotions[1]}
-- Tertiary: ${subjectMotions[2] || 'subtle environmental movement'}`
-  
-  const ambientMotionSection = `AMBIENT MOTION (background atmospheric elements):
-- ${ambientMotions[0]}
-- ${ambientMotions[1]}
-- ${ambientMotions[2] || 'light quality shifts subtly'}`
-  
-  // Platform-specific prompt (check if Sora model)
-  const isSoraModel = platform.startsWith('sora-')
-  if (isSoraModel) {
-    return `[SORA 2 B-ROLL — ${segmentId}.${segmentNumber}]
-
-DURATION: ${duration} seconds
-RESOLUTION: 720p
-ASPECT: ${aspectRatio}
-
-STARTING FRAME:
-Continue from the provided image — ${visualDesc}. ${propsLine} Visual focus on topic/subject matter. NO human face visible.
-
-CAMERA:
-${cameraMove.promptPhrase}. ${envMotion.cameraEnhancement}. Stable, cinematic movement.
-
-SETTING & LIGHTING:
-${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
-
-${subjectMotionSection}
-
-${ambientMotionSection}
-
-PHYSICS:
-${envMotion.physicsNotes}. Single camera movement per shot.
-
-ACTION SEQUENCE:
-${actionBeatsFormatted}
-
-${brollAudioDirective}
-
-CONTINUITY NOTES:
-- Maintain exact lighting and color grade from reference image
-- NO human face should appear - this is B-roll footage
-- Visual focus on topic/subject/product, NOT on people
-- Every frame must have visible motion - no static shots
-
-TRANSITION:
-${getTransition(transition)}
-
-OUTPUT INTENT:
-${actualOutputIntent}
-
-EXCLUSIONS:
-No text overlays, no human faces, no people on screen, no morphing, no artifacts, no static boring frames.`
+  // Physics notes based on environment
+  const physicsNotes: Record<string, string> = {
+    tech: 'Digital elements float weightlessly, data flows like liquid light, holograms shimmer',
+    social: 'Icons have momentum, counters increment smoothly, viral effects spread organically',
+    finance: 'Charts animate with ease-out curves, coins have realistic weight, particles drift',
+    nature: 'Wind affects lighter elements, gravity pulls water naturally, organic growth motion',
+    urban: 'Traffic follows patterns, lights flicker naturally, steam rises realistically',
+    product: 'Premium slow motion, materials behave realistically, specular highlights shift',
   }
+  const physics = physicsNotes[visualBrief.environmentType] || 'Natural realistic physics, gravity applies'
   
-  // VEO 3.1 B-roll prompt
-  return `[VEO 3.1 B-ROLL — ${segmentId}.${segmentNumber}]
+  // Platform-specific prompt
+  const isSoraModel = platform.startsWith('sora-')
+  const platformLabel = isSoraModel ? 'SORA 2 B-ROLL' : 'VEO 3.1 B-ROLL'
+  
+  return `[${platformLabel} — ${segmentId}.${segmentNumber}]
 
 DURATION: ${duration} seconds
 RESOLUTION: ${resolution}
 ASPECT: ${aspectRatio}
 
 STARTING FRAME:
-Continue from the provided image — ${visualDesc}. ${propsLine} Visual focus on topic/subject matter. NO human face visible.
+Continue from the provided image — ${visualDesc}. ${propsLine}
+Visual focus: ${primaryVisual} with ${visualBrief.primarySubject.attributes.join(', ')} qualities.
+NO human face visible.
 
 CAMERA:
-${cameraMove.promptPhrase}. ${envMotion.cameraEnhancement}. Stable tripod, cinematic movement. All key elements remain in frame.
+${cameraMove.promptPhrase}. ${contextualMotions.cameraEnhancement}.
+Stable tripod, cinematic movement. All key elements remain in frame.
 
 SETTING & LIGHTING:
-${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment clearly visible.
+${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
+Atmosphere: ${visualBrief.emotionalTone} mood with ${visualBrief.environmentType} aesthetics.
 
 ${subjectMotionSection}
 
 ${ambientMotionSection}
 
 PHYSICS:
-${envMotion.physicsNotes}
+${physics}
 
 ACTION SEQUENCE:
 ${actionBeatsFormatted}
@@ -1926,8 +2180,9 @@ ${brollAudioDirective}
 CONTINUITY NOTES:
 - Maintain exact lighting and color grade from reference image
 - NO human face should appear - this is B-roll footage
-- Visual focus on topic/subject/product, NOT on people
+- Visual focus on ${primaryVisual}, NOT on people
 - Every frame must have visible motion - no static shots
+- Secondary elements: ${visualBrief.secondaryElements.join(', ')}
 
 TRANSITION:
 ${getTransition(transition)}
@@ -1939,278 +2194,6 @@ NEGATIVE:
 No blurry elements, no distortion, no artifacts, no text overlays, no human faces, no people on screen, no static boring frames.`
 }
 
-// ============================================================================
-// ENVIRONMENT-SPECIFIC MOTION LIBRARY (2026)
-// Concrete motion descriptions - fixes boring "zoom only" B-roll videos
-// ============================================================================
-
-interface EnvironmentMotion {
-  subjectMotions: string[]
-  ambientMotions: string[]
-  physicsNotes: string
-  cameraEnhancement: string
-}
-
-const ENVIRONMENT_MOTION_LIBRARY: Record<string, EnvironmentMotion> = {
-  tech: {
-    subjectMotions: [
-      'holographic data streams flow upward with glowing cyan particles',
-      'code lines scroll rapidly across floating translucent screens',
-      'digital interface elements pulse and expand with incoming information',
-      'circuit pathways illuminate sequentially like neural network activations',
-      'data visualization bars animate upward showing real-time growth',
-      '3D wireframe models rotate slowly revealing complex geometric detail',
-      'binary numbers cascade downward like digital rain',
-      'glowing nodes connect with animated light beams'
-    ],
-    ambientMotions: [
-      'subtle blue and cyan light pulses ripple across reflective surfaces',
-      'floating holographic particles drift through the scene',
-      'soft lens flares shift as virtual light sources activate',
-      'digital grid lines shimmer with processing activity',
-      'ambient glow intensifies and dims with data flow rhythm'
-    ],
-    physicsNotes: 'Digital elements float weightlessly, data flows like liquid light',
-    cameraEnhancement: 'subtle parallax drift revealing depth layers'
-  },
-  data: {
-    subjectMotions: [
-      'bar chart columns rise sequentially with bounce animation',
-      'pie chart segments separate and rotate to highlight portions',
-      'line graph traces animate from left to right showing trends',
-      'percentage numbers count up rapidly to final values',
-      'dashboard widgets flip with new information',
-      'infographic icons pop in with bounce animation',
-      'progress bars fill smoothly with gradient color shift'
-    ],
-    ambientMotions: [
-      'subtle grid background pulses with data rhythm',
-      'connecting lines draw between data points',
-      'soft glow emanates from active chart elements',
-      'floating numbers drift subtly in background'
-    ],
-    physicsNotes: 'Elements animate with ease-out curves, numbers increment smoothly',
-    cameraEnhancement: 'gentle push toward key data point'
-  },
-  nature: {
-    subjectMotions: [
-      'tree leaves rustle and sway gently in the breeze',
-      'flower petals flutter and drift through the air',
-      'grass blades bend and wave in wind patterns',
-      'water surface ripples expand outward from center',
-      'clouds drift slowly, edges morphing softly',
-      'sunbeams shift through canopy creating moving shadows',
-      'birds take flight with realistic wing flaps',
-      'butterflies flutter in figure-eight paths'
-    ],
-    ambientMotions: [
-      'dust motes float through shafts of sunlight',
-      'pollen drifts lazily on air currents',
-      'dappled light shifts as leaves move overhead',
-      'morning mist slowly dissipates revealing scene'
-    ],
-    physicsNotes: 'Wind affects lighter elements more, gravity pulls water naturally',
-    cameraEnhancement: 'gentle breathing motion - subtle in/out rhythm'
-  },
-  urban: {
-    subjectMotions: [
-      'car headlights streak past creating light trails',
-      'pedestrians walk with natural gait across crosswalks',
-      'neon signs flicker and pulse with electric energy',
-      'traffic lights cycle through colors in sequence',
-      'building windows light up sequentially at dusk',
-      'steam rises dramatically from food carts',
-      'metro train rushes past with motion blur',
-      'cyclists weave through traffic smoothly'
-    ],
-    ambientMotions: [
-      'city light bokeh shifts with camera movement',
-      'steam rises from subway grates into cold air',
-      'rain drops streak down glass windows',
-      'pedestrian shadows sweep across walls'
-    ],
-    physicsNotes: 'Traffic follows lane patterns, people walk 3-4 mph, lights flicker naturally',
-    cameraEnhancement: 'subtle handheld micro-shake for documentary feel'
-  },
-  office: {
-    subjectMotions: [
-      'computer screens display scrolling content and notifications',
-      'coffee steam rises in gentle spiraling wisps',
-      'papers shuffle and organize on desk surface',
-      'keyboard keys press with typing rhythm',
-      'chair swivels slightly indicating recent activity',
-      'desk lamp adjusts casting new shadows',
-      'phone screen lights up with notification',
-      'pen rolls slowly on angled desk surface'
-    ],
-    ambientMotions: [
-      'natural light shifts through window blinds',
-      'dust particles float in sunbeam from window',
-      'HVAC air current moves light papers',
-      'monitor glow pulses with screen changes'
-    ],
-    physicsNotes: 'Objects have realistic weight, steam rises then dissipates naturally',
-    cameraEnhancement: 'slow drift across desk revealing workspace'
-  },
-  product: {
-    subjectMotions: [
-      'product rotates slowly on display showing all angles',
-      'packaging unfolds elegantly revealing product',
-      'product features highlight with glowing accents',
-      'hands interact demonstrating functionality',
-      'components separate showing internal design',
-      'liquid pours with realistic fluid dynamics',
-      'fabric drapes showing material quality',
-      'device powers on with boot animation'
-    ],
-    ambientMotions: [
-      'studio lighting shifts to highlight features',
-      'subtle reflections move across glossy surfaces',
-      'soft shadows rotate as light orbits product',
-      'floating dust catches rim lighting'
-    ],
-    physicsNotes: 'Premium slow motion, materials behave realistically - metal reflects, fabric flows',
-    cameraEnhancement: 'smooth cinematic orbit emphasizing premium quality'
-  },
-  food: {
-    subjectMotions: [
-      'steam rises in billowing clouds from hot dish',
-      'sauce drizzles slowly with viscous flow',
-      'cheese stretches in satisfying strings',
-      'vegetables sizzle and pop in hot oil',
-      'beverage pours with bubbles rising',
-      'knife slices through ingredients with precision',
-      'garnish sprinkles down onto plated dish',
-      'bread tears revealing soft interior texture'
-    ],
-    ambientMotions: [
-      'warm kitchen lighting creates appetizing glow',
-      'background shows bustling kitchen activity',
-      'flame flickers under cooking pan',
-      'steam wisps drift toward camera'
-    ],
-    physicsNotes: 'Liquids have proper viscosity, steam rises and dissipates, sizzle creates splatter',
-    cameraEnhancement: 'slow push-in toward hero dish with shallow depth of field'
-  },
-  abstract: {
-    subjectMotions: [
-      'geometric shapes morph and transform fluidly',
-      'color gradients shift and blend into new combinations',
-      'particle systems explode then reconverge',
-      'liquid metal flows into new shapes',
-      'fractal patterns zoom revealing infinite detail',
-      'light beams refract through crystal creating rainbows',
-      'organic forms pulse with life energy',
-      'typography animates letter by letter'
-    ],
-    ambientMotions: [
-      'background colors shift through spectrum',
-      'floating orbs drift with physics-defying motion',
-      'light leaks sweep across frame',
-      'bokeh shapes morph and multiply'
-    ],
-    physicsNotes: 'Physics stylized - slower for drama, impossible movements acceptable',
-    cameraEnhancement: 'dynamic movement matching visual energy'
-  },
-  default: {
-    subjectMotions: [
-      'main subject shifts position showing dimension',
-      'foreground moves at different speed than background',
-      'key element animates to draw attention',
-      'secondary elements provide supporting motion',
-      'subtle movement indicates life and energy'
-    ],
-    ambientMotions: [
-      'atmospheric particles drift through light',
-      'shadows shift indicating time passage',
-      'background has gentle motion parallax',
-      'light quality changes gradually'
-    ],
-    physicsNotes: 'Natural realistic physics, gravity applies, wind affects light objects',
-    cameraEnhancement: 'subtle drift or gentle push for visual interest'
-  }
-}
-
-function detectEnvironmentCategoryForMotion(visualDirection: string): string {
-  const text = (visualDirection || '').toLowerCase()
-  const patterns: Record<string, string[]> = {
-    tech: ['code', 'screen', 'computer', 'laptop', 'software', 'ai', 'robot', 'digital', 'algorithm', 'server', 'programming', 'neural', 'hologram', 'interface', 'circuit', 'cyber', 'virtual', 'tech', 'smartphone', 'app'],
-    data: ['chart', 'graph', 'statistics', 'analytics', 'dashboard', 'percentage', 'metric', 'visualization', 'infographic', 'numbers', 'growth', 'trend', 'report', 'kpi'],
-    nature: ['nature', 'outdoor', 'forest', 'mountain', 'beach', 'sky', 'tree', 'landscape', 'garden', 'flower', 'ocean', 'river', 'sunset', 'cloud', 'rain', 'leaf', 'plant'],
-    urban: ['city', 'street', 'building', 'traffic', 'downtown', 'mall', 'urban', 'night', 'neon', 'car', 'road', 'pedestrian', 'subway', 'metro', 'skyscraper'],
-    office: ['office', 'desk', 'meeting', 'business', 'corporate', 'workspace', 'keyboard', 'coffee', 'chair', 'whiteboard', 'presentation'],
-    product: ['product', 'unbox', 'package', 'brand', 'gadget', 'device', 'showcase', 'demo', 'premium', 'luxury', 'retail', 'hero'],
-    food: ['food', 'cook', 'kitchen', 'dish', 'recipe', 'restaurant', 'chef', 'delicious', 'tasty', 'ingredient', 'meal', 'cuisine'],
-    abstract: ['abstract', 'concept', 'idea', 'metaphor', 'artistic', 'creative', 'imagination', 'dream', 'surreal', 'geometric', 'pattern']
-  }
-  for (const [category, keywords] of Object.entries(patterns)) {
-    if (keywords.some(kw => text.includes(kw))) return category
-  }
-  return 'default'
-}
-
-function getRandomMotionItems<T>(array: T[], count: number): T[] {
-  const shuffled = [...array].sort(() => 0.5 - Math.random())
-  return shuffled.slice(0, Math.min(count, array.length))
-}
-
-function generateBrollActionBeats(params: {
-  duration: number
-  segmentType: string
-  emotion: string
-  visualDirection?: string
-  emotionMotion: ReturnType<typeof getEmotionMotion>
-}): Array<{ timeRange: string; action: string }> {
-  const { duration, segmentType, emotion, visualDirection, emotionMotion } = params
-  
-  const beat1End = Math.floor(duration * 0.33)
-  const beat2End = Math.floor(duration * 0.66)
-  
-  // KEY FIX: Detect environment from visual direction
-  const envCategory = detectEnvironmentCategoryForMotion(visualDirection || '')
-  const envMotion = ENVIRONMENT_MOTION_LIBRARY[envCategory] || ENVIRONMENT_MOTION_LIBRARY.default
-  
-  // Get SPECIFIC motions for this environment
-  const subjectMotions = getRandomMotionItems(envMotion.subjectMotions, 3)
-  const ambientMotions = getRandomMotionItems(envMotion.ambientMotions, 2)
-  
-  const typeUpper = segmentType.toUpperCase()
-  const beats: Array<{ timeRange: string; action: string }> = []
-  
-  switch (typeUpper) {
-    case 'FORE':
-    case 'FORESHADOW':
-      beats.push(
-        { timeRange: `0s-${beat1End}s`, action: `Scene reveals: ${subjectMotions[0]}. ${ambientMotions[0]}.` },
-        { timeRange: `${beat1End}s-${beat2End}s`, action: `Motion builds: ${subjectMotions[1]}. ${envMotion.cameraEnhancement}.` },
-        { timeRange: `${beat2End}s-${duration}s`, action: `${ambientMotions[1]}. Hold with anticipation.` }
-      )
-      break
-    case 'PEAK':
-      beats.push(
-        { timeRange: `0s-${beat1End}s`, action: `IMPACT: ${subjectMotions[0]} with maximum intensity. ${envMotion.cameraEnhancement}.` },
-        { timeRange: `${beat1End}s-${beat2End}s`, action: `Peak energy: ${subjectMotions[1]}. ${ambientMotions[0]}.` },
-        { timeRange: `${beat2End}s-${duration}s`, action: `Settle: ${ambientMotions[1]}. Powerful stillness.` }
-      )
-      break
-    case 'ENDING':
-      beats.push(
-        { timeRange: `0s-${beat1End}s`, action: `Resolution: ${subjectMotions[0]} with decreasing energy.` },
-        { timeRange: `${beat1End}s-${beat2End}s`, action: `Gentle: ${ambientMotions[0]}. Warm atmosphere.` },
-        { timeRange: `${beat2End}s-${duration}s`, action: `Final hold: ${ambientMotions[1]}. Closure.` }
-      )
-      break
-    default:
-      beats.push(
-        { timeRange: `0s-${beat1End}s`, action: `${subjectMotions[0]}. ${envMotion.cameraEnhancement}.` },
-        { timeRange: `${beat1End}s-${beat2End}s`, action: `${subjectMotions[1]}. ${ambientMotions[0]}.` },
-        { timeRange: `${beat2End}s-${duration}s`, action: `${subjectMotions[2] || ambientMotions[1]}. Scene breathes naturally.` }
-      )
-  }
-  
-  return beats
-}
-
 function generateBrollOutputIntent(segmentType: string): string {
   const intents: Record<string, string> = {
     'FORE': 'Set the visual context. Create anticipation for upcoming content without revealing too much.',
@@ -2219,7 +2202,10 @@ function generateBrollOutputIntent(segmentType: string): string {
     'BODY-1': 'Illustrate the first key point visually. Make abstract concepts tangible.',
     'BODY-2': 'Continue visual storytelling. Maintain engagement through compelling imagery.',
     'BODY-3': 'Build toward climax. Visual energy should increase toward the peak.',
+    'BODY-4': 'Reinforce the message. Add visual evidence and support.',
+    'BODY-5': 'Final content delivery. Maximum visual impact before conclusion.',
     'PEAK': 'Maximum visual impact. This is the climactic B-roll moment.',
+    'TWIST': 'Revelation moment. Visual should support the surprising information.',
     'ENDING': 'Provide visual resolution. Satisfy the viewer with a complete visual arc.'
   }
   
