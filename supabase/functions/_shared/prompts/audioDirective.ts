@@ -217,32 +217,23 @@ export interface VolumePriority {
   description: string;
 }
 
+// SIMPLIFIED: Removed verbose dB levels - video models don't need mix engineering details
 export const VOLUME_PRIORITY_CREATOR: VolumePriority[] = [
-  { layer: '1st - Dialogue', level: '0dB (primary)', description: 'Close-mic, dry, crystal clear' },
-  { layer: '2nd - Breath/Movement', level: '-12dB', description: 'Natural body sounds, subtle' },
-  { layer: '3rd - Room Tone', level: '-18dB', description: 'Subtle ambient, non-distracting' },
-  { layer: '4th - Accent SFX', level: '-15dB', description: 'Punctuation sounds, supportive' },
+  { layer: 'Dialogue', level: 'primary', description: 'Close-mic, crystal clear' },
+  { layer: 'Room Tone', level: 'subtle', description: 'Non-distracting ambient' },
 ];
 
 export const VOLUME_PRIORITY_BROLL: VolumePriority[] = [
-  { layer: '1st - Primary Ambient', level: '0dB (primary)', description: 'Main environmental sound' },
-  { layer: '2nd - Accent SFX', level: '-6dB', description: 'Action-synced sounds' },
-  { layer: '3rd - Undertone', level: '-12dB', description: 'Emotional foundation layer' },
-  { layer: '4th - Texture', level: '-18dB', description: 'Atmospheric depth' },
+  { layer: 'Ambient', level: 'primary', description: 'Environmental sound' },
+  { layer: 'SFX', level: 'supportive', description: 'Action-synced sounds' },
 ];
 
 export const VOLUME_PRIORITY_BROLL_WITH_VOICEOVER: VolumePriority[] = [
-  { layer: '1st - Voiceover', level: '0dB (primary)', description: 'Narrator voice, close-mic dry' },
-  { layer: '2nd - Primary Ambient', level: '-15dB', description: 'Ducked under voice' },
-  { layer: '3rd - Accent SFX', level: '-12dB', description: 'Supportive action sounds' },
-  { layer: '4th - Undertone', level: '-20dB', description: 'Subtle emotional foundation' },
+  { layer: 'Voiceover', level: 'primary', description: 'Narrator voice' },
+  { layer: 'Ambient', level: 'ducked', description: 'Under voice' },
 ];
 
-function formatVolumePriority(priorities: VolumePriority[]): string {
-  return priorities
-    .map(p => `  ${p.layer}: ${p.level} — ${p.description}`)
-    .join('\n');
-}
+// REMOVED: formatVolumePriority function - no longer needed
 
 // ============================================================================
 // VOICE ANCHOR GENERATOR
@@ -427,46 +418,18 @@ export function getCreatorAudioDirective(
     'LOOP-END': 'warmth',
   };
 
-  // Use segment-specific emotion or provided emotion
   const effectiveEmotion = emotionBySegment[segmentType] || emotion;
   const sfx = getEmotionSFX(effectiveEmotion);
-  
   const wordCount = dialogueText.split(/\s+/).filter(w => w.length > 0).length;
-  
-  // Calculate approximate speaking duration using language-specific WPM
-  const wpm = SPEECH_RATES[language.toLowerCase()] || SPEECH_RATES.english;
-  const speakingDuration = Math.ceil((wordCount / wpm) * 60);
 
+  // SIMPLIFIED: Compact audio directive (~15 lines vs ~30 lines before)
   return `
-═══════════════════════════════════════════════════════════════
-🔊 AUDIO DIRECTIVE (Creator Speaking - ${segmentType})
-═══════════════════════════════════════════════════════════════
-
-DIALOGUE:
-"${dialogueText}"
-Word count: ${wordCount} words (~${speakingDuration}s speaking time)
-Lip sync: Character's lip movements MUST match dialogue timing exactly
-
-VOICE QUALITY:
-${sfx.voice_quality}
-Breath: ${sfx.breath_pattern}
-
-SOUND DESIGN (${effectiveEmotion}):
-- Undertone: ${sfx.undertone}
-- Accent SFX: ${sfx.accent_sfx}
-- Spatial: ${sfx.spatial_cue}
-
-VOLUME PRIORITY (mix hierarchy):
-${formatVolumePriority(VOLUME_PRIORITY_CREATOR)}
-
-AUDIO PERSPECTIVE:
-Close-mic, dry voice, minimal room reverb
-Background: Subtle room tone only
-
-EXCLUSIONS:
-No background music, no audience sounds, no text overlays, no subtitles
-
-⚠️ Maintain voice anchor characteristics throughout this segment.
+AUDIO:
+Dialogue: "${dialogueText}"
+Word count: ${wordCount} words | Lip-sync required
+Voice: ${sfx.voice_quality}
+Ambient: Subtle room tone, close-mic quality
+Exclude: no music, no subtitles, no audience sounds
 `;
 }
 
@@ -482,61 +445,34 @@ export function getBRollAudioDirective(
   hasVoiceover: boolean = false,
   voiceoverText: string = ''
 ): string {
-  const sfx = getEmotionSFX(emotion);
-  
   const ambientByCategory: Record<string, string> = {
-    'tech': 'soft server fan hum, subtle electronic beeps, quiet data center atmosphere',
-    'food': 'gentle sizzle, soft utensil clinks, kitchen ambient warmth',
-    'nature': 'light breeze rustle, distant bird calls, natural outdoor atmosphere',
-    'office': 'soft HVAC hum, distant keyboard clicks, professional space tone',
-    'urban': 'city ambient hum, distant traffic whoosh, urban atmosphere',
-    'product': 'clean studio silence, subtle room tone, premium feel',
-    'data': 'soft electronic hum, subtle digital processing sounds, tech atmosphere',
-    'default': 'subtle room tone, clean ambient, minimal background',
+    'tech': 'soft server hum, subtle electronic beeps',
+    'food': 'gentle sizzle, soft utensil clinks',
+    'nature': 'light breeze, distant bird calls',
+    'office': 'soft HVAC hum, distant typing',
+    'urban': 'city ambient, distant traffic',
+    'product': 'clean studio silence',
+    'data': 'soft electronic hum, digital processing',
+    'default': 'subtle room tone',
   };
 
-  const primaryAmbient = ambientByCategory[category] || ambientByCategory.default;
-  
-  // Choose volume priority based on voiceover presence
-  const volumePriority = hasVoiceover 
-    ? VOLUME_PRIORITY_BROLL_WITH_VOICEOVER 
-    : VOLUME_PRIORITY_BROLL;
+  const ambient = ambientByCategory[category] || ambientByCategory.default;
 
-  // Build voiceover section if applicable
-  const voiceoverSection = hasVoiceover && voiceoverText
-    ? `
-VOICEOVER (off-screen narration):
-"${voiceoverText}"
-Voice: ${sfx.voice_quality}
-Delivery: Natural narrator style, NOT lip-synced to any visible character`
-    : `
-SPEECH: NONE
-No dialogue, no voiceover, no narration in this segment`;
+  // SIMPLIFIED: Compact format (~8 lines vs ~25 lines before)
+  if (hasVoiceover && voiceoverText) {
+    return `
+AUDIO:
+Voiceover: "${voiceoverText}"
+Delivery: Natural narrator, NOT lip-synced
+Ambient: ${ambient} (ducked under voice)
+Exclude: no music, no subtitles, no audience sounds
+`;
+  }
 
   return `
-═══════════════════════════════════════════════════════════════
-🔊 AUDIO DIRECTIVE (B-Roll - ${category} / ${emotion})
-═══════════════════════════════════════════════════════════════
-${voiceoverSection}
-
-SOUND DESIGN (${emotion}):
-- Primary Ambient: ${primaryAmbient}
-- Undertone: ${sfx.undertone}
-- Accent SFX: ${sfx.accent_sfx}
-- Texture: ${sfx.ambient_texture}
-- Spatial: ${sfx.spatial_cue}
-
-VOLUME PRIORITY (mix hierarchy):
-${formatVolumePriority(volumePriority)}
-
-DIEGETIC SOUNDS:
-Natural sounds from visible objects only (footsteps, door, typing, etc.)
-Sync to on-screen actions
-
-EXCLUSIONS:
-No background music, no audience sounds, no text overlays, no subtitles
-
-⚠️ Audio should support visuals without distraction.
+AUDIO:
+Ambient: ${ambient}
+Exclude: no music, no subtitles, no audience sounds
 `;
 }
 

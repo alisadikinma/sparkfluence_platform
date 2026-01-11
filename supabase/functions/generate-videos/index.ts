@@ -558,6 +558,7 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
   
   // Find job to process
   let job: any = null
+  let jobWasReset = false  // Track if job was reset from stuck state
 
   if (job_id) {
     // PARALLEL MODE: Process specific job by ID (frontend handles stagger timing)
@@ -576,24 +577,37 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     
     // Check if job is already processing or completed
     if (data.status === JOB_STATUS.PROCESSING) {
-      console.log(`[PROCESS_SINGLE] Job ${job_id} already processing, returning current state`)
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          data: { 
-            job: {
-              id: data.id,
-              segment_number: data.segment_number,
-              segment_type: data.segment_type,
-              segment_id: data.segment_id,
-              veo_uuid: data.veo_uuid,
-              status: JOB_STATUS.PROCESSING
-            },
-            already_processing: true
-          } 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      // Check for stuck jobs: status=1 but no veo_uuid means previous attempt failed
+      if (!data.veo_uuid) {
+        console.log(`[PROCESS_SINGLE] Job ${job_id} stuck (status=1, no veo_uuid) - resetting to retry`)
+        // Reset to pending for retry
+        await supabase
+          .from('video_generation_jobs')
+          .update({ status: JOB_STATUS.PENDING, updated_at: new Date().toISOString() })
+          .eq('id', job_id)
+        // Continue processing instead of returning
+        job = { ...data, status: JOB_STATUS.PENDING }
+        jobWasReset = true
+      } else {
+        console.log(`[PROCESS_SINGLE] Job ${job_id} already processing with veo_uuid=${data.veo_uuid}`)
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            data: { 
+              job: {
+                id: data.id,
+                segment_number: data.segment_number,
+                segment_type: data.segment_type,
+                segment_id: data.segment_id,
+                veo_uuid: data.veo_uuid,
+                status: JOB_STATUS.PROCESSING
+              },
+              already_processing: true
+            } 
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
     }
     
     if (data.status === JOB_STATUS.COMPLETED) {
@@ -618,8 +632,11 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       )
     }
     
-    job = data
-    console.log(`[PROCESS_SINGLE] 🎯 PARALLEL MODE: Processing specific job ${job_id} (${data.segment_type})`)
+    // Only assign if not already set from stuck job reset
+    if (!jobWasReset) {
+      job = data
+    }
+    console.log(`[PROCESS_SINGLE] 🎯 PARALLEL MODE: Processing specific job ${job_id} (${job.segment_type})`)
     
   } else if (session_id && user_id) {
     // SEQUENTIAL MODE: Check if another job is processing first
@@ -1398,31 +1415,17 @@ function generateVoiceCharacter(language: string, creatorAppearance?: string): V
   return profiles[gender]
 }
 
+// SIMPLIFIED (2026): Compact voice anchor without decorative borders
 function buildVoiceCharacterAnchor(voiceChar: VoiceCharacter, isSora: boolean = false): string {
   // For Sora: Skip age to avoid content moderation flags
   if (isSora) {
-    return `VOICE CHARACTER:
-Gender: ${voiceChar.gender}
-Accent: ${voiceChar.accent}
-Tone: ${voiceChar.tone}
-Pace: ${voiceChar.pace}
-
-Maintain this voice character throughout the video.`
+    return `VOICE: ${voiceChar.gender}, ${voiceChar.accent}, ${voiceChar.tone}, ${voiceChar.pace}`
   }
   
-  return `═══════════════════════════════════════════════════════════════
-VOICE CHARACTER ANCHOR (MUST MAINTAIN ACROSS ALL SEGMENTS)
-═══════════════════════════════════════════════════════════════
-Voice Profile: ${voiceChar.description}
-Gender: ${voiceChar.gender}
-Age: ${voiceChar.age}
-Accent: ${voiceChar.accent}
-Tone: ${voiceChar.tone}
-Pace: ${voiceChar.pace}
-
-CRITICAL: This EXACT voice character must be used for ALL audio in this video.
-Do NOT change voice characteristics between segments.
-═══════════════════════════════════════════════════════════════`
+  return `VOICE CHARACTER:
+${voiceChar.description}
+Accent: ${voiceChar.accent} | Tone: ${voiceChar.tone} | Pace: ${voiceChar.pace}
+Maintain consistent voice across all segments.`
 }
 
 // ============================================================================
@@ -1993,7 +1996,7 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
   // Generate contextual motions based on visual brief
   const contextualMotions = generateContextualMotions(visualBrief, segmentType)
   
-  // Build B-roll specific prompt
+  // Build B-roll specific prompt (SIMPLIFIED 2026)
   const brollPrompt = buildEnhancedBrollVideoPrompt({
     segmentId,
     segmentNumber,
@@ -2005,17 +2008,11 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
     timeOfDay,
     lightingDescription,
     visualDirection,
-    backgroundDescription,
     propsDescription,
-    soundEffects,
     outputIntent,
     transition: transitionType,
     platform,
-    // NEW: Include script for voiceover narration
     scriptText,
-    language: detectedLanguage,
-    voiceCharacter: voiceChar,
-    // NEW: Visual Brief data
     visualBrief,
     contextualMotions,
     topic
@@ -2029,6 +2026,7 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
 // Uses Visual Brief extraction for contextual, specific motion descriptions
 // ============================================================================
 
+// SIMPLIFIED (2026): Removed unused params - backgroundDescription, soundEffects, language, voiceCharacter
 interface EnhancedBrollPromptParams {
   segmentId: string
   segmentNumber: number
@@ -2040,15 +2038,11 @@ interface EnhancedBrollPromptParams {
   timeOfDay?: string
   lightingDescription?: string
   visualDirection?: string
-  backgroundDescription?: string
   propsDescription?: string
-  soundEffects?: string
   outputIntent?: string
   transition: string
   platform: VideoModelKey
   scriptText?: string
-  language?: string
-  voiceCharacter?: VoiceCharacter
   visualBrief: VisualBrief
   contextualMotions: {
     subjectMotions: string[]
@@ -2070,63 +2064,29 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
     timeOfDay = 'soft natural light',
     lightingDescription,
     visualDirection,
-    backgroundDescription,
     propsDescription,
-    soundEffects,
     outputIntent,
     transition,
     platform,
     scriptText = '',
-    language = 'english',
-    voiceCharacter,
     visualBrief,
     contextualMotions,
     topic
   } = params
   
-  // Build voiceover section if script exists
   const hasVoiceover = scriptText && scriptText.trim().length > 0
-  
-  // Get camera movement for segment type
   const cameraMove = getCameraMovement(segmentType, emotion)
-  
-  // Resolution based on aspect ratio
   const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
   
-  // Build visual description from visual brief
+  // Visual description
   const primaryVisual = visualBrief.primarySubject.element
   const visualDesc = visualDirection || 
     `${primaryVisual} ${visualBrief.primarySubject.action} in ${visualBrief.environmentType} setting`
   
-  // Build props line
-  const propsLine = propsDescription ? `Props: ${propsDescription}.` : ''
-  
-  // Build lighting line
-  const lightingLine = lightingDescription || `${timeOfDay}, professional ${environment} lighting`
-  
-  // Generate output intent if not provided
+  const lightingLine = lightingDescription || `${timeOfDay}, ${environment} lighting`
   const actualOutputIntent = outputIntent || generateBrollOutputIntent(segmentType)
   
-  // Build action beats with contextual motions
-  const beat1End = Math.floor(duration * 0.33)
-  const beat2End = Math.floor(duration * 0.66)
-  
-  const actionBeatsFormatted = `- (0s-${beat1End}s): ${contextualMotions.subjectMotions[0]}. ${contextualMotions.cameraEnhancement}.
-- (${beat1End}s-${beat2End}s): ${contextualMotions.subjectMotions[1]}. ${contextualMotions.ambientMotions[0]}.
-- (${beat2End}s-${duration}s): ${contextualMotions.subjectMotions[2] || contextualMotions.ambientMotions[1]}. Scene breathes naturally.`
-  
-  // Build subject motion section with contextual motions
-  const subjectMotionSection = `SUBJECT MOTION (specific to ${topic || 'topic'}):
-- Primary: ${contextualMotions.subjectMotions[0]}
-- Secondary: ${contextualMotions.subjectMotions[1]}
-- Tertiary: ${contextualMotions.subjectMotions[2] || 'subtle environmental response'}`
-  
-  const ambientMotionSection = `AMBIENT MOTION:
-- ${contextualMotions.ambientMotions[0]}
-- ${contextualMotions.ambientMotions[1]}
-- ${contextualMotions.ambientMotions[2] || 'light quality shifts subtly'}`
-  
-  // Get audio directive
+  // Get audio directive (simplified)
   const brollCategory = detectBRollCategory(visualDesc)
   const brollAudioDirective = getBRollAudioDirective(
     brollCategory,
@@ -2135,67 +2095,38 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
     hasVoiceover ? scriptText : ''
   )
   
-  // Physics notes based on environment
-  const physicsNotes: Record<string, string> = {
-    tech: 'Digital elements float weightlessly, data flows like liquid light, holograms shimmer',
-    social: 'Icons have momentum, counters increment smoothly, viral effects spread organically',
-    finance: 'Charts animate with ease-out curves, coins have realistic weight, particles drift',
-    nature: 'Wind affects lighter elements, gravity pulls water naturally, organic growth motion',
-    urban: 'Traffic follows patterns, lights flicker naturally, steam rises realistically',
-    product: 'Premium slow motion, materials behave realistically, specular highlights shift',
-  }
-  const physics = physicsNotes[visualBrief.environmentType] || 'Natural realistic physics, gravity applies'
-  
-  // Platform-specific prompt
   const isSoraModel = platform.startsWith('sora-')
   const platformLabel = isSoraModel ? 'SORA 2 B-ROLL' : 'VEO 3.1 B-ROLL'
   
+  // ============================================================================
+  // SIMPLIFIED PROMPT FORMAT (2026) - ~30 lines vs ~60 lines before
+  // Removed: PHYSICS section, verbose SUBJECT/AMBIENT MOTION, redundant exclusions
+  // ============================================================================
   return `[${platformLabel} — ${segmentId}.${segmentNumber}]
 
-DURATION: ${duration} seconds
-RESOLUTION: ${resolution}
-ASPECT: ${aspectRatio}
+DURATION: ${duration}s | ${resolution} | ${aspectRatio}
 
 STARTING FRAME:
-Continue from the provided image — ${visualDesc}. ${propsLine}
-Visual focus: ${primaryVisual} with ${visualBrief.primarySubject.attributes.join(', ')} qualities.
-NO human face visible.
+From reference image — ${visualDesc}. ${propsDescription ? `Props: ${propsDescription}.` : ''}
+Focus: ${primaryVisual}, ${visualBrief.primarySubject.attributes.join(', ')}.
 
 CAMERA:
 ${cameraMove.promptPhrase}. ${contextualMotions.cameraEnhancement}.
-Stable tripod, cinematic movement. All key elements remain in frame.
 
-SETTING & LIGHTING:
-${lightingLine}. ${environment.charAt(0).toUpperCase() + environment.slice(1)} environment.
-Atmosphere: ${visualBrief.emotionalTone} mood with ${visualBrief.environmentType} aesthetics.
+LIGHTING: ${lightingLine}
 
-${subjectMotionSection}
-
-${ambientMotionSection}
-
-PHYSICS:
-${physics}
-
-ACTION SEQUENCE:
-${actionBeatsFormatted}
+MOTION:
+- Subject: ${contextualMotions.subjectMotions[0]}
+- Ambient: ${contextualMotions.ambientMotions[0]}
+- Secondary: ${contextualMotions.subjectMotions[1] || 'subtle movement'}
 
 ${brollAudioDirective}
 
-CONTINUITY NOTES:
-- Maintain exact lighting and color grade from reference image
-- NO human face should appear - this is B-roll footage
-- Visual focus on ${primaryVisual}, NOT on people
-- Every frame must have visible motion - no static shots
-- Secondary elements: ${visualBrief.secondaryElements.join(', ')}
+TRANSITION: ${getTransition(transition)}
 
-TRANSITION:
-${getTransition(transition)}
+INTENT: ${actualOutputIntent}
 
-OUTPUT INTENT:
-${actualOutputIntent}
-
-NEGATIVE:
-No blurry elements, no distortion, no artifacts, no text overlays, no human faces, no people on screen, no static boring frames.`
+NEGATIVE: blurry, distortion, text, human faces, static frames`
 }
 
 function generateBrollOutputIntent(segmentType: string): string {
