@@ -85,10 +85,19 @@ class VideoCombiner:
         ffprobe_path: str = "ffprobe",
         work_dir: Optional[Path] = None
     ):
+        import os
+        
         self.ffmpeg_path = ffmpeg_path
         self.ffprobe_path = ffprobe_path
         self.work_dir = work_dir or Path(tempfile.gettempdir()) / "sparkfluence_combine"
-        self.work_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Use os.makedirs for more robust directory creation
+        try:
+            os.makedirs(str(self.work_dir), exist_ok=True)
+            logger.info(f"VideoCombiner initialized with work_dir: {self.work_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create work_dir {self.work_dir}: {e}")
+            raise
         
         self.transition_engine = TransitionEngine(ffmpeg_path)
         self.subtitle_generator = SubtitleGenerator()
@@ -108,13 +117,28 @@ class VideoCombiner:
     
     async def download_video(self, url: str, output_path: Path) -> Path:
         """Download video from URL."""
+        import os
+        
+        # Ensure parent directory exists
+        parent_dir = output_path.parent
+        if not parent_dir.exists():
+            logger.warning(f"Parent directory doesn't exist, creating: {parent_dir}")
+            os.makedirs(str(parent_dir), exist_ok=True)
+        
         async with httpx.AsyncClient(timeout=120.0) as client:
             logger.info(f"Downloading: {url[:80]}...")
+            logger.info(f"Output path: {output_path}")
+            
             response = await client.get(url)
             response.raise_for_status()
             
-            with open(output_path, 'wb') as f:
-                f.write(response.content)
+            try:
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+            except Exception as e:
+                logger.error(f"Failed to write file {output_path}: {e}")
+                logger.error(f"Parent exists: {parent_dir.exists()}, Parent is dir: {parent_dir.is_dir() if parent_dir.exists() else 'N/A'}")
+                raise
             
             logger.info(f"Downloaded: {output_path.name} ({len(response.content) / 1024:.1f} KB)")
             return output_path
@@ -305,9 +329,34 @@ class VideoCombiner:
         5. Normalize audio
         6. Final output
         """
+        import os
+        import time
+        
         config = config or CombineConfig()
-        job_dir = self.work_dir / f"job_{hash(str(output_path))}"
-        job_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Use UUID instead of hash to avoid negative numbers and ensure uniqueness
+        import uuid
+        job_id = uuid.uuid4().hex[:16]
+        job_dir = self.work_dir / f"job_{job_id}"
+        
+        # Ensure work_dir exists first
+        try:
+            os.makedirs(str(self.work_dir), exist_ok=True)
+            logger.info(f"Work dir ensured: {self.work_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create work_dir: {e}")
+            return CombineResult(success=False, error_message=f"Failed to create work directory: {e}")
+        
+        # Create job directory with explicit check
+        try:
+            os.makedirs(str(job_dir), exist_ok=True)
+            # Verify it exists
+            if not job_dir.exists():
+                raise RuntimeError(f"Directory creation reported success but {job_dir} does not exist")
+            logger.info(f"Job dir created: {job_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create job_dir {job_dir}: {e}")
+            return CombineResult(success=False, error_message=f"Failed to create job directory: {e}")
         
         try:
             # Step 1: Download segments

@@ -229,6 +229,8 @@ export const VideoGeneration = (): JSX.Element => {
   const [isLoadingPrompts, setIsLoadingPrompts] = useState(false);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
   const [rateLimitWarning, setRateLimitWarning] = useState<string | null>(null);
+  // Per-segment video model override (key: segment.id, value: 'veo31' | 'sora2')
+  const [segmentModelOverrides, setSegmentModelOverrides] = useState<Record<string, 'veo31' | 'sora2'>>({});
   
   const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const checkStatusIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -1495,6 +1497,23 @@ export const VideoGeneration = (): JSX.Element => {
     return hints[type] || 'Cinematic movement';
   };
 
+  // Helper: Get effective video model for a segment
+  const getEffectiveModel = (segmentId: string): 'veo31' | 'sora2' => {
+    // Per-segment override takes priority
+    if (segmentModelOverrides[segmentId]) {
+      return segmentModelOverrides[segmentId];
+    }
+    // Then use video settings from earlier selection
+    if (videoSettings?.model === 'sora2') return 'sora2';
+    // Default to VEO 3.1
+    return 'veo31';
+  };
+
+  // Helper: Get model display name
+  const getModelDisplayName = (model: 'veo31' | 'sora2'): string => {
+    return model === 'sora2' ? 'Sora 2.0' : 'VEO 3.1';
+  };
+
   // Helper: Get audio/ambient hint based on segment type
   const getAudioHint = (segmentType: string, shotType: string): string => {
     const type = (segmentType || '').toUpperCase();
@@ -1686,14 +1705,7 @@ export const VideoGeneration = (): JSX.Element => {
                   </span>
                 )}
               </div>
-              {/* DEBUG: Force Refresh Button */}
-              <button
-                onClick={forceRefreshFromDatabase}
-                className="mt-2 px-2 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-[10px] rounded"
-                title="Force refresh video status from database"
-              >
-                🔄 Sync DB
-              </button>
+
             </div>
           </div>
         </div>
@@ -1859,11 +1871,39 @@ export const VideoGeneration = (): JSX.Element => {
                         <span>{segment.script ? 'AI Voice' : 'Ambient'}</span>
                       </div>
 
-                      {/* Platform Badge */}
-                      {videoPrompts[segment.id] && (
+                      {/* Platform Badge - showing preview from prompt */}
+                      {videoPrompts[segment.id] && !segment.videoUrl && (
                         <div className="flex items-center gap-1.5 bg-purple-500/10 text-purple-400 text-[10px] px-2 py-1 rounded">
                           <Video className="w-3 h-3" />
                           <span>{videoPrompts[segment.id].platform_name || videoPrompts[segment.id].platform}</span>
+                        </div>
+                      )}
+
+                      {/* Video Model Selector - only show before video is generated */}
+                      {!segment.videoUrl && !segment.isGeneratingVideo && (
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={getEffectiveModel(segment.id)}
+                            onChange={(e) => {
+                              const newModel = e.target.value as 'veo31' | 'sora2';
+                              setSegmentModelOverrides(prev => ({
+                                ...prev,
+                                [segment.id]: newModel
+                              }));
+                            }}
+                            className="bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1 text-white text-[10px] cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
+                          >
+                            <option value="veo31">VEO 3.1</option>
+                            <option value="sora2">Sora 2.0</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Show selected model badge after video is generated */}
+                      {segment.videoUrl && (
+                        <div className="flex items-center gap-1.5 bg-green-500/10 text-green-400 text-[10px] px-2 py-1 rounded">
+                          <Video className="w-3 h-3" />
+                          <span>{getModelDisplayName(getEffectiveModel(segment.id))}</span>
                         </div>
                       )}
                     </div>

@@ -223,10 +223,13 @@ class TransitionEngine:
         default_duration: float = 0.5
     ) -> Path:
         """Apply transitions to a chain of videos."""
+        import shutil
+        import os
+        
         if len(videos) < 2:
             if len(videos) == 1:
-                # Just copy single video
-                subprocess.run(['cp', str(videos[0]), str(output)])
+                # Just copy single video (cross-platform)
+                shutil.copy(str(videos[0]), str(output))
                 return output
             raise ValueError("Need at least 1 video")
         
@@ -242,6 +245,12 @@ class TransitionEngine:
         
         # Process pairs of videos
         work_dir = output.parent
+        
+        # Ensure work directory exists
+        if not work_dir.exists():
+            logger.warning(f"Work dir doesn't exist, creating: {work_dir}")
+            os.makedirs(str(work_dir), exist_ok=True)
+        
         current = videos[0]
         
         for i, (next_video, trans_config) in enumerate(zip(videos[1:], transitions)):
