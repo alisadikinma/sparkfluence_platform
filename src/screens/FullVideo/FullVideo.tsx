@@ -410,9 +410,9 @@ export const FullVideo: React.FC = () => {
     try {
       console.log('[FullVideo] Saving final_video_url to database for session:', videoData.sessionId);
       
-      // 1. Update video_generation_jobs - store in first segment for the session
+      // 1. Update ALL video_generation_jobs for this session with final_video_url
       //    This ensures History page can always find the final video
-      const { error: jobError } = await supabase
+      const { data: updatedJobs, error: jobError } = await supabase
         .from('video_generation_jobs')
         .update({ 
           final_video_url: videoUrl,
@@ -420,27 +420,12 @@ export const FullVideo: React.FC = () => {
         })
         .eq('user_id', user.id)
         .eq('session_id', videoData.sessionId)
-        .eq('segment_id', '0'); // Update first segment
+        .select('id');
       
       if (jobError) {
-        console.warn('[FullVideo] Failed to update video_generation_jobs:', jobError);
-        // Try updating any segment if segment_id 0 doesn't exist
-        const { error: fallbackError } = await supabase
-          .from('video_generation_jobs')
-          .update({ 
-            final_video_url: videoUrl,
-            has_subtitles: hasSubtitles 
-          })
-          .eq('user_id', user.id)
-          .eq('session_id', videoData.sessionId)
-          .order('segment_id', { ascending: true })
-          .limit(1);
-        
-        if (fallbackError) {
-          console.error('[FullVideo] Fallback update also failed:', fallbackError);
-        }
+        console.error('[FullVideo] Failed to update video_generation_jobs:', jobError);
       } else {
-        console.log('[FullVideo] Successfully saved final_video_url to video_generation_jobs');
+        console.log('[FullVideo] Successfully saved final_video_url to', updatedJobs?.length || 0, 'video_generation_jobs');
       }
       
       // 2. Also try to update planned_content if exists
