@@ -1243,6 +1243,21 @@ export const id: TranslationKeys = {
   },
 
   // ============================================
+  // VIDEO EDITOR
+  // ============================================
+  videoEditor: {
+    title: 'Video Editor',
+    status: {
+      pending: 'Menunggu',
+      processing: 'Memproses',
+      completed: 'Selesai',
+      failed: 'Gagal',
+      images: 'Gambar',
+      videos: 'Video',
+    },
+  },
+
+  // ============================================
   // HISTORY
   // ============================================
   history: {

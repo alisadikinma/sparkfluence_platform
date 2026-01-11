@@ -29,6 +29,7 @@ export const en = {
     next: 'Next',
     skip: 'Skip',
     done: 'Done',
+    failed: 'Failed',
     loading: 'Loading...',
     processing: 'Processing...',
     generating: 'Generating...',
@@ -1241,6 +1242,21 @@ export const en = {
     title: 'Notifications',
     markAllRead: 'Mark all read',
     noNotifications: 'No notifications',
+  },
+
+  // ============================================
+  // VIDEO EDITOR
+  // ============================================
+  videoEditor: {
+    title: 'Video Editor',
+    status: {
+      pending: 'Pending',
+      processing: 'Processing',
+      completed: 'Completed',
+      failed: 'Failed',
+      images: 'Images',
+      videos: 'Videos',
+    },
   },
 
   // ============================================

@@ -1251,6 +1251,21 @@ export const hi = {
   },
 
   // ============================================
+  // VIDEO EDITOR
+  // ============================================
+  videoEditor: {
+    title: 'Video Editor',
+    status: {
+      pending: 'Pending',
+      processing: 'Processing',
+      completed: 'Completed',
+      failed: 'Failed',
+      images: 'Images',
+      videos: 'Videos',
+    },
+  },
+
+  // ============================================
   // HISTORY
   // ============================================
   history: {

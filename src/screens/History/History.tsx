@@ -163,9 +163,9 @@ export const History = (): JSX.Element => {
         // Group by session_id - with null safety
         const sessionMap = new Map<string, VideoJob[]>();
         videoJobs.forEach((job: any) => {
-          // Skip invalid jobs
-          if (!job || !job.session_id) {
-            console.warn('[History] Skipping invalid job:', job);
+          // Skip invalid jobs - check ALL required fields
+          if (!job || !job.session_id || typeof job.status !== 'number') {
+            console.warn('[History] Skipping invalid job:', job?.id, 'status:', job?.status);
             return;
           }
           const existing = sessionMap.get(job.session_id) || [];
@@ -175,6 +175,7 @@ export const History = (): JSX.Element => {
 
         const projectList: ProjectGroup[] = [];
         sessionMap.forEach((segments, sessionId) => {
+          try {
           // Filter out any null/undefined segments and ensure status exists
           const validSegments = segments.filter(s => s && typeof s.status === 'number');
           
@@ -259,6 +260,10 @@ export const History = (): JSX.Element => {
             model: projectModel,
             total_duration_seconds: totalDuration
           });
+          } catch (sessionErr) {
+            console.warn('[History] Error processing session:', sessionId, sessionErr);
+            // Continue with other sessions - don't crash the entire page
+          }
         });
 
         // Sort by updated_at

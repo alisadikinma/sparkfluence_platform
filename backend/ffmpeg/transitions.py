@@ -1,10 +1,15 @@
 """
 FFmpeg Transitions Module
 Provides xfade transition effects between video segments.
+
+Includes Fast Mode for low-resource systems (1-2 CPU cores) that uses
+simple concat instead of CPU-intensive xfade transitions.
 """
 
 import subprocess
 import logging
+import os
+import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
@@ -12,6 +17,129 @@ from enum import Enum
 
 logger = logging.getLogger('FFmpeg.Transitions')
 
+
+# ============================================================================
+# RESOURCE DETECTION & FAST MODE
+# ============================================================================
+
+def get_cpu_count() -> int:
+    """Get available CPU cores."""
+    try:
+        return os.cpu_count() or 1
+    except:
+        return 1
+
+def should_use_fast_mode() -> bool:
+    """
+    Determine if fast mode (simple concat) should be used.
+    Fast mode is enabled when:
+    - System has 2 or fewer CPU cores
+    - SPARKFLUENCE_FAST_MODE env var is set to 'true'
+    - SPARKFLUENCE_DISABLE_XFADE env var is set to 'true'
+    """
+    # Check explicit env overrides
+    if os.environ.get('SPARKFLUENCE_FAST_MODE', '').lower() == 'true':
+        logger.info("Fast mode enabled via SPARKFLUENCE_FAST_MODE")
+        return True
+    if os.environ.get('SPARKFLUENCE_DISABLE_XFADE', '').lower() == 'true':
+        logger.info("Fast mode enabled via SPARKFLUENCE_DISABLE_XFADE")
+        return True
+    
+    # Auto-detect based on CPU cores
+    cpu_count = get_cpu_count()
+    if cpu_count <= 2:
+        logger.info(f"Fast mode auto-enabled: only {cpu_count} CPU core(s) detected")
+        return True
+    
+    return False
+
+
+def fast_concat_videos(videos: List[Path], output: Path) -> Path:
+    """
+    Fast concat using FFmpeg demuxer (no re-encoding, instant).
+    Used when xfade transitions would be too slow.
+    """
+    if len(videos) < 1:
+        raise ValueError("Need at least 1 video")
+    
+    if len(videos) == 1:
+        shutil.copy(str(videos[0]), str(output))
+        return output
+    
+    # Create concat list file
+    work_dir = output.parent
+    concat_list = work_dir / "concat_list.txt"
+    
+    with open(concat_list, 'w') as f:
+        for video in videos:
+            # Use absolute paths with proper escaping
+            escaped_path = str(video.absolute()).replace("'", "'\\''")
+            f.write(f"file '{escaped_path}'\n")
+    
+    # Fast concat using demuxer (no re-encoding)
+    cmd = [
+        'ffmpeg', '-y',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', str(concat_list),
+        '-c', 'copy',  # No re-encoding - instant!
+        str(output)
+    ]
+    
+    logger.info(f"Fast concat: {len(videos)} videos (no xfade, instant)")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # Cleanup
+    concat_list.unlink(missing_ok=True)
+    
+    if result.returncode != 0:
+        # If demuxer concat fails (format mismatch), try re-encode concat
+        logger.warning("Demuxer concat failed, trying re-encode concat")
+        return fast_concat_with_reencode(videos, output)
+    
+    return output
+
+
+def fast_concat_with_reencode(videos: List[Path], output: Path) -> Path:
+    """
+    Fast concat with minimal re-encoding.
+    Fallback when demuxer concat fails due to format differences.
+    """
+    work_dir = output.parent
+    concat_list = work_dir / "concat_list.txt"
+    
+    with open(concat_list, 'w') as f:
+        for video in videos:
+            escaped_path = str(video.absolute()).replace("'", "'\\''")
+            f.write(f"file '{escaped_path}'\n")
+    
+    # Use ultrafast preset for speed
+    cmd = [
+        'ffmpeg', '-y',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', str(concat_list),
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-c:a', 'aac', '-b:a', '192k',
+        str(output)
+    ]
+    
+    logger.info(f"Fast concat with re-encode: {len(videos)} videos (ultrafast preset)")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # Cleanup
+    concat_list.unlink(missing_ok=True)
+    
+    if result.returncode != 0:
+        logger.error(f"Fast concat failed: {result.stderr}")
+        raise RuntimeError(f"Fast concat failed: {result.stderr}")
+    
+    return output
+
+
+# ============================================================================
+# TRANSITION TYPES & PRESETS
+# ============================================================================
 
 class TransitionType(Enum):
     """Supported xfade transition types."""
@@ -122,9 +250,13 @@ class TransitionConfig:
 class TransitionEngine:
     """Handles video transitions using FFmpeg xfade filter."""
     
-    def __init__(self, ffmpeg_path: str = 'ffmpeg'):
+    def __init__(self, ffmpeg_path: str = 'ffmpeg', force_fast_mode: bool = False):
         self.ffmpeg_path = ffmpeg_path
+        self.fast_mode = force_fast_mode or should_use_fast_mode()
         self._verify_ffmpeg()
+        
+        if self.fast_mode:
+            logger.info("TransitionEngine running in FAST MODE (simple concat)")
     
     def _verify_ffmpeg(self):
         """Verify FFmpeg is available."""
@@ -223,8 +355,6 @@ class TransitionEngine:
         default_duration: float = 0.5
     ) -> Path:
         """Apply transitions to a chain of videos."""
-        import shutil
-        import os
         
         if len(videos) < 2:
             if len(videos) == 1:
@@ -233,6 +363,12 @@ class TransitionEngine:
                 return output
             raise ValueError("Need at least 1 video")
         
+        # ====== FAST MODE: Use simple concat ======
+        if self.fast_mode:
+            logger.info(f"FAST MODE: Concatenating {len(videos)} videos without xfade")
+            return fast_concat_videos(videos, output)
+        
+        # ====== NORMAL MODE: Use xfade transitions ======
         # Default transitions if not provided
         if transitions is None:
             transitions = [
