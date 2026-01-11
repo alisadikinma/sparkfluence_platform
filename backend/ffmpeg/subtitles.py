@@ -454,10 +454,10 @@ SUBTITLE_PRESETS = {
     
     'tiktok': SubtitleStyle(
         font_name="Montserrat",
-        font_size=100,  # Larger for mobile readability
+        font_size=140,  # Extra large for mobile readability
         bold=True,
-        outline=6,
-        shadow=3,
+        outline=8,
+        shadow=4,
         primary_color="&HFFFFFF",  # White
         highlight_color="&H00FFFF",  # Yellow/Cyan
         outline_color="&H000000",  # Black
@@ -520,10 +520,10 @@ SUBTITLE_PRESETS = {
     
     'viral': SubtitleStyle(
         font_name="Montserrat",
-        font_size=100,  # Same as tiktok for consistency
+        font_size=140,  # Same as tiktok for consistency
         bold=True,
-        outline=6,
-        shadow=3,
+        outline=8,
+        shadow=4,
         primary_color="&HFFFFFF",  # White
         highlight_color="&H00D7FF",  # Orange-Yellow (BGR)
         outline_color="&H000000",

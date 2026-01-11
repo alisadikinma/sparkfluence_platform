@@ -1078,20 +1078,70 @@ export const History = (): JSX.Element => {
                         onClick={handleAddSubtitle}
                         disabled={isAddingSubtitle}
                         variant="outline"
-                        className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10 flex flex-col items-center justify-center gap-1 py-3 relative overflow-hidden"
+                        className={`relative overflow-hidden transition-all duration-500 ${
+                          isAddingSubtitle 
+                            ? 'border-purple-500 bg-purple-950/50 text-white min-h-[80px] col-span-2' 
+                            : 'border-purple-500/50 text-purple-400 hover:bg-purple-500/10'
+                        } flex flex-col items-center justify-center gap-1 py-3`}
                       >
                         {isAddingSubtitle ? (
                           <>
-                            {/* Progress bar background */}
-                            <div 
-                              className="absolute inset-0 bg-purple-500/20 transition-all duration-300"
-                              style={{ width: `${subtitleProgress}%` }}
-                            />
-                            <div className="flex items-center gap-2 relative z-10">
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              <span>{subtitleProgress}%</span>
+                            {/* Animated gradient background */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-purple-900/0 via-purple-600/30 to-purple-900/0 animate-pulse" />
+                            
+                            {/* Progress bar container */}
+                            <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-purple-950">
+                              {/* Animated progress fill with glow */}
+                              <div 
+                                className="h-full bg-gradient-to-r from-purple-500 via-fuchsia-500 to-purple-500 transition-all duration-500 ease-out relative"
+                                style={{ width: `${subtitleProgress}%` }}
+                              >
+                                {/* Shimmer effect */}
+                                <div 
+                                  className="absolute inset-0 animate-shimmer"
+                                  style={{ 
+                                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
+                                    backgroundSize: '200% 100%'
+                                  }} 
+                                />
+                                {/* Glow on leading edge */}
+                                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-fuchsia-400 rounded-full blur-md animate-pulse" />
+                              </div>
                             </div>
-                            <span className="text-xs text-purple-300 relative z-10">{subtitleStep}</span>
+                            
+                            {/* Content */}
+                            <div className="relative z-10 flex flex-col items-center gap-2">
+                              {/* Percentage with glow */}
+                              <div className="flex items-center gap-3">
+                                {/* Spinning loader with gradient */}
+                                <div className="relative w-8 h-8">
+                                  <div className="absolute inset-0 rounded-full border-2 border-purple-500/30" />
+                                  <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-fuchsia-500 animate-spin" />
+                                  <div className="absolute inset-1 rounded-full bg-purple-500/20 animate-pulse" />
+                                </div>
+                                <span className="text-2xl font-bold bg-gradient-to-r from-purple-300 via-fuchsia-300 to-purple-300 bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+                                  {subtitleProgress}%
+                                </span>
+                              </div>
+                              
+                              {/* Step text with typing effect */}
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-purple-200/90 font-medium">
+                                  {subtitleStep}
+                                </span>
+                                <span className="flex gap-0.5">
+                                  <span className="w-1.5 h-1.5 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                  <span className="w-1.5 h-1.5 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                  <span className="w-1.5 h-1.5 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                </span>
+                              </div>
+                            </div>
+                            
+                            {/* Corner accents */}
+                            <div className="absolute top-0 left-0 w-3 h-3 border-l-2 border-t-2 border-purple-400/50" />
+                            <div className="absolute top-0 right-0 w-3 h-3 border-r-2 border-t-2 border-purple-400/50" />
+                            <div className="absolute bottom-1.5 left-0 w-3 h-3 border-l-2 border-b-2 border-purple-400/50" />
+                            <div className="absolute bottom-1.5 right-0 w-3 h-3 border-r-2 border-b-2 border-purple-400/50" />
                           </>
                         ) : (
                           <div className="flex items-center gap-2">
