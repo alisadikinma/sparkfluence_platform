@@ -258,7 +258,9 @@ async function handlePreviewPrompts(requestBody: any) {
     resolution: string
     has_dialogue: boolean
     dialogue_preview: string
+    dialogue_validation: { valid: boolean; wordCount: number; maxWords: number; languageAdjusted: boolean }
     prompt: string
+    image_url: string | null
   }> = []
 
   for (let i = 0; i < segments.length; i++) {
@@ -266,7 +268,9 @@ async function handlePreviewPrompts(requestBody: any) {
     const segmentId = segment.segment_id || segment.id || String(i + 1)
     const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${i + 1}`
     const scriptText = segment.script_text || segment.script || ''
-    const duration = segment.duration_seconds || 8
+    // DURATION FIX: Ensure valid number, fallback to 8
+    const rawDuration = segment.duration_seconds || segment.duration || 8
+    const duration = typeof rawDuration === 'number' && !isNaN(rawDuration) && rawDuration > 0 ? rawDuration : 8
     const emotion = segment.emotion || 'authority'
     const shotType = segment.shot_type || 'B-ROLL'
     const imageUrl = segment.image_url || segment.imageUrl || null
@@ -275,8 +279,16 @@ async function handlePreviewPrompts(requestBody: any) {
     // Determine platform - ALL segments use the same platform for consistent quality
     const selectedPlatform: VideoModelKey = selectedPlatformForAll
 
+    // SAFETY: Ensure modelSpecs exists
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
+    if (!modelSpecs) {
+      console.error(`[PREVIEW_PROMPTS] ❌ Unknown platform: ${selectedPlatform}, falling back to veo-3.1-fast`)
+    }
+    const safeModelSpecs = modelSpecs || VIDEO_MODELS['veo-3.1-fast']
 
+    // Calculate actual duration (clamped to model max)
+    const actualDuration = Math.min(duration, safeModelSpecs.maxDuration)
+    
     // Build the cinematic video prompt with anchor params
     const videoPrompt = buildCinematicVideoPrompt({
       segment: {
@@ -292,7 +304,7 @@ async function handlePreviewPrompts(requestBody: any) {
       aspectRatio: aspect_ratio as '9:16' | '16:9',
       environment,
       platform: selectedPlatform,
-      duration: Math.min(duration, modelSpecs.maxDuration),
+      duration: actualDuration,
       // ========================================================================
       // NEW: Face Anchor params (2026)
       // ========================================================================
@@ -302,8 +314,16 @@ async function handlePreviewPrompts(requestBody: any) {
       characterDescription: character_description
     })
 
-    // Validate dialogue length
-    const dialogueValidation = scriptText ? validateDialogueLength(scriptText, selectedPlatform) : { valid: true, wordCount: 0, maxWords: 0 }
+    // Validate dialogue length with language awareness
+    const dialogueValidation = scriptText 
+      ? validateDialogueLength(scriptText, selectedPlatform, actualDuration, language) 
+      : { valid: true, wordCount: 0, maxWords: 0, languageAdjusted: false }
+
+    // Get resolution from model specs
+    const resolutionKeys = Object.keys(safeModelSpecs.resolutions)
+    const resolution = resolutionKeys.length > 0 ? resolutionKeys[0] : '720p'
+
+    console.log(`[PREVIEW_PROMPTS] Segment ${i + 1}: ${segmentType}, duration=${actualDuration}s, platform=${selectedPlatform}`)
 
     prompts.push({
       segment_id: segmentId,
@@ -311,10 +331,10 @@ async function handlePreviewPrompts(requestBody: any) {
       segment_type: segmentType,
       shot_type: shotType,
       platform: selectedPlatform,
-      platform_name: modelSpecs.displayName,
-      duration: Math.min(duration, modelSpecs.maxDuration),
-      max_duration: modelSpecs.maxDuration,
-      resolution: Object.keys(modelSpecs.resolutions)[0] || '720p', // Get first resolution key
+      platform_name: safeModelSpecs.displayName,
+      duration: actualDuration,
+      max_duration: safeModelSpecs.maxDuration,
+      resolution,
       has_dialogue: hasDialogue,
       dialogue_preview: scriptText ? scriptText.substring(0, 100) + (scriptText.length > 100 ? '...' : '') : '',
       dialogue_validation: dialogueValidation,
@@ -1468,12 +1488,23 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   
   // Check if using Sora (needs sanitization)
   const isSoraModel = platform.startsWith('sora-')
+  const platformLabel = isSoraModel ? 'SORA 2' : 'VEO 3.1'
+  
+  // ========================================================================
+  // DURATION FIX (2026): Get closest valid duration from model config
+  // This ensures duration is always valid and within model limits
+  // ========================================================================
+  const modelConfig = VIDEO_MODELS[platform]
+  const safeDuration = modelConfig 
+    ? getClosestDuration(modelConfig, duration || 8)
+    : (typeof duration === 'number' && !isNaN(duration) && duration > 0) ? duration : 8
+  
+  console.log(`[VIDEO-PROMPT] Platform: ${platform}, Input duration: ${duration}, Safe duration: ${safeDuration}s`)
   
   // ========================================================================
   // VOICEOVER DURATION FIX (2026): Truncate script to fit duration
   // This prevents voiceover from exceeding video length
   // ========================================================================
-  const safeDuration = (typeof duration === 'number' && !isNaN(duration) && duration > 0) ? duration : 10
   const maxWords = calculateMaxWords(safeDuration, language)
   const truncationResult = truncateScript(rawScriptText || '', maxWords)
   const scriptText = truncationResult.truncated
@@ -1592,16 +1623,11 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
       ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
       : actualCharacterDescription || undefined
     
-    // Use consistent voice from anchor (voiceChar already contains all voice info)
-    
     // Resolution based on aspect ratio (dynamic)
     const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
     
-    // Build custom prompt with VOICE_ANCHOR and FACE_ANCHOR blocks
-    // NOTE: isSoraModel already declared at function scope - DO NOT redeclare
-    const platformLabel = isSoraModel ? 'SORA 2' : 'VEO 3.1'
-    const modelConfig = VIDEO_MODELS[platform]
-    const actualDuration = modelConfig ? getClosestDuration(modelConfig, duration) : (duration || 10)
+    // Use safeDuration calculated at function scope (already validated)
+    const actualDuration = safeDuration
     
     // Get camera movement
     const cameraMove = getCameraMovement(segmentType, emotion)
@@ -1679,12 +1705,11 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
   // ========================================================================
   
   // Build B-roll specific prompt (voiceover narration + visual fokus topik)
-  const brollModelConfig = VIDEO_MODELS[platform]
-  const brollActualDuration = brollModelConfig ? getClosestDuration(brollModelConfig, duration) : duration
+  // Use safeDuration calculated at function scope (already validated)
   const brollPrompt = buildBrollVideoPrompt({
     segmentId,
     segmentNumber,
-    duration: brollActualDuration,
+    duration: safeDuration,
     aspectRatio,
     segmentType,
     emotion,
