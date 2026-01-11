@@ -542,8 +542,12 @@ export function buildCinematographyPrompt(params: {
 // Source: 07-Prompt-Templates.md, 06-Cinematography-Lookup.md
 // ============================================================================
 
+// CHARACTER BIBLE - Default creator appearance (Ali Sadikin Ma)
+// Source: 07-Prompt-Templates.md Section 11
+export const DEFAULT_CHARACTER_BIBLE = `A 37-year-old Indonesian man with a bald head and round face shape. Warm skin undertone with natural texture and visible pores. Dark brown almond-shaped eyes behind rectangular gunmetal semi-rimless glasses. Clean-shaven with a confident, approachable expression.`;
+
 export interface FullPromptParams {
-  characterDescription: string;
+  characterDescription?: string; // Optional - uses CHARACTER_BIBLE if not provided
   emotion: string;
   topic: string;
   shotType?: string;        // CU, MCU, MS, etc.
@@ -551,6 +555,7 @@ export interface FullPromptParams {
   aspectRatio: string;      // 9:16, 16:9, 1:1
   costume?: string;         // Override costume
   visualReference?: string; // Film reference (Blade Runner, etc.)
+  useCharacterBible?: boolean; // Force use of default character bible
 }
 
 /**
@@ -559,14 +564,20 @@ export interface FullPromptParams {
  */
 export function buildFullCinematographyPrompt(params: FullPromptParams): string {
   const {
-    characterDescription,
     emotion,
     topic,
     segmentType,
     aspectRatio,
     costume,
-    visualReference
+    visualReference,
+    useCharacterBible = true // Default to using character bible for CREATOR shots
   } = params;
+  
+  // Use CHARACTER BIBLE for CREATOR shots (CRITICAL for face consistency)
+  // Only use custom description if explicitly provided AND not forcing character bible
+  const characterDescription = (useCharacterBible || !params.characterDescription)
+    ? DEFAULT_CHARACTER_BIBLE
+    : params.characterDescription;
   
   // Get specs from lookup tables
   const emotionSpecs = getEmotionSpecs(emotion);

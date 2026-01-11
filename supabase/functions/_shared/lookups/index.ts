@@ -37,6 +37,7 @@ export {
   TOPIC_COSTUMES,
   CAMERA_MOVEMENTS,
   TRANSITIONS,
+  DEFAULT_CHARACTER_BIBLE,  // Character Bible for CREATOR shots
   getEmotionSpecs,
   getLightingPattern,
   getShotType,
