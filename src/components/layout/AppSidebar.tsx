@@ -2,11 +2,19 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   Menu, X, Home, Calendar, Clock, Sparkles, Image, Video,
-  MessageCircle,
+  MessageCircle, FlaskConical,
   ChevronLeft, ChevronRight
 } from "lucide-react";
+
+// Admin emails for special menu access
+const ADMIN_EMAILS = [
+  "alisadikin.ma@gmail.com",
+  "ali.sadikincom85@gmail.com",
+  "admin@sparkfluence.com"
+];
 
 interface AppSidebarProps {
   activePage: 'dashboard' | 'planner' | 'history' | 'settings' | 'scriptLab';
@@ -16,6 +24,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
   const navigate = useNavigate();
   const { t, language } = useLanguage();
   const { theme } = useTheme();
+  const { user } = useAuth();
+  
+  // Check if current user is admin
+  const isAdmin = ADMIN_EMAILS.includes(user?.email || "");
   const [sidebarOpen, setSidebarOpen] = useState(false); // Mobile
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebar_collapsed');
@@ -38,6 +50,9 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
       { id: 'visualForge', icon: Image, label: t.nav.visualForge, comingSoon: true },
       { id: 'videoGenie', icon: Video, label: t.nav.videoGenie, comingSoon: true },
       { id: 'aiChat', icon: MessageCircle, label: 'AI Chat', comingSoon: true },
+    ],
+    admin: [
+      { id: 'engineTest', icon: FlaskConical, label: 'Engine Test', path: '/sparkfluence-engine-test' },
     ],
   };
 
@@ -156,6 +171,30 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
               </button>
             ))}
           </div>
+
+          {/* Admin Section - Only visible to admin users */}
+          {isAdmin && (
+            <div className="mb-4">
+              {!collapsed && (
+                <div className="flex items-center gap-2 px-3 mb-2">
+                  <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider">ADMIN</p>
+                </div>
+              )}
+              {menuItems.admin.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => item.path && navigate(item.path)}
+                  title={collapsed ? item.label : undefined}
+                  className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors ${
+                    collapsed ? 'justify-center' : ''
+                  } hover:bg-amber-500/10 text-amber-600 border border-amber-500/20`}
+                >
+                  <item.icon className="w-5 h-5 flex-shrink-0" />
+                  {!collapsed && <span className="text-sm font-semibold">{item.label}</span>}
+                </button>
+              ))}
+            </div>
+          )}
         </nav>
 
         {/* Collapse Toggle Button - Desktop only */}

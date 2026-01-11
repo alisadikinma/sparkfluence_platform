@@ -11,6 +11,7 @@ import { FileText, Image, Video, FlaskConical, ShieldAlert } from "lucide-react"
 // Admin emails yang diizinkan akses
 const ADMIN_EMAILS = [
   "alisadikin.ma@gmail.com",
+  "ali.sadikincom85@gmail.com",
   "admin@sparkfluence.com"
 ];
 
