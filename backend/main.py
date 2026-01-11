@@ -126,6 +126,30 @@ class SupabaseHelper:
             response = await client.get(url, headers=self.headers, params=params)
             response.raise_for_status()
             return response.json()
+    
+    async def update(self, table: str, filters: Dict, data: Dict) -> List[Dict]:
+        """Update records in table matching filters."""
+        async with httpx.AsyncClient() as client:
+            url = f"{self.url}/rest/v1/{table}"
+            params = {k: f"eq.{v}" for k, v in (filters or {}).items()}
+            response = await client.patch(
+                url,
+                headers=self.headers,
+                params=params,
+                json=data
+            )
+            response.raise_for_status()
+            return response.json()
+    
+    async def select_jsonb_contains(self, table: str, column: str, key: str, value: str) -> List[Dict]:
+        """Select records where JSONB column contains key=value."""
+        async with httpx.AsyncClient() as client:
+            url = f"{self.url}/rest/v1/{table}"
+            # Use PostgREST JSONB contains operator: column->>'key' = value
+            params = {f"{column}->>'{key}'": f"eq.{value}"}
+            response = await client.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()
 
 supabase = SupabaseHelper()
 
@@ -690,6 +714,27 @@ async def process_video_combination_v2(
         # Upload to storage
         update_job_status(job_id, 95, "Uploading final video")
         final_url = await upload_to_storage(result.output_path, project_id)
+        
+        # Update planned_content.final_video_url in database
+        try:
+            update_job_status(job_id, 98, "Updating database")
+            planned_records = await supabase.select_jsonb_contains(
+                'planned_content', 'video_data', 'sessionId', session_id
+            )
+            if planned_records and len(planned_records) > 0:
+                planned_id = planned_records[0].get('id')
+                if planned_id:
+                    await supabase.update(
+                        'planned_content',
+                        {'id': planned_id},
+                        {'final_video_url': final_url}
+                    )
+                    logger.info(f"Updated planned_content {planned_id} with final_video_url")
+            else:
+                logger.warning(f"No planned_content found for session_id: {session_id}")
+        except Exception as db_err:
+            # Don't fail the job if DB update fails - video is still uploaded
+            logger.error(f"Failed to update planned_content: {db_err}")
         
         # Mark as completed
         jobs[job_id].update({

@@ -8,7 +8,7 @@ import { TopNavbar } from "../../components/layout/TopNavbar";
 import { 
   Clock, Video, Play, Trash2, X,
   CheckCircle, AlertCircle, Loader2, Image as ImageIcon,
-  Calendar, Download, Globe, Monitor, Cpu
+  Calendar, Download, Globe, Monitor, Cpu, FileText, Wrench, Film
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
@@ -73,6 +73,10 @@ interface ProjectGroup {
 
 type TabType = 'all' | 'drafts' | 'completed';
 
+// Backend API URL
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence.alisadikinma.com/api';
+const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || '';
+
 export const History = (): JSX.Element => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -82,6 +86,13 @@ export const History = (): JSX.Element => {
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<ProjectGroup | null>(null);
+  
+  // New states for actions
+  const [isRepairing, setIsRepairing] = useState(false);
+  const [isCombining, setIsCombining] = useState(false);
+  const [isAddingSubtitle, setIsAddingSubtitle] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState(false);
 
   // Get locale for date formatting
   const getLocale = () => {
@@ -218,13 +229,13 @@ export const History = (): JSX.Element => {
             statusText = t.common.done || 'Complete';
           } else if (isProcessing) {
             // Show processing status with progress
-            statusText = `${t.videoEditor.status.processing || 'Processing'} ${videosReady}/${validSegments.length}`;
+            statusText = `${t.videoEditor?.status?.processing || 'Processing'} ${videosReady}/${validSegments.length}`;
           } else if (hasFailed) {
             statusText = `${videosFailed} ${t.common.failed || 'failed'}`;
           } else if (imagesReady < validSegments.length) {
-            statusText = `${t.videoEditor.status.images || 'Images'} ${imagesReady}/${validSegments.length}`;
+            statusText = `${t.videoEditor?.status?.images || 'Images'} ${imagesReady}/${validSegments.length}`;
           } else {
-            statusText = `${t.videoEditor.status.videos || 'Videos'} ${videosReady}/${validSegments.length}`;
+            statusText = `${t.videoEditor?.status?.videos || 'Videos'} ${videosReady}/${validSegments.length}`;
           }
 
           projectList.push({
@@ -291,6 +302,8 @@ export const History = (): JSX.Element => {
   const handleViewProject = (project: ProjectGroup) => {
     if (project.is_complete) {
       setSelectedProject(project);
+      setVideoError(false);
+      setActionError(null);
     } else {
       navigate("/video-generation", {
         state: {
@@ -315,11 +328,13 @@ export const History = (): JSX.Element => {
 
   const closeModal = () => {
     setSelectedProject(null);
+    setVideoError(false);
+    setActionError(null);
   };
 
   const handleDeleteProject = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    if (!confirm(t.gallery.deleteConfirm.message)) return;
+    if (!confirm(t.gallery?.deleteConfirm?.message || 'Are you sure you want to delete this project?')) return;
 
     setDeletingId(sessionId);
     try {
@@ -332,11 +347,234 @@ export const History = (): JSX.Element => {
       if (error) throw error;
 
       setProjects(prev => prev.filter(p => p.session_id !== sessionId));
+      if (selectedProject?.session_id === sessionId) {
+        closeModal();
+      }
     } catch (err) {
       console.error("Error deleting project:", err);
-      alert(t.errors.general);
+      alert(t.errors?.general || 'An error occurred');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  // Repair video link - search in storage and update planned_content
+  const handleRepairLink = async () => {
+    if (!selectedProject || !user) return;
+    
+    setIsRepairing(true);
+    setActionError(null);
+    
+    try {
+      console.log('[History] Repairing link for session:', selectedProject.session_id);
+      
+      // List files in final-videos bucket
+      const { data: files, error: listError } = await supabase.storage
+        .from('final-videos')
+        .list('', { limit: 100, sortBy: { column: 'created_at', order: 'desc' } });
+      
+      if (listError) throw listError;
+      
+      // Find video matching this session (by session_id in filename or recent upload)
+      const sessionId = selectedProject.session_id;
+      let matchingFile = files?.find(f => f.name.includes(sessionId));
+      
+      // If no exact match, try to find by planned_content_id
+      if (!matchingFile && selectedProject.planned_content_id) {
+        matchingFile = files?.find(f => f.name.includes(selectedProject.planned_content_id!));
+      }
+      
+      // If still no match, find most recent video from around the same time
+      if (!matchingFile && files && files.length > 0) {
+        const projectDate = new Date(selectedProject.updated_at);
+        const tolerance = 24 * 60 * 60 * 1000; // 24 hours
+        
+        matchingFile = files.find(f => {
+          const fileDate = new Date(f.created_at);
+          return Math.abs(fileDate.getTime() - projectDate.getTime()) < tolerance;
+        });
+      }
+      
+      if (!matchingFile) {
+        throw new Error(language === 'id' 
+          ? 'Video tidak ditemukan di storage. Coba combine ulang.'
+          : 'Video not found in storage. Try re-combining.');
+      }
+      
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('final-videos')
+        .getPublicUrl(matchingFile.name);
+      
+      const videoUrl = urlData.publicUrl;
+      console.log('[History] Found video:', videoUrl);
+      
+      // Update planned_content with the URL
+      if (selectedProject.planned_content_id) {
+        const { error: updateError } = await supabase
+          .from('planned_content')
+          .update({ final_video_url: videoUrl })
+          .eq('id', selectedProject.planned_content_id);
+        
+        if (updateError) throw updateError;
+      }
+      
+      // Update local state
+      setSelectedProject(prev => prev ? { ...prev, final_video_url: videoUrl } : null);
+      setProjects(prev => prev.map(p => 
+        p.session_id === selectedProject.session_id 
+          ? { ...p, final_video_url: videoUrl }
+          : p
+      ));
+      
+      setVideoError(false);
+      console.log('[History] Link repaired successfully');
+      
+    } catch (err: any) {
+      console.error('[History] Repair failed:', err);
+      setActionError(err.message || 'Failed to repair link');
+    } finally {
+      setIsRepairing(false);
+    }
+  };
+
+  // Combine video - navigate to full-video page
+  const handleCombineVideo = () => {
+    if (!selectedProject) return;
+    
+    // Navigate to full-video with segments
+    const navigationState = {
+      segments: selectedProject.segments.map(s => ({
+        id: s.segment_id,
+        type: s.segment_type,
+        script: s.script_text || '',
+        imageUrl: s.image_url,
+        videoUrl: s.video_url,
+        durationSeconds: s.duration_seconds || 8,
+        visualDirection: '',
+        emotion: ''
+      })),
+      topic: selectedProject.topic_title,
+      sessionId: selectedProject.session_id,
+      videoSettings: {
+        aspectRatio: '9:16',
+        resolution: selectedProject.resolution || '1080p'
+      }
+    };
+    
+    sessionStorage.setItem('fullVideoState', JSON.stringify(navigationState));
+    navigate('/full-video', { state: navigationState });
+  };
+
+  // Add subtitles to video
+  const handleAddSubtitle = async () => {
+    if (!selectedProject?.final_video_url) return;
+    
+    setIsAddingSubtitle(true);
+    setActionError(null);
+    
+    try {
+      console.log('[History] Adding subtitles to:', selectedProject.final_video_url);
+      
+      const response = await fetch(`${BACKEND_URL}/add-subtitles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': BACKEND_API_KEY
+        },
+        body: JSON.stringify({
+          video_url: selectedProject.final_video_url,
+          subtitle_style: 'tiktok',
+          project_id: selectedProject.planned_content_id || selectedProject.session_id
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to start subtitle process');
+      }
+      
+      const data = await response.json();
+      console.log('[History] Subtitle job started:', data);
+      
+      // Poll for completion
+      if (data.data?.job_id) {
+        const jobId = data.data.job_id;
+        let attempts = 0;
+        const maxAttempts = 60; // 5 minutes max
+        
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds
+          
+          const statusResponse = await fetch(`${BACKEND_URL}/job-status/${jobId}`, {
+            headers: { 'x-api-key': BACKEND_API_KEY }
+          });
+          
+          if (!statusResponse.ok) {
+            attempts++;
+            continue;
+          }
+          
+          const statusData = await statusResponse.json();
+          const job = statusData.data;
+          
+          if (job.status === 'completed' && job.final_video_url) {
+            // Update with subtitled video
+            if (selectedProject.planned_content_id) {
+              await supabase
+                .from('planned_content')
+                .update({ final_video_url: job.final_video_url })
+                .eq('id', selectedProject.planned_content_id);
+            }
+            
+            setSelectedProject(prev => prev ? { ...prev, final_video_url: job.final_video_url } : null);
+            setProjects(prev => prev.map(p => 
+              p.session_id === selectedProject.session_id 
+                ? { ...p, final_video_url: job.final_video_url }
+                : p
+            ));
+            
+            console.log('[History] Subtitles added successfully');
+            break;
+          } else if (job.status === 'failed') {
+            throw new Error(job.error_message || 'Subtitle generation failed');
+          }
+          
+          attempts++;
+        }
+        
+        if (attempts >= maxAttempts) {
+          throw new Error('Subtitle generation timed out');
+        }
+      }
+      
+    } catch (err: any) {
+      console.error('[History] Add subtitle failed:', err);
+      setActionError(err.message || 'Failed to add subtitles');
+    } finally {
+      setIsAddingSubtitle(false);
+    }
+  };
+
+  // Download video
+  const handleDownload = async () => {
+    if (!selectedProject?.final_video_url) return;
+    
+    try {
+      const response = await fetch(selectedProject.final_video_url);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${selectedProject.topic_title.replace(/[^a-z0-9]/gi, '_').substring(0, 40)}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      // Fallback: open in new tab
+      window.open(selectedProject.final_video_url, '_blank');
     }
   };
 
@@ -356,10 +594,22 @@ export const History = (): JSX.Element => {
   });
 
   const tabs: { key: TabType; label: string; count: number }[] = [
-    { key: 'all', label: t.planner.filters.all, count: projects.length },
-    { key: 'drafts', label: t.planner.filters.drafts, count: projects.filter(p => !p.is_complete).length },
-    { key: 'completed', label: t.gallery.published, count: projects.filter(p => p.is_complete).length },
+    { key: 'all', label: t.planner?.filters?.all || 'All', count: projects.length },
+    { key: 'drafts', label: t.planner?.filters?.drafts || 'Drafts', count: projects.filter(p => !p.is_complete).length },
+    { key: 'completed', label: t.gallery?.published || 'Completed', count: projects.filter(p => p.is_complete).length },
   ];
+
+  // UI text
+  const uiText = {
+    repairLink: language === 'id' ? 'Perbaiki Link' : 'Repair Link',
+    repairing: language === 'id' ? 'Memperbaiki...' : 'Repairing...',
+    combineVideo: language === 'id' ? 'Combine Video' : 'Combine Video',
+    combining: language === 'id' ? 'Combining...' : 'Combining...',
+    addSubtitle: language === 'id' ? 'Tambah Subtitle' : 'Add Subtitle',
+    addingSubtitle: language === 'id' ? 'Menambahkan...' : 'Adding...',
+    videoNotFound: language === 'id' ? 'Video tidak dapat dimuat. Coba perbaiki link atau combine ulang.' : 'Video cannot be loaded. Try repairing link or re-combining.',
+    noFinalVideo: language === 'id' ? 'Video final belum tersedia. Klik "Combine Video" untuk membuat.' : 'Final video not available. Click "Combine Video" to create.',
+  };
 
   return (
     <div className="flex w-full min-h-screen bg-page">
@@ -371,9 +621,9 @@ export const History = (): JSX.Element => {
         <main className="pt-20 pb-8 px-4 sm:px-6 lg:px-8">
           {/* Header */}
           <div className="mb-6">
-            <h1 className="text-2xl font-bold text-text-primary">{t.nav.history}</h1>
+            <h1 className="text-2xl font-bold text-text-primary">{t.nav?.history || 'History'}</h1>
             <p className="text-text-secondary text-sm">
-              {t.history.subtitle}
+              {t.history?.subtitle || 'View all your past video projects'}
             </p>
           </div>
 
@@ -413,13 +663,13 @@ export const History = (): JSX.Element => {
             <div className="text-center py-20">
               <Clock className="w-12 h-12 text-text-muted mx-auto mb-4" />
               <p className="text-text-secondary mb-4">
-                {t.history.empty.title}
+                {t.history?.empty?.title || 'No projects yet'}
               </p>
               <Button
                 onClick={() => navigate("/script-lab")}
                 className="bg-primary hover:bg-primary-hover text-white"
               >
-                {t.gallery.empty.button}
+                {t.gallery?.empty?.button || 'Create New Video'}
               </Button>
             </div>
           ) : (
@@ -458,7 +708,7 @@ export const History = (): JSX.Element => {
                       {project.is_complete ? (
                         <span className="flex items-center gap-0.5 text-[9px] text-green-500 bg-green-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
                           <CheckCircle className="w-2.5 h-2.5" />
-                          {t.common.done}
+                          {t.common?.done || 'Done'}
                         </span>
                       ) : project.is_processing ? (
                         <span className="flex items-center gap-0.5 text-[9px] text-blue-400 bg-blue-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
@@ -468,12 +718,12 @@ export const History = (): JSX.Element => {
                       ) : project.has_failed ? (
                         <span className="flex items-center gap-0.5 text-[9px] text-red-500 bg-red-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
                           <AlertCircle className="w-2.5 h-2.5" />
-                          {project.videos_failed} {t.common.failed || 'Failed'}
+                          {project.videos_failed} {t.common?.failed || 'Failed'}
                         </span>
                       ) : (
                         <span className="flex items-center gap-0.5 text-[9px] text-amber-500 bg-amber-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
                           <AlertCircle className="w-2.5 h-2.5" />
-                          {t.planner.draft}
+                          {t.planner?.draft || 'Draft'}
                         </span>
                       )}
                     </div>
@@ -574,17 +824,17 @@ export const History = (): JSX.Element => {
         </main>
       </div>
 
-      {/* Video Detail Modal - Planner Detail Style */}
+      {/* Video Detail Modal - Enhanced with more actions */}
       {selectedProject && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={closeModal}>
           <div
-            className="bg-card rounded-2xl max-w-3xl w-full overflow-hidden"
+            className="bg-card rounded-2xl max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border-default">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border-default sticky top-0 bg-card z-10">
               <h3 className="text-lg font-semibold text-text-primary">
-                {t.gallery.viewDetails}
+                {t.gallery?.viewDetails || 'View Details'}
               </h3>
               <button
                 onClick={closeModal}
@@ -595,16 +845,17 @@ export const History = (): JSX.Element => {
             </div>
 
             {/* Modal Body - Two columns */}
-            <div className="p-6 flex gap-6">
+            <div className="p-6 flex flex-col md:flex-row gap-6">
               {/* Left - Video Preview */}
-              <div className="w-[280px] flex-shrink-0">
+              <div className="w-full md:w-[280px] flex-shrink-0">
                 <div className="bg-black rounded-xl overflow-hidden aspect-[9/16] relative">
-                  {selectedProject.final_video_url ? (
+                  {selectedProject.final_video_url && !videoError ? (
                     <video
                       src={selectedProject.final_video_url}
                       controls
                       className="w-full h-full object-contain"
                       poster={selectedProject.thumbnail_url || undefined}
+                      onError={() => setVideoError(true)}
                     />
                   ) : selectedProject.thumbnail_url ? (
                     <>
@@ -613,10 +864,26 @@ export const History = (): JSX.Element => {
                         alt={selectedProject.topic_title}
                         className="w-full h-full object-cover"
                       />
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                        <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center cursor-pointer hover:bg-white/30 transition-colors">
-                          <Play className="w-7 h-7 text-white ml-1" />
-                        </div>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 p-4">
+                        {videoError ? (
+                          <>
+                            <AlertCircle className="w-10 h-10 text-amber-400 mb-2" />
+                            <p className="text-white/80 text-xs text-center mb-3">
+                              {uiText.videoNotFound}
+                            </p>
+                          </>
+                        ) : !selectedProject.final_video_url ? (
+                          <>
+                            <Film className="w-10 h-10 text-amber-400 mb-2" />
+                            <p className="text-white/80 text-xs text-center mb-3">
+                              {uiText.noFinalVideo}
+                            </p>
+                          </>
+                        ) : (
+                          <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center cursor-pointer hover:bg-white/30 transition-colors">
+                            <Play className="w-7 h-7 text-white ml-1" />
+                          </div>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -630,14 +897,20 @@ export const History = (): JSX.Element => {
               {/* Right - Details */}
               <div className="flex-1 min-w-0">
                 {/* Date & Status Badges */}
-                <div className="flex items-center gap-2 mb-4">
+                <div className="flex items-center gap-2 mb-4 flex-wrap">
                   <span className="px-3 py-1 bg-surface text-text-primary text-sm rounded-full">
                     {formatDate(selectedProject.updated_at)}
                   </span>
                   <span className="px-3 py-1 bg-green-500/20 text-green-500 text-sm rounded-full flex items-center gap-1">
                     <CheckCircle className="w-3 h-3" />
-                    {t.common.done}
+                    {t.common?.done || 'Done'}
                   </span>
+                  {!selectedProject.final_video_url && (
+                    <span className="px-3 py-1 bg-amber-500/20 text-amber-500 text-sm rounded-full flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {language === 'id' ? 'Belum Combine' : 'Not Combined'}
+                    </span>
+                  )}
                 </div>
 
                 {/* Title */}
@@ -646,16 +919,26 @@ export const History = (): JSX.Element => {
                 </h2>
 
                 {/* Description */}
-                <p className="text-text-secondary text-sm mb-6">
-                  {selectedProject.description || t.history.empty.description}
+                <p className="text-text-secondary text-sm mb-4">
+                  {selectedProject.description || (t.history?.empty?.description || 'Your generation history will appear here')}
                 </p>
+
+                {/* Error Message */}
+                {actionError && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4">
+                    <p className="text-red-400 text-sm flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4" />
+                      {actionError}
+                    </p>
+                  </div>
+                )}
 
                 {/* Platform & Time */}
                 <div className="flex items-center gap-8 mb-6">
                   {/* Platforms */}
                   <div>
                     <p className="text-text-muted text-xs mb-2">
-                      {t.planner.detail.platform}
+                      {t.planner?.detail?.platform || 'Platform'}
                     </p>
                     <div className="flex items-center gap-2">
                       {(selectedProject.platforms && selectedProject.platforms.length > 0) ? (
@@ -687,37 +970,98 @@ export const History = (): JSX.Element => {
                   {/* Duration */}
                   <div>
                     <p className="text-text-muted text-xs mb-2">
-                      {t.gallery.videoInfo.duration}
+                      {t.gallery?.videoInfo?.duration || 'Duration'}
                     </p>
                     <div className="flex items-center gap-2 text-text-primary">
                       <Clock className="w-4 h-4" />
-                      <span>{selectedProject.total_segments * 8}s</span>
+                      <span>{selectedProject.total_duration_seconds}s</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex items-center gap-3">
-                  <button
+                {/* Action Buttons - Grid layout */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Row 1: Primary actions */}
+                  {selectedProject.final_video_url && !videoError ? (
+                    <>
+                      <Button
+                        onClick={handleDownload}
+                        className="bg-primary hover:bg-primary-hover text-white flex items-center justify-center gap-2"
+                      >
+                        <Download className="w-4 h-4" />
+                        {t.common?.download || 'Download'}
+                      </Button>
+                      <Button
+                        onClick={handleAddSubtitle}
+                        disabled={isAddingSubtitle}
+                        variant="outline"
+                        className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10 flex items-center justify-center gap-2"
+                      >
+                        {isAddingSubtitle ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <FileText className="w-4 h-4" />
+                        )}
+                        {isAddingSubtitle ? uiText.addingSubtitle : uiText.addSubtitle}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        onClick={handleCombineVideo}
+                        disabled={isCombining}
+                        className="bg-primary hover:bg-primary-hover text-white flex items-center justify-center gap-2"
+                      >
+                        {isCombining ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Film className="w-4 h-4" />
+                        )}
+                        {isCombining ? uiText.combining : uiText.combineVideo}
+                      </Button>
+                      <Button
+                        onClick={handleRepairLink}
+                        disabled={isRepairing}
+                        variant="outline"
+                        className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10 flex items-center justify-center gap-2"
+                      >
+                        {isRepairing ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Wrench className="w-4 h-4" />
+                        )}
+                        {isRepairing ? uiText.repairing : uiText.repairLink}
+                      </Button>
+                    </>
+                  )}
+                  
+                  {/* Row 2: Secondary actions */}
+                  <Button
                     onClick={(e) => {
-                      handleDeleteProject(e, selectedProject.session_id);
-                      closeModal();
+                      handleDeleteProject(e as any, selectedProject.session_id);
                     }}
-                    className="flex items-center gap-2 px-5 py-2.5 border border-border-default rounded-lg text-text-primary hover:bg-surface transition-colors"
+                    variant="outline"
+                    className="border-red-500/50 text-red-400 hover:bg-red-500/10 flex items-center justify-center gap-2"
                   >
                     <Trash2 className="w-4 h-4" />
-                    {t.common.delete}
-                  </button>
-
-                  {selectedProject.final_video_url && (
-                    <a
-                      href={selectedProject.final_video_url}
-                      download
-                      className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover rounded-lg text-white transition-colors"
+                    {t.common?.delete || 'Delete'}
+                  </Button>
+                  
+                  {/* If video exists but has error, show repair option */}
+                  {selectedProject.final_video_url && videoError && (
+                    <Button
+                      onClick={handleRepairLink}
+                      disabled={isRepairing}
+                      variant="outline"
+                      className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10 flex items-center justify-center gap-2"
                     >
-                      <Download className="w-4 h-4" />
-                      {t.common.download}
-                    </a>
+                      {isRepairing ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Wrench className="w-4 h-4" />
+                      )}
+                      {isRepairing ? uiText.repairing : uiText.repairLink}
+                    </Button>
                   )}
                 </div>
               </div>
