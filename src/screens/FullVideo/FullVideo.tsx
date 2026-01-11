@@ -403,19 +403,55 @@ export const FullVideo: React.FC = () => {
     return "Almost done... (this may take a while)";
   };
 
-  // Update planned_content with final video URL
-  const updatePlannedContentWithVideo = async (videoUrl: string) => {
+  // Update database with final video URL (both planned_content AND video_generation_jobs)
+  const updatePlannedContentWithVideo = async (videoUrl: string, hasSubtitles: boolean = false) => {
     if (!user || !videoData?.sessionId) return;
     
     try {
-      const { error } = await supabase
+      console.log('[FullVideo] Saving final_video_url to database for session:', videoData.sessionId);
+      
+      // 1. Update video_generation_jobs - store in first segment for the session
+      //    This ensures History page can always find the final video
+      const { error: jobError } = await supabase
+        .from('video_generation_jobs')
+        .update({ 
+          final_video_url: videoUrl,
+          has_subtitles: hasSubtitles
+        })
+        .eq('user_id', user.id)
+        .eq('session_id', videoData.sessionId)
+        .eq('segment_id', '0'); // Update first segment
+      
+      if (jobError) {
+        console.warn('[FullVideo] Failed to update video_generation_jobs:', jobError);
+        // Try updating any segment if segment_id 0 doesn't exist
+        const { error: fallbackError } = await supabase
+          .from('video_generation_jobs')
+          .update({ 
+            final_video_url: videoUrl,
+            has_subtitles: hasSubtitles 
+          })
+          .eq('user_id', user.id)
+          .eq('session_id', videoData.sessionId)
+          .order('segment_id', { ascending: true })
+          .limit(1);
+        
+        if (fallbackError) {
+          console.error('[FullVideo] Fallback update also failed:', fallbackError);
+        }
+      } else {
+        console.log('[FullVideo] Successfully saved final_video_url to video_generation_jobs');
+      }
+      
+      // 2. Also try to update planned_content if exists
+      const { error: plannedError } = await supabase
         .from('planned_content')
         .update({ final_video_url: videoUrl })
         .eq('user_id', user.id)
         .contains('video_data', { sessionId: videoData.sessionId });
       
-      if (error) {
-        console.error('[FullVideo] Failed to update planned_content:', error);
+      if (plannedError) {
+        console.warn('[FullVideo] Failed to update planned_content (may not exist yet):', plannedError);
       }
     } catch (err) {
       console.error('[FullVideo] Update error:', err);

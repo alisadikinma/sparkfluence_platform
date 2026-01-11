@@ -31,6 +31,9 @@ interface VideoJob {
   resolution?: string;
   preferred_platform?: string;
   duration_seconds?: number;
+  // Final video fields (from migration)
+  final_video_url?: string | null;
+  has_subtitles?: boolean;
 }
 
 // Job status constants
@@ -69,6 +72,7 @@ interface ProjectGroup {
   resolution?: string;
   model?: string;
   total_duration_seconds: number;
+  has_subtitles?: boolean;
 }
 
 type TabType = 'all' | 'drafts' | 'completed';
@@ -118,10 +122,10 @@ export const History = (): JSX.Element => {
       setLoading(true);
       console.log('[History] Fetching projects for user:', user.id);
       
-      // Fetch video generation jobs with metadata
+      // Fetch video generation jobs with metadata (including final_video_url)
       const { data: videoJobs, error: videoError } = await supabase
         .from("video_generation_jobs")
-        .select("*, language, resolution, preferred_platform, duration_seconds")
+        .select("*, language, resolution, preferred_platform, duration_seconds, final_video_url, has_subtitles")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false });
 
@@ -239,6 +243,15 @@ export const History = (): JSX.Element => {
           const segmentDuration = firstSeg?.duration_seconds || videoData?.duration_seconds || 8;
           const totalDuration = validSegments.length * segmentDuration;
 
+          // Get final_video_url from video_generation_jobs first (new migration), then planned_content
+          const jobFinalVideoUrl = validSegments.find(s => s.final_video_url)?.final_video_url || undefined;
+          const jobHasSubtitles = validSegments.some(s => s.has_subtitles);
+          
+          // Debug: Log final_video_url sources
+          if (jobFinalVideoUrl || planned?.final_video_url) {
+            console.log(`[History] Session ${sessionId.slice(0,8)}: jobFinalVideoUrl=${!!jobFinalVideoUrl}, plannedFinalVideoUrl=${!!planned?.final_video_url}`);
+          }
+
           // Calculate status text - PRIORITY: Processing > Failed > Pending
           let statusText = '';
           if (isComplete) {
@@ -275,7 +288,7 @@ export const History = (): JSX.Element => {
             created_at: validSegments[0]?.created_at || new Date().toISOString(),
             updated_at: validSegments[0]?.updated_at || new Date().toISOString(),
             planned_content_id: planned?.id,
-            final_video_url: planned?.final_video_url || undefined,
+            final_video_url: jobFinalVideoUrl || planned?.final_video_url || undefined,
             thumbnail_url: planned?.thumbnail_url || validSegments.find(s => s.image_url)?.image_url,
             scheduled_date: planned?.scheduled_date,
             scheduled_time: planned?.scheduled_time,
@@ -285,7 +298,8 @@ export const History = (): JSX.Element => {
             language: projectLanguage,
             resolution: projectResolution,
             model: projectModel,
-            total_duration_seconds: totalDuration
+            total_duration_seconds: totalDuration,
+            has_subtitles: jobHasSubtitles
           });
           } catch (sessionErr) {
             console.warn('[History] Error processing session:', sessionId, sessionErr);
