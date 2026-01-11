@@ -95,6 +95,8 @@ export const History = (): JSX.Element => {
   const [isRepairing, setIsRepairing] = useState(false);
   const [isCombining, setIsCombining] = useState(false);
   const [isAddingSubtitle, setIsAddingSubtitle] = useState(false);
+  const [subtitleProgress, setSubtitleProgress] = useState(0);
+  const [subtitleStep, setSubtitleStep] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [videoError, setVideoError] = useState(false);
 
@@ -502,6 +504,8 @@ export const History = (): JSX.Element => {
     
     setIsAddingSubtitle(true);
     setActionError(null);
+    setSubtitleProgress(5);
+    setSubtitleStep(language === 'id' ? 'Memulai...' : 'Starting...');
     
     try {
       console.log('[History] Adding subtitles to:', selectedProject.final_video_url);
@@ -526,6 +530,8 @@ export const History = (): JSX.Element => {
       
       const data = await response.json();
       console.log('[History] Subtitle job started:', data);
+      setSubtitleProgress(10);
+      setSubtitleStep(language === 'id' ? 'Mengunduh video...' : 'Downloading video...');
       
       // Poll for completion
       if (data.data?.job_id) {
@@ -548,7 +554,32 @@ export const History = (): JSX.Element => {
           const statusData = await statusResponse.json();
           const job = statusData.data;
           
+          // Update progress from backend
+          if (job.progress_percentage) {
+            setSubtitleProgress(job.progress_percentage);
+          } else {
+            // Estimate progress based on attempts
+            const estimatedProgress = Math.min(10 + (attempts * 3), 90);
+            setSubtitleProgress(estimatedProgress);
+          }
+          
+          // Update step text
+          if (job.current_step) {
+            setSubtitleStep(job.current_step);
+          } else if (attempts < 3) {
+            setSubtitleStep(language === 'id' ? 'Mengunduh video...' : 'Downloading video...');
+          } else if (attempts < 8) {
+            setSubtitleStep(language === 'id' ? 'Transkripsi audio...' : 'Transcribing audio...');
+          } else if (attempts < 15) {
+            setSubtitleStep(language === 'id' ? 'Membuat subtitle...' : 'Generating subtitles...');
+          } else {
+            setSubtitleStep(language === 'id' ? 'Memproses video...' : 'Processing video...');
+          }
+          
           if (job.status === 'completed' && job.final_video_url) {
+            setSubtitleProgress(100);
+            setSubtitleStep(language === 'id' ? 'Selesai!' : 'Complete!');
+            
             // Update with subtitled video
             if (selectedProject.planned_content_id) {
               await supabase
@@ -557,10 +588,27 @@ export const History = (): JSX.Element => {
                 .eq('id', selectedProject.planned_content_id);
             }
             
-            setSelectedProject(prev => prev ? { ...prev, final_video_url: job.final_video_url } : null);
+            // Also update video_generation_jobs (user_id required for RLS)
+            const { data: updateData, error: updateError } = await supabase
+              .from('video_generation_jobs')
+              .update({ 
+                final_video_url: job.final_video_url,
+                has_subtitles: true
+              })
+              .eq('session_id', selectedProject.session_id)
+              .eq('user_id', user?.id)
+              .select('id');
+            
+            if (updateError) {
+              console.error('[History] Failed to update video_generation_jobs:', updateError);
+            } else {
+              console.log(`[History] Updated ${updateData?.length || 0} video_generation_jobs with subtitle video URL`);
+            }
+            
+            setSelectedProject(prev => prev ? { ...prev, final_video_url: job.final_video_url, has_subtitles: true } : null);
             setProjects(prev => prev.map(p => 
               p.session_id === selectedProject.session_id 
-                ? { ...p, final_video_url: job.final_video_url }
+                ? { ...p, final_video_url: job.final_video_url, has_subtitles: true }
                 : p
             ));
             
@@ -583,6 +631,8 @@ export const History = (): JSX.Element => {
       setActionError(err.message || 'Failed to add subtitles');
     } finally {
       setIsAddingSubtitle(false);
+      setSubtitleProgress(0);
+      setSubtitleStep('');
     }
   };
 
@@ -1028,14 +1078,27 @@ export const History = (): JSX.Element => {
                         onClick={handleAddSubtitle}
                         disabled={isAddingSubtitle}
                         variant="outline"
-                        className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10 flex items-center justify-center gap-2"
+                        className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10 flex flex-col items-center justify-center gap-1 py-3 relative overflow-hidden"
                       >
                         {isAddingSubtitle ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <>
+                            {/* Progress bar background */}
+                            <div 
+                              className="absolute inset-0 bg-purple-500/20 transition-all duration-300"
+                              style={{ width: `${subtitleProgress}%` }}
+                            />
+                            <div className="flex items-center gap-2 relative z-10">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>{subtitleProgress}%</span>
+                            </div>
+                            <span className="text-xs text-purple-300 relative z-10">{subtitleStep}</span>
+                          </>
                         ) : (
-                          <FileText className="w-4 h-4" />
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4" />
+                            {uiText.addSubtitle}
+                          </div>
                         )}
-                        {isAddingSubtitle ? uiText.addingSubtitle : uiText.addSubtitle}
                       </Button>
                     </>
                   ) : (

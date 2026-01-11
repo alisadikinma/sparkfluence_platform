@@ -197,10 +197,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         # Other words - normal white
                         text_parts.append(w.word.upper())
                 
-                # Join with newline for vertical stacking (TikTok style)
-                # Or space for horizontal
-                display_text = "\\N".join(text_parts)  # Vertical stack
-                # display_text = " ".join(text_parts)  # Horizontal
+                # Join with space for horizontal single line
+                # Only use newline if text is too long (>40 chars)
+                full_text = " ".join(text_parts)
+                if len(full_text.replace('{', '').replace('}', '').replace('\\', '')) > 50:
+                    # Too long - split into 2 lines at middle
+                    mid = len(text_parts) // 2
+                    display_text = " ".join(text_parts[:mid]) + "\\N" + " ".join(text_parts[mid:])
+                else:
+                    display_text = full_text  # Single line horizontal
                 
                 start = self._format_time(current_word.start)
                 end = self._format_time(current_word.end)
@@ -246,7 +251,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         # Previous words - white
                         text_parts.append(word.word.upper())
                 
-                display_text = "\\N".join(text_parts)
+                # Single line horizontal (split only if too long)
+                full_text = " ".join(text_parts)
+                if len(full_text.replace('{', '').replace('}', '').replace('\\', '')) > 50:
+                    mid = len(text_parts) // 2
+                    display_text = " ".join(text_parts[:mid]) + "\\N" + " ".join(text_parts[mid:])
+                else:
+                    display_text = full_text
                 
                 start = self._format_time(group[word_idx].start)
                 # End when next word starts, or at group end
@@ -443,16 +454,16 @@ SUBTITLE_PRESETS = {
     
     'tiktok': SubtitleStyle(
         font_name="Montserrat",
-        font_size=80,  # Larger for mobile readability
+        font_size=100,  # Larger for mobile readability
         bold=True,
-        outline=5,
+        outline=6,
         shadow=3,
         primary_color="&HFFFFFF",  # White
         highlight_color="&H00FFFF",  # Yellow/Cyan
         outline_color="&H000000",  # Black
         alignment=SubtitlePosition.BOTTOM_CENTER,
         margin_v=450,  # Lower center area
-        words_per_group=2  # 2 words at a time
+        words_per_group=3  # 3 words at a time (single line)
     ),
     
     'reels': SubtitleStyle(
@@ -509,16 +520,16 @@ SUBTITLE_PRESETS = {
     
     'viral': SubtitleStyle(
         font_name="Montserrat",
-        font_size=84,
+        font_size=100,  # Same as tiktok for consistency
         bold=True,
-        outline=5,
+        outline=6,
         shadow=3,
         primary_color="&HFFFFFF",  # White
         highlight_color="&H00D7FF",  # Orange-Yellow (BGR)
         outline_color="&H000000",
         alignment=SubtitlePosition.BOTTOM_CENTER,
         margin_v=480,
-        words_per_group=2
+        words_per_group=3  # Single line horizontal
     )
 }
 
