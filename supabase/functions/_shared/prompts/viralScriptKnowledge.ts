@@ -698,15 +698,67 @@ ${CASE_STUDIES}
 `;
 
 // ============================================================================
-// Helper: Get knowledge by duration
+// Helper: Get knowledge by duration AND video model
 // ============================================================================
 
-export function getStructureByDuration(duration: string): string {
-  // SORA 2.0 OPTIMIZED: HOOK always 5s (non-negotiable scroll-stopper)
-  // Other segments use 10s or 15s for better content density
-  const structures: Record<string, string> = {
+/**
+ * VIDEO MODEL CONSTRAINTS:
+ * - VEO 3.1: Max 8s per segment (fast lip-sync)
+ * - Sora 2.0: Max 10-15s per segment (longer form)
+ */
+export function getStructureByDuration(duration: string, videoModel?: string): string {
+  // Determine max segment duration based on video model
+  const isVEO = videoModel?.toLowerCase()?.includes('veo') || videoModel?.toLowerCase()?.includes('3.1');
+  const maxSegment = isVEO ? 8 : 15; // VEO max 8s, Sora max 15s
+  const modelName = isVEO ? 'VEO 3.1' : 'Sora 2.0';
+  
+  // VEO 3.1 OPTIMIZED structures (max 8s per segment)
+  const veoStructures: Record<string, string> = {
     '30s': `
-4 segments for 30s video (Sora 2.0 optimized):
+4 segments for 30s video (VEO 3.1 - max 8s per segment):
+| Segment | Timing | Duration | Shot Type |
+|---------|--------|----------|----------|
+| HOOK | 0-5s | 5s | CREATOR |
+| BODY-1 | 5-13s | 8s | B-ROLL |
+| BODY-2 | 13-21s | 8s | B-ROLL |
+| CTA | 21-29s | 8s | CREATOR |
+
+CRITICAL: Max 8s per segment for VEO 3.1. HOOK must be 5s for scroll-stopping.`,
+    
+    '60s': `
+6 segments for 60s video (VEO 3.1 - max 8s per segment):
+| Segment | Timing | Duration | Shot Type |
+|---------|--------|----------|----------|
+| HOOK | 0-5s | 5s | CREATOR |
+| FORE | 5-13s | 8s | B-ROLL |
+| BODY-1 | 13-21s | 8s | B-ROLL |
+| BODY-2 | 21-29s | 8s | B-ROLL |
+| PEAK | 29-37s | 8s | B-ROLL |
+| CTA | 37-45s | 8s | CREATOR |
+
+CRITICAL: Max 8s per segment for VEO 3.1. More segments but shorter = better lip-sync quality.`,
+    
+    '90s': `
+10 segments for 90s video (VEO 3.1 - max 8s per segment):
+| Segment | Timing | Duration | Shot Type |
+|---------|--------|----------|----------|
+| HOOK | 0-5s | 5s | CREATOR |
+| FORE | 5-13s | 8s | B-ROLL |
+| BODY-1 | 13-21s | 8s | B-ROLL |
+| BODY-2 | 21-29s | 8s | B-ROLL |
+| BODY-3 | 29-37s | 8s | B-ROLL |
+| BODY-4 | 37-45s | 8s | B-ROLL |
+| BODY-5 | 45-53s | 8s | B-ROLL |
+| PEAK | 53-61s | 8s | B-ROLL |
+| CTA | 61-69s | 8s | CREATOR |
+
+CRITICAL: Max 8s per segment for VEO 3.1. More segments to fill 90s duration.`
+  };
+  
+  // SORA 2.0 OPTIMIZED structures (max 10-15s per segment)
+  const soraStructures: Record<string, string> = {
+    '30s': `
+4 segments for 30s video (Sora 2.0 - max 10s per segment):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
@@ -717,7 +769,7 @@ export function getStructureByDuration(duration: string): string {
 Note: No FORESHADOW for 30s — go straight to value. HOOK must be exactly 5s for scroll-stopping.`,
     
     '60s': `
-5 segments for 60s video (Sora 2.0 optimized):
+5 segments for 60s video (Sora 2.0 - max 15s per segment):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
@@ -729,7 +781,7 @@ Note: No FORESHADOW for 30s — go straight to value. HOOK must be exactly 5s fo
 CRITICAL: HOOK must be exactly 5s (scroll-stopper, non-negotiable). Use 15s for content-dense segments.`,
     
     '90s': `
-7 segments for 90s video (Sora 2.0 optimized):
+7 segments for 90s video (Sora 2.0 - max 15s per segment):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
@@ -743,5 +795,10 @@ CRITICAL: HOOK must be exactly 5s (scroll-stopper, non-negotiable). Use 15s for 
 CRITICAL: HOOK must be exactly 5s. Fewer segments with longer durations = better content flow.`
   };
 
+  const structures = isVEO ? veoStructures : soraStructures;
+  
+  // Log which model structure is being used
+  console.log(`[StructureGuide] Using ${modelName} structure for ${duration} video (max ${maxSegment}s/segment)`);
+  
   return structures[duration] || structures['60s'];
 }

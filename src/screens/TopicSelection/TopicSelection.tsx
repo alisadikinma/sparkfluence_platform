@@ -464,7 +464,9 @@ export const TopicSelection = (): JSX.Element => {
           user_id: user?.id,
           // DNA Tone: When enabled, use creative_dna styles for script generation
           use_dna_tone: useDnaTone && hasDnaTone,
-          creative_dna: useDnaTone && hasDnaTone ? dbOnboardingData?.creative_dna : null
+          creative_dna: useDnaTone && hasDnaTone ? dbOnboardingData?.creative_dna : null,
+          // Video model for segment duration constraints (VEO 3.1 max 8s, Sora 2.0 max 15s)
+          video_model: model
         }
       });
 

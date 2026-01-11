@@ -113,7 +113,9 @@ serve(async (req) => {
       segment_type,
       // DNA Tone parameters (from TopicSelection)
       use_dna_tone,
-      creative_dna
+      creative_dna,
+      // Video model for segment duration constraints
+      video_model
       // NOTE: character_description is handled by VideoEditor -> generate-images
       // No need to pass avatar URL here anymore
     } = await req.json()
@@ -131,9 +133,10 @@ serve(async (req) => {
     const selectedResolution = resolution || '1080p'
     const selectedPlatform = platform || 'tiktok'
     const selectedLanguage = language || 'indonesian'
+    const selectedVideoModel = video_model || 'sora-2' // Default to Sora for backward compatibility
     
     console.log('[Script] Starting generation - NO DB QUERIES for knowledge')
-    console.log(`[Script] Duration: ${selectedDuration}, Language: ${selectedLanguage}`)
+    console.log(`[Script] Duration: ${selectedDuration}, Language: ${selectedLanguage}, VideoModel: ${selectedVideoModel}`)
 
     // Handle regenerate_segment differently
     if (input_type === 'regenerate_segment') {
@@ -152,7 +155,7 @@ serve(async (req) => {
     const dnaStyles = use_dna_tone && creative_dna && Array.isArray(creative_dna) ? creative_dna : null
     console.log(`[Script] DNA Tone: ${use_dna_tone ? 'ENABLED' : 'disabled'}${dnaStyles ? ` (${dnaStyles.length} styles)` : ''}`)
     
-    const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles)
+    const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles, selectedVideoModel)
     // P0: Inject product naming rule for tech topics
     const systemPrompt = injectProductNamingRule(baseSystemPrompt)
     const userPrompt = buildUserPrompt(
@@ -374,12 +377,24 @@ serve(async (req) => {
 // PROMPT BUILDERS (Using Static Knowledge)
 // ============================================================================
 
-function buildSystemPrompt(language: string, duration: string, dnaStyles: string[] | null = null): string {
+function buildSystemPrompt(language: string, duration: string, dnaStyles: string[] | null = null, videoModel: string = 'sora-2'): string {
   const langConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG['indonesian']
-  // SORA 2.0 OPTIMIZED: Fewer segments with longer durations (10s/15s)
-  // HOOK always 5s (non-negotiable scroll-stopper)
-  const segmentCount = duration === '30s' ? 4 : duration === '60s' ? 5 : 7
-  const structureGuide = getStructureByDuration(duration)
+  
+  // VIDEO MODEL AWARE: Adjust segment count based on model constraints
+  // VEO 3.1: max 8s/segment → more segments needed
+  // Sora 2.0: max 15s/segment → fewer segments
+  const isVEO = videoModel?.toLowerCase()?.includes('veo') || videoModel?.toLowerCase()?.includes('3.1')
+  
+  let segmentCount: number
+  if (isVEO) {
+    // VEO 3.1: More segments with shorter durations
+    segmentCount = duration === '30s' ? 4 : duration === '60s' ? 6 : 10
+  } else {
+    // Sora 2.0: Fewer segments with longer durations
+    segmentCount = duration === '30s' ? 4 : duration === '60s' ? 5 : 7
+  }
+  
+  const structureGuide = getStructureByDuration(duration, videoModel)
   
   // Get slang knowledge for language
   const slangGuide = getSlangKnowledge(language)
