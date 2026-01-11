@@ -680,3 +680,31 @@ export function getVisualSpecs(params: {
     filmStock,
   };
 }
+
+// ============================================================================
+// NEGATIVE PROMPT TEMPLATES (Moved from metaphorLookup.ts - 2026-01-11)
+// Used by fal.ai wan/v2.6 for B-roll quality control
+// ============================================================================
+
+export const NEGATIVE_PROMPTS = {
+  // Quality issues only (DEFAULT)
+  general: 'blurry, low quality, distorted, artifacts, noise, grain, pixelated, compression artifacts',
+  // Text/watermark exclusion
+  no_text: 'text, watermark, logo, signature, username, label, caption, subtitle, overlay, UI elements',
+  // Style exclusion (keep photorealistic)
+  no_style: 'cartoon, anime, illustration, painting, drawing, sketch, 3D render, CGI, digital art',
+  // Combined quality + text + style (NO human exclusion - humans allowed in all segments)
+  combined: 'blurry, low quality, distorted, artifacts, text, watermark, logo, cartoon, anime, illustration, painting, oversaturated, underexposed, flat lighting, cheap CGI',
+};
+
+/**
+ * Get negative prompt for B-roll (fal.ai wan/v2.6)
+ * NOTE: Humans are ALLOWED in all segments. Only creator face differs (HOOK/CTA use reference image).
+ * @param type - Type of negative prompt: 'general' | 'no_text' | 'no_style' | 'combined'
+ * @returns Negative prompt string
+ */
+export function getBRollNegativePrompt(
+  type: keyof typeof NEGATIVE_PROMPTS = 'combined'
+): string {
+  return NEGATIVE_PROMPTS[type] || NEGATIVE_PROMPTS.combined;
+}

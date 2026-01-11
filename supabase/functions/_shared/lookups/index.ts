@@ -5,22 +5,12 @@
  * Central export for all O(1) lookup modules.
  * Use these instead of RAG for structured data.
  * 
- * Last Updated: 2026-01-10
+ * Last Updated: 2026-01-11
  */
 
-// Metaphor Lookup - Abstract → Visual Element Mapping
-export {
-  METAPHOR_MAP,
-  TOPIC_VISUALS,
-  NEGATIVE_PROMPTS,
-  getVisualsForConcept,
-  extractVisualsFromText,
-  getTopicVisuals,
-  identifyAbstractConcepts,
-  buildVisualBrief,
-  getBRollNegativePrompt,
-  type VisualBrief,
-} from './metaphorLookup.ts';
+// Metaphor Lookup - DISABLED (2026-01-11)
+// Stock image search temporarily disabled, metaphorLookup.ts no longer used
+// NEGATIVE_PROMPTS and getBRollNegativePrompt moved to cinematographyLookup.ts
 
 // Cinematography Lookup - Emotion/Mood → Technical Specs
 export {
@@ -38,6 +28,7 @@ export {
   CAMERA_MOVEMENTS,
   TRANSITIONS,
   DEFAULT_CHARACTER_BIBLE,  // Character Bible for CREATOR shots
+  NEGATIVE_PROMPTS,         // Moved from metaphorLookup.ts (2026-01-11)
   getEmotionSpecs,
   getLightingPattern,
   getShotType,
@@ -47,6 +38,7 @@ export {
   buildCinematographyPrompt,
   buildFullCinematographyPrompt,
   getVisualSpecs,
+  getBRollNegativePrompt,   // Moved from metaphorLookup.ts (2026-01-11)
   type EmotionSpecs,
   type FullPromptParams,
   type LightingPattern,
@@ -121,20 +113,22 @@ export {
   type VideoPromptParams,
 } from './videoSpecs.ts';
 
-// Product Keywords Lookup - Entity Detection for Stock Image Search
-export {
-  TECH_BRANDS,
-  CRYPTO_TERMS,
-  GENERIC_KEYWORDS,
-  MODEL_PATTERNS,
-  BRAND_SEARCH_QUERIES,
-  detectProductEntities,
-  shouldUseStockImage,
-  getProductSearchQuery,
-  getProductCategory,
-  decideImageSource,
-  extractProductModels,
-  detectBrands,
-  type ProductEntity,
-  type ProductSearchDecision,
-} from './productKeywords.ts';
+// Product Keywords Lookup - DISABLED (2026-01-11)
+// Stock image search temporarily disabled, productKeywords.ts no longer used
+// TODO: Re-enable when stock image feature is ready
+// export {
+//   TECH_BRANDS,
+//   CRYPTO_TERMS,
+//   GENERIC_KEYWORDS,
+//   MODEL_PATTERNS,
+//   BRAND_SEARCH_QUERIES,
+//   detectProductEntities,
+//   shouldUseStockImage,
+//   getProductSearchQuery,
+//   getProductCategory,
+//   decideImageSource,
+//   extractProductModels,
+//   detectBrands,
+//   type ProductEntity,
+//   type ProductSearchDecision,
+// } from './productKeywords.ts';
