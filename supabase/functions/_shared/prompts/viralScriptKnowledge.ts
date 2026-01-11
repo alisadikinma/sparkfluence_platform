@@ -46,35 +46,17 @@ You are NOT a writer. You are an engineer applying:
 
 ## 2. DURATION-BASED STRUCTURE RULES
 
-⚠️ SORA 2.0 OPTIMIZED: HOOK always 5s (scroll-stopper), other segments 10s or 15s
+⚠️ IMPORTANT: The exact segment structure will be provided dynamically based on:
+- Video duration (30s, 60s, 90s)
+- Video model (VEO 3.1 max 8s/segment, Sora 2.0 max 15s/segment)
 
-### 30-Second Video Structure (4 segments)
-| Segment | Timing | Duration | Shot Type |
-|---------|--------|----------|-----------|
-| HOOK | 0-5s | 5s | CREATOR |
-| BODY-1 | 5-15s | 10s | B-ROLL |
-| BODY-2 | 15-25s | 10s | B-ROLL |
-| CTA | 25-30s | 5s | CREATOR |
+**Follow the structure table provided in the user prompt EXACTLY.**
 
-### 60-Second Video Structure (5 segments) - DEFAULT
-| Segment | Timing | Duration | Shot Type |
-|---------|--------|----------|-----------|
-| HOOK | 0-5s | 5s | CREATOR |
-| FORE | 5-15s | 10s | B-ROLL |
-| BODY-1 | 15-30s | 15s | B-ROLL |
-| PEAK | 30-45s | 15s | B-ROLL |
-| CTA | 45-55s | 10s | CREATOR |
-
-### 90-Second Video Structure (7 segments)
-| Segment | Timing | Duration | Shot Type |
-|---------|--------|----------|-----------|
-| HOOK | 0-5s | 5s | CREATOR |
-| FORE | 5-15s | 10s | B-ROLL |
-| BODY-1 | 15-30s | 15s | B-ROLL |
-| BODY-2 | 30-45s | 15s | B-ROLL |
-| BODY-3 | 45-60s | 15s | B-ROLL |
-| PEAK | 60-75s | 15s | B-ROLL |
-| CTA | 75-85s | 10s | CREATOR |
+### General Rules:
+- HOOK: Always 5s (scroll-stopper, non-negotiable)
+- CTA: 5-8s depending on duration
+- B-ROLL segments: Max 8s for VEO, Max 15s for Sora
+- Total duration must match exactly (30s, 60s, or 90s)
 
 ## 3. SHOT TYPE ALLOCATION
 
@@ -306,12 +288,13 @@ Indonesian softeners: "sih," "tuh," "gitu," "gak sih?"
 5. **Numbers/statistics:** "80% orang nggak sadar mereka sering melakukan kesalahan ini!"
 
 ## SCRIPT-WRITING FRAMEWORK
-**Structure template:**
-[0-3s] Hook: Numbers, controversy, or pattern-interrupt
-[3-8s] Problem amplification: Make it relatable ("Pernah gak sih...")
-[8-35s] Solution/tutorial: Dense value, quick cuts
-[35-45s] Results demonstration: Show transformation
-[45-55s] CTA: Natural, question-based or continuation promise
+**Structure:** Follow the exact segment structure provided in the prompt.
+**Key principles:**
+- HOOK (0-5s): Numbers, controversy, or pattern-interrupt
+- FORE: Problem amplification, tease ending ("Pernah gak sih...")
+- BODY segments: Dense value, quick cuts, solution/tutorial
+- PEAK: Results demonstration, payoff from foreshadow
+- CTA: Natural, question-based or continuation promise
 
 **Language mixing formula:**
 Indonesian sentence structure + English tech terms + Gen-Z slang markers ("literally," "lowkey," "vibes-nya") + reaction words ("anjir," "bengek," "sheesh")
@@ -721,26 +704,28 @@ export function getStructureByDuration(duration: string, videoModel?: string): s
 | HOOK | 0-5s | 5s | CREATOR |
 | BODY-1 | 5-13s | 8s | B-ROLL |
 | BODY-2 | 13-21s | 8s | B-ROLL |
-| PEAK | 21-26s | 5s | B-ROLL |
-| CTA | 26-31s | 5s | CREATOR |
+| BODY-3 | 21-25s | 4s | B-ROLL |
+| CTA | 25-30s | 5s | CREATOR |
 
-CRITICAL: Max 8s per segment for VEO 3.1. HOOK and CTA must be 5s for optimal pacing.`,
+CRITICAL: Max 8s per segment for VEO 3.1. Total = 30s exactly. No FORE for 30s videos.`,
     
     '60s': `
-6 segments for 60s video (VEO 3.1 - max 8s per segment):
+8 segments for 60s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
 | FORE | 5-13s | 8s | B-ROLL |
 | BODY-1 | 13-21s | 8s | B-ROLL |
 | BODY-2 | 21-29s | 8s | B-ROLL |
-| PEAK | 29-37s | 8s | B-ROLL |
-| CTA | 37-45s | 8s | CREATOR |
+| BODY-3 | 29-37s | 8s | B-ROLL |
+| BODY-4 | 37-45s | 8s | B-ROLL |
+| PEAK | 45-53s | 8s | B-ROLL |
+| CTA | 53-60s | 7s | CREATOR |
 
-CRITICAL: Max 8s per segment for VEO 3.1. More segments but shorter = better lip-sync quality.`,
+CRITICAL: Max 8s per segment for VEO 3.1. Total = 60s exactly.`,
     
     '90s': `
-10 segments for 90s video (VEO 3.1 - max 8s per segment):
+12 segments for 90s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type |
 |---------|--------|----------|----------|
 | HOOK | 0-5s | 5s | CREATOR |
@@ -750,10 +735,13 @@ CRITICAL: Max 8s per segment for VEO 3.1. More segments but shorter = better lip
 | BODY-3 | 29-37s | 8s | B-ROLL |
 | BODY-4 | 37-45s | 8s | B-ROLL |
 | BODY-5 | 45-53s | 8s | B-ROLL |
-| PEAK | 53-61s | 8s | B-ROLL |
-| CTA | 61-69s | 8s | CREATOR |
+| BODY-6 | 53-61s | 8s | B-ROLL |
+| BODY-7 | 61-69s | 8s | B-ROLL |
+| PEAK | 69-77s | 8s | B-ROLL |
+| CTA | 77-85s | 8s | CREATOR |
+| LOOP-END | 85-90s | 5s | CREATOR |
 
-CRITICAL: Max 8s per segment for VEO 3.1. More segments to fill 90s duration.`
+CRITICAL: Max 8s per segment for VEO 3.1. Total = 90s exactly.`
   };
   
   // SORA 2.0 OPTIMIZED structures (max 10-15s per segment)
