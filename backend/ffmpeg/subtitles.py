@@ -27,6 +27,37 @@ class SubtitlePosition(Enum):
     TOP_RIGHT = 9
 
 
+def detect_script(text: str) -> str:
+    """
+    Detect the script/writing system of text.
+    Returns: 'devanagari', 'latin', or 'mixed'
+    """
+    if not text:
+        return 'latin'
+    
+    # Unicode ranges for Devanagari (Hindi)
+    devanagari_count = sum(1 for c in text if '\u0900' <= c <= '\u097F')
+    latin_count = sum(1 for c in text if 'A' <= c.upper() <= 'Z')
+    
+    total = devanagari_count + latin_count
+    if total == 0:
+        return 'latin'
+    
+    if devanagari_count / total > 0.3:  # 30%+ Devanagari = use Hindi font
+        return 'devanagari'
+    return 'latin'
+
+
+def get_font_for_script(script: str) -> str:
+    """Get appropriate font for detected script."""
+    fonts = {
+        'devanagari': 'Noto Sans Devanagari',
+        'latin': 'Montserrat',
+        'mixed': 'Noto Sans'  # Fallback that supports both
+    }
+    return fonts.get(script, 'Noto Sans')
+
+
 @dataclass
 class SubtitleStyle:
     """ASS subtitle style configuration."""
@@ -243,6 +274,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         Returns:
             ASS file content as string
         """
+        # Auto-detect script from content and update font if needed
+        all_text = ' '.join(seg.text for seg in segments if seg.text)
+        detected_script = detect_script(all_text)
+        
+        if detected_script == 'devanagari':
+            logger.info(f"[Subtitles] Detected Hindi/Devanagari script - using Noto Sans Devanagari font")
+            self.style.font_name = get_font_for_script('devanagari')
+        
         lines = [self._generate_header()]
         
         for segment in segments:
