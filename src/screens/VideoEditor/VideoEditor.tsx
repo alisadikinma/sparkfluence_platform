@@ -47,6 +47,43 @@ interface ImageJob {
   error_message: string | null;
 }
 
+// Debug output from generate-images Edge Function (same as ImagePromptTab)
+interface DebugSegmentResult {
+  segment_number: number;
+  segment_type: string;
+  shot_type: string;
+  emotion: string;
+  is_creator_shot: boolean;
+  has_reference_image: boolean;
+  script_text: string;
+  visual_direction: string;
+  provider_selection: {
+    primary: string;
+    fallback: string;
+    selection_reason: string;
+  };
+  stock_image_decision: {
+    use_stock_image: boolean;
+    category: string | null;
+    search_query: string | null;
+    reason: string;
+  };
+  visual_brief: {
+    topic_keywords: string[];
+    abstract_concepts: string[];
+    primary_visual: string | null;
+    secondary_elements: string[];
+    environment: string | null;
+  } | null;
+  final_image_prompt: string;
+  negative_prompt: string | null;
+  cinematography: {
+    shot_size: string;
+    lighting: string;
+    emotion_expression: string;
+  } | null;
+}
+
 const JOB_STATUS = {
   PENDING: 0,
   PROCESSING: 1,
@@ -77,6 +114,12 @@ export const VideoEditor = (): JSX.Element => {
   const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  
+  // Debug prompts modal state (same as ImagePromptTab)
+  const [showDebugModal, setShowDebugModal] = useState(false);
+  const [debugResults, setDebugResults] = useState<DebugSegmentResult[]>([]);
+  const [isLoadingDebug, setIsLoadingDebug] = useState(false);
+  const [copiedPromptIdx, setCopiedPromptIdx] = useState<number | null>(null);
   
   const fromScriptLab = location.state?.fromScriptLab === true;
 
@@ -417,9 +460,10 @@ export const VideoEditor = (): JSX.Element => {
           segment_type: seg.type,
           shot_type: seg.shotType,
           emotion: seg.emotion,
-          visual_prompt: seg.visualDirection || seg.script,
-          visual_direction: seg.visualDirection,
-          script_text: seg.script, // ✅ CRITICAL: Script text for stock image search & visual brief extraction
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: seg.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: seg.visualDirection || '',
+          script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null
         };
@@ -512,9 +556,10 @@ export const VideoEditor = (): JSX.Element => {
           segment_type: seg.type,
           shot_type: seg.shotType,
           emotion: seg.emotion,
-          visual_prompt: seg.visualDirection || seg.script,
-          visual_direction: seg.visualDirection,
-          script_text: seg.script, // ✅ CRITICAL: Script text for stock image search & visual brief extraction
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: seg.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: seg.visualDirection || '',
+          script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null
         };
@@ -578,9 +623,10 @@ export const VideoEditor = (): JSX.Element => {
           segment_type: seg.type,
           shot_type: seg.shotType,
           emotion: seg.emotion,
-          visual_prompt: seg.visualDirection || seg.script,
-          visual_direction: seg.visualDirection,
-          script_text: seg.script, // ✅ The voiceover text
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: seg.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: seg.visualDirection || '',
+          script_text: seg.script, // ✅ The voiceover text for visual brief extraction
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null
         };
@@ -726,12 +772,14 @@ export const VideoEditor = (): JSX.Element => {
       const requestBody = {
         segments: [{
           segment_number: parseInt(segmentId),
-          visual_prompt: segment.visualDirection || segment.script,
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: segment.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: segment.visualDirection || '',
           shot_type: segment.shotType,
           creator_avatar_url: avatarUrl,
           emotion: segment.emotion,
           segment_type: segment.type,
-          script_text: segment.script, // ✅ CRITICAL: Script text for stock image search & visual brief extraction
+          script_text: segment.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: referenceImage
         }],

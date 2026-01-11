@@ -527,10 +527,27 @@ export const ImagePromptTab: React.FC = () => {
                     {segment.visual_brief && (
                       <div className="p-2 bg-blue-500/10 rounded text-xs">
                         <p className="font-medium text-blue-600 mb-1">Visual Brief:</p>
-                        <p><strong>Primary:</strong> {segment.visual_brief.primary_visual}</p>
-                        <p><strong>Keywords:</strong> {segment.visual_brief.topic_keywords.join(', ')}</p>
-                        {segment.visual_brief.abstract_concepts.length > 0 && (
-                          <p><strong>Abstract:</strong> {segment.visual_brief.abstract_concepts.join(', ')}</p>
+                        {/* Handle new format with source/preview */}
+                        {(segment.visual_brief as any).source ? (
+                          <>
+                            <p><strong>Source:</strong> {(segment.visual_brief as any).source}</p>
+                            <p><strong>Length:</strong> {(segment.visual_brief as any).prompt_length} chars</p>
+                            {(segment.visual_brief as any).preview && (
+                              <p><strong>Preview:</strong> {(segment.visual_brief as any).preview}</p>
+                            )}
+                            {(segment.visual_brief as any).note && (
+                              <p className="text-muted-foreground italic mt-1">{(segment.visual_brief as any).note}</p>
+                            )}
+                          </>
+                        ) : (
+                          /* Legacy format with keywords/concepts */
+                          <>
+                            <p><strong>Primary:</strong> {segment.visual_brief.primary_visual || 'N/A'}</p>
+                            <p><strong>Keywords:</strong> {segment.visual_brief.topic_keywords?.join(', ') || 'N/A'}</p>
+                            {segment.visual_brief.abstract_concepts?.length > 0 && (
+                              <p><strong>Abstract:</strong> {segment.visual_brief.abstract_concepts.join(', ')}</p>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
