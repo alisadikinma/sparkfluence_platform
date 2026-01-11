@@ -30,24 +30,22 @@ import {
   buildFullCinematographyPrompt,
   SEGMENT_DEFAULTS,
   TOPIC_COSTUMES,
-  // Metaphor for B-roll
-  buildVisualBrief,
+  // Negative prompt for B-roll
   getBRollNegativePrompt,
-  type VisualBrief,
-  // Product detection for stock images
-  decideImageSource,
-  type ProductSearchDecision,
+  // NOTE: buildVisualBrief REMOVED (2026-01-11) - B-ROLL now uses visual_direction directly
 } from '../_shared/lookups/index.ts'
 
 // ============================================================================
-// STOCK IMAGE SEARCH SERVICE (2026-01-11)
-// Unsplash + Pexels for real product images
+// STOCK IMAGE SEARCH - TEMPORARILY DISABLED (2026-01-11)
+// All segments use AI generation via fal.ai
+// TODO: Re-enable when stock image feature is ready
 // ============================================================================
-import {
-  searchProductImage,
-  downloadAndUploadSearchImage,
-  type ImageSearchResult,
-} from '../_shared/services/imageSearch.ts'
+// import {
+//   searchProductImage,
+//   downloadAndUploadSearchImage,
+//   decideImageSource,
+//   type ImageSearchResult,
+// } from '../_shared/services/imageSearch.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -139,12 +137,13 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
     const hfApiKey = Deno.env.get('HUGGINGFACE_API_KEY')
-    const falApiKey = Deno.env.get('FAL_AI_API_KEY') // fal.ai API key
+    const falApiKey = Deno.env.get('FAL_AI_API_KEY')
     
-    // Stock image search keys (2026-01-11)
-    const unsplashKey = Deno.env.get('UNSPLASH_ACCESS_KEY')
-    const pexelsKey = Deno.env.get('PEXELS_API_KEY')
-    const pixabayKey = Deno.env.get('PIXABAY_API_KEY')
+    // Stock image search keys - TEMPORARILY DISABLED (2026-01-11)
+    // TODO: Re-enable when stock image feature is ready
+    // const unsplashKey = Deno.env.get('UNSPLASH_ACCESS_KEY')
+    // const pexelsKey = Deno.env.get('PEXELS_API_KEY')
+    // const pixabayKey = Deno.env.get('PIXABAY_API_KEY')
     
     if (!supabaseUrl || !supabaseKey) {
       return new Response(
@@ -169,7 +168,7 @@ serve(async (req) => {
     // MODE: PROCESS_SINGLE - Process one job by ID
     // ========================================================================
     if (mode === 'process_single') {
-      return await handleProcessSingle(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey, unsplashKey, pexelsKey, pixabayKey)
+      return await handleProcessSingle(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey)
     }
 
     // ========================================================================
@@ -189,7 +188,7 @@ serve(async (req) => {
     // ========================================================================
     // MODE: LEGACY - Original synchronous processing (backward compatible)
     // ========================================================================
-    return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey, unsplashKey, pexelsKey, pixabayKey)
+    return await handleLegacyMode(supabase, requestBody, openaiApiKey, hfApiKey, falApiKey)
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -332,10 +331,7 @@ async function handleProcessSingle(
   requestBody: any, 
   openaiApiKey: string | undefined, 
   hfApiKey: string | undefined, 
-  falApiKey: string | undefined,
-  unsplashKey: string | undefined,
-  pexelsKey: string | undefined,
-  pixabayKey: string | undefined
+  falApiKey: string | undefined
 ) {
   const { job_id, session_id, user_id } = requestBody
   const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
@@ -415,110 +411,111 @@ async function handleProcessSingle(
     .eq('id', job.id)
 
   // ========================================================================
-  // STOCK IMAGE SEARCH FOR B-ROLL PRODUCT SHOTS (2026-01-11)
-  // Try stock images FIRST for B-roll with product entities → skip AI if found
+  // STOCK IMAGE SEARCH - TEMPORARILY DISABLED (2026-01-11)
+  // TODO: Re-enable when stock image feature is ready
   // ========================================================================
   const shotType = job.shot_type || 'B-ROLL'
   const segmentType = (job.segment_type || '').toUpperCase()
   const isCreatorShot = shotType === 'CREATOR' || 
     ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)
   
+  // COMMENTED OUT: Stock image search for B-ROLL product shots
   // For B-ROLL segments, check if we can use stock images instead of AI
-  if (!isCreatorShot && (unsplashKey || pexelsKey)) {
-    // CRITICAL: Use script_text (spoken words) for product detection, NOT visual_prompt!
-    const scriptText = job.script_text || ''
-    const topic = job.topic || ''
-    
-    console.log(`[PROCESS_SINGLE] 🔍 Product detection using script_text: "${scriptText.substring(0, 100)}..."`)
-    
-    // Check for product entities in the content
-    const imageSourceDecision = decideImageSource(scriptText, topic)
-    
-    if (imageSourceDecision.useStockImage && imageSourceDecision.searchQuery) {
-      console.log(`[PROCESS_SINGLE] 📦 Product detected: ${imageSourceDecision.category}`)
-      console.log(`[PROCESS_SINGLE] 🔍 Searching stock images: "${imageSourceDecision.searchQuery}"`)
-      
-      try {
-        // Search stock images (Pexels → Unsplash → Pixabay)
-        const stockResult = await searchProductImage(
-          imageSourceDecision.searchQuery,
-          unsplashKey,
-          pexelsKey,
-          pixabayKey
-        )
-        
-        if (stockResult) {
-          console.log(`[PROCESS_SINGLE] ✅ Stock image found from ${stockResult.source}`)
-          
-          // Download and upload to Supabase storage
-          const stockImageUrl = await downloadAndUploadSearchImage(
-            stockResult,
-            supabase,
-            unsplashKey // For Unsplash download tracking
-          )
-          
-          if (stockImageUrl) {
-            // Success! Update job and return early
-            await supabase
-              .from('image_generation_jobs')
-              .update({ 
-                status: JOB_STATUS.COMPLETED, 
-                image_url: stockImageUrl,
-                provider: `stock-${stockResult.source}`,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', job.id)
-
-            console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} completed with stock image (${stockResult.source})`)
-
-            // Check session completion status
-            const { data: remainingJobs } = await supabase
-              .from('image_generation_jobs')
-              .select('id, status')
-              .eq('session_id', job.session_id)
-              .eq('user_id', job.user_id)
-
-            const pending = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.PENDING).length || 0
-            const processing = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.PROCESSING).length || 0
-            const completed = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.COMPLETED).length || 0
-            const failed = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.FAILED).length || 0
-            const total = remainingJobs?.length || 0
-            const allComplete = pending === 0 && processing === 0
-
-            if (allComplete && total > 0) {
-              await createCompletionNotification(supabase, job.user_id, job.session_id, completed, failed, total)
-            }
-
-            return new Response(
-              JSON.stringify({ 
-                success: true, 
-                data: { 
-                  job: {
-                    id: job.id,
-                    segment_number: job.segment_number,
-                    segment_type: job.segment_type,
-                    image_url: stockImageUrl,
-                    provider: `stock-${stockResult.source}`,
-                    status: JOB_STATUS.COMPLETED
-                  },
-                  summary: { total, completed, failed, pending, processing },
-                  all_complete: allComplete
-                } 
-              }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            )
-          }
-        }
-        
-        console.log(`[PROCESS_SINGLE] ⚠️ No stock image found, falling back to AI generation`)
-      } catch (stockError) {
-        console.warn(`[PROCESS_SINGLE] ⚠️ Stock search error: ${stockError}, falling back to AI generation`)
-      }
-    }
-  }
+  // if (!isCreatorShot && (unsplashKey || pexelsKey)) {
+  //   // CRITICAL: Use script_text (spoken words) for product detection, NOT visual_prompt!
+  //   const scriptText = job.script_text || ''
+  //   const topic = job.topic || ''
+  //   
+  //   console.log(`[PROCESS_SINGLE] 🔍 Product detection using script_text: "${scriptText.substring(0, 100)}..."`)
+  //   
+  //   // Check for product entities in the content
+  //   const imageSourceDecision = decideImageSource(scriptText, topic)
+  //   
+  //   if (imageSourceDecision.useStockImage && imageSourceDecision.searchQuery) {
+  //     console.log(`[PROCESS_SINGLE] 📦 Product detected: ${imageSourceDecision.category}`)
+  //     console.log(`[PROCESS_SINGLE] 🔍 Searching stock images: "${imageSourceDecision.searchQuery}"`)
+  //     
+  //     try {
+  //       // Search stock images (Pexels → Unsplash → Pixabay)
+  //       const stockResult = await searchProductImage(
+  //         imageSourceDecision.searchQuery,
+  //         unsplashKey,
+  //         pexelsKey,
+  //         pixabayKey
+  //       )
+  //       
+  //       if (stockResult) {
+  //         console.log(`[PROCESS_SINGLE] ✅ Stock image found from ${stockResult.source}`)
+  //         
+  //         // Download and upload to Supabase storage
+  //         const stockImageUrl = await downloadAndUploadSearchImage(
+  //           stockResult,
+  //           supabase,
+  //           unsplashKey // For Unsplash download tracking
+  //         )
+  //         
+  //         if (stockImageUrl) {
+  //           // Success! Update job and return early
+  //           await supabase
+  //             .from('image_generation_jobs')
+  //             .update({ 
+  //               status: JOB_STATUS.COMPLETED, 
+  //               image_url: stockImageUrl,
+  //               provider: `stock-${stockResult.source}`,
+  //               updated_at: new Date().toISOString()
+  //             })
+  //             .eq('id', job.id)
+  // 
+  //           console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} completed with stock image (${stockResult.source})`)
+  // 
+  //           // Check session completion status
+  //           const { data: remainingJobs } = await supabase
+  //             .from('image_generation_jobs')
+  //             .select('id, status')
+  //             .eq('session_id', job.session_id)
+  //             .eq('user_id', job.user_id)
+  // 
+  //           const pending = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.PENDING).length || 0
+  //           const processing = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.PROCESSING).length || 0
+  //           const completed = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.COMPLETED).length || 0
+  //           const failed = remainingJobs?.filter((j: any) => j.status === JOB_STATUS.FAILED).length || 0
+  //           const total = remainingJobs?.length || 0
+  //           const allComplete = pending === 0 && processing === 0
+  // 
+  //           if (allComplete && total > 0) {
+  //             await createCompletionNotification(supabase, job.user_id, job.session_id, completed, failed, total)
+  //           }
+  // 
+  //           return new Response(
+  //             JSON.stringify({ 
+  //               success: true, 
+  //               data: { 
+  //                 job: {
+  //                   id: job.id,
+  //                   segment_number: job.segment_number,
+  //                   segment_type: job.segment_type,
+  //                   image_url: stockImageUrl,
+  //                   provider: `stock-${stockResult.source}`,
+  //                   status: JOB_STATUS.COMPLETED
+  //                 },
+  //                 summary: { total, completed, failed, pending, processing },
+  //                 all_complete: allComplete
+  //               } 
+  //             }),
+  //             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  //           )
+  //         }
+  //       }
+  //       
+  //       console.log(`[PROCESS_SINGLE] ⚠️ No stock image found, falling back to AI generation`)
+  //     } catch (stockError) {
+  //       console.warn(`[PROCESS_SINGLE] ⚠️ Stock search error: ${stockError}, falling back to AI generation`)
+  //     }
+  //   }
+  // }
 
   // ========================================================================
-  // GENERATE IMAGE WITH AI (FALLBACK OR PRIMARY)
+  // GENERATE IMAGE WITH AI
   // Try primary provider first, then fallback if fails
   // ========================================================================
   const primaryProvider = (job.provider || 'nano-banana-pro') as ImageModelKey
@@ -855,36 +852,37 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
     const scriptText = segment.script_text || segment.voiceover || segment.text || ''
     const visualDirection = segment.visual_prompt || segment.visual_direction || ''
 
-    // Stock image decision (for B-roll only)
+    // Stock image decision (for B-roll only) - TEMPORARILY DISABLED (2026-01-11)
+    // TODO: Re-enable when stock image feature is ready
     let stockDecision = {
       use_stock_image: false,
       category: null as string | null,
       search_query: null as string | null,
-      reason: 'N/A - CREATOR shot' as string
+      reason: 'Stock image search temporarily disabled' as string
     }
     
-    if (!isCreatorShot) {
-      const imageSourceDecision = decideImageSource(scriptText, topic)
-      stockDecision = {
-        use_stock_image: imageSourceDecision.useStockImage,
-        category: imageSourceDecision.category || null,
-        search_query: imageSourceDecision.searchQuery || null,
-        reason: imageSourceDecision.useStockImage 
-          ? `Product entity detected: ${imageSourceDecision.category}`
-          : 'No recognizable product entity in script_text'
-      }
-    }
+    // if (!isCreatorShot) {
+    //   const imageSourceDecision = decideImageSource(scriptText, topic)
+    //   stockDecision = {
+    //     use_stock_image: imageSourceDecision.useStockImage,
+    //     category: imageSourceDecision.category || null,
+    //     search_query: imageSourceDecision.searchQuery || null,
+    //     reason: imageSourceDecision.useStockImage 
+    //       ? `Product entity detected: ${imageSourceDecision.category}`
+    //       : 'No recognizable product entity in script_text'
+    //   }
+    // }
 
-    // Visual Brief extraction (for B-roll only)
+    // Visual Brief extraction - REPLACED (2026-01-11)
+    // B-ROLL now uses visual_direction directly from script generation
     let visualBriefResult = null
-    if (!isCreatorShot) {
-      const visualBrief = buildVisualBrief(scriptText, topic)
+    if (!isCreatorShot && visualDirection) {
+      // Instead of buildVisualBrief, show the visual_direction that will be used
       visualBriefResult = {
-        topic_keywords: visualBrief.topic_keywords || [],
-        abstract_concepts: visualBrief.abstract_concepts || [],
-        primary_visual: visualBrief.primary_subject?.element || null,
-        secondary_elements: visualBrief.secondary_elements || [],
-        environment: visualBrief.environment?.setting || null
+        source: 'visual_direction (direct from script generation)',
+        prompt_length: visualDirection.length,
+        preview: visualDirection.substring(0, 200) + (visualDirection.length > 200 ? '...' : ''),
+        note: 'Script generation already produces cinematic prompts. buildVisualBrief() bypassed.'
       }
     }
 
@@ -974,10 +972,12 @@ async function handleLegacyMode(
   requestBody: any, 
   openaiApiKey: string | undefined, 
   hfApiKey: string | undefined, 
-  falApiKey: string | undefined,
-  unsplashKey: string | undefined,
-  pexelsKey: string | undefined,
-  pixabayKey: string | undefined
+  falApiKey: string | undefined
+  // TEMPORARILY DISABLED (2026-01-11): Stock image search parameters
+  // TODO: Re-enable when stock image feature is ready
+  // unsplashKey: string | undefined,
+  // pexelsKey: string | undefined,
+  // pixabayKey: string | undefined
 ) {
   // Original synchronous processing for backward compatibility
   const segments = requestBody.segments
@@ -1103,79 +1103,80 @@ async function handleLegacyMode(
     console.log(`[LEGACY] ${i + 1}/${segments.length}: ${segmentType} (${shotType}) → ${primaryProvider} (ref: ${hasReferenceImage}, fallback: ${fallbackProvider})`)
 
     // ========================================================================
-    // STOCK IMAGE SEARCH FOR B-ROLL PRODUCT SHOTS (2026-01-11)
+    // STOCK IMAGE SEARCH FOR B-ROLL PRODUCT SHOTS - TEMPORARILY DISABLED (2026-01-11)
+    // TODO: Re-enable when stock image feature is ready
     // Try stock images FIRST for B-roll with product entities → skip AI if found
     // ========================================================================
-    let stockImageUsed = false
-    let stockImageUrl: string | null = null
-    let stockProvider: string | null = null
-    
-    if (!isCreatorShot && (unsplashKey || pexelsKey)) {
-      // CRITICAL: Use script_text (spoken words) for product detection, NOT visual_prompt!
-      const scriptText = segment.script_text || segment.voiceover || ''
-      
-      console.log(`[LEGACY] 🔍 Product detection using script_text: "${scriptText.substring(0, 100)}..."`)
-      
-      // Check for product entities in the content
-      const imageSourceDecision = decideImageSource(scriptText, topic)
-      
-      if (imageSourceDecision.useStockImage && imageSourceDecision.searchQuery) {
-        console.log(`[LEGACY] 📦 Product detected: ${imageSourceDecision.category}`)
-        console.log(`[LEGACY] 🔍 Searching stock images: "${imageSourceDecision.searchQuery}"`)
-        
-        try {
-          // Search stock images (Pexels → Unsplash → Pixabay)
-          const stockResult = await searchProductImage(
-            imageSourceDecision.searchQuery,
-            unsplashKey,
-            pexelsKey,
-            pixabayKey
-          )
-          
-          if (stockResult) {
-            console.log(`[LEGACY] ✅ Stock image found from ${stockResult.source}`)
-            
-            // Download and upload to Supabase storage
-            stockImageUrl = await downloadAndUploadSearchImage(
-              stockResult,
-              supabase,
-              unsplashKey // For Unsplash download tracking
-            )
-            
-            if (stockImageUrl) {
-              stockImageUsed = true
-              stockProvider = `stock-${stockResult.source}`
-              console.log(`[LEGACY] ✅ Using stock image for ${segmentType}`)
-            }
-          } else {
-            console.log(`[LEGACY] ⚠️ No stock image found, falling back to AI generation`)
-          }
-        } catch (stockError) {
-          console.warn(`[LEGACY] ⚠️ Stock search error: ${stockError}, falling back to AI generation`)
-        }
-      }
-    }
-    
-    // If stock image found, skip AI generation
-    if (stockImageUsed && stockImageUrl) {
-      images.push({
-        segment_number: segment.segment_number,
-        segment_type: segmentType,
-        shot_type: shotType,
-        emotion: emotion,
-        prompt: imagePrompt,
-        image_url: stockImageUrl,
-        provider: stockProvider || 'stock',
-        error: null
-      })
-      
-      console.log(`[LEGACY] ✅ Success: ${segmentType} via ${stockProvider}`)
-      
-      if (i < segments.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500)) // Shorter delay for stock
-      }
-      continue // Skip AI generation
-    }
+    // let stockImageUsed = false
+    // let stockImageUrl: string | null = null
+    // let stockProvider: string | null = null
+    // 
+    // if (!isCreatorShot && (unsplashKey || pexelsKey)) {
+    //   // CRITICAL: Use script_text (spoken words) for product detection, NOT visual_prompt!
+    //   const scriptText = segment.script_text || segment.voiceover || ''
+    //   
+    //   console.log(`[LEGACY] 🔍 Product detection using script_text: "${scriptText.substring(0, 100)}..."`)
+    //   
+    //   // Check for product entities in the content
+    //   const imageSourceDecision = decideImageSource(scriptText, topic)
+    //   
+    //   if (imageSourceDecision.useStockImage && imageSourceDecision.searchQuery) {
+    //     console.log(`[LEGACY] 📦 Product detected: ${imageSourceDecision.category}`)
+    //     console.log(`[LEGACY] 🔍 Searching stock images: "${imageSourceDecision.searchQuery}"`)
+    //     
+    //     try {
+    //       // Search stock images (Pexels → Unsplash → Pixabay)
+    //       const stockResult = await searchProductImage(
+    //         imageSourceDecision.searchQuery,
+    //         unsplashKey,
+    //         pexelsKey,
+    //         pixabayKey
+    //       )
+    //       
+    //       if (stockResult) {
+    //         console.log(`[LEGACY] ✅ Stock image found from ${stockResult.source}`)
+    //         
+    //         // Download and upload to Supabase storage
+    //         stockImageUrl = await downloadAndUploadSearchImage(
+    //           stockResult,
+    //           supabase,
+    //           unsplashKey // For Unsplash download tracking
+    //         )
+    //         
+    //         if (stockImageUrl) {
+    //           stockImageUsed = true
+    //           stockProvider = `stock-${stockResult.source}`
+    //           console.log(`[LEGACY] ✅ Using stock image for ${segmentType}`)
+    //         }
+    //       } else {
+    //         console.log(`[LEGACY] ⚠️ No stock image found, falling back to AI generation`)
+    //       }
+    //     } catch (stockError) {
+    //       console.warn(`[LEGACY] ⚠️ Stock search error: ${stockError}, falling back to AI generation`)
+    //     }
+    //   }
+    // }
+    // 
+    // // If stock image found, skip AI generation
+    // if (stockImageUsed && stockImageUrl) {
+    //   images.push({
+    //     segment_number: segment.segment_number,
+    //     segment_type: segmentType,
+    //     shot_type: shotType,
+    //     emotion: emotion,
+    //     prompt: imagePrompt,
+    //     image_url: stockImageUrl,
+    //     provider: stockProvider || 'stock',
+    //     error: null
+    //   })
+    //   
+    //   console.log(`[LEGACY] ✅ Success: ${segmentType} via ${stockProvider}`)
+    //   
+    //   if (i < segments.length - 1) {
+    //     await new Promise(resolve => setTimeout(resolve, 500)) // Shorter delay for stock
+    //   }
+    //   continue // Skip AI generation
+    // }
 
     // Generate with automatic fallback (AI generation)
     const result = await generateWithProviderAndFallback(primaryProvider, fallbackProvider, imagePrompt, refImage)
@@ -1328,29 +1329,25 @@ function buildCinematicPrompt(params: PromptParams): string {
     return fullPrompt
   }
   
-  // B-ROLL SHOT - Use Visual Brief extraction for contextual imagery
-  // CRITICAL: Script text should be the SPOKEN words, NOT visual direction!
-  // Priority: script_text > voiceover > text (NEVER visualDirection - that's for different purpose)
-  const scriptText = segment.script_text || segment.voiceover || segment.text || ''
+  // ========================================================================
+  // B-ROLL SHOT - Use visual_direction directly from script generation
+  // CRITICAL FIX (2026-01-11): Script gen already produces excellent prompts!
+  // visual_direction contains segment-specific cinematic prompts.
+  // DO NOT use buildVisualBrief() - it causes topic keywords to override segment content.
+  // ========================================================================
   
   // Debug logging
   console.log(`[buildCinematicPrompt] Segment: ${segmentType}, Shot: ${shotType}`)
-  console.log(`[buildCinematicPrompt] script_text field: "${(segment.script_text || '').substring(0, 50)}..."`) 
-  console.log(`[buildCinematicPrompt] voiceover field: "${(segment.voiceover || '').substring(0, 50)}..."`) 
-  console.log(`[buildCinematicPrompt] Final scriptText: "${scriptText.substring(0, 80)}..."`) 
-  console.log(`[buildCinematicPrompt] Topic: "${topic}"`)
+  console.log(`[buildCinematicPrompt] visual_direction: "${visualDirection.substring(0, 100)}..."`)
   
-  // Use Visual Brief for B-roll (two-stage extraction)
-  const visualBrief = buildVisualBrief(scriptText, topic)
-  
-  // Use the generated image_prompt from Visual Brief
-  if (visualBrief.image_prompt) {
-    console.log(`[buildCinematicPrompt] ✅ Using Visual Brief prompt`)
-    return visualBrief.image_prompt
+  // PRIMARY: Use visual_direction from script generation (already cinematic prompt)
+  if (visualDirection && visualDirection.length > 50) {
+    console.log(`[buildCinematicPrompt] ✅ Using visual_direction directly (${visualDirection.length} chars)`)
+    return visualDirection
   }
   
-  // Fallback: Build basic B-roll prompt from topic (NOT visualDirection!)
-  console.log(`[buildCinematicPrompt] ⚠️ Visual Brief empty, using topic-based fallback`)
+  // FALLBACK: If no visual_direction, build basic cinematic prompt from topic
+  console.log(`[buildCinematicPrompt] ⚠️ No visual_direction, using topic-based fallback`)
   const visual = topic 
     ? `Professional ${topic} concept visualization - modern technology scene`
     : 'Modern technology concept - clean professional imagery'
