@@ -5,11 +5,11 @@ import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
+import { apiEndpoints, API_KEY } from "../../lib/api";
 import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play, Link2, ExternalLink } from "lucide-react";
 
-// Backend API URL - adjust based on environment
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence-api.alisadikinma.com';
-const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || 'sparkfluence_prod_key_2024';
+// Backend API imported from centralized config
+// See src/lib/api.ts for configuration
 
 // V2 Options defaults
 const DEFAULT_COMBINE_OPTIONS = {
@@ -272,11 +272,11 @@ export const FullVideo: React.FC = () => {
       console.log('[FullVideo] Request body (V2):', JSON.stringify(requestBody, null, 2));
       
       // V2 endpoint with transitions + subtitles
-      const response = await fetch(BACKEND_URL + "/api/combine-final-video-v2", {
+      const response = await fetch(apiEndpoints.combineVideo, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': BACKEND_API_KEY
+          'x-api-key': API_KEY
         },
         body: JSON.stringify(requestBody)
       });
@@ -338,8 +338,8 @@ export const FullVideo: React.FC = () => {
 
   const pollJobStatusDirect = async (jid: string, attempts = 0) => {
     try {
-      const response = await fetch(BACKEND_URL + "/api/job-status/" + jid, {
-        headers: { 'x-api-key': BACKEND_API_KEY }
+      const response = await fetch(apiEndpoints.jobStatus(jid), {
+        headers: { 'x-api-key': API_KEY }
       });
       
       if (!response.ok) {
@@ -456,11 +456,11 @@ export const FullVideo: React.FC = () => {
     setSubtitlePercent(5);
     
     try {
-      const response = await fetch(BACKEND_URL + "/api/add-subtitles", {
+      const response = await fetch(apiEndpoints.addSubtitles, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': BACKEND_API_KEY
+          'x-api-key': API_KEY
         },
         body: JSON.stringify({
           video_url: finalVideoUrl,
@@ -508,8 +508,8 @@ export const FullVideo: React.FC = () => {
       }
       
       try {
-        const response = await fetch(BACKEND_URL + "/api/job-status/" + jid, {
-          headers: { 'x-api-key': BACKEND_API_KEY }
+        const response = await fetch(apiEndpoints.jobStatus(jid), {
+          headers: { 'x-api-key': API_KEY }
         });
         
         if (!response.ok) return;

@@ -1,3 +1,4 @@
+import { apiEndpoints, API_KEY } from "../../lib/api";
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
@@ -77,9 +78,8 @@ interface ProjectGroup {
 
 type TabType = 'all' | 'drafts' | 'completed';
 
-// Backend API URL
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://sparkfluence.alisadikinma.com/api';
-const BACKEND_API_KEY = import.meta.env.VITE_BACKEND_API_KEY || '';
+// Backend API imported from centralized config
+// See src/lib/api.ts for configuration
 
 export const History = (): JSX.Element => {
   const navigate = useNavigate();
@@ -506,11 +506,11 @@ export const History = (): JSX.Element => {
     try {
       console.log('[History] Adding subtitles to:', selectedProject.final_video_url);
       
-      const response = await fetch(`${BACKEND_URL}/add-subtitles`, {
+      const response = await fetch(apiEndpoints.addSubtitles, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': BACKEND_API_KEY
+          'x-api-key': API_KEY
         },
         body: JSON.stringify({
           video_url: selectedProject.final_video_url,
@@ -536,8 +536,8 @@ export const History = (): JSX.Element => {
         while (attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds
           
-          const statusResponse = await fetch(`${BACKEND_URL}/job-status/${jobId}`, {
-            headers: { 'x-api-key': BACKEND_API_KEY }
+          const statusResponse = await fetch(apiEndpoints.jobStatus(jobId), {
+            headers: { 'x-api-key': API_KEY }
           });
           
           if (!statusResponse.ok) {
