@@ -37,6 +37,7 @@ import { Planner } from "./screens/Planner";
 import { History } from "./screens/History/History";
 import { AuthCallback } from "./screens/AuthCallback/AuthCallback";
 import { ScriptLab } from "./screens/ScriptLab";
+import { SparkfluenceEngineTest } from "./screens/EngineTest";
 import { Privacy, Terms } from "./screens/Legal";
 
 // Wrapper component for smooth scroll
@@ -100,6 +101,9 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/settings/notifications" element={<Notifications />} />
                     <Route path="/app/billing" element={<Billing />} />
                     <Route path="/billing" element={<Billing />} />
+
+                    {/* Admin only - Engine Test Dashboard */}
+                    <Route path="/sparkfluence-engine-test" element={<SparkfluenceEngineTest />} />
                   </Routes>
                 </PlannerProvider>
               </OnboardingProvider>
