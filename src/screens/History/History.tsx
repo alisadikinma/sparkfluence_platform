@@ -216,8 +216,24 @@ export const History = (): JSX.Element => {
           const firstSeg = validSegments[0];
           const videoData = planned?.video_data || {};
           
-          // Try segment first, then video_data, then defaults
-          const projectLanguage = firstSeg?.language || videoData?.language || 'id';
+          // Normalize language: handle both short ('id') and long ('indonesian') formats
+          const normalizeLanguage = (lang: string | undefined): string => {
+            if (!lang) return 'id';
+            const langLower = lang.toLowerCase();
+            // Map long format to short format
+            if (langLower === 'indonesian') return 'id';
+            if (langLower === 'english') return 'en';
+            if (langLower === 'hindi') return 'hi';
+            // Already short format or unknown
+            return langLower;
+          };
+          
+          // Try segment first, then video_data (multiple possible locations), then defaults
+          const rawLanguage = firstSeg?.language 
+            || videoData?.language 
+            || videoData?.videoSettings?.language
+            || videoData?.settings?.language;
+          const projectLanguage = normalizeLanguage(rawLanguage);
           const projectResolution = firstSeg?.resolution || videoData?.resolution || '1080p';
           const projectModel = firstSeg?.preferred_platform || videoData?.model || 'veo31';
           const segmentDuration = firstSeg?.duration_seconds || videoData?.duration_seconds || 8;
