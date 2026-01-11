@@ -542,9 +542,9 @@ export const ImagePromptTab: React.FC = () => {
                         ) : (
                           /* Legacy format with keywords/concepts */
                           <>
-                            <p><strong>Primary:</strong> {segment.visual_brief.primary_visual || 'N/A'}</p>
-                            <p><strong>Keywords:</strong> {segment.visual_brief.topic_keywords?.join(', ') || 'N/A'}</p>
-                            {segment.visual_brief.abstract_concepts?.length > 0 && (
+                            <p><strong>Primary:</strong> {segment.visual_brief?.primary_visual || 'N/A'}</p>
+                            <p><strong>Keywords:</strong> {Array.isArray(segment.visual_brief?.topic_keywords) ? segment.visual_brief.topic_keywords.join(', ') : 'N/A'}</p>
+                            {Array.isArray(segment.visual_brief?.abstract_concepts) && segment.visual_brief.abstract_concepts.length > 0 && (
                               <p><strong>Abstract:</strong> {segment.visual_brief.abstract_concepts.join(', ')}</p>
                             )}
                           </>
