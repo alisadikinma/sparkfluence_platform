@@ -29,6 +29,7 @@ import {
   getCreatorAudioDirective,
   getBRollAudioDirective,
   detectBRollCategory,
+  type VoiceCharacterInfo,
 } from '../_shared/prompts/audioDirective.ts'
 
 const corsHeaders = {
@@ -1919,13 +1920,14 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     const cameraMove = getCameraMovement(segmentType, emotion)
     
     // ========================================================================
-    // FIX: Include actual dialogue in audio directive
+    // FIX: Include actual dialogue + voice character in audio directive
     // ========================================================================
     const creatorAudioDirective = getCreatorAudioDirective(
       detectedLanguage,
       scriptText, // Pass the actual script text
       segmentTypeUpper,
-      emotion
+      emotion,
+      voiceChar // Pass voice character for consistency
     )
     
     // Build the custom prompt with anchors

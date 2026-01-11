@@ -406,11 +406,20 @@ const SPEECH_RATES: Record<string, number> = {
   spanish: 145,    // WPM - moderate
 };
 
+export interface VoiceCharacterInfo {
+  gender: 'male' | 'female';
+  age: string;
+  accent: string;
+  tone: string;
+  pace: string;
+}
+
 export function getCreatorAudioDirective(
   language: string,
   dialogueText: string,
   segmentType: string,
-  emotion: string = 'authority'
+  emotion: string = 'authority',
+  voiceCharacter?: VoiceCharacterInfo // NEW: Voice character for consistency
 ): string {
   const emotionBySegment: Record<string, string> = {
     'HOOK': 'curiosity',
@@ -422,14 +431,23 @@ export function getCreatorAudioDirective(
   const sfx = getEmotionSFX(effectiveEmotion);
   const wordCount = dialogueText.split(/\s+/).filter(w => w.length > 0).length;
 
-  // SIMPLIFIED: Compact audio directive (~15 lines vs ~30 lines before)
+  // Build voice description from character info
+  let voiceDesc = sfx.voice_quality;
+  if (voiceCharacter) {
+    voiceDesc = `${voiceCharacter.gender} voice, ${voiceCharacter.age}, ${voiceCharacter.accent}. ${voiceCharacter.tone}, ${voiceCharacter.pace}`;
+  }
+
+  // SIMPLIFIED: Compact audio directive with voice consistency
   return `
 AUDIO:
 Dialogue: "${dialogueText}"
 Word count: ${wordCount} words | Lip-sync required
-Voice: ${sfx.voice_quality}
+Voice: ${voiceDesc}
+Delivery: ${sfx.voice_quality}
 Ambient: Subtle room tone, close-mic quality
 Exclude: no music, no subtitles, no audience sounds
+
+⚠️ VOICE CONSISTENCY: Use SAME voice characteristics across ALL segments.
 `;
 }
 
