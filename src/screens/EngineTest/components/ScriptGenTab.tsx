@@ -138,6 +138,96 @@ export const ScriptGenTab: React.FC = () => {
   // UI state
   const [showRawJson, setShowRawJson] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
+  const [copiedAnalysis, setCopiedAnalysis] = useState(false);
+
+  // Format gap analysis as improvement notes for copying
+  const formatGapAnalysisForCopy = () => {
+    if (!gapAnalysis) return "";
+    
+    const timestamp = new Date().toISOString().split('T')[0];
+    const metadata = sparkfluenceOutput?.metadata;
+    
+    let output = `# Script Engine Gap Analysis Report\n`;
+    output += `📅 Date: ${timestamp}\n`;
+    output += `🎯 Overall Score: ${gapAnalysis.overall_score}/100\n`;
+    if (metadata) {
+      output += `📝 Topic: ${topic}\n`;
+      output += `🌐 Language: ${metadata.language}\n`;
+      output += `⏱️ Duration: ${metadata.total_duration}s\n`;
+    }
+    output += `\n---\n\n`;
+    
+    output += `## Criteria Breakdown\n\n`;
+    gapAnalysis.criteria.forEach((item) => {
+      const statusIcon = item.status === 'pass' ? '✅' : item.status === 'warning' ? '⚠️' : '❌';
+      output += `### ${statusIcon} ${item.name}: ${item.score}/${item.max_score}\n`;
+      output += `${item.gap_details}\n\n`;
+    });
+    
+    output += `---\n\n`;
+    output += `## Summary\n`;
+    output += `${gapAnalysis.summary}\n\n`;
+    
+    if (gapAnalysis.recommendations.length > 0) {
+      output += `## 🔧 Action Items for Code Improvement\n\n`;
+      output += `**Target Files:**\n`;
+      output += `- \`supabase/functions/generate-script/viralScriptKnowledge.ts\`\n`;
+      output += `- \`supabase/functions/generate-script/slangValidator.ts\`\n`;
+      output += `- \`supabase/functions/_shared/knowledge/\`\n\n`;
+      
+      output += `**Required Changes:**\n`;
+      gapAnalysis.recommendations.forEach((rec, idx) => {
+        output += `${idx + 1}. ${rec}\n`;
+      });
+      output += `\n`;
+    }
+    
+    // Add specific improvement suggestions based on scores
+    output += `## 📋 Technical Implementation Notes\n\n`;
+    
+    const lowScoreCriteria = gapAnalysis.criteria.filter(c => c.score < 7);
+    if (lowScoreCriteria.length > 0) {
+      lowScoreCriteria.forEach(c => {
+        if (c.name === 'Slang Compliance') {
+          output += `### Slang Enhancement\n`;
+          output += `- Update \`slangValidator.ts\` to enforce particle usage (sih, tuh, gitu, dong)\n`;
+          output += `- Add post-processing to inject particles if missing\n`;
+          output += `- Reference: \`08-indonesian-slang-2026.md\` Top 20 terms\n\n`;
+        }
+        if (c.name === 'Hook Quality') {
+          output += `### Hook Enhancement\n`;
+          output += `- Update \`viralScriptKnowledge.ts\` hook templates\n`;
+          output += `- Add psychological triggers: curiosity gap, controversy, FOMO\n`;
+          output += `- Reference: \`02-hook-library-reference.md\`\n\n`;
+        }
+        if (c.name === 'Foreshadow/Retention Lock') {
+          output += `### Foreshadow Enhancement\n`;
+          output += `- Enforce retention lock pattern in prompt\n`;
+          output += `- Required phrase: "...dan yang terakhir paling gila. Tonton sampai habis!"\n`;
+          output += `- Reference: \`01-viral-script-architecture.md\` FORESHADOW section\n\n`;
+        }
+        if (c.name === 'Visual Direction') {
+          output += `### Visual Direction Enhancement\n`;
+          output += `- Add camera specs enforcement (CU/MCU/MS, lens, f-stop)\n`;
+          output += `- Add lighting patterns (Rembrandt, Loop, Butterfly)\n`;
+          output += `- Reference: \`06-Cinematography-Lookup.md\`\n\n`;
+        }
+      });
+    } else {
+      output += `✅ All criteria passing. Focus on maintaining quality.\n`;
+    }
+    
+    return output;
+  };
+
+  const handleCopyAnalysis = () => {
+    const analysisText = formatGapAnalysisForCopy();
+    if (analysisText) {
+      navigator.clipboard.writeText(analysisText);
+      setCopiedAnalysis(true);
+      setTimeout(() => setCopiedAnalysis(false), 2000);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!topic.trim()) {
@@ -628,12 +718,21 @@ Example format:
       {gapAnalysis && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg flex items-center justify-between">
-              <span>Gap Analysis Results</span>
-              <span className={`text-3xl font-bold ${getScoreColor(gapAnalysis.overall_score)}`}>
-                {gapAnalysis.overall_score}/100
-              </span>
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">Gap Analysis Results</CardTitle>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleCopyAnalysis}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 px-3 py-1.5 rounded-md bg-muted/50 hover:bg-muted border border-border transition-colors"
+                >
+                  {copiedAnalysis ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+                  {copiedAnalysis ? "Copied!" : "Copy as Improvement Notes"}
+                </button>
+                <span className={`text-3xl font-bold ${getScoreColor(gapAnalysis.overall_score)}`}>
+                  {gapAnalysis.overall_score}/100
+                </span>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Progress Bar */}
