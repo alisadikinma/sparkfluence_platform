@@ -537,17 +537,23 @@ export const VideoGeneration = (): JSX.Element => {
         character_name: 'Creator'
       }));
 
+      // Determine content language from settings (NOT UI language)
+      // Map language setting to API expected format
+      const contentLanguage = settings?.language || 'indonesian';
+      
       const { data, error } = await supabase.functions.invoke('generate-videos', {
         body: {
           mode: 'preview_prompts',
           segments: segmentsData,
           topic: topic,
-          language: 'indonesian',
+          language: contentLanguage,
           aspect_ratio: settings?.aspectRatio || '9:16',
           environment: 'studio',
           preferred_platform: settings?.model || 'auto' // 'auto' | 'sora2' | 'veo31'
         }
       });
+      
+      console.log('[VideoGen] fetchVideoPrompts with language:', contentLanguage);
 
       if (error) throw error;
 
@@ -1214,6 +1220,10 @@ export const VideoGeneration = (): JSX.Element => {
         };
       });
 
+      // Determine content language from settings (NOT UI language)
+      const contentLanguage = videoSettings?.language || 'indonesian';
+      console.log('[VideoGen] Creating jobs with language:', contentLanguage);
+      
       // Create jobs in database (with retry for network errors)
       const { data, error } = await invokeWithRetry('generate-videos', {
         mode: 'create_jobs',
@@ -1221,7 +1231,7 @@ export const VideoGeneration = (): JSX.Element => {
         session_id: sessionId,
         segments: segmentsData,
         topic: currentTopic,
-        language: 'indonesian',
+        language: contentLanguage,
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
         resolution: videoSettings?.resolution || '1080p',
         preferred_platform: videoSettings?.model || 'auto' // 'auto' | 'sora2' | 'veo31'
@@ -1269,6 +1279,9 @@ export const VideoGeneration = (): JSX.Element => {
     );
 
     try {
+      // Determine content language from settings
+      const contentLanguage = videoSettings?.language || 'indonesian';
+      
       const { data, error } = await supabase.functions.invoke('generate-videos', {
         body: {
           segments: [{
@@ -1283,7 +1296,7 @@ export const VideoGeneration = (): JSX.Element => {
             shot_type: segment.shotType || 'B-ROLL',
             visual_direction: segment.visualDirection
           }],
-          language: 'indonesian',
+          language: contentLanguage,
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
           resolution: videoSettings?.resolution || '1080p', // Default to 1080p Full HD
           session_id: sessionId,

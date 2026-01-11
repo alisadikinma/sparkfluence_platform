@@ -807,10 +807,13 @@ export const History = (): JSX.Element => {
                         <Cpu className="w-2 h-2" />
                         {project.model === 'sora2' ? 'SORA 2' : project.model === 'veo31' ? 'VEO 3.1' : 'Auto'}
                       </span>
-                      {/* Language */}
+                      {/* Language - Display full name */}
                       <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
                         <Globe className="w-2 h-2" />
-                        {project.language === 'id' ? 'ID' : project.language === 'en' ? 'EN' : project.language?.toUpperCase() || 'ID'}
+                        {project.language === 'id' || project.language === 'indonesian' ? '🇮🇩 ID' 
+                          : project.language === 'en' || project.language === 'english' ? '🇺🇸 EN' 
+                          : project.language === 'hi' || project.language === 'hindi' ? '🇮🇳 HI' 
+                          : project.language?.toUpperCase() || '🇮🇩 ID'}
                       </span>
                     </div>
 
