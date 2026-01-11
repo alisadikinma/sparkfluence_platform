@@ -686,6 +686,7 @@ export const History = (): JSX.Element => {
     combineVideo: language === 'id' ? 'Combine Video' : 'Combine Video',
     combining: language === 'id' ? 'Combining...' : 'Combining...',
     addSubtitle: language === 'id' ? 'Tambah Subtitle' : 'Add Subtitle',
+    replaceSubtitle: language === 'id' ? 'Ganti Subtitle' : 'Replace Subtitle',
     addingSubtitle: language === 'id' ? 'Menambahkan...' : 'Adding...',
     videoNotFound: language === 'id' ? 'Video tidak dapat dimuat. Coba perbaiki link atau combine ulang.' : 'Video cannot be loaded. Try repairing link or re-combining.',
     noFinalVideo: language === 'id' ? 'Video final belum tersedia. Klik "Combine Video" untuk membuat.' : 'Final video not available. Click "Combine Video" to create.',
@@ -1146,7 +1147,7 @@ export const History = (): JSX.Element => {
                         ) : (
                           <div className="flex items-center gap-2">
                             <FileText className="w-4 h-4" />
-                            {uiText.addSubtitle}
+                            {selectedProject?.has_subtitles ? uiText.replaceSubtitle : uiText.addSubtitle}
                           </div>
                         )}
                       </Button>

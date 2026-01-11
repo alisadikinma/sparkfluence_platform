@@ -297,8 +297,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         
         for segment in segments:
             if word_by_word and segment.words:
-                # Use popup style (words accumulate)
-                lines.extend(self._generate_word_popup_lines(segment))
+                # Use karaoke style (all words visible, current highlighted)
+                lines.extend(self._generate_karaoke_lines(segment))
             else:
                 # Simple full line
                 start = self._format_time(segment.start)
