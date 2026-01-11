@@ -28,14 +28,16 @@ interface VideoPromptResult {
   segment_number: number;
   segment_type: string;
   shot_type: string;
-  duration: number;
+  duration: number | null;
   platform: string;
   video_prompt: string;
   audio_directive: string;
   dialogue_validation?: {
     valid: boolean;
-    word_count: number;
-    max_words: number;
+    wordCount: number;  // API returns camelCase
+    maxWords: number;   // API returns camelCase
+    word_count?: number; // Legacy snake_case support
+    max_words?: number;  // Legacy snake_case support
   };
   camera_motion?: string;
   transition?: string;
@@ -399,7 +401,7 @@ export const VideoPromptTab: React.FC = () => {
     const allOutput = sparkfluenceOutput.map((seg, idx) => 
       `=== SEGMENT ${idx + 1}: ${seg.segment_type} ===\n` +
       `Platform: ${seg.platform}\n` +
-      `Duration: ${seg.duration}s\n\n` +
+      `Duration: ${seg.duration ?? 8}s\n\n` +
       `--- VIDEO PROMPT ---\n${seg.video_prompt}\n\n` +
       `--- AUDIO DIRECTIVE ---\n${seg.audio_directive}`
     ).join('\n\n============================================================\n\n');
@@ -566,7 +568,7 @@ A photorealistic cinematic...
                           {segment.platform || 'VEO'}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {segment.duration}s
+                          {segment.duration ?? 8}s
                         </span>
                       </div>
                       <button
@@ -588,7 +590,7 @@ A photorealistic cinematic...
                           ? "bg-green-500/10 text-green-600" 
                           : "bg-red-500/10 text-red-600"
                       }`}>
-                        <strong>Dialogue:</strong> {segment.dialogue_validation.word_count}/{segment.dialogue_validation.max_words} words
+                        <strong>Dialogue:</strong> {segment.dialogue_validation.wordCount ?? segment.dialogue_validation.word_count ?? 0}/{segment.dialogue_validation.maxWords ?? segment.dialogue_validation.max_words ?? 0} words
                         {segment.dialogue_validation.valid ? " ✓" : " ⚠️ EXCEEDS"}
                       </div>
                     )}
