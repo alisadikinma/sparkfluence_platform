@@ -208,6 +208,8 @@ export const VideoPromptTab: React.FC = () => {
         shot_type: seg.shot_type,
         script_text: seg.script_text,
         duration_seconds: estimateDuration(seg.script_text, seg.segment_type),
+        // Pass image_prompt as visual_direction for STARTING FRAME reference
+        visual_direction: seg.image_prompt || '',
         // image_url would come from actual generation, not preview
       }));
 

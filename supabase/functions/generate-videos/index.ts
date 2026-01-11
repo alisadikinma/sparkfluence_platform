@@ -1812,7 +1812,11 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   }
 
   // Extract segment data
-  const visualDirection = segment.visual_direction || segment.visualDirection || ''
+  // Truncate visual_direction to first 300 chars for STARTING FRAME (full image prompts are too long)
+  const rawVisualDirection = segment.visual_direction || segment.visualDirection || ''
+  const visualDirection = rawVisualDirection.length > 300 
+    ? rawVisualDirection.substring(0, 300).trim() + '...'
+    : rawVisualDirection
   const transitionType = segment.transition || 'hold'
   const segmentNumber = segment.segment_number || 1
   const segmentId = segment.segment_id || segment.id || 'CLIP'
