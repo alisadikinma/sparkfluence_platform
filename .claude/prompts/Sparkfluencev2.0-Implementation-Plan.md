@@ -1392,12 +1392,12 @@ supabase functions deploy function-name@previous-version
 
 ## Questions to Resolve
 
-1. **Voice Recording**: Required or optional in onboarding? (Can skip?)
-2. **Multi-Image Limit**: Max images per segment? (Suggest: 10)
-3. **Old Routes**: Should /video-editor redirect or return 404?
-4. **API Keys**: Are UNSPLASH_ACCESS_KEY and PEXELS_API_KEY already obtained?
-5. **Order ID Timing**: Generate on script success or after first image?
-6. **Regeneration Cost**: Should we warn users about regeneration costs?
+1. **Voice Recording**: Required or optional in onboarding? optional in onboarding, we should have default sound for male & famele in case customer doesn't want to record his/her voice
+2. **Multi-Image Limit**: Max images per segment? 3, prompt user max 3 images per segment
+3. **Old Routes**: Should /video-editor redirect or return 404? return 404
+4. **API Keys**: Are UNSPLASH_ACCESS_KEY and PEXELS_API_KEY already obtained? Yes in .env
+5. **Order ID Timing**: Generate on script success or after first image? Generate on script success
+6. **Regeneration Cost**: Should we warn users about regeneration costs? Yes
 
 ---
 
