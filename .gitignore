@@ -9,3 +9,6 @@ dist/
 .vscode/
 .idea/
 __pycache__/
+- Copy.env 
+*.env 
+.env* 
