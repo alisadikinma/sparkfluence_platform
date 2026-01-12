@@ -119,19 +119,36 @@ Location: `D:\Projects\sparkfluence_platform\docs\knowledge\`
 ```
 D:\Projects\sparkfluence_platform\
 ├── src\
-│   ├── components\ui\        # Shadcn components
-│   ├── contexts\             # Auth, Onboarding, Planner
-│   ├── hooks\                # Custom hooks
-│   ├── lib\supabase.ts       # Supabase client
-│   ├── screens\              # 29 screens
-│   └── index.tsx             # App entry + routing
+│   ├── components\
+│   │   ├── ui\               # Shadcn components (button, card, input, etc.)
+│   │   ├── layout\           # Sidebar, Navbar, Footer
+│   │   ├── animations\       # FadeIn, ScaleIn, FloatingElement
+│   │   └── features\         # Domain-specific components (ImageGeneration, VoiceRecorder)
+│   ├── contexts\             # Auth, Onboarding, Language, Theme, Planner
+│   ├── hooks\                # useAuth, useSubscription, useAvatarManager
+│   ├── lib\
+│   │   ├── supabase.ts       # Supabase client initialization
+│   │   └── orderIdGenerator.ts # Order ID utilities (SF-YYYYMMDD-XXXX)
+│   ├── screens\              # 28+ screens (dashboard, script-lab, image-generation, etc.)
+│   └── index.tsx             # App entry + React Router
 ├── supabase\
 │   ├── functions\            # Edge Functions (Deno)
+│   │   ├── _shared\          # Shared utilities (CORS, Supabase client, config)
+│   │   │   ├── cors.ts
+│   │   │   ├── supabase.ts
+│   │   │   ├── config\       # aiModels.ts, modelCapabilities.ts
+│   │   │   ├── knowledge\    # Viral content patterns, slang, prompts
+│   │   │   └── lookups\      # Cinematography, metaphors, product keywords
+│   │   ├── generate-script\  # Script generation (Gemini + RAG)
+│   │   ├── generate-images\  # Image generation (fal.ai multi-model)
+│   │   ├── generate-videos\  # Video generation (Wan 2.5, Kling 2.5)
+│   │   └── analyze-image\    # Gemini Vision API for image analysis
 │   └── migrations\           # SQL migrations
 ├── backend\
-│   └── main.py               # FastAPI server
+│   └── main.py               # FastAPI + FFmpeg (video combining)
 ├── docs\
-│   └── knowledge\            # 5 knowledge files
+│   ├── knowledge\            # 5 knowledge files
+│   └── V2_TECHNICAL_SPEC.md  # v2.0 implementation spec
 └── CLAUDE.md                 # This file
 ```
 
@@ -303,6 +320,8 @@ OPENROUTER_API_KEY=xxx
 FAL_AI_API_KEY=key_id:key_secret
 VEO_API_KEY=xxx
 GROQ_API_KEY=xxx
+UNSPLASH_ACCESS_KEY=xxx
+PEXELS_API_KEY=xxx
 
 :: Python Backend (.env)
 SUPABASE_URL=xxx
@@ -332,5 +351,215 @@ SUPABASE_SERVICE_ROLE_KEY=xxx
 
 ---
 
+## V2.0 Implementation Notes
+
+### Order ID System
+- **Format**: `SF-YYYYMMDD-XXXX` (e.g., `SF-20260113-A3X9`)
+- **Generated**: When script is created in `/script-lab`
+- **Tracked**: Throughout entire flow (script → images → videos → final)
+- **Stored**: `generation_sessions.order_id` column
+- **Utility**: `src/lib/orderIdGenerator.ts`
+
+### Multi-Image Gallery Flow
+**Path**: `/image-generation` (renamed from `/video-editor`)
+
+**Key behaviors**:
+- Each segment can have **multiple images** (append, not replace)
+- User clicks to **SELECT** 1 final image per segment
+- **Regenerate** button opens popup with optional notes + reference image
+- **Add Reference** button opens stock image modal (Unsplash + Pexels)
+- Duration **auto-calculated** from segment type (5s or 10s)
+
+**State structure**:
+```typescript
+interface SegmentImage {
+  id: string;
+  image_url: string;
+  generation_number: number;          // 1, 2, 3, ...
+  source_type: 'generated' | 'stock' | 'uploaded';
+  is_selected: boolean;               // Only 1 per segment
+}
+```
+
+### Auto-Duration Logic
+**CRITICAL**: User does NOT select duration anywhere!
+
+| Segment Type | Duration | Rule |
+|--------------|----------|------|
+| HOOK, FORE, CTA, LOOP-END | 5s | Always 5s |
+| BODY-X, PEAK (30s video) | 5s | Short video = tight segments |
+| BODY-X, PEAK (60s/90s video) | 10s | Standard/long video |
+
+**Implementation**: `src/lib/segmentDuration.ts`
+
+### Image Analysis → Video Prompt Pipeline
+1. User selects final image per segment
+2. System analyzes image via **Gemini 2.0 Flash Vision** (FREE)
+3. Analysis returns: objects, style, lighting, mood, suggested_motion
+4. System **auto-generates** video prompt from analysis + segment type + script
+5. User can edit prompt before generation
+6. Send to **Wan 2.5** or **Kling 2.5** for video generation
+
+**Edge Functions**:
+- `analyze-image` - Gemini Vision API
+- `generate-video-prompt` - Create prompt from analysis
+- `search-stock-images` - Unsplash + Pexels integration
+
+### Voice Recording Requirements
+**Minimum**: 2 minutes for quality voice cloning
+
+**Locations**:
+- **Onboarding**: Step 2.5 (after avatar, before preferences)
+- **Profile**: Re-record section with playback
+
+**Component**: `src/components/features/VoiceRecorder/VoiceRecorder.tsx`
+
+**Storage**:
+- Bucket: `voice-references`
+- Table: `user_profiles.voice_reference_url`
+- Duration: `user_profiles.voice_reference_duration_seconds`
+
+### API Documentation Reference
+**⚠️ CRITICAL**: Read API docs before implementing generation features
+
+**Location**: `D:\Projects\fal_ai_model\`
+
+| Model Type | PDF Files |
+|------------|-----------|
+| Image (with reference) | FLUX.1 Kontext Pro, Nano Banana |
+| Image (no reference) | Bytedance Seedream v4, Qwen Image |
+| Video | Wan 2.5, Kling Video |
+| Voice | Chatterbox Turbo (TTS) |
+| Music | Minimax Music v2 |
+
+**Extract from each doc**:
+- Endpoint URL
+- Seed support (yes/no, range)
+- Negative prompt support
+- Required vs optional fields
+- Rate limits
+
+**Config**: `supabase/functions/_shared/config/modelCapabilities.ts`
+
+### Edge Function Patterns
+
+**Multi-mode support** (images & videos):
+```typescript
+// Mode parameter
+interface Request {
+  mode: 'create_jobs' | 'process_single' | 'check_status';
+  // ... other fields
+}
+
+// create_jobs: Async batch processing
+// process_single: Sync single generation
+// check_status: Poll job status
+```
+
+**Retry logic with session refresh**:
+```typescript
+async function invokeWithRetry(functionName, body, maxRetries = 3) {
+  // Auto-refresh session if expired
+  // Retry on network errors
+  // Return { data, error }
+}
+```
+
+**Standard response format**:
+```typescript
+// Success
+{ success: true, data: { ... } }
+
+// Error
+{ success: false, error: { code: 'ERROR_CODE', message: 'Human readable' } }
+```
+
+### Key Hooks & Utilities
+
+**useAuth()** - AuthContext
+```typescript
+const { user, session, loading, signIn, signOut } = useAuth();
+```
+
+**useSubscription()** - Subscription data
+```typescript
+const { subscription, sparks, features, canUseTool } = useSubscription();
+// Calls Edge Function: get-subscription
+// Returns: plan tier, sparks balance, feature access
+```
+
+**ensureValidSession()** - Session management
+```typescript
+// Pattern used in long-running operations
+const isValid = await ensureValidSession();
+if (!isValid) {
+  // Redirect to login or refresh
+}
+```
+
+### Development Workflow
+
+**Start development**:
+```batch
+npm run dev
+```
+
+**Build for production**:
+```batch
+npm run build
+```
+
+**Local Supabase** (ask permission before deploy):
+```batch
+supabase start
+supabase db reset
+supabase db diff
+supabase functions serve function-name --no-verify-jwt
+```
+
+**Deploy Edge Function** (ask permission):
+```batch
+supabase functions deploy function-name --no-verify-jwt
+```
+
+**Database migration** (ask permission):
+```batch
+supabase db push
+```
+
+### Testing Patterns
+
+**Component testing**:
+- Test render without API calls
+- Mock Supabase client responses
+- Test user interactions (click, select, input)
+
+**Edge Function testing**:
+- Test with sample data
+- Verify response format (success/error)
+- Check CORS headers
+- Test with invalid inputs
+
+**End-to-end flow**:
+1. Script generation → Order ID created
+2. Image generation → Multi-image gallery
+3. Image selection → Mark as selected
+4. Video generation → Auto-prompt from image
+5. Final video → FFmpeg combines all segments
+
+### Common Pitfalls
+
+| Issue | Solution |
+|-------|----------|
+| Route not found after rename | Update both route definition AND navigation calls |
+| Multi-image not saving | Remove UNIQUE constraint on (session_id, segment_number) |
+| Image analysis fails | Check Gemini API key, verify image URL accessible |
+| Voice recording too short | Enforce 2-minute minimum in UI (disable save button) |
+| Order ID collision | Use timestamp + random 4 chars (very low probability) |
+| Edge Function CORS | Always handle OPTIONS request first |
+| Session expired | Use `ensureValidSession()` before long operations |
+
+---
+
 **Last Updated:** January 2026
-**Version:** 4.0 (Simplified, Windows-focused, permission-gated)
+**Version:** 5.0 (v2.0 implementation ready - multi-image, voice recording, auto-prompts)
