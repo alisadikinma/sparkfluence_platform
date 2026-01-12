@@ -69,21 +69,21 @@ src/
 #### 0.1 Read API Documentation
 **Location**: `D:\Projects\fal_ai_model\`
 
-**CRITICAL**: Read ALL PDFs sebelum implement Edge Functions:
+**CRITICAL**: Read ALL MDs sebelum implement Edge Functions:
 
-**Image Models** (4 PDFs):
-- [ ] `image/FLUX.1 Kontext [pro] _Image to Image _ fal.ai.pdf`
-- [ ] `image/Nano Banana _Image to Image _fal.ai.pdf`
-- [ ] `image/Bytedance Seedream v4 _Text to Image _ fal.ai.pdf`
-- [ ] `image/Qwen Image _ Text to Image _ fal.ai.pdf`
+**Image Models** (4 MDs):
+- [ ] `image/FLUX.1 Kontext [pro] _Image to Image _ fal.ai.md`
+- [ ] `image/Nano Banana _Image to Image _fal.ai.md`
+- [ ] `image/Bytedance Seedream v4 _Text to Image _ fal.ai.md`
+- [ ] `image/Qwen Image _ Text to Image _ fal.ai.md`
 
-**Video Models** (2 PDFs):
-- [ ] `video/Wan 2.5 Image to Video _Image to Video _fal.ai.pdf`
-- [ ] `video/Kling Video _ Image to Video _ fal.ai.pdf`
+**Video Models** (2 MDs):
+- [ ] `video/Wan 2.5 Image to Video _Image to Video _fal.ai.md`
+- [ ] `video/Kling Video _ Image to Video _ fal.ai.md`
 
-**Audio Models** (2 PDFs):
-- [ ] `Chatterbox Turbo _Text to Speech _ fal.ai.pdf`
-- [ ] `Minimax Music _Text to Audio _ fal.ai.pdf`
+**Audio Models** (2 MDs):
+- [ ] `Chatterbox Turbo _Text to Speech _ fal.ai.md`
+- [ ] `Minimax Music _Text to Audio _ fal.ai.md`
 
 **Extract dari setiap doc**:
 | Info | Note |
@@ -103,7 +103,7 @@ src/
 
 ```typescript
 export const MODEL_CAPABILITIES = {
-  // Fill after reading PDFs
+  // Fill after reading API Docs
   'flux-pro/kontext': {
     endpoint: 'https://...',
     supports_seed: false,        // Update after checking
