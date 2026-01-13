@@ -811,6 +811,7 @@ export const ImageGeneration = (): JSX.Element => {
   const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null; initialKeywords: string }>({ isOpen: false, segment: null, initialKeywords: '' });
+  const [openTooltip, setOpenTooltip] = useState<{ segmentId: string; type: 'creator-face' | 'add-reference' } | null>(null);
 
   const fromScriptLab = location.state?.fromScriptLab === true;
 
@@ -1898,7 +1899,7 @@ export const ImageGeneration = (): JSX.Element => {
                 return (
                   <div 
                     key={segment.id} 
-                    className={`bg-card border rounded-xl overflow-hidden shadow-theme ${
+                    className={`bg-card border rounded-xl shadow-theme ${
                       segment.imageUrl ? 'border-green-500/30' : 'border-border-default'
                     }`}
                   >
@@ -2058,32 +2059,88 @@ export const ImageGeneration = (): JSX.Element => {
 
                           {/* Add Reference Image Button - Only for B-ROLL segments */}
                           {!isCreatorShot && (
-                            <div className="mt-2 space-y-2">
-                              {/* Include Creator Face Checkbox */}
-                              <label className="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer hover:bg-surface/80 transition-colors">
-                                <input
-                                  type="checkbox"
-                                  checked={segment.includeCreatorFace || false}
-                                  onChange={(e) => {
-                                    setSegments(prev => prev.map(s =>
-                                      s.id === segment.id
-                                        ? { ...s, includeCreatorFace: e.target.checked }
-                                        : s
-                                    ));
-                                  }}
-                                  className="w-4 h-4 rounded border-border-default text-primary focus:ring-primary"
-                                />
-                                <span className="text-xs text-text-secondary flex-1">
-                                  Include Creator Face
-                                </span>
-                                {segment.includeCreatorFace && (
-                                  <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
-                                    Multi-ref
+                            <div className="mt-2 space-y-2" style={{ overflow: 'visible' }}>
+                              {/* Include Creator Face Checkbox with Info Tooltip */}
+                              <div className="relative">
+                                <label className="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer hover:bg-surface/80 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={segment.includeCreatorFace || false}
+                                    onChange={(e) => {
+                                      setSegments(prev => prev.map(s =>
+                                        s.id === segment.id
+                                          ? { ...s, includeCreatorFace: e.target.checked }
+                                          : s
+                                      ));
+                                    }}
+                                    className="w-4 h-4 rounded border-border-default text-primary focus:ring-primary"
+                                  />
+                                  <span className="text-xs text-text-secondary flex-1">
+                                    Include Creator Face
                                   </span>
+                                  {segment.includeCreatorFace && (
+                                    <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
+                                      Multi-ref
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setOpenTooltip(prev => 
+                                        prev?.segmentId === segment.id && prev?.type === 'creator-face' 
+                                          ? null 
+                                          : { segmentId: segment.id, type: 'creator-face' }
+                                      );
+                                    }}
+                                    className="p-0.5 hover:bg-primary/20 rounded-full transition-colors"
+                                  >
+                                    <Info className="w-3.5 h-3.5 text-text-muted hover:text-primary" />
+                                  </button>
+                                </label>
+                                {/* Tooltip for Include Creator Face */}
+                                {openTooltip?.segmentId === segment.id && openTooltip?.type === 'creator-face' && (
+                                  <>
+                                    <div className="fixed inset-0 z-[99]" onClick={() => setOpenTooltip(null)} />
+                                    <div className="absolute left-auto right-0 top-full mt-1 w-80 p-3 bg-card border border-border-default rounded-lg shadow-2xl text-xs z-[100]">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <div className="p-1 bg-pink-500/20 rounded">
+                                          <Camera className="w-3 h-3 text-pink-500" />
+                                        </div>
+                                        <p className="text-text-primary font-semibold">
+                                          {language === 'id' ? 'Include Creator Face' : 'Include Creator Face'}
+                                        </p>
+                                        <button onClick={() => setOpenTooltip(null)} className="ml-auto p-0.5 hover:bg-surface rounded">
+                                          <X className="w-3 h-3 text-text-muted" />
+                                        </button>
+                                      </div>
+                                      <p className="text-text-secondary leading-relaxed mb-2">
+                                        {language === 'id' 
+                                          ? 'Fitur ini akan menambahkan wajah kamu ke dalam gambar B-ROLL. AI menggunakan model FLUX Kontext Multi-Reference yang menggabungkan foto profil kamu dengan scene yang diminta.' 
+                                          : 'This feature adds your face into B-ROLL images. AI uses FLUX Kontext Multi-Reference model that combines your profile photo with the requested scene.'}
+                                      </p>
+                                      <div className="bg-surface rounded p-2 mb-2">
+                                        <p className="text-text-primary font-medium text-[10px] mb-1">
+                                          {language === 'id' ? '✅ Kapan Digunakan:' : '✅ When to Use:'}
+                                        </p>
+                                        <ul className="text-text-muted text-[10px] space-y-0.5 list-disc list-inside">
+                                          <li>{language === 'id' ? 'Vlog atau storytelling personal' : 'Personal vlog or storytelling'}</li>
+                                          <li>{language === 'id' ? 'Tutorial dimana kamu perlu terlihat di scene' : 'Tutorials where you need to appear in scene'}</li>
+                                          <li>{language === 'id' ? 'Review produk dengan tampilan realistis' : 'Product reviews with realistic appearance'}</li>
+                                        </ul>
+                                      </div>
+                                      <div className="bg-amber-500/10 rounded p-2">
+                                        <p className="text-amber-600 dark:text-amber-400 text-[10px]">
+                                          ⚠️ {language === 'id' ? 'Pastikan foto profil kamu sudah diupload di Settings > Profile' : 'Make sure your profile photo is uploaded in Settings > Profile'}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </>
                                 )}
-                              </label>
+                              </div>
 
-                              {/* Reference Image */}
+                              {/* Reference Image with Info Tooltip */}
                               {segment.referenceImageUrl ? (
                                 <div className="flex items-center gap-2 p-2 bg-surface rounded-lg">
                                   <img 
@@ -2107,18 +2164,73 @@ export const ImageGeneration = (): JSX.Element => {
                                   </button>
                                 </div>
                               ) : (
-                                <Button
-                                  onClick={() => {
-                                    const keywords = extractKeywords(segment.visualDirection, segment.script);
-                                    setReferenceImageModal({ isOpen: true, segment, initialKeywords: keywords });
-                                  }}
-                                  variant="outline"
-                                  size="sm"
-                                  className="w-full text-xs"
-                                >
-                                  <Camera className="w-3 h-3 mr-1" />
-                                  Add Reference
-                                </Button>
+                                <div className="relative">
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      onClick={() => {
+                                        const keywords = extractKeywords(segment.visualDirection, segment.script);
+                                        setReferenceImageModal({ isOpen: true, segment, initialKeywords: keywords });
+                                      }}
+                                      variant="outline"
+                                      size="sm"
+                                      className="flex-1 text-xs"
+                                    >
+                                      <Camera className="w-3 h-3 mr-1" />
+                                      Add Reference
+                                    </Button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenTooltip(prev => 
+                                          prev?.segmentId === segment.id && prev?.type === 'add-reference' 
+                                            ? null 
+                                            : { segmentId: segment.id, type: 'add-reference' }
+                                        );
+                                      }}
+                                      className="p-1.5 hover:bg-surface rounded-lg transition-colors border border-border-default"
+                                    >
+                                      <Info className="w-3.5 h-3.5 text-text-muted hover:text-primary" />
+                                    </button>
+                                  </div>
+                                  {/* Tooltip for Add Reference */}
+                                  {openTooltip?.segmentId === segment.id && openTooltip?.type === 'add-reference' && (
+                                    <>
+                                      <div className="fixed inset-0 z-[99]" onClick={() => setOpenTooltip(null)} />
+                                      <div className="absolute left-auto right-0 top-full mt-1 w-80 p-3 bg-card border border-border-default rounded-lg shadow-2xl text-xs z-[100]">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <div className="p-1 bg-blue-500/20 rounded">
+                                            <ImageIcon className="w-3 h-3 text-blue-500" />
+                                          </div>
+                                          <p className="text-text-primary font-semibold">
+                                            {language === 'id' ? 'Reference Image' : 'Reference Image'}
+                                          </p>
+                                          <button onClick={() => setOpenTooltip(null)} className="ml-auto p-0.5 hover:bg-surface rounded">
+                                            <X className="w-3 h-3 text-text-muted" />
+                                          </button>
+                                        </div>
+                                        <p className="text-text-secondary leading-relaxed mb-2">
+                                          {language === 'id' 
+                                            ? 'Gambar referensi membantu AI memahami style visual yang kamu inginkan. AI akan menggunakan gambar ini sebagai panduan untuk menghasilkan hasil yang lebih sesuai.' 
+                                            : 'Reference images help AI understand the visual style you want. AI will use this image as a guide to generate more accurate results.'}
+                                        </p>
+                                        <div className="bg-surface rounded p-2 mb-2">
+                                          <p className="text-text-primary font-medium text-[10px] mb-1">
+                                            {language === 'id' ? '🎯 Contoh Penggunaan:' : '🎯 Example Uses:'}
+                                          </p>
+                                          <ul className="text-text-muted text-[10px] space-y-0.5 list-disc list-inside">
+                                            <li>{language === 'id' ? 'Foto produk spesifik yang ingin ditampilkan' : 'Specific product photo to be shown'}</li>
+                                            <li>{language === 'id' ? 'Lokasi atau gedung tertentu' : 'Specific location or building'}</li>
+                                            <li>{language === 'id' ? 'Style visual atau mood tertentu' : 'Specific visual style or mood'}</li>
+                                          </ul>
+                                        </div>
+                                        <p className="text-primary text-[10px]">
+                                          💡 {language === 'id' ? 'Cari dari Unsplash/Pexels gratis atau paste URL gambar sendiri' : 'Search from free Unsplash/Pexels or paste your own image URL'}
+                                        </p>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </div>
                           )}

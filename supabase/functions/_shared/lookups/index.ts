@@ -82,14 +82,14 @@ export {
   type SlangValidationResult,
 } from './slangLookup.ts';
 
-// Video Specs Lookup - Platform Technical Specifications
+// Video Specs Lookup - Platform Technical Specifications (fal.ai: Kling 2.5, Wan 2.5)
 export {
   PROJECT_SPECS,
   DIALOGUE_LIMITS,
   VIDEO_PLATFORMS,
   ENVIRONMENT_AUDIO,
   DEFAULT_VOICE_CHARACTERS,
-  VEO_CAMERA_MOVEMENTS,
+  // CAMERA_MOVEMENTS already exported from cinematographyLookup.ts
   SEGMENT_DURATION_RULES,
   getMaxDialogueWords,
   getRequiredDuration,
@@ -99,17 +99,14 @@ export {
   getClosestDuration,
   getEnvironmentAudio,
   getVoiceCharacter,
-  buildVoiceAnchorPrompt,
-  buildAudioDirective,
   getCameraMovement,
   getSegmentDurationRules,
   validateSegmentDuration,
-  buildVeoVideoPrompt,
-  buildSoraVideoPrompt,
+  buildKlingVideoPrompt,
+  buildWanVideoPrompt,
   type VideoPlatform,
   type PlatformConfig,
   type VoiceCharacter,
-  type AudioDirectiveParams,
   type VideoPromptParams,
 } from './videoSpecs.ts';
 
