@@ -9,7 +9,8 @@ import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segm
 import {
   RefreshCw, ImageIcon, Loader2,
   Sparkles, X, Maximize2, AlertCircle,
-  CloudOff, Cloud, CheckCircle2, Info, Download
+  CloudOff, Cloud, CheckCircle2, Info, Download,
+  ChevronDown, Upload, Search, Camera
 } from "lucide-react";
 
 interface SegmentImage {
@@ -43,6 +44,8 @@ interface Segment {
   isGeneratingImage: boolean;
   imageError?: string | null;
   jobId?: string;
+  referenceImageUrl?: string;              // B-ROLL reference image (stock/uploaded)
+  referenceImageSource?: 'unsplash' | 'pexels' | 'upload';
 }
 
 interface VideoSettings {
@@ -68,6 +71,68 @@ const JOB_STATUS = {
   PROCESSING: 1,
   COMPLETED: 2,
   FAILED: 3
+};
+
+// Image Model Configuration
+// Maps frontend keys to edge function model keys
+const IMAGE_MODELS = {
+  aRoll: {
+    auto: { id: 'auto', label: 'Auto (Nano Banana)', edgeKey: 'fal-nano-banana-edit' },
+    'nano-banana': { id: 'nano-banana', label: 'Nano Banana Edit', edgeKey: 'fal-nano-banana-edit' },
+    'flux-kontext': { id: 'flux-kontext', label: 'FLUX Kontext Pro', edgeKey: 'flux-kontext' },
+  },
+  bRoll: {
+    auto: { id: 'auto', label: 'Auto (Seedream v4)', edgeKey: 'fal-seedream-v4' },
+    'qwen-image': { id: 'qwen-image', label: 'Qwen Image', edgeKey: 'fal-qwen-image' },
+    'seedream-v4': { id: 'seedream-v4', label: 'Seedream v4', edgeKey: 'fal-seedream-v4' },
+  }
+};
+
+interface ImageModelSettings {
+  aRoll: 'auto' | 'nano-banana' | 'flux-kontext';
+  bRoll: 'auto' | 'qwen-image' | 'seedream-v4';
+}
+
+// Enhanced keyword extraction - extracts products, brands, people, core subjects
+const extractKeywords = (visualDirection: string, script: string): string => {
+  const text = visualDirection || script;
+  if (!text) return '';
+  
+  const keywords: string[] = [];
+  
+  // 1. Extract capitalized phrases (likely proper nouns/brands)
+  // Matches: "Tesla Model S", "Elon Musk", "iPhone 17 Pro"
+  const properNouns = text.match(/[A-Z][a-zA-Z]*(?:\s+[A-Z0-9][a-zA-Z0-9]*)+/g) || [];
+  keywords.push(...properNouns.slice(0, 2));
+  
+  // 2. Extract product patterns (brand + model)
+  // Matches: "iPhone 17", "Model S", "Galaxy S24", "RTX 4090"
+  const productPatterns = text.match(/\b(?:iPhone|iPad|MacBook|Galaxy|Pixel|Tesla|Model|RTX|GTX|AMD|Intel|Nike|Adidas|BMW|Mercedes|Porsche|Ferrari|Samsung|Sony|Canon|Nikon|GoPro|DJI)\s*[A-Z0-9]+(?:\s*(?:Pro|Max|Ultra|Plus|Mini|Air|SE))?/gi) || [];
+  keywords.push(...productPatterns.slice(0, 2));
+  
+  // 3. Extract quoted terms (often key subjects)
+  const quoted = text.match(/"([^"]+)"|'([^']+)'/g)?.map(q => q.replace(/['"]/g, '')) || [];
+  keywords.push(...quoted.slice(0, 1));
+  
+  // 4. Fallback: Extract noun phrases after "of" (e.g., "shot of coffee shop")
+  const ofPhrases = text.match(/(?:of|showing|featuring)\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/gi) || [];
+  keywords.push(...ofPhrases.map(p => p.replace(/^(?:of|showing|featuring)\s+(?:a\s+)?/i, '')).slice(0, 1));
+  
+  // 5. Last fallback: First capitalized word or meaningful noun
+  if (keywords.length === 0) {
+    const fallback = text.match(/[A-Z][a-z]+/);
+    if (fallback) keywords.push(fallback[0]);
+    else {
+      // Extract first 2-3 non-stopword words
+      const stopwords = new Set(['the', 'a', 'an', 'is', 'are', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'yang', 'dan', 'di', 'ke', 'cinematic', 'shot', 'scene', 'frame']);
+      const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !stopwords.has(w)).slice(0, 2);
+      keywords.push(...words);
+    }
+  }
+  
+  // Dedupe and join
+  const unique = [...new Set(keywords.map(k => k.trim()))].filter(k => k.length > 1);
+  return unique.slice(0, 3).join(' ');
 };
 
 // ImageGallery Component - displays multiple images per segment
@@ -452,6 +517,166 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
   );
 };
 
+// ReferenceImageModal Component - for B-ROLL segments to add reference images
+interface ReferenceImageModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  segment: Segment | null;
+  initialKeywords: string;
+  onSelect: (imageUrl: string, source: 'unsplash' | 'pexels' | 'upload') => void;
+}
+
+const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
+  isOpen,
+  onClose,
+  segment,
+  initialKeywords,
+  onSelect
+}) => {
+  const [searchQuery, setSearchQuery] = useState(initialKeywords);
+  const [results, setResults] = useState<StockImageResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [uploadUrl, setUploadUrl] = useState('');
+
+  // Auto-search when modal opens with keywords
+  useEffect(() => {
+    if (isOpen && initialKeywords) {
+      setSearchQuery(initialKeywords);
+      handleSearch(initialKeywords);
+    }
+  }, [isOpen, initialKeywords]);
+
+  const handleSearch = async (query?: string) => {
+    const searchTerm = query || searchQuery;
+    if (!searchTerm.trim()) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data, error: searchError } = await supabase.functions.invoke('search-stock-images', {
+        body: {
+          query: searchTerm.trim(),
+          orientation: 'portrait',
+          per_page: 20,
+          provider: 'both'
+        }
+      });
+
+      if (searchError) {
+        console.error('Stock search error:', searchError);
+        throw new Error('Stock image search unavailable. Use URL paste instead.');
+      }
+      if (data?.success && data?.data?.results) {
+        setResults(data.data.results);
+        if (data.data.results.length === 0) {
+          setError('No results found. Try different keywords or paste URL.');
+        }
+      } else {
+        setResults([]);
+        setError(data?.error?.message || 'No results. Try paste URL instead.');
+      }
+    } catch (err: any) {
+      console.error('Search error:', err);
+      setError(err.message || 'Search failed. Use "Paste URL" option instead.');
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUploadUrl = () => {
+    if (uploadUrl.trim()) {
+      onSelect(uploadUrl.trim(), 'upload');
+      onClose();
+    }
+  };
+
+  if (!isOpen || !segment) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4">
+      <div className="bg-card border border-border-default rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-border-default">
+          <div>
+            <h3 className="text-lg font-bold text-text-primary">Add Reference Image</h3>
+            <p className="text-xs text-text-muted">Segment: {segment.type} (B-ROLL)</p>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-surface rounded-lg">
+            <X className="w-5 h-5 text-text-secondary" />
+          </button>
+        </div>
+
+        {/* Search bar */}
+        <div className="p-4 border-b border-border-default space-y-3">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder="Search stock images..."
+                className="w-full pl-10 pr-4 py-2 bg-surface border border-border-default rounded-lg text-sm"
+              />
+            </div>
+            <Button onClick={() => handleSearch()} disabled={loading || !searchQuery.trim()}>
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Search'}
+            </Button>
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          
+          {/* Upload URL option */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={uploadUrl}
+              onChange={(e) => setUploadUrl(e.target.value)}
+              placeholder="Or paste image URL..."
+              className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm"
+            />
+            <Button onClick={handleUploadUrl} disabled={!uploadUrl.trim()} variant="outline">
+              <Upload className="w-4 h-4 mr-1" /> Use URL
+            </Button>
+          </div>
+        </div>
+
+        {/* Results grid */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            </div>
+          ) : results.length > 0 ? (
+            <div className="grid grid-cols-4 gap-3">
+              {results.map((img) => (
+                <div
+                  key={`${img.provider}-${img.id}`}
+                  className="relative aspect-[9/16] rounded-lg overflow-hidden cursor-pointer hover:ring-2 ring-primary"
+                  onClick={() => { onSelect(img.url_regular, img.provider); onClose(); }}
+                >
+                  <img src={img.url_thumb} alt="" className="w-full h-full object-cover" />
+                  <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80">
+                    <p className="text-[10px] text-white truncate">{img.photographer}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full py-12">
+              <Camera className="w-12 h-12 text-text-muted/30 mb-3" />
+              <p className="text-text-secondary text-sm">Search for reference images</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const ImageGeneration = (): JSX.Element => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -476,6 +701,11 @@ export const ImageGeneration = (): JSX.Element => {
   
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [regenerateModal, setRegenerateModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
+  
+  // NEW: Image model selection state
+  const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null; initialKeywords: string }>({ isOpen: false, segment: null, initialKeywords: '' });
 
   const fromScriptLab = location.state?.fromScriptLab === true;
 
@@ -892,7 +1122,9 @@ export const ImageGeneration = (): JSX.Element => {
           visual_direction: seg.visualDirection || '',
           script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
-          character_ref_png: isCreatorShot ? referenceImage : null
+          character_ref_png: isCreatorShot ? referenceImage : null,
+          // Reference image for B-ROLL or CREATOR
+          reference_image_url: isCreatorShot ? referenceImage : seg.referenceImageUrl
         };
       });
       
@@ -905,9 +1137,11 @@ export const ImageGeneration = (): JSX.Element => {
           topic: currentTopic,
           style: 'cinematic',
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
+          provider: 'auto',
           character_description: characterDescription,
-          character_ref_png: referenceImage // Avatar for face consistency on CREATOR shots
+          character_ref_png: referenceImage,
+          // Model selection for B-ROLL segments (CREATOR always uses nano-banana-edit)
+          broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
         }
       });
 
@@ -988,7 +1222,9 @@ export const ImageGeneration = (): JSX.Element => {
           visual_direction: seg.visualDirection || '',
           script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
-          character_ref_png: isCreatorShot ? referenceImage : null
+          character_ref_png: isCreatorShot ? referenceImage : null,
+          // Reference image for B-ROLL
+          reference_image_url: !isCreatorShot ? seg.referenceImageUrl : undefined
         };
       });
 
@@ -1001,9 +1237,11 @@ export const ImageGeneration = (): JSX.Element => {
           topic: currentTopic,
           style: 'cinematic',
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
+          provider: 'auto',
           character_description: characterDescription,
-          character_ref_png: referenceImage
+          character_ref_png: referenceImage,
+          // Model selection for B-ROLL segments (CREATOR always uses nano-banana-edit)
+          broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
         }
       });
 
@@ -1062,12 +1300,16 @@ export const ImageGeneration = (): JSX.Element => {
           segment_type: segment.type,
           script_text: segment.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
-          character_ref_png: referenceImage
+          character_ref_png: referenceImage,
+          // Reference image for B-ROLL
+          reference_image_url: !isCreatorShot ? segment.referenceImageUrl : undefined
         }],
         style: 'cinematic',
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
-        provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
-        character_ref_png: referenceImage // Request-level reference for CREATOR shots
+        provider: 'auto',
+        character_ref_png: referenceImage,
+        // Model selection for B-ROLL segments (CREATOR always uses nano-banana-edit)
+        broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
       };
       
       const { data, error } = await supabase.functions.invoke('generate-images', {
@@ -1136,7 +1378,7 @@ export const ImageGeneration = (): JSX.Element => {
       );
       return false;
     }
-  }, [segments, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic, sessionId, user]);
+  }, [segments, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic, sessionId, user, imageModels]);
 
   const handleSelectImage = useCallback(async (imageId: string, segmentNumber: number) => {
     if (!user || !sessionId) return;
@@ -1190,6 +1432,15 @@ export const ImageGeneration = (): JSX.Element => {
     const segment = regenerateModal.segment;
     const segmentNumber = parseInt(segment.id);
 
+    // Max 3 images validation
+    const currentImageCount = segment.images?.length || 0;
+    if (currentImageCount >= 3) {
+      alert(language === 'id' 
+        ? 'Maksimal 3 gambar per segment. Hapus gambar lama dulu.'
+        : 'Maximum 3 images per segment. Delete old images first.');
+      return;
+    }
+
     try {
       // Get max generation number for this segment
       const maxGenNumber = Math.max(...segment.images.map(img => img.generationNumber), 0);
@@ -1228,6 +1479,19 @@ export const ImageGeneration = (): JSX.Element => {
       alert('Failed to regenerate image. Please try again.');
     }
   }, [user, sessionId, regenerateModal.segment, videoSettings, startBackgroundProcessing]);
+
+  // Handle reference image selection for B-ROLL segments
+  const handleReferenceImageSelect = useCallback((imageUrl: string, source: 'unsplash' | 'pexels' | 'upload') => {
+    if (!referenceImageModal.segment) return;
+    
+    setSegments(prev => prev.map(seg => 
+      seg.id === referenceImageModal.segment!.id 
+        ? { ...seg, referenceImageUrl: imageUrl, referenceImageSource: source }
+        : seg
+    ));
+    
+    setReferenceImageModal({ isOpen: false, segment: null, initialKeywords: '' });
+  }, [referenceImageModal.segment]);
 
   const handlePrevious = () => {
     saveProgress(segments, currentTopic, videoSettings);
@@ -1410,8 +1674,57 @@ export const ImageGeneration = (): JSX.Element => {
               </p>
             </div>
             
-            {/* Generate All Images Button - always visible and clickable */}
+            {/* Generate All Images Button + Model Dropdown */}
             <div className="flex gap-2">
+              {/* Model Selection Dropdown */}
+              <div className="relative">
+                <Button
+                  onClick={() => setShowModelDropdown(!showModelDropdown)}
+                  variant="outline"
+                  className="h-12 px-4 flex items-center gap-2"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span className="hidden sm:inline">Models</span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
+                </Button>
+                
+                {showModelDropdown && (
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-card border border-border-default rounded-xl shadow-lg z-50 p-4">
+                    <h4 className="text-sm font-semibold text-text-primary mb-3">Image Model Selection</h4>
+                    
+                    {/* A-ROLL Model */}
+                    <div className="mb-3">
+                      <label className="text-xs text-text-muted mb-1 block">A-ROLL (HOOK, CTA)</label>
+                      <select
+                        value={imageModels.aRoll}
+                        onChange={(e) => setImageModels(prev => ({ ...prev, aRoll: e.target.value as any }))}
+                        className="w-full bg-surface border border-border-default rounded-lg px-3 py-2 text-sm text-text-primary"
+                      >
+                        {Object.entries(IMAGE_MODELS.aRoll).map(([key, model]) => (
+                          <option key={key} value={key}>{model.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    {/* B-ROLL Model */}
+                    <div>
+                      <label className="text-xs text-text-muted mb-1 block">B-ROLL (FORE, BODY, PEAK)</label>
+                      <select
+                        value={imageModels.bRoll}
+                        onChange={(e) => setImageModels(prev => ({ ...prev, bRoll: e.target.value as any }))}
+                        className="w-full bg-surface border border-border-default rounded-lg px-3 py-2 text-sm text-text-primary"
+                      >
+                        {Object.entries(IMAGE_MODELS.bRoll).map(([key, model]) => (
+                          <option key={key} value={key}>{model.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <p className="text-xs text-text-muted mt-3">Selected models apply to new generations</p>
+                  </div>
+                )}
+              </div>
+              
               <Button
                 onClick={allHaveImages ? handleRegenerateAll : handleGenerateAllBackground}
                 disabled={isGeneratingAll || isBackgroundMode}
@@ -1626,6 +1939,48 @@ export const ImageGeneration = (): JSX.Element => {
                             )}
                           </div>
 
+                          {/* Add Reference Image Button - Only for B-ROLL segments */}
+                          {!isCreatorShot && (
+                            <div className="mt-2">
+                              {segment.referenceImageUrl ? (
+                                <div className="flex items-center gap-2 p-2 bg-surface rounded-lg">
+                                  <img 
+                                    src={segment.referenceImageUrl} 
+                                    alt="Reference" 
+                                    className="w-8 h-10 object-cover rounded"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-text-secondary truncate">Reference added</p>
+                                    <p className="text-[10px] text-text-muted capitalize">{segment.referenceImageSource}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setSegments(prev => prev.map(s => 
+                                        s.id === segment.id ? { ...s, referenceImageUrl: undefined, referenceImageSource: undefined } : s
+                                      ));
+                                    }}
+                                    className="p-1 hover:bg-red-500/20 rounded"
+                                  >
+                                    <X className="w-3 h-3 text-red-500" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <Button
+                                  onClick={() => {
+                                    const keywords = extractKeywords(segment.visualDirection, segment.script);
+                                    setReferenceImageModal({ isOpen: true, segment, initialKeywords: keywords });
+                                  }}
+                                  variant="outline"
+                                  size="sm"
+                                  className="w-full text-xs"
+                                >
+                                  <Camera className="w-3 h-3 mr-1" />
+                                  Add Reference 📷
+                                </Button>
+                              )}
+                            </div>
+                          )}
+
                           {/* Image Gallery - Multi-image support */}
                           <ImageGallery
                             images={segment.images || []}
@@ -1711,6 +2066,15 @@ export const ImageGeneration = (): JSX.Element => {
         onClose={() => setRegenerateModal({ isOpen: false, segment: null })}
         segment={regenerateModal.segment}
         onRegenerate={handleRegenerateWithNotes}
+      />
+
+      {/* Reference Image Modal for B-ROLL */}
+      <ReferenceImageModal
+        isOpen={referenceImageModal.isOpen}
+        onClose={() => setReferenceImageModal({ isOpen: false, segment: null, initialKeywords: '' })}
+        segment={referenceImageModal.segment}
+        initialKeywords={referenceImageModal.initialKeywords}
+        onSelect={handleReferenceImageSelect}
       />
     </div>
   );

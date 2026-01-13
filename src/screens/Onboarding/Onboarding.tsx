@@ -8,6 +8,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
 import { Loader2, Camera, User, ArrowRight, ArrowLeft, Check } from "lucide-react";
+import { clearAvatarCache } from "../../lib/avatarCache";
 
 interface LookupItem {
   id: string;
@@ -260,15 +261,36 @@ export const Onboarding = (): JSX.Element => {
         .from("avatars")
         .upload(avatarFileName, avatarFile, { upsert: true });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error("Storage upload error:", uploadError);
+        // Show user-friendly error
+        if (uploadError.message.includes("Bucket not found")) {
+          setError(language === 'id' 
+            ? "Storage belum dikonfigurasi. Hubungi admin." 
+            : "Storage not configured. Contact admin.");
+        } else if (uploadError.message.includes("violates row-level security")) {
+          setError(language === 'id' 
+            ? "Tidak ada izin upload. Hubungi admin." 
+            : "No upload permission. Contact admin.");
+        } else {
+          setError(language === 'id' 
+            ? `Gagal upload foto: ${uploadError.message}` 
+            : `Failed to upload photo: ${uploadError.message}`);
+        }
+        return null;
+      }
 
       const { data: urlData } = supabase.storage
         .from("avatars")
         .getPublicUrl(avatarFileName);
 
+      console.log("Avatar uploaded successfully:", urlData.publicUrl);
       return urlData.publicUrl;
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error uploading avatar:", err);
+      setError(language === 'id' 
+        ? `Gagal upload foto: ${err.message}` 
+        : `Failed to upload photo: ${err.message}`);
       return null;
     } finally {
       setUploadingAvatar(false);
@@ -363,6 +385,11 @@ export const Onboarding = (): JSX.Element => {
         await supabase.auth.updateUser({
           data: { full_name: displayName.trim() }
         });
+
+        // Invalidate avatar cache so other pages fetch fresh data
+        if (finalAvatarUrl) {
+          clearAvatarCache();
+        }
       } catch (err) {
         console.error("Error saving profile:", err);
       }

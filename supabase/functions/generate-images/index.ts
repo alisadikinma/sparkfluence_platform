@@ -70,12 +70,13 @@ const JOB_STATUS = {
 }
 
 // ============================================================================
-// IMAGE PROVIDER SELECTION (2026-01-11 Updated with /edit endpoint)
+// IMAGE PROVIDER SELECTION (2026-01-14 Updated with Seedream v4 + QWEN)
 // ============================================================================
 // PRIORITY:
 //   - CREATOR (HOOK/CTA) WITH ref: fal-nano-banana-edit (face consistency via image_urls)
 //   - CREATOR (HOOK/CTA) NO ref: fal-nano-banana (text-to-image)
-//   - B-ROLL: fal-wan-t2i (negative prompt for no humans) → fal-nano-banana → FLUX
+//   - B-ROLL WITH ref: fal-nano-banana-edit (scene reference via image_urls)
+//   - B-ROLL NO ref: Use brollModel from header (seedream-v4 / qwen-image / default)
 // ============================================================================
 
 interface ProviderSelection {
@@ -83,7 +84,14 @@ interface ProviderSelection {
   fallback: ImageModelKey;
 }
 
-function selectImageProvider(isCreatorShot: boolean, hasReferenceImage: boolean = false): ProviderSelection {
+// Default B-ROLL model when 'auto' mode
+const DEFAULT_BROLL_MODEL: ImageModelKey = 'fal-seedream-v4'
+
+function selectImageProvider(
+  isCreatorShot: boolean, 
+  hasReferenceImage: boolean = false,
+  brollModel?: ImageModelKey  // User's B-ROLL model choice from header
+): ProviderSelection {
   if (isCreatorShot) {
     // HOOK/CTA segments - need face consistency
     if (hasReferenceImage) {
@@ -100,10 +108,22 @@ function selectImageProvider(isCreatorShot: boolean, hasReferenceImage: boolean 
       }
     }
   } else {
-    // B-ROLL segments - no face needed, use negative prompt
+    // B-ROLL segments
+    if (hasReferenceImage) {
+      // ✅ B-ROLL with reference → use /edit model (supports reference images)
+      return {
+        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (image_urls support)
+        fallback: 'fal-nano-banana'        // fal.ai Nano Banana fallback
+      }
+    }
+    // B-ROLL without reference - use user's selected model or default
+    const selectedModel = brollModel || DEFAULT_BROLL_MODEL
+    const fallbackModel: ImageModelKey = selectedModel === 'fal-seedream-v4' 
+      ? 'fal-qwen-image' 
+      : 'fal-seedream-v4'
     return {
-      primary: 'fal-wan-t2i',      // fal.ai Wan 2.6 (supports negative prompt)
-      fallback: 'fal-nano-banana'  // fal.ai Nano Banana fallback
+      primary: selectedModel,
+      fallback: fallbackModel
     }
   }
 }
@@ -220,7 +240,8 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     topic, 
     style = 'cinematic', 
     aspect_ratio = '9:16',
-    provider: defaultProvider = 'auto', // 'auto' = Nano Banana primary for all
+    provider: defaultProvider = 'auto', // 'auto' = intelligent selection
+    broll_model = 'fal-seedream-v4',    // User's B-ROLL model choice from header
     character_description = '',
     character_ref_png = '' // Avatar URL for face consistency
   } = requestBody
@@ -260,21 +281,27 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     const isCreatorShot = shotType === 'CREATOR' || 
       ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
-    // Reference image for CREATOR shots
-    const refImage = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
-    const hasReferenceImage = !!refImage
+    // ========================================================================
+    // REFERENCE IMAGE HANDLING (2026-01-14 Updated)
+    // CREATOR shots: use character_ref_png (avatar for face consistency)
+    // B-ROLL shots: use reference_image_url (scene reference from stock/upload)
+    // ========================================================================
+    const creatorRefImage = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
+    const brollRefImage = !isCreatorShot ? (segment.reference_image_url || null) : null
+    const hasReferenceImage = !!(creatorRefImage || brollRefImage)
     
     // ========================================================================
-    // PROVIDER SELECTION (2026-01-11 - Updated with /edit endpoint)
+    // PROVIDER SELECTION (2026-01-14 - Updated with Seedream v4 + QWEN)
     // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
     // CREATOR no ref: fal-nano-banana → gpt-image-1
-    // B-ROLL: fal-wan-t2i → fal-nano-banana
+    // B-ROLL with ref: fal-nano-banana-edit → fal-nano-banana
+    // B-ROLL no ref: broll_model (seedream-v4/qwen/etc) → fallback
     // ========================================================================
     let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
     let fallbackProvider: ImageModelKey = 'flux-schnell'
     
     if (defaultProvider === 'auto') {
-      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage)
+      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage, broll_model as ImageModelKey)
       segmentProvider = providerChoice.primary
       fallbackProvider = providerChoice.fallback
     }
@@ -297,7 +324,8 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       fallback_provider: fallbackProvider, // Store fallback for retry
       topic,
       character_description: charDesc,
-      character_ref_png: isCreatorShot ? (segment.character_ref_png || character_ref_png) : null,
+      character_ref_png: creatorRefImage,  // Avatar for CREATOR shots
+      reference_image_url: brollRefImage,  // Scene reference for B-ROLL shots
       status: JOB_STATUS.PENDING,
       image_url: null,
       error_message: null
@@ -534,6 +562,19 @@ async function handleProcessSingle(
   let usedProvider: string = primaryProvider
   let errorMessages: string[] = []
 
+  // ========================================================================
+  // REFERENCE IMAGE SELECTION (2026-01-14)
+  // CREATOR shots: use character_ref_png (avatar)
+  // B-ROLL shots: use reference_image_url (scene reference)
+  // ========================================================================
+  const referenceImageForGeneration = isCreatorShot 
+    ? (job.character_ref_png || undefined)
+    : (job.reference_image_url || undefined)
+  
+  if (referenceImageForGeneration) {
+    console.log(`[PROCESS_SINGLE] Reference image: ${referenceImageForGeneration.substring(0, 60)}...`)
+  }
+
   // Helper function to generate image with a specific provider
   const generateWithProvider = async (providerKey: ImageModelKey): Promise<string | null> => {
     const providerConfig = IMAGE_MODELS[providerKey]
@@ -553,7 +594,7 @@ async function handleProcessSingle(
           job.visual_prompt, 
           aspectRatio, 
           supabase,
-          job.character_ref_png || undefined
+          referenceImageForGeneration
         )
       }
     } else if (providerConfig.provider === 'geminigen') {
@@ -564,7 +605,7 @@ async function handleProcessSingle(
         aspectRatio,
         providerKey,
         supabase,
-        job.character_ref_png || undefined
+        referenceImageForGeneration
       )
     } else if (providerConfig.provider === 'huggingface') {
       if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
@@ -577,7 +618,7 @@ async function handleProcessSingle(
         aspectRatio,
         providerKey,
         supabase,
-        job.character_ref_png || undefined
+        referenceImageForGeneration
       )
     }
     
@@ -899,6 +940,7 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
     style = 'cinematic', 
     aspect_ratio = '9:16',
     provider: defaultProvider = 'auto',
+    broll_model = 'fal-seedream-v4',  // User's B-ROLL model choice
     character_description = '',
     character_ref_png = ''
   } = requestBody
@@ -927,9 +969,10 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
     const isCreatorShot = shotType === 'CREATOR' || 
       ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
-    // Reference image
-    const refImage = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
-    const hasReferenceImage = !!refImage
+    // Reference image (2026-01-14: B-ROLL can also have reference!)
+    const creatorRef = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
+    const brollRef = !isCreatorShot ? (segment.reference_image_url || null) : null
+    const hasReferenceImage = !!(creatorRef || brollRef)
 
     // Provider selection
     let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
@@ -937,7 +980,7 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
     let selectionReason = ''
     
     if (defaultProvider === 'auto') {
-      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage)
+      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage, broll_model as ImageModelKey)
       primaryProvider = providerChoice.primary
       fallbackProvider = providerChoice.fallback
       
@@ -948,7 +991,11 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
           selectionReason = 'CREATOR shot WITHOUT reference → fal-nano-banana (text-to-image)'
         }
       } else {
-        selectionReason = 'B-ROLL shot → fal-wan-t2i (supports negative prompt for quality control)'
+        if (hasReferenceImage) {
+          selectionReason = 'B-ROLL shot WITH reference → fal-nano-banana-edit (scene reference via image_urls)'
+        } else {
+          selectionReason = `B-ROLL shot → ${broll_model} (user-selected model from header)`
+        }
       }
     } else {
       selectionReason = `Manual provider override: ${defaultProvider}`
@@ -1090,6 +1137,7 @@ async function handleLegacyMode(
   const style = requestBody.style || 'cinematic'
   const aspectRatio: '9:16' | '16:9' | '1:1' = requestBody.aspect_ratio || '9:16'
   const defaultProvider = requestBody.provider || 'auto' // 'auto' = fal.ai primary
+  const brollModel = requestBody.broll_model || 'fal-seedream-v4' // User's B-ROLL model choice
   const topic = requestBody.topic || ''
   const characterDescription = requestBody.character_description || ''
   const characterRefPng = requestBody.character_ref_png || '' // Avatar URL for face consistency
@@ -1176,21 +1224,28 @@ async function handleLegacyMode(
     const isCreatorShot = shotType === 'CREATOR' || 
       ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType.toUpperCase())
     
-    // Reference image for CREATOR shots only
-    const refImage = isCreatorShot ? (segment.character_ref_png || characterRefPng || undefined) : undefined
+    // ========================================================================
+    // REFERENCE IMAGE HANDLING (2026-01-14 Updated)
+    // CREATOR shots: use character_ref_png (avatar for face consistency)
+    // B-ROLL shots: use reference_image_url (scene reference from stock/upload)
+    // ========================================================================
+    const refImage = isCreatorShot 
+      ? (segment.character_ref_png || characterRefPng || undefined)
+      : (segment.reference_image_url || undefined)  // B-ROLL can also have reference!
     const hasReferenceImage = !!refImage
     
     // ========================================================================
-    // PROVIDER SELECTION (2026-01-11 - Updated with /edit endpoint)
+    // PROVIDER SELECTION (2026-01-14 - Updated with Seedream v4 + QWEN)
     // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
     // CREATOR no ref: fal-nano-banana → gpt-image-1
-    // B-ROLL: fal-wan-t2i → fal-nano-banana
+    // B-ROLL with ref: fal-nano-banana-edit → fal-nano-banana
+    // B-ROLL no ref: brollModel (seedream-v4/qwen/etc) → fallback
     // ========================================================================
     let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
     let fallbackProvider: ImageModelKey = 'flux-schnell'
     
     if (defaultProvider === 'auto') {
-      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage)
+      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage, brollModel as ImageModelKey)
       primaryProvider = providerChoice.primary
       fallbackProvider = providerChoice.fallback
     }
@@ -1931,16 +1986,32 @@ async function generateWithFalAi(
       // Don't add image_url - it will be ignored anyway
     }
     // No style presets for T2I endpoint
-  } else if (modelKey === 'fal-wan-t2i') {
+  } else if (modelKey === 'fal-seedream-v4') {
     // ========================================================================
-    // WAN 2.6 T2I - supports negative prompt (critical for B-roll without faces)
+    // SEEDREAM V4 (ByteDance) - High-res B-ROLL, excellent text rendering
+    // Up to 4096px, cinematic quality, NO negative prompt support
+    // ========================================================================
+    requestBody.num_images = 1
+    requestBody.max_images = 1
+    requestBody.enable_safety_checker = true
+    requestBody.enhance_prompt_mode = 'standard'
+    // Seedream uses seed for reproducibility
+    if (!requestBody.seed) {
+      requestBody.seed = Math.floor(Math.random() * 2147483647)
+    }
+    console.log(`[FAL.AI] Using Seedream v4 for high-quality B-ROLL`)
+  } else if (modelKey === 'fal-qwen-image') {
+    // ========================================================================
+    // QWEN IMAGE - B-ROLL with NEGATIVE PROMPT support, turbo mode
+    // Max 1024px, supports LoRAs
     // ========================================================================
     requestBody.negative_prompt = getBRollNegativePrompt('combined')
     requestBody.num_inference_steps = 30
-    requestBody.guidance_scale = 6.0
-    requestBody.shift = 5.0
-    requestBody.sampler = 'unipc'
-    console.log(`[FAL.AI] Using negative prompt for quality (humans allowed)`)
+    requestBody.guidance_scale = 2.5
+    requestBody.num_images = 1
+    requestBody.acceleration = 'none' // or 'high' for turbo
+    requestBody.use_turbo = false
+    console.log(`[FAL.AI] Using QWEN Image with negative prompt for B-ROLL`)
   }
   
   // Make API request to the correct endpoint

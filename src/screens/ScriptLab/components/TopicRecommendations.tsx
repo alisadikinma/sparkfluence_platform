@@ -327,9 +327,11 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         console.log('[TopicRecommendations] Invalid response, using fallback:', data);
         setTopics(getFallbackTopics(language));
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[TopicRecommendations] Error generating topics:", err);
       setTopics(getFallbackTopics(language));
+      // DON'T cache fallback topics on error - allows retry to fetch fresh from API
+      // Removed: cacheTopics(...) to enable proper refresh
     } finally {
       setLoading(false);
       setRefreshing(false);

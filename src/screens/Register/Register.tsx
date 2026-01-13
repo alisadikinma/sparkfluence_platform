@@ -98,7 +98,20 @@ export const Register = (): JSX.Element => {
         // Try to get detailed error from context
         try {
           const body = fnError.context?.body;
-          const errorBody = typeof body === 'string' ? JSON.parse(body) : body;
+          let errorBody = null;
+          
+          if (typeof body === 'string') {
+            errorBody = JSON.parse(body);
+          } else if (body instanceof ReadableStream) {
+            // Read stream and parse
+            const reader = body.getReader();
+            const { value } = await reader.read();
+            const text = new TextDecoder().decode(value);
+            errorBody = JSON.parse(text);
+          } else if (body && typeof body === 'object') {
+            errorBody = body;
+          }
+          
           if (errorBody?.error?.message) {
             setError(errorBody.error.message);
             setSendingOtp(false);
@@ -162,7 +175,20 @@ export const Register = (): JSX.Element => {
         // Try to get detailed error from context
         try {
           const body = fnError.context?.body;
-          const errorBody = typeof body === 'string' ? JSON.parse(body) : body;
+          let errorBody = null;
+          
+          if (typeof body === 'string') {
+            errorBody = JSON.parse(body);
+          } else if (body instanceof ReadableStream) {
+            // Read stream and parse
+            const reader = body.getReader();
+            const { value } = await reader.read();
+            const text = new TextDecoder().decode(value);
+            errorBody = JSON.parse(text);
+          } else if (body && typeof body === 'object') {
+            errorBody = body;
+          }
+          
           if (errorBody?.error?.message) {
             setError(errorBody.error.message);
             setVerifyingOtp(false);

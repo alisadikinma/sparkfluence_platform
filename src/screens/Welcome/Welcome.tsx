@@ -102,11 +102,28 @@ export const Welcome = (): JSX.Element => {
 
       // Extract detailed error message
       if (fnError) {
-        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
-        if (errorBody?.error?.message) {
-          setError(errorBody.error.message);
-          setSendingOtp(false);
-          return;
+        try {
+          const body = fnError.context?.body;
+          let errorBody = null;
+          
+          if (typeof body === 'string') {
+            errorBody = JSON.parse(body);
+          } else if (body instanceof ReadableStream) {
+            const reader = body.getReader();
+            const { value } = await reader.read();
+            const text = new TextDecoder().decode(value);
+            errorBody = JSON.parse(text);
+          } else if (body && typeof body === 'object') {
+            errorBody = body;
+          }
+          
+          if (errorBody?.error?.message) {
+            setError(errorBody.error.message);
+            setSendingOtp(false);
+            return;
+          }
+        } catch (parseErr) {
+          console.warn('[Welcome] Could not parse error body:', parseErr);
         }
         throw fnError;
       }
@@ -152,11 +169,28 @@ export const Welcome = (): JSX.Element => {
 
       // Extract detailed error message
       if (fnError) {
-        const errorBody = fnError.context?.body ? JSON.parse(fnError.context.body) : null;
-        if (errorBody?.error?.message) {
-          setError(errorBody.error.message);
-          setSendingOtp(false);
-          return;
+        try {
+          const body = fnError.context?.body;
+          let errorBody = null;
+          
+          if (typeof body === 'string') {
+            errorBody = JSON.parse(body);
+          } else if (body instanceof ReadableStream) {
+            const reader = body.getReader();
+            const { value } = await reader.read();
+            const text = new TextDecoder().decode(value);
+            errorBody = JSON.parse(text);
+          } else if (body && typeof body === 'object') {
+            errorBody = body;
+          }
+          
+          if (errorBody?.error?.message) {
+            setError(errorBody.error.message);
+            setVerifyingOtp(false);
+            return;
+          }
+        } catch (parseErr) {
+          console.warn('[Welcome] Could not parse error body:', parseErr);
         }
         throw fnError;
       }

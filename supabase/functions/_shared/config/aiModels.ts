@@ -466,33 +466,72 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   },
 
   // ==========================================================================
-  // FAL.AI WAN 2.6 T2I - B-ROLL shots (environments, no faces)
+  // FAL.AI SEEDREAM V4 - High-res B-ROLL (ByteDance)
+  // Excellent text rendering, up to 4096px, cinematic quality
   // ==========================================================================
-  'fal-wan-t2i': {
-    key: 'fal-wan-t2i',
-    displayName: 'Wan 2.6 T2I (fal.ai)',
+  'fal-seedream-v4': {
+    key: 'fal-seedream-v4',
+    displayName: 'Seedream v4 (fal.ai)',
     provider: 'fal',
-    endpoint: 'https://fal.run/wan/v2.6/text-to-image',
-    apiModelName: 'wan/v2.6/text-to-image',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v4/text-to-image',
+    apiModelName: 'fal-ai/bytedance/seedream/v4/text-to-image',
     aspectRatios: {
-      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '1:1': { apiValue: 'custom', dimensions: { width: 2048, height: 2048 } },
       '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
       '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1536, height: 1152 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 1152, height: 1536 } },
     },
     qualityOptions: undefined,
-    styleOptions: undefined, // Native cinematic
+    styleOptions: undefined,
     refImageParam: null, // Not supported
-    supportsNegativePrompt: true, // KEY FEATURE for B-roll
+    supportsNegativePrompt: false, // Not supported
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.03,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['high resolution (up to 4096px)', 'excellent text rendering', 'cinematic quality', 'fast'],
+    weaknesses: ['no reference image', 'no negative prompt'],
+    bestFor: ['B-ROLL', 'high-res visuals', 'text/typography in images', 'hero shots'],
+    enabled: true,
+    notes: 'HIGH QUALITY B-ROLL - best for text rendering and high-res output',
+  },
+
+  // ==========================================================================
+  // FAL.AI QWEN IMAGE - B-ROLL with negative prompt support
+  // Turbo mode available, supports LoRAs
+  // ==========================================================================
+  'fal-qwen-image': {
+    key: 'fal-qwen-image',
+    displayName: 'Qwen Image (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/qwen-image',
+    apiModelName: 'fal-ai/qwen-image',
+    aspectRatios: {
+      '1:1': { apiValue: 'square', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'portrait_3_4', dimensions: { width: 768, height: 1024 } },
+      '16:9': { apiValue: 'landscape_16_9', dimensions: { width: 1024, height: 576 } },
+      '4:3': { apiValue: 'landscape_4_3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: 'portrait_3_4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: {
+      'regular': 'none',
+      'turbo': 'high',
+    },
+    styleOptions: undefined,
+    refImageParam: null, // Not supported
+    supportsNegativePrompt: true, // KEY FEATURE!
     maxPromptLength: 4000,
     responseFormat: 'url',
     costPerImage: 0.02,
     isFree: false,
     rateLimit: 0,
-    strengths: ['negative prompt support', 'cinematic environments', 'tech visuals', 'no faces'],
-    weaknesses: ['no reference image', 'no style presets'],
-    bestFor: ['B-ROLL', 'environments', 'tech visuals', 'product shots'],
+    strengths: ['negative prompt support', 'turbo mode', 'LoRA support', 'good quality'],
+    weaknesses: ['no reference image', 'max 1024px'],
+    bestFor: ['B-ROLL', 'environments', 'when negative prompt needed'],
     enabled: true,
-    notes: 'PRIMARY for B-ROLL - supports negative prompt to exclude humans',
+    notes: 'B-ROLL with NEGATIVE PROMPT - use when need to exclude specific elements',
   },
 };
 
@@ -866,10 +905,10 @@ export function selectImageModel(params: {
 /**
  * Get image model fallback chain
  * 
- * PRIORITY (2026-01-11 Updated with /edit endpoint):
+ * PRIORITY (2026-01-14 Updated with Seedream v4 + QWEN):
  * - CREATOR with ref: fal-nano-banana-edit → gpt-image-1 → imagen-pro → FLUX
  * - CREATOR no ref: fal-nano-banana → gpt-image-1 → FLUX
- * - B-ROLL: fal-wan-t2i → fal-nano-banana → FLUX
+ * - B-ROLL: seedream-v4 → qwen-image → fal-nano-banana → FLUX
  */
 export function getImageModelFallbackChain(primaryModel: string, isCreatorShot: boolean = false): string[] {
   // CREATOR shots with reference: fal-nano-banana-edit → gpt-image-1 → imagen-pro → FLUX
@@ -884,18 +923,19 @@ export function getImageModelFallbackChain(primaryModel: string, isCreatorShot: 
     return creatorChains[primaryModel] || ['fal-nano-banana-edit', 'gpt-image-1', 'flux-schnell'];
   }
   
-  // B-ROLL: fal-wan-t2i → fal-nano-banana → FLUX
+  // B-ROLL: primary → seedream-v4 / qwen-image → fal-nano-banana → FLUX
   const brollChains: Record<string, string[]> = {
-    'fal-wan-t2i': ['fal-nano-banana', 'flux-schnell'],
-    'fal-nano-banana': ['fal-wan-t2i', 'flux-schnell'],
-    'flux-schnell': ['fal-wan-t2i', 'fal-nano-banana'],
-    'imagen-pro': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
-    'imagen-4-fast': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
-    'imagen-4-ultra': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
-    'dall-e-3': ['fal-wan-t2i', 'fal-nano-banana', 'flux-schnell'],
+    'fal-seedream-v4': ['fal-qwen-image', 'fal-nano-banana', 'flux-schnell'],
+    'fal-qwen-image': ['fal-seedream-v4', 'fal-nano-banana', 'flux-schnell'],
+    'fal-nano-banana': ['fal-seedream-v4', 'fal-qwen-image', 'flux-schnell'],
+    'flux-schnell': ['fal-seedream-v4', 'fal-qwen-image', 'fal-nano-banana'],
+    'imagen-pro': ['fal-seedream-v4', 'fal-qwen-image', 'fal-nano-banana', 'flux-schnell'],
+    'imagen-4-fast': ['fal-seedream-v4', 'fal-qwen-image', 'fal-nano-banana', 'flux-schnell'],
+    'imagen-4-ultra': ['fal-seedream-v4', 'fal-qwen-image', 'fal-nano-banana', 'flux-schnell'],
+    'dall-e-3': ['fal-seedream-v4', 'fal-qwen-image', 'fal-nano-banana', 'flux-schnell'],
   };
   
-  return brollChains[primaryModel] || ['fal-nano-banana', 'flux-schnell'];
+  return brollChains[primaryModel] || ['fal-seedream-v4', 'fal-nano-banana', 'flux-schnell'];
 }
 
 // ============================================================================

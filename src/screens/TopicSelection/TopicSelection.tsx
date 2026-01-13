@@ -363,7 +363,9 @@ export const TopicSelection = (): JSX.Element => {
       console.error('Error generating topics:', err);
       const fallbackTopics = getFallbackTopics(outputLang);
       setTopics(fallbackTopics);
-      cacheTopics(fallbackTopics);
+      // DON'T cache fallback topics on error - allows retry to fetch fresh from API
+      // cacheTopics(fallbackTopics); // Removed to enable refresh
+      setError(err.message || 'Gagal memuat topik dari server. Menggunakan topik default.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -1019,6 +1021,15 @@ export const TopicSelection = (): JSX.Element => {
           avatarManager.setPendingUploadFile(null);
         }}
         nameInputRef={avatarManager.nameInputRef}
+      />
+
+      {/* Hidden file input for avatar upload */}
+      <input
+        ref={avatarManager.fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={avatarManager.handleFileSelect}
       />
     </div>
   );
