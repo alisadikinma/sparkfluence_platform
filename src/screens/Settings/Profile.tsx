@@ -21,8 +21,10 @@ import {
   MessageSquare,
   Shield,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Mic
 } from "lucide-react";
+import { VoiceRecorder } from "../../components/features/VoiceRecorder";
 import { PhoneInput } from "../../components/ui/phone-input";
 
 interface ProfileData {
@@ -33,6 +35,8 @@ interface ProfileData {
   phone_number: string;
   phone_verified: boolean;
   country: string;
+  voice_reference_url: string;
+  voice_reference_duration_seconds: number;
 }
 
 interface ContentPreferences {
@@ -44,7 +48,7 @@ interface ContentPreferences {
   creative_dna: string[];
 }
 
-type TabType = "info" | "content" | "phone" | "password" | "language";
+type TabType = "info" | "voice" | "content" | "phone" | "password" | "language";
 
 // Options for dropdowns
 const interestOptions = [
@@ -231,7 +235,14 @@ export const Profile = (): JSX.Element => {
     phone_number: "",
     phone_verified: false,
     country: "ID",
+    voice_reference_url: "",
+    voice_reference_duration_seconds: 0,
   });
+
+  // Voice recording state
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
+  const [voiceDuration, setVoiceDuration] = useState(0);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
 
   // Content Preferences State
   const [contentPrefs, setContentPrefs] = useState<ContentPreferences>({
@@ -307,7 +318,13 @@ export const Profile = (): JSX.Element => {
           phone_number: data.phone_number || "",
           phone_verified: data.phone_verified || false,
           country: data.country || "ID",
+          voice_reference_url: data.voice_reference_url || "",
+          voice_reference_duration_seconds: data.voice_reference_duration_seconds || 0,
         });
+
+        if (data.voice_reference_url) {
+          setVoiceDuration(data.voice_reference_duration_seconds || 0);
+        }
 
         setContentPrefs({
           interest: data.interest || "",
@@ -350,6 +367,56 @@ export const Profile = (): JSX.Element => {
       return "0" + phone.slice(2);
     }
     return phone;
+  };
+
+  const handleVoiceRecordingComplete = (audioBlob: Blob, duration: number) => {
+    setVoiceBlob(audioBlob);
+    setVoiceDuration(duration);
+  };
+
+  const saveVoiceRecording = async () => {
+    if (!voiceBlob || !user) return;
+
+    setUploadingVoice(true);
+    setSaveSuccess(false);
+
+    try {
+      const voiceFileName = `${user.id}-${Date.now()}.webm`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("voice-references")
+        .upload(voiceFileName, voiceBlob, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from("voice-references")
+        .getPublicUrl(voiceFileName);
+
+      await supabase
+        .from("user_profiles")
+        .update({
+          voice_reference_url: urlData.publicUrl,
+          voice_reference_duration_seconds: voiceDuration,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", user.id);
+
+      setProfile(prev => ({
+        ...prev,
+        voice_reference_url: urlData.publicUrl,
+        voice_reference_duration_seconds: voiceDuration
+      }));
+
+      setVoiceBlob(null);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      console.error("Error saving voice recording:", err);
+      alert(language === 'id' ? "Gagal menyimpan rekaman suara." : "Failed to save voice recording.");
+    } finally {
+      setUploadingVoice(false);
+    }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -899,6 +966,7 @@ export const Profile = (): JSX.Element => {
 
   const tabs = [
     { id: "info" as TabType, label: language === 'id' ? "Info" : "Info", icon: User },
+    { id: "voice" as TabType, label: language === 'id' ? "Suara" : "Voice", icon: Mic },
     { id: "content" as TabType, label: language === 'id' ? "Konten" : "Content", icon: Sparkles },
     { id: "phone" as TabType, label: "WhatsApp", icon: Phone },
     { id: "password" as TabType, label: "Password", icon: Lock },
@@ -1011,6 +1079,89 @@ export const Profile = (): JSX.Element => {
                     {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : saveSuccess ? <Check className="w-4 h-4 mr-2" /> : null}
                     {saveSuccess ? (language === 'id' ? 'Tersimpan!' : 'Saved!') : t.common.save}
                   </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Voice Tab */}
+            {activeTab === "voice" && (
+              <div className="max-w-2xl space-y-6">
+                {/* Existing voice info */}
+                {profile.voice_reference_url && (
+                  <div className="bg-[#1a1a24] border border-[#2b2b38] rounded-xl p-4">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 rounded-full bg-[#7c3aed]/20 flex items-center justify-center">
+                        <Mic className="w-5 h-5 text-[#7c3aed]" />
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">{language === 'id' ? 'Rekaman Suara Aktif' : 'Active Voice Recording'}</p>
+                        <p className="text-[#9ca3af] text-sm">
+                          {Math.floor(profile.voice_reference_duration_seconds / 60)}:{(profile.voice_reference_duration_seconds % 60).toString().padStart(2, '0')} {language === 'id' ? 'menit' : 'minutes'}
+                        </p>
+                      </div>
+                    </div>
+                    <audio
+                      src={profile.voice_reference_url}
+                      controls
+                      className="w-full mt-3"
+                      style={{ height: '40px' }}
+                    />
+                  </div>
+                )}
+
+                {/* Voice recorder */}
+                <div className="bg-[#1a1a24] border border-[#2b2b38] rounded-xl p-6">
+                  <div className="mb-4">
+                    <h3 className="text-white font-medium text-lg mb-1">
+                      {profile.voice_reference_url
+                        ? (language === 'id' ? 'Rekam Ulang Suara' : 'Re-record Voice')
+                        : (language === 'id' ? 'Rekam Suara Baru' : 'Record New Voice')
+                      }
+                    </h3>
+                    <p className="text-[#9ca3af] text-sm">
+                      {language === 'id'
+                        ? 'Rekaman minimal 2 menit untuk hasil voice cloning terbaik'
+                        : 'Minimum 2 minutes recording for best voice cloning quality'}
+                    </p>
+                  </div>
+
+                  <VoiceRecorder
+                    minDuration={120}
+                    maxDuration={180}
+                    onRecordingComplete={handleVoiceRecordingComplete}
+                    existingAudioUrl={profile.voice_reference_url || undefined}
+                    disabled={uploadingVoice}
+                  />
+
+                  {voiceBlob && (
+                    <div className="mt-6 pt-6 border-t border-[#2b2b38]">
+                      <Button
+                        onClick={saveVoiceRecording}
+                        disabled={uploadingVoice || voiceDuration < 120}
+                        className="w-full bg-[#7c3aed] hover:bg-[#6d28d9] h-12"
+                      >
+                        {uploadingVoice ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : saveSuccess ? (
+                          <Check className="w-4 h-4 mr-2" />
+                        ) : null}
+                        {saveSuccess
+                          ? (language === 'id' ? 'Tersimpan!' : 'Saved!')
+                          : (language === 'id' ? 'Simpan Rekaman' : 'Save Recording')
+                        }
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Info box */}
+                <div className="bg-[#7c3aed]/10 border border-[#7c3aed]/30 rounded-xl p-4">
+                  <p className="text-white/70 text-sm">
+                    💡 {language === 'id'
+                      ? 'Tip: Bicara dengan natural tentang apapun - ceritakan tentang dirimu, hobimu, atau yang lagi kamu pikirkan. Semakin natural, semakin bagus hasil voice cloning-nya.'
+                      : 'Tip: Speak naturally about anything - tell us about yourself, your hobbies, or what\'s on your mind. The more natural, the better the voice cloning result.'
+                    }
+                  </p>
                 </div>
               </div>
             )}

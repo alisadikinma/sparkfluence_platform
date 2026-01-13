@@ -1,0 +1,1717 @@
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { Button } from "../../components/ui/button";
+import { Logo } from "../../components/ui/logo";
+import { supabase } from "../../lib/supabase";
+import { useAuth } from "../../contexts/AuthContext";
+import { useLanguage } from "../../contexts/LanguageContext";
+import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segmentDuration";
+import {
+  RefreshCw, ImageIcon, Loader2,
+  Sparkles, X, Maximize2, AlertCircle,
+  CloudOff, Cloud, CheckCircle2, Info, Download
+} from "lucide-react";
+
+interface SegmentImage {
+  id: string;                              // job ID from database
+  imageUrl: string;                        // Supabase storage URL
+  generationNumber: number;                // 1, 2, 3, ... (tracks regen count)
+  sourceType: 'generated' | 'stock' | 'uploaded';
+  isSelected: boolean;                     // Only 1 per segment can be true
+  scriptText?: string;                     // Stored for video prompt generation
+  regenerationNotes?: string;              // User notes from regen modal
+  referenceImageUrl?: string;              // Avatar/ref image used
+  status: 0 | 1 | 2 | 3;                   // PENDING | PROCESSING | COMPLETED | FAILED
+  errorMessage?: string;
+  createdAt: string;
+}
+
+interface Segment {
+  id: string;
+  segmentId: string;
+  type: string;
+  timing: string;
+  durationSeconds: number;
+  shotType: string;
+  creatorAvatarUrl?: string;
+  emotion: string;
+  transition: string;
+  script: string;
+  visualDirection: string;
+  imageUrl: string | null;                 // Keep for backward compatibility (selected image)
+  images: SegmentImage[];                  // NEW: Array of all images for this segment
+  isGeneratingImage: boolean;
+  imageError?: string | null;
+  jobId?: string;
+}
+
+interface VideoSettings {
+  duration: '30s' | '60s' | '90s';
+  aspectRatio: '9:16' | '16:9';
+  resolution: '720p' | '1080p';
+  language?: string;
+  model?: 'auto' | 'veo31' | 'sora2'; // auto = VEO 3.1 (default)
+}
+
+interface ImageJob {
+  id: string;
+  segment_id: string;
+  segment_number: number;
+  segment_type: string;
+  status: number;
+  image_url: string | null;
+  error_message: string | null;
+}
+
+const JOB_STATUS = {
+  PENDING: 0,
+  PROCESSING: 1,
+  COMPLETED: 2,
+  FAILED: 3
+};
+
+// ImageGallery Component - displays multiple images per segment
+interface ImageGalleryProps {
+  images: SegmentImage[];
+  segmentNumber: number;
+  sessionId: string;
+  onSelectImage: (imageId: string) => void;
+  onRegenerateImage: (imageId: string) => void;
+  onDeleteImage: (imageId: string) => void;
+  disabled?: boolean;
+}
+
+const ImageGallery: React.FC<ImageGalleryProps> = ({
+  images,
+  segmentNumber,
+  onSelectImage,
+  onRegenerateImage,
+  onDeleteImage,
+  disabled = false
+}) => {
+  if (images.length === 0) return null;
+
+  return (
+    <div className="mt-3 border-t border-border-default pt-3">
+      <label className="text-text-secondary text-xs mb-2 block">
+        Image Gallery ({images.length} {images.length === 1 ? 'image' : 'images'})
+      </label>
+      <div className="flex gap-2 overflow-x-auto pb-2">
+        {images.map((img) => (
+          <div key={img.id} className="relative flex-shrink-0 w-24 h-32">
+            {/* Thumbnail */}
+            <img
+              src={img.imageUrl}
+              alt={`Generation ${img.generationNumber}`}
+              className={`w-full h-full object-cover rounded-lg border-2 transition-all cursor-pointer ${
+                img.isSelected
+                  ? 'border-green-500 ring-2 ring-green-500/30'
+                  : 'border-border-default hover:border-primary'
+              }`}
+              onClick={() => !disabled && onSelectImage(img.id)}
+            />
+
+            {/* Selected indicator */}
+            {img.isSelected && (
+              <div className="absolute top-1 right-1 bg-green-500 rounded-full p-1">
+                <CheckCircle2 className="w-4 h-4 text-white" />
+              </div>
+            )}
+
+            {/* Generation number badge */}
+            <div className="absolute top-1 left-1 bg-black/70 rounded px-2 py-0.5 text-xs text-white font-medium">
+              #{img.generationNumber}
+            </div>
+
+            {/* Source type badge */}
+            <div className="absolute bottom-1 left-1 bg-primary/80 rounded px-2 py-0.5 text-xs text-white">
+              {img.sourceType === 'generated' ? 'AI' : img.sourceType === 'stock' ? 'STOCK' : 'UPLOAD'}
+            </div>
+
+            {/* Actions on hover */}
+            {!disabled && (
+              <div className="absolute inset-0 bg-black/0 hover:bg-black/60 transition-all flex items-center justify-center gap-1 opacity-0 hover:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRegenerateImage(img.id);
+                  }}
+                  className="p-1 bg-primary rounded"
+                  title="Regenerate"
+                >
+                  <RefreshCw className="w-3 h-3 text-white" />
+                </button>
+                {!img.isSelected && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteImage(img.id);
+                    }}
+                    className="p-1 bg-red-500 rounded"
+                    title="Delete"
+                  >
+                    <X className="w-3 h-3 text-white" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Processing indicator */}
+            {img.status === JOB_STATUS.PROCESSING && (
+              <div className="absolute inset-0 bg-black/70 flex items-center justify-center rounded-lg">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            )}
+
+            {/* Failed indicator */}
+            {img.status === JOB_STATUS.FAILED && (
+              <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center rounded-lg">
+                <AlertCircle className="w-5 h-5 text-red-500" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// StockImageModal Component - search stock images from Unsplash and Pexels
+interface StockImageResult {
+  id: string;
+  provider: 'unsplash' | 'pexels';
+  url_thumb: string;
+  url_regular: string;
+  url_full: string;
+  width: number;
+  height: number;
+  photographer: string;
+  photographer_url: string;
+  alt_description: string;
+}
+
+interface StockImageModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (imageUrl: string, metadata: StockImageResult) => void;
+}
+
+const StockImageModal: React.FC<StockImageModalProps> = ({ isOpen, onClose, onSelect }) => {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<StockImageResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data, error: searchError } = await supabase.functions.invoke('search-stock-images', {
+        body: {
+          query: query.trim(),
+          orientation: 'portrait',
+          per_page: 20,
+          provider: 'both'
+        }
+      });
+
+      if (searchError) throw searchError;
+
+      if (data?.success && data?.data?.results) {
+        setResults(data.data.results);
+      } else {
+        throw new Error('No results found');
+      }
+    } catch (err: any) {
+      console.error('Stock image search error:', err);
+      setError(err.message || 'Failed to search stock images');
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !loading) {
+      handleSearch();
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4">
+      <div className="bg-card border border-border-default rounded-2xl w-full max-w-5xl max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-border-default">
+          <h3 className="text-xl font-bold text-text-primary">Search Stock Images</h3>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-surface rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5 text-text-secondary" />
+          </button>
+        </div>
+
+        {/* Search bar */}
+        <div className="p-4 border-b border-border-default">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyPress}
+              placeholder="Search images (e.g., coffee shop, sunset, office)"
+              className="flex-1 bg-surface border border-border-default rounded-lg px-4 py-2 text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
+              disabled={loading}
+            />
+            <Button
+              onClick={handleSearch}
+              disabled={loading || !query.trim()}
+              className="px-6"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Searching...
+                </>
+              ) : (
+                'Search'
+              )}
+            </Button>
+          </div>
+          {error && (
+            <p className="text-xs text-red-500 mt-2 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              {error}
+            </p>
+          )}
+        </div>
+
+        {/* Results grid */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {results.length > 0 ? (
+            <div className="grid grid-cols-3 gap-4">
+              {results.map((img) => (
+                <div
+                  key={`${img.provider}-${img.id}`}
+                  className="relative aspect-[9/16] rounded-lg overflow-hidden cursor-pointer hover:ring-2 ring-primary transition-all group"
+                  onClick={() => {
+                    onSelect(img.url_regular, img);
+                    onClose();
+                  }}
+                >
+                  <img
+                    src={img.url_thumb}
+                    alt={img.alt_description || 'Stock image'}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="absolute bottom-0 left-0 right-0 p-3">
+                      <p className="text-xs text-white font-medium truncate">
+                        Photo by {img.photographer}
+                      </p>
+                      <p className="text-xs text-white/60 uppercase">{img.provider}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <ImageIcon className="w-16 h-16 text-text-muted/30 mb-4" />
+              <p className="text-text-secondary">
+                {loading ? 'Searching...' : 'Search for stock images from Unsplash and Pexels'}
+              </p>
+              <p className="text-sm text-text-muted mt-1">
+                Results will appear here
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// RegenerateModal Component - regenerate with notes
+interface RegenerateModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  segment: Segment | null;
+  onRegenerate: (notes: string, referenceImageUrl?: string) => void;
+}
+
+const RegenerateModal: React.FC<RegenerateModalProps> = ({
+  isOpen,
+  onClose,
+  segment,
+  onRegenerate
+}) => {
+  const [notes, setNotes] = useState('');
+  const [referenceImageUrl, setReferenceImageUrl] = useState('');
+  const [showStockSearch, setShowStockSearch] = useState(false);
+
+  if (!isOpen || !segment) return null;
+
+  const handleSubmit = () => {
+    onRegenerate(notes, referenceImageUrl || undefined);
+    setNotes('');
+    setReferenceImageUrl('');
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-card border border-border-default rounded-2xl p-6 w-full max-w-md relative">
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1 hover:bg-surface rounded-lg transition-colors"
+        >
+          <X className="w-5 h-5 text-text-secondary" />
+        </button>
+
+        {/* Title */}
+        <h3 className="text-xl font-bold text-text-primary mb-4">
+          Regenerate Image
+        </h3>
+
+        {/* Segment info */}
+        <div className="mb-4 p-3 bg-surface rounded-lg">
+          <p className="text-sm text-text-muted mb-1">Segment: <span className="text-primary font-medium">{segment.type}</span></p>
+          <p className="text-xs text-text-secondary line-clamp-2">{segment.script}</p>
+        </div>
+
+        {/* Original prompt display */}
+        <div className="mb-4">
+          <label className="text-sm text-text-muted block mb-1">Original Visual Direction:</label>
+          <div className="text-sm text-text-secondary bg-surface p-3 rounded-lg max-h-24 overflow-y-auto">
+            {segment.visualDirection || 'No visual direction provided'}
+          </div>
+        </div>
+
+        {/* Notes input */}
+        <div className="mb-4">
+          <label className="text-sm text-text-muted block mb-1">Additional Notes (optional):</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g., Make it darker, add more contrast, change lighting..."
+            className="w-full bg-surface border border-border-default rounded-lg p-3 text-text-primary resize-none h-24 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+
+        {/* Reference image */}
+        <div className="mb-6">
+          <label className="text-sm text-text-muted block mb-1">Reference Image URL (optional):</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={referenceImageUrl}
+              onChange={(e) => setReferenceImageUrl(e.target.value)}
+              placeholder="Paste image URL or search stock images"
+              className="flex-1 bg-surface border border-border-default rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            <Button
+              onClick={() => setShowStockSearch(true)}
+              variant="outline"
+              className="flex-shrink-0"
+            >
+              <ImageIcon className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex gap-3">
+          <Button onClick={onClose} variant="outline" className="flex-1">
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} className="flex-1 bg-primary hover:bg-primary-hover">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Regenerate
+          </Button>
+        </div>
+      </div>
+
+      {/* Stock Image Search Modal */}
+      <StockImageModal
+        isOpen={showStockSearch}
+        onClose={() => setShowStockSearch(false)}
+        onSelect={(imageUrl, metadata) => {
+          setReferenceImageUrl(imageUrl);
+          setShowStockSearch(false);
+        }}
+      />
+    </div>
+  );
+};
+
+export const ImageGeneration = (): JSX.Element => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+  const { language } = useLanguage();
+  
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [currentTopic, setCurrentTopic] = useState("Your Video");
+  const [videoSettings, setVideoSettings] = useState<VideoSettings | null>(null);
+  const [characterDescription, setCharacterDescription] = useState<string>("");
+  const [characterRefPng, setCharacterRefPng] = useState<string>("");
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string>("");
+  const [sessionId, setSessionId] = useState<string>("");
+  const [isLoaded, setIsLoaded] = useState(false);
+  
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [isBackgroundMode, setIsBackgroundMode] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0, completed: 0, failed: 0 });
+  const [showBackgroundToast, setShowBackgroundToast] = useState(false);
+  const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [regenerateModal, setRegenerateModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
+
+  const fromScriptLab = location.state?.fromScriptLab === true;
+
+  const uiText = {
+    title: language === 'id' ? 'Editor Video' : language === 'hi' ? 'वीडियो एडिटर' : 'Video Editor',
+    duration: language === 'id' ? 'Durasi' : language === 'hi' ? 'अवधि' : 'Duration',
+    generateAll: language === 'id' ? 'Generate Semua Gambar' : language === 'hi' ? 'सभी छवियां जनरेट करें' : 'Generate All Images',
+    generating: language === 'id' ? 'Generating...' : language === 'hi' ? 'जनरेट हो रहा है...' : 'Generating...',
+    script: language === 'id' ? 'Script (VO)' : language === 'hi' ? 'स्क्रिप्ट (VO)' : 'Script (VO)',
+    visualDirection: language === 'id' ? 'Arahan Visual' : language === 'hi' ? 'विजुअल निर्देश' : 'Visual Direction',
+    visualPreview: language === 'id' ? 'Preview Visual' : language === 'hi' ? 'विजुअल प्रीव्यू' : 'Visual Preview',
+    creatorShot: language === 'id' ? 'Creator Shot' : language === 'hi' ? 'क्रिएटर शॉट' : 'Creator Shot',
+    generateImage: language === 'id' ? 'Generate' : language === 'hi' ? 'जनरेट' : 'Generate',
+    regenerate: language === 'id' ? 'Regenerate' : language === 'hi' ? 'रीजनरेट' : 'Regenerate',
+    previous: language === 'id' ? 'Sebelumnya' : language === 'hi' ? 'पिछला' : 'Previous',
+    next: language === 'id' ? 'Generate Video' : language === 'hi' ? 'वीडियो जनरेट करें' : 'Generate Videos',
+    imagesRequired: language === 'id' ? 'Generate semua gambar dulu' : language === 'hi' ? 'पहले सभी छवियां जनरेट करें' : 'Generate all images first',
+    loading: language === 'id' ? 'Memuat progress...' : language === 'hi' ? 'प्रगति लोड हो रहा है...' : 'Loading your progress...',
+    step: language === 'id' ? 'Langkah' : language === 'hi' ? 'चरण' : 'Step',
+    backgroundProcessing: language === 'id' 
+      ? 'Gambar sedang di-generate di background. Anda bisa menutup browser atau melakukan aktivitas lain. Kami akan kirim notifikasi saat selesai!'
+      : language === 'hi'
+      ? 'छवियां बैकग्राउंड में जनरेट हो रही हैं। आप ब्राउज़र बंद कर सकते हैं। हम आपको सूचित करेंगे!'
+      : 'Images are being generated in the background. You can close your browser or do other activities. We\'ll notify you when done!',
+    resuming: language === 'id' ? 'Melanjutkan proses...' : language === 'hi' ? 'प्रक्रिया जारी...' : 'Resuming process...',
+    processingComplete: language === 'id' ? 'Semua gambar selesai!' : language === 'hi' ? 'सभी छवियां तैयार!' : 'All images complete!',
+  };
+
+  useEffect(() => {
+    return () => {
+      if (processingIntervalRef.current) {
+        clearInterval(processingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sessionId && segments.length > 0) {
+      const timeoutId = setTimeout(() => {
+        saveProgress(segments, currentTopic, videoSettings);
+      }, 1000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [segments, sessionId]);
+
+  const saveProgress = (updatedSegments: Segment[], topic: string, settings: VideoSettings | null) => {
+    if (!sessionId) return;
+    const progressData = {
+      sessionId,
+      topic,
+      videoSettings: settings,
+      segments: updatedSegments,
+      updatedAt: new Date().toISOString()
+    };
+    localStorage.setItem(`sparkfluence_video_progress_${sessionId}`, JSON.stringify(progressData));
+    localStorage.setItem('sparkfluence_active_session', sessionId);
+  };
+
+  const loadProgress = (sid: string): any | null => {
+    try {
+      const saved = localStorage.getItem(`sparkfluence_video_progress_${sid}`);
+      if (saved) return JSON.parse(saved);
+    } catch (err) {
+      console.error('Error loading progress:', err);
+    }
+    return null;
+  };
+
+  const checkExistingJobs = async (sid: string): Promise<ImageJob[] | null> => {
+    if (!user) return null;
+    
+    try {
+      const { data, error } = await supabase
+        .from('image_generation_jobs')
+        .select('*')
+        .eq('session_id', sid)
+        .eq('user_id', user.id)
+        .order('segment_number', { ascending: true });
+      
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error('Error checking existing jobs:', err);
+      return null;
+    }
+  };
+
+  const syncJobsWithSegments = (jobs: ImageJob[], currentSegments: Segment[]): Segment[] => {
+    return currentSegments.map((seg, index) => {
+      const job = jobs.find(j => j.segment_number === index + 1);
+      if (job) {
+        return {
+          ...seg,
+          imageUrl: job.image_url || seg.imageUrl,
+          images: seg.images || [],          // Preserve existing images array
+          imageError: job.error_message || null,
+          isGeneratingImage: job.status === JOB_STATUS.PROCESSING,
+          jobId: job.id
+        };
+      }
+      return {
+        ...seg,
+        images: seg.images || []              // Ensure images array exists
+      };
+    });
+  };
+
+  // Fetch all images for a session (multi-image support)
+  const fetchSegmentImages = async (sid: string): Promise<Map<number, SegmentImage[]>> => {
+    if (!user) return new Map();
+
+    try {
+      const { data, error } = await supabase
+        .from('image_generation_jobs')
+        .select('*')
+        .eq('session_id', sid)
+        .eq('user_id', user.id)
+        .order('segment_number', { ascending: true })
+        .order('generation_number', { ascending: true });
+
+      if (error) throw error;
+
+      // Group by segment_number
+      const imageMap = new Map<number, SegmentImage[]>();
+      (data || []).forEach(job => {
+        const segNum = job.segment_number;
+        if (!imageMap.has(segNum)) imageMap.set(segNum, []);
+        imageMap.get(segNum)!.push({
+          id: job.id,
+          imageUrl: job.image_url || '',
+          generationNumber: job.generation_number || 1,
+          sourceType: job.source_type || 'generated',
+          isSelected: job.is_selected || false,
+          scriptText: job.script_text || undefined,
+          regenerationNotes: job.regeneration_notes || undefined,
+          referenceImageUrl: job.reference_image_url || undefined,
+          status: job.status,
+          errorMessage: job.error_message || undefined,
+          createdAt: job.created_at
+        });
+      });
+
+      return imageMap;
+    } catch (err) {
+      console.error('Error fetching segment images:', err);
+      return new Map();
+    }
+  };
+
+  // Sync images with segments
+  const syncImagesWithSegments = (imageMap: Map<number, SegmentImage[]>, currentSegments: Segment[]): Segment[] => {
+    return currentSegments.map((seg, index) => {
+      const images = imageMap.get(index + 1) || [];
+      const selectedImage = images.find(img => img.isSelected);
+
+      return {
+        ...seg,
+        images,
+        imageUrl: selectedImage?.imageUrl || seg.imageUrl,
+        isGeneratingImage: images.some(img => img.status === JOB_STATUS.PROCESSING), // Any processing
+        imageError: images.find(img => img.status === JOB_STATUS.FAILED)?.errorMessage || null
+      };
+    });
+  };
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!user) return;
+      try {
+        const { data } = await supabase
+          .from('user_profiles')
+          .select('character_description, avatar_url, character_ref_png')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (data?.character_description) setCharacterDescription(data.character_description);
+        if (data?.avatar_url) setUserAvatarUrl(data.avatar_url);
+        if (data?.character_ref_png) setCharacterRefPng(data.character_ref_png);
+      } catch (err) {
+        console.error('Error fetching user profile:', err);
+      }
+    };
+    fetchUserProfile();
+  }, [user]);
+
+  useEffect(() => {
+    const initializeEditor = async () => {
+      const urlSessionId = searchParams.get('session');
+      const stateData = location.state;
+      
+      let sid = urlSessionId || stateData?.sessionId || null;
+      
+      if (stateData?.segments && stateData.segments.length > 0) {
+        sid = sid || `video_${Date.now()}`;
+        setSessionId(sid);
+        
+        if (stateData.characterDescription) {
+          setCharacterDescription(stateData.characterDescription);
+        }
+        
+        const existingJobs = await checkExistingJobs(sid);
+        const savedProgress = loadProgress(sid);
+        
+        let formattedSegments: Segment[];
+        
+        if (savedProgress && savedProgress.segments?.length > 0) {
+          formattedSegments = savedProgress.segments;
+          setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
+          setVideoSettings(savedProgress.videoSettings || stateData.videoSettings || null);
+        } else {
+          // Auto-calculate duration based on segment type and video duration
+          const videoDuration = stateData.videoSettings?.duration || '60s';
+
+          formattedSegments = stateData.segments.map((seg: any, index: number) => {
+            const segmentType = seg.type || `SEGMENT_${index + 1}`;
+            const autoDuration = calculateSegmentDuration(segmentType, videoDuration);
+
+            return {
+              id: String(index + 1),
+              segmentId: seg.segment_id || `VIDEO-${String(index + 1).padStart(3, '0')}`,
+              type: segmentType,
+              timing: seg.timing || `${index * 8}-${(index + 1) * 8}s`,
+              durationSeconds: autoDuration,  // Auto-calculated duration
+              shotType: seg.shot_type || 'B-ROLL',
+              creatorAvatarUrl: seg.creator_avatar_url || undefined,
+              emotion: seg.emotion || '',
+              transition: seg.transition || 'Cut',
+              script: seg.script_text || seg.script || '',
+              visualDirection: seg.visual_direction || '',
+              imageUrl: null,
+              images: [],                        // Initialize empty images array
+              isGeneratingImage: false,
+              imageError: null,
+            };
+          });
+
+          setCurrentTopic(stateData.topic?.split('\n')[0].trim() || 'Your Video');
+          setVideoSettings(stateData.videoSettings || null);
+        }
+        
+        if (existingJobs && existingJobs.length > 0) {
+          formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
+          
+          const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
+          if (hasPending) {
+            setIsBackgroundMode(true);
+            setShowBackgroundToast(true);
+            startBackgroundProcessing(sid);
+          }
+        }
+        
+        setSegments(formattedSegments);
+        setIsLoaded(true);
+        
+      } else if (sid) {
+        const existingJobs = await checkExistingJobs(sid);
+        const savedProgress = loadProgress(sid);
+        
+        if (savedProgress && savedProgress.segments?.length > 0) {
+          setSessionId(sid);
+          let formattedSegments = savedProgress.segments;
+          
+          if (existingJobs && existingJobs.length > 0) {
+            formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
+            
+            const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
+            if (hasPending) {
+              setIsBackgroundMode(true);
+              setShowBackgroundToast(true);
+              startBackgroundProcessing(sid);
+            }
+          }
+          
+          setSegments(formattedSegments);
+          setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
+          setVideoSettings(savedProgress.videoSettings || null);
+          setIsLoaded(true);
+        } else {
+          navigate('/topic-selection');
+        }
+      } else {
+        const activeSessionId = localStorage.getItem('sparkfluence_active_session');
+        if (activeSessionId) {
+          const savedProgress = loadProgress(activeSessionId);
+          const existingJobs = await checkExistingJobs(activeSessionId);
+          
+          if (savedProgress && savedProgress.segments?.length > 0) {
+            setSessionId(activeSessionId);
+            let formattedSegments = savedProgress.segments;
+            
+            if (existingJobs && existingJobs.length > 0) {
+              formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
+              
+              const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
+              if (hasPending) {
+                setIsBackgroundMode(true);
+                setShowBackgroundToast(true);
+                startBackgroundProcessing(activeSessionId);
+              }
+            }
+            
+            setSegments(formattedSegments);
+            setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
+            setVideoSettings(savedProgress.videoSettings || null);
+            setIsLoaded(true);
+          } else {
+            navigate('/topic-selection');
+          }
+        } else {
+          navigate('/topic-selection');
+        }
+      }
+    };
+    
+    initializeEditor();
+  }, [location.state, searchParams, navigate, user]);
+
+  const startBackgroundProcessing = useCallback((sid: string) => {
+    if (processingIntervalRef.current) {
+      clearInterval(processingIntervalRef.current);
+    }
+    
+    const processNext = async () => {
+      if (!user) return;
+      
+      try {
+        const { data, error } = await supabase.functions.invoke('generate-images', {
+          body: {
+            mode: 'process_single',
+            session_id: sid,
+            user_id: user.id
+          }
+        });
+        
+        if (error) {
+          console.error('Process error:', error);
+          return;
+        }
+        
+        const result = data?.data;
+        
+        if (result?.summary) {
+          setGenerationProgress({
+            current: result.summary.completed + result.summary.failed,
+            total: result.summary.total,
+            completed: result.summary.completed,
+            failed: result.summary.failed
+          });
+        }
+        
+        if (result?.job?.image_url) {
+          setSegments(prev => {
+            const updated = prev.map(seg => {
+              if (seg.jobId === result.job.id || parseInt(seg.id) === result.job.segment_number) {
+                return {
+                  ...seg,
+                  imageUrl: result.job.image_url,
+                  isGeneratingImage: false,
+                  imageError: null
+                };
+              }
+              return seg;
+            });
+            saveProgress(updated, currentTopic, videoSettings);
+            return updated;
+          });
+        }
+        
+        if (result?.all_complete) {
+          setIsGeneratingAll(false);
+          setIsBackgroundMode(false);
+          setShowBackgroundToast(false);
+          if (processingIntervalRef.current) {
+            clearInterval(processingIntervalRef.current);
+            processingIntervalRef.current = null;
+          }
+        }
+        
+      } catch (err) {
+        console.error('Background processing error:', err);
+      }
+    };
+    
+    processNext();
+    processingIntervalRef.current = setInterval(processNext, 3000);
+  }, [user, currentTopic, videoSettings]);
+
+  const handleGenerateAllBackground = async () => {
+    if (!user || !sessionId) return;
+    
+    const segmentsToGenerate = segments.filter(s => !s.imageUrl && !s.isGeneratingImage);
+    if (segmentsToGenerate.length === 0) return;
+
+    setIsGeneratingAll(true);
+    setIsBackgroundMode(true);
+    setShowBackgroundToast(true);
+    setGenerationProgress({ current: 0, total: segmentsToGenerate.length, completed: 0, failed: 0 });
+
+    try {
+      // Use character_ref_png if available, otherwise fallback to avatar_url
+      const referenceImage = characterRefPng || userAvatarUrl || '';
+      
+      const segmentsData = segmentsToGenerate.map((seg, index) => {
+        const originalIndex = segments.findIndex(s => s.id === seg.id);
+        const isCreatorShot = seg.shotType === 'CREATOR'; // Only shot_type matters
+        return {
+          segment_id: seg.segmentId,
+          segment_number: originalIndex + 1,
+          segment_type: seg.type,
+          shot_type: seg.shotType,
+          emotion: seg.emotion,
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: seg.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: seg.visualDirection || '',
+          script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: isCreatorShot ? referenceImage : null
+        };
+      });
+      
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: {
+          mode: 'create_jobs',
+          user_id: user.id,
+          session_id: sessionId,
+          segments: segmentsData,
+          topic: currentTopic,
+          style: 'cinematic',
+          aspect_ratio: videoSettings?.aspectRatio || '9:16',
+          provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
+          character_description: characterDescription,
+          character_ref_png: referenceImage // Avatar for face consistency on CREATOR shots
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.data?.jobs) {
+        setSegments(prev => {
+          const updated = prev.map(seg => {
+            const job = data.data.jobs.find((j: any) => j.segment_number === parseInt(seg.id));
+            if (job) {
+              return { ...seg, jobId: job.id, isGeneratingImage: true };
+            }
+            return seg;
+          });
+          return updated;
+        });
+      }
+
+      startBackgroundProcessing(sessionId);
+
+    } catch (err: any) {
+      console.error('Error creating jobs:', err);
+      setIsGeneratingAll(false);
+      setIsBackgroundMode(false);
+      setShowBackgroundToast(false);
+    }
+  };
+
+  const handleRegenerateAll = async () => {
+    if (!user || !sessionId) return;
+    
+    // Confirm before regenerating
+    const confirmMsg = language === 'id' 
+      ? `Regenerate semua ${segments.length} gambar? Gambar lama akan diganti.`
+      : `Regenerate all ${segments.length} images? Existing images will be replaced.`;
+    
+    if (!window.confirm(confirmMsg)) return;
+
+    // Clear all existing images first
+    setSegments(prev => prev.map(seg => ({
+      ...seg,
+      imageUrl: null,
+      imageError: null,
+      isGeneratingImage: false,
+      jobId: undefined
+    })));
+
+    // Delete existing jobs for this session
+    try {
+      await supabase
+        .from('image_generation_jobs')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('user_id', user.id);
+    } catch (err) {
+      console.error('Error deleting old jobs:', err);
+    }
+
+    setIsGeneratingAll(true);
+    setIsBackgroundMode(true);
+    setShowBackgroundToast(true);
+    setGenerationProgress({ current: 0, total: segments.length, completed: 0, failed: 0 });
+
+    try {
+      // Use character_ref_png if available, otherwise fallback to avatar_url
+      const referenceImage = characterRefPng || userAvatarUrl || '';
+      
+      const segmentsData = segments.map((seg, index) => {
+        const isCreatorShot = seg.shotType === 'CREATOR'; // Only shot_type matters
+        return {
+          segment_id: seg.segmentId,
+          segment_number: index + 1,
+          segment_type: seg.type,
+          shot_type: seg.shotType,
+          emotion: seg.emotion,
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: seg.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: seg.visualDirection || '',
+          script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: isCreatorShot ? referenceImage : null
+        };
+      });
+
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: {
+          mode: 'create_jobs',
+          user_id: user.id,
+          session_id: sessionId,
+          segments: segmentsData,
+          topic: currentTopic,
+          style: 'cinematic',
+          aspect_ratio: videoSettings?.aspectRatio || '9:16',
+          provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
+          character_description: characterDescription,
+          character_ref_png: referenceImage
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.data?.jobs) {
+        setSegments(prev => {
+          const updated = prev.map(seg => {
+            const job = data.data.jobs.find((j: any) => j.segment_number === parseInt(seg.id));
+            if (job) {
+              return { ...seg, jobId: job.id, isGeneratingImage: true };
+            }
+            return seg;
+          });
+          return updated;
+        });
+      }
+
+      startBackgroundProcessing(sessionId);
+
+    } catch (err: any) {
+      console.error('Error creating regenerate jobs:', err);
+      setIsGeneratingAll(false);
+      setIsBackgroundMode(false);
+      setShowBackgroundToast(false);
+    }
+  };
+
+  const handleGenerateImage = useCallback(async (segmentId: string): Promise<boolean> => {
+    const segment = segments.find(s => s.id === segmentId);
+    if (!segment) return false;
+
+    setSegments(prev =>
+      prev.map(seg =>
+        seg.id === segmentId
+          ? { ...seg, isGeneratingImage: true, imageError: null }
+          : seg
+      )
+    );
+
+    try {
+      const avatarUrl = segment.creatorAvatarUrl || userAvatarUrl || null;
+      // Only CREATOR shot_type needs face reference
+      const isCreatorShot = segment.shotType === 'CREATOR';
+      const referenceImage = isCreatorShot ? (characterRefPng || avatarUrl) : null;
+      
+      const requestBody = {
+        segments: [{
+          segment_number: parseInt(segmentId),
+          // ✅ FIX: Don't fallback to script - let edge function use visual_brief extraction
+          visual_prompt: segment.visualDirection || '', // Empty = trigger visual brief extraction
+          visual_direction: segment.visualDirection || '',
+          shot_type: segment.shotType,
+          creator_avatar_url: avatarUrl,
+          emotion: segment.emotion,
+          segment_type: segment.type,
+          script_text: segment.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
+          character_description: isCreatorShot ? characterDescription : null,
+          character_ref_png: referenceImage
+        }],
+        style: 'cinematic',
+        aspect_ratio: videoSettings?.aspectRatio || '9:16',
+        provider: 'auto', // Hybrid: gpt-image-1 for CREATOR, huggingface for B-ROLL
+        character_ref_png: referenceImage // Request-level reference for CREATOR shots
+      };
+      
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: requestBody
+      });
+
+      if (error) throw error;
+
+      const imageUrl = data?.data?.images?.[0]?.image_url;
+      const imageError = data?.data?.images?.[0]?.error;
+      
+      // Update job record in database if exists (sync status)
+      if (imageUrl && sessionId && user && segment.jobId) {
+        try {
+          await supabase
+            .from('image_generation_jobs')
+            .update({ 
+              status: JOB_STATUS.COMPLETED,
+              image_url: imageUrl,
+              error_message: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', segment.jobId)
+            .eq('user_id', user.id);
+        } catch (dbErr) {
+          console.error('Error updating job status:', dbErr);
+        }
+      } else if (imageUrl && sessionId && user) {
+        // Try to find and update by segment_number if no jobId
+        try {
+          await supabase
+            .from('image_generation_jobs')
+            .update({ 
+              status: JOB_STATUS.COMPLETED,
+              image_url: imageUrl,
+              error_message: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('session_id', sessionId)
+            .eq('segment_number', parseInt(segmentId))
+            .eq('user_id', user.id);
+        } catch (dbErr) {
+          console.error('Error updating job status by segment:', dbErr);
+        }
+      }
+      
+      setSegments(prev => {
+        const updated = prev.map(seg =>
+          seg.id === segmentId
+            ? { ...seg, imageUrl: imageUrl || null, isGeneratingImage: false, imageError: imageError || null }
+            : seg
+        );
+        saveProgress(updated, currentTopic, videoSettings);
+        return updated;
+      });
+
+      return !!imageUrl;
+    } catch (err: any) {
+      console.error('Error generating image:', err);
+      setSegments(prev =>
+        prev.map(seg =>
+          seg.id === segmentId
+            ? { ...seg, isGeneratingImage: false, imageError: err.message }
+            : seg
+        )
+      );
+      return false;
+    }
+  }, [segments, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic, sessionId, user]);
+
+  const handleSelectImage = useCallback(async (imageId: string, segmentNumber: number) => {
+    if (!user || !sessionId) return;
+
+    try {
+      // Update database: set is_selected=true for selected, false for others in same segment
+      const { error } = await supabase
+        .from('image_generation_jobs')
+        .update({ is_selected: false })
+        .eq('session_id', sessionId)
+        .eq('segment_number', segmentNumber)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      // Now set the selected image to true
+      const { error: selectError } = await supabase
+        .from('image_generation_jobs')
+        .update({ is_selected: true })
+        .eq('id', imageId)
+        .eq('user_id', user.id);
+
+      if (selectError) throw selectError;
+
+      // Update local state
+      setSegments(prev => prev.map((seg, idx) => {
+        if (idx + 1 !== segmentNumber) return seg;
+
+        const updatedImages = seg.images.map(img => ({
+          ...img,
+          isSelected: img.id === imageId
+        }));
+
+        const selectedImage = updatedImages.find(img => img.isSelected);
+
+        return {
+          ...seg,
+          images: updatedImages,
+          imageUrl: selectedImage?.imageUrl || null
+        };
+      }));
+
+    } catch (err) {
+      console.error('Failed to select image:', err);
+    }
+  }, [user, sessionId]);
+
+  const handleRegenerateWithNotes = useCallback(async (notes: string, referenceImageUrl?: string) => {
+    if (!user || !sessionId || !regenerateModal.segment) return;
+
+    const segment = regenerateModal.segment;
+    const segmentNumber = parseInt(segment.id);
+
+    try {
+      // Get max generation number for this segment
+      const maxGenNumber = Math.max(...segment.images.map(img => img.generationNumber), 0);
+
+      // Call Edge Function to create new regeneration job
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: {
+          mode: 'regenerate_single',
+          user_id: user.id,
+          session_id: sessionId,
+          segment_number: segmentNumber,
+          generation_number: maxGenNumber + 1,
+          regeneration_notes: notes,
+          reference_image_url: referenceImageUrl,
+          visual_prompt: segment.visualDirection,
+          script_text: segment.script,
+          segment_type: segment.type,
+          shot_type: segment.shotType,
+          emotion: segment.emotion,
+          aspect_ratio: videoSettings?.aspectRatio || '9:16'
+        }
+      });
+
+      if (error) throw error;
+
+      console.log('Regeneration job created:', data);
+
+      // Start background processing to poll for the new image
+      startBackgroundProcessing(sessionId);
+
+      // Close modal
+      setRegenerateModal({ isOpen: false, segment: null });
+
+    } catch (err) {
+      console.error('Regenerate failed:', err);
+      alert('Failed to regenerate image. Please try again.');
+    }
+  }, [user, sessionId, regenerateModal.segment, videoSettings, startBackgroundProcessing]);
+
+  const handlePrevious = () => {
+    saveProgress(segments, currentTopic, videoSettings);
+    
+    if (fromScriptLab) {
+      navigate("/script-lab");
+    } else {
+      navigate("/topic-selection", { state: { returning: true } });
+    }
+  };
+
+  const handleNext = () => {
+    const allHaveImages = segments.every(seg => seg.imageUrl);
+    if (!allHaveImages) {
+      alert(uiText.imagesRequired);
+      return;
+    }
+
+    navigate("/video-generation", {
+      state: {
+        sessionId,
+        segments,
+        topic: currentTopic,
+        videoSettings
+      }
+    });
+  };
+
+  const totalDuration = segments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
+  const allHaveImages = segments.every(seg => seg.imageUrl);
+  const imagesGenerated = segments.filter(s => s.imageUrl).length;
+
+  // Download helper function
+  const handleDownloadImage = async (imageUrl: string, segmentType: string, segmentId: string) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      
+      // Detect actual content type and set correct extension
+      const contentType = blob.type || response.headers.get('content-type') || '';
+      let extension = 'png'; // default
+      
+      if (contentType.includes('jpeg') || contentType.includes('jpg')) {
+        extension = 'jpg';
+      } else if (contentType.includes('png')) {
+        extension = 'png';
+      } else if (contentType.includes('webp')) {
+        extension = 'webp';
+      } else if (contentType.includes('gif')) {
+        extension = 'gif';
+      } else if (contentType.includes('mp4') || contentType.includes('video')) {
+        // This is a video, not an image - warn user
+        console.warn('URL contains video, not image:', imageUrl);
+        extension = 'mp4';
+      }
+      
+      // Also check URL extension as fallback
+      const urlLower = imageUrl.toLowerCase();
+      if (urlLower.includes('.mp4') || urlLower.includes('video')) {
+        console.warn('URL appears to be video:', imageUrl);
+        extension = 'mp4';
+      }
+      
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${currentTopic.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}_${segmentType}_${segmentId}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      // Fallback: open in new tab
+      window.open(imageUrl, '_blank');
+    }
+  };
+
+  const groupedSegments = segments.reduce((acc, segment, index) => {
+    const baseType = segment.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
+    const isBody = baseType === 'BODY' || segment.type.startsWith('BODY');
+    
+    if (isBody) {
+      const lastGroup = acc[acc.length - 1];
+      if (lastGroup && lastGroup.isBodyGroup) {
+        lastGroup.segments.push({ ...segment, originalIndex: index });
+      } else {
+        acc.push({ isBodyGroup: true, segments: [{ ...segment, originalIndex: index }] });
+      }
+    } else {
+      acc.push({ isBodyGroup: false, segments: [{ ...segment, originalIndex: index }] });
+    }
+    return acc;
+  }, [] as { isBodyGroup: boolean; segments: (Segment & { originalIndex: number })[] }[]);
+
+  if (!isLoaded) {
+    return (
+      <div className="min-h-screen bg-page flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          <p className="text-text-secondary">{uiText.loading}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-page p-4 sm:p-6">
+      <div className="max-w-5xl mx-auto">
+        {/* Background Processing Toast */}
+        {showBackgroundToast && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4">
+            <div className="bg-gradient-to-r from-primary/90 to-accent-pink/90 backdrop-blur-lg rounded-xl p-4 shadow-2xl border border-white/10">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <Cloud className="w-5 h-5 text-white" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-white font-semibold text-sm">
+                      {language === 'id' ? 'Proses di Background' : 'Background Processing'}
+                    </h4>
+                    <button 
+                      onClick={() => setShowBackgroundToast(false)}
+                      className="p-1 hover:bg-white/10 rounded"
+                    >
+                      <X className="w-4 h-4 text-white/60" />
+                    </button>
+                  </div>
+                  <p className="text-white/80 text-xs leading-relaxed mb-3">
+                    {uiText.backgroundProcessing}
+                  </p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-white/60">
+                      <span>{generationProgress.completed}/{generationProgress.total} complete</span>
+                      {generationProgress.failed > 0 && (
+                        <span className="text-red-300">{generationProgress.failed} failed</span>
+                      )}
+                    </div>
+                    <div className="h-1.5 bg-white/20 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-white rounded-full transition-all duration-500"
+                        style={{ width: `${generationProgress.total > 0 ? (generationProgress.completed / generationProgress.total) * 100 : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex justify-center mb-4">
+            <Logo />
+          </div>
+          <div className="flex gap-2 mb-6 max-w-md mx-auto">
+            {[1, 2, 3, 4, 5, 6, 7].map((step) => (
+              <div
+                key={step}
+                className={`h-1 flex-1 rounded-full transition-all duration-300 ${
+                  step <= 5 ? "bg-primary" : "bg-surface"
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Title & Generate All Button */}
+        <div className="mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+            <div className="flex-1">
+              <h1 className="text-xl sm:text-2xl font-bold text-text-primary mb-1 line-clamp-2">
+                {currentTopic}
+              </h1>
+              <p className="text-text-muted text-sm">
+                {uiText.step} 5/7 • {uiText.duration}: {totalDuration}s 
+                {videoSettings && ` • ${videoSettings.aspectRatio}`}
+              </p>
+            </div>
+            
+            {/* Generate All Images Button - always visible and clickable */}
+            <div className="flex gap-2">
+              <Button
+                onClick={allHaveImages ? handleRegenerateAll : handleGenerateAllBackground}
+                disabled={isGeneratingAll || isBackgroundMode}
+                className={`h-12 px-6 font-medium flex items-center gap-2 ${
+                  isBackgroundMode
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
+                } text-white`}
+              >
+                {isBackgroundMode ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>{generationProgress.completed}/{generationProgress.total}</span>
+                  </>
+                ) : allHaveImages ? (
+                  <>
+                    <RefreshCw className="w-5 h-5" />
+                    <span>{language === 'id' ? 'Regenerate Semua' : 'Regenerate All'} ({segments.length})</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Segments */}
+        <div className="space-y-4">
+          {groupedSegments.map((group, groupIndex) => (
+            <div 
+              key={groupIndex}
+              className={group.isBodyGroup && group.segments.length > 1 
+                ? "bg-surface border border-border-default rounded-2xl p-3 space-y-3" 
+                : ""
+              }
+            >
+              {group.isBodyGroup && group.segments.length > 1 && (
+                <div className="flex items-center gap-2 px-2 pb-2 border-b border-border-default">
+                  <span className="text-blue-500 dark:text-blue-400 text-sm font-medium">BODY</span>
+                  <span className="text-text-muted text-xs">
+                    ({group.segments.length} {language === 'id' ? 'segmen' : 'segments'})
+                  </span>
+                </div>
+              )}
+              
+              {group.segments.map((segment, segIndex) => {
+                const displayIndex = segment.originalIndex + 1;
+                const isCreatorShot = segment.shotType === 'CREATOR';
+                
+                return (
+                  <div 
+                    key={segment.id} 
+                    className={`bg-card border rounded-xl overflow-hidden shadow-theme ${
+                      segment.imageUrl ? 'border-green-500/30' : 'border-border-default'
+                    }`}
+                  >
+                    {/* Segment Header */}
+                    <div className="p-3 sm:p-4 border-b border-border-default">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2 sm:gap-3">
+                          <div className={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-bold ${
+                            segment.imageUrl ? 'bg-green-600' : 'bg-primary'
+                          }`}>
+                            {segment.imageUrl ? <CheckCircle2 className="w-4 h-4" /> : displayIndex}
+                          </div>
+                          <span className="text-text-primary font-semibold text-sm sm:text-base">
+                            {group.isBodyGroup && group.segments.length > 1 
+                              ? `BODY-${segIndex + 1}` 
+                              : segment.type
+                            }
+                          </span>
+                          <span className="text-text-muted text-xs sm:text-sm">{segment.timing}</span>
+                          <span
+                            className="text-text-muted text-xs"
+                            title={videoSettings ? getDurationExplanation(segment.type, videoSettings.duration) : ''}
+                          >
+                            ({segment.durationSeconds}s)
+                          </span>
+                        </div>
+                        
+                        {/* Tags */}
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-1 rounded ${
+                            isCreatorShot 
+                              ? 'bg-pink-500/20 text-pink-600 dark:text-pink-400' 
+                              : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                          }`}>
+                            {segment.shotType}
+                          </span>
+                          {segment.emotion && (
+                            <span className="text-primary text-xs bg-primary/10 px-2 py-1 rounded hidden sm:inline">
+                              {segment.emotion}
+                            </span>
+                          )}
+                          {segment.transition && (
+                            <span className="text-amber-600 dark:text-amber-400 text-xs bg-amber-500/10 px-2 py-1 rounded hidden sm:inline">
+                              {segment.transition}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Content */}
+                    <div className="p-3 sm:p-4">
+                      <div className="flex flex-col sm:flex-row gap-4">
+                        {/* Script + Visual Direction */}
+                        <div className="flex-1 space-y-3">
+                          {/* Script */}
+                          <div>
+                            <label className="text-text-secondary text-xs mb-1.5 block">{uiText.script}</label>
+                            <div className="bg-surface border border-border-default rounded-lg p-3 text-text-primary text-sm min-h-[80px]">
+                              {segment.script}
+                            </div>
+                          </div>
+
+                          {/* Visual Direction */}
+                          {segment.visualDirection && (
+                            <div>
+                              <label className="text-text-secondary text-xs mb-1.5 block">{uiText.visualDirection}</label>
+                              <div className="bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs max-h-24 overflow-y-auto">
+                                {segment.visualDirection}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Visual Preview */}
+                        <div className="w-full sm:w-44 flex-shrink-0">
+                          <label className="text-text-secondary text-xs mb-1.5 block">
+                            {uiText.visualPreview}
+                            {isCreatorShot && (
+                              <span className="text-pink-600 dark:text-pink-400 ml-1">({uiText.creatorShot})</span>
+                            )}
+                          </label>
+                          <div className="w-full aspect-[9/16] sm:h-56 bg-surface border border-border-default rounded-lg overflow-hidden relative">
+                            {segment.isGeneratingImage ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center">
+                                <Loader2 className="w-6 h-6 text-primary animate-spin mb-2" />
+                                <span className="text-text-secondary text-xs">{uiText.generating}</span>
+                              </div>
+                            ) : segment.imageUrl ? (
+                              <>
+                                <img
+                                  src={segment.imageUrl}
+                                  alt={`${segment.type} visual`}
+                                  className="w-full h-full object-cover cursor-pointer"
+                                  onClick={() => setPreviewImage(segment.imageUrl)}
+                                />
+                                {isCreatorShot && (
+                                  <div className="absolute bottom-1 left-1 bg-pink-500/80 text-white text-[10px] px-1.5 py-0.5 rounded">
+                                    Creator
+                                  </div>
+                                )}
+                                <div className="absolute inset-0 bg-black/0 hover:bg-black/50 transition-all flex items-center justify-center gap-2 opacity-0 hover:opacity-100">
+                                  <button
+                                    onClick={() => setPreviewImage(segment.imageUrl)}
+                                    className="p-2 bg-white/20 rounded-lg backdrop-blur-sm"
+                                    title="Preview"
+                                  >
+                                    <Maximize2 className="w-4 h-4 text-white" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (segment.imageUrl) handleDownloadImage(segment.imageUrl, segment.type, segment.id);
+                                    }}
+                                    className="p-2 bg-green-600 rounded-lg"
+                                    title="Download"
+                                  >
+                                    <Download className="w-4 h-4 text-white" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleGenerateImage(segment.id)}
+                                    className="p-2 bg-primary rounded-lg"
+                                    title="Regenerate"
+                                    disabled={isBackgroundMode}
+                                  >
+                                    <RefreshCw className="w-4 h-4 text-white" />
+                                  </button>
+                                </div>
+                              </>
+                            ) : segment.imageError ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center">
+                                <AlertCircle className="w-6 h-6 text-red-500 dark:text-red-400 mb-2" />
+                                <p className="text-red-500 dark:text-red-400 text-xs mb-3 line-clamp-2">{segment.imageError}</p>
+                                <Button
+                                  onClick={() => handleGenerateImage(segment.id)}
+                                  size="sm"
+                                  disabled={isBackgroundMode}
+                                  className="bg-primary hover:bg-primary-hover text-white text-xs"
+                                >
+                                  <RefreshCw className="w-3 h-3 mr-1" />
+                                  Retry
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center p-3">
+                                <Button
+                                  onClick={() => handleGenerateImage(segment.id)}
+                                  disabled={isGeneratingAll || isBackgroundMode}
+                                  className="bg-primary hover:bg-primary-hover text-white"
+                                >
+                                  <ImageIcon className="w-4 h-4 mr-2" />
+                                  {uiText.generateImage}
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Image Gallery - Multi-image support */}
+                          <ImageGallery
+                            images={segment.images || []}
+                            segmentNumber={parseInt(segment.id)}
+                            sessionId={sessionId}
+                            onSelectImage={(imageId) => handleSelectImage(imageId, parseInt(segment.id))}
+                            onRegenerateImage={() => setRegenerateModal({ isOpen: true, segment })}
+                            onDeleteImage={(imageId) => {
+                              console.log('Delete image:', imageId);
+                              // TODO: Implement handleDeleteImage (optional feature)
+                            }}
+                            disabled={isBackgroundMode}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
+        {/* Navigation */}
+        <div className="flex items-center justify-between mt-8">
+          <Button
+            onClick={handlePrevious}
+            variant="outline"
+            className="border-border-default text-text-primary hover:bg-surface h-12 px-6 sm:px-8 font-medium"
+          >
+            {uiText.previous}
+          </Button>
+          <Button
+            onClick={handleNext}
+            disabled={!allHaveImages}
+            className={`h-12 px-6 sm:px-8 font-medium transition-all ${
+              allHaveImages
+                ? "bg-primary hover:bg-primary-hover text-white"
+                : "bg-primary/50 text-white/50 cursor-not-allowed"
+            }`}
+          >
+            {allHaveImages ? uiText.next : `${imagesGenerated}/${segments.length} images`}
+          </Button>
+        </div>
+      </div>
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 sm:p-8"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (previewImage) handleDownloadImage(previewImage, 'preview', Date.now().toString());
+              }}
+              className="p-2 bg-green-600 hover:bg-green-700 rounded-full transition-colors"
+              title="Download"
+            >
+              <Download className="w-6 h-6 text-white" />
+            </button>
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+          </div>
+          <img
+            src={previewImage}
+            alt="Preview"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
+      {/* Regenerate Modal */}
+      <RegenerateModal
+        isOpen={regenerateModal.isOpen}
+        onClose={() => setRegenerateModal({ isOpen: false, segment: null })}
+        segment={regenerateModal.segment}
+        onRegenerate={handleRegenerateWithNotes}
+      />
+    </div>
+  );
+};

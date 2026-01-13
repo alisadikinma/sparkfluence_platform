@@ -2,11 +2,10 @@
  * VIDEO SPECS LOOKUP - Platform Technical Specifications
  * =======================================================
  * 
- * Direct O(1) lookup for VEO 3.1, Sora 2 technical constraints.
- * Replaces RAG queries for video platform specs.
+ * fal.ai Video Models: Kling 2.5 Turbo, Wan 2.5
+ * MIGRATED: GeminiGen (VEO/Sora) → fal.ai
  * 
- * Sources: 05-Video-Platform-Specs.md
- * Last Updated: 2026-01-10
+ * Last Updated: 2026-01-13
  */
 
 // ============================================================================
@@ -19,14 +18,13 @@ export const PROJECT_SPECS = {
     landscape: '16:9',
   },
   resolution: {
-    portrait: '720p',
-    landscape: '1080p',
+    kling: 'auto',
+    wan: '1080p',
   },
   frameRate: 24,
   maxSegmentDuration: {
-    veo: 8,
-    sora: 15,
-    soraPro: 25,
+    kling: 10,
+    wan: 10,
   },
 } as const;
 
@@ -38,23 +36,17 @@ export const PROJECT_SPECS = {
  * Based on Indonesian speech rate: 130 WPM × 0.80 safety margin
  */
 export const DIALOGUE_LIMITS: Record<number, number> = {
-  4: 7,   // 130/60 × 4 × 0.80 = 6.9 ≈ 7
-  6: 10,  // 130/60 × 6 × 0.80 = 10.4 ≈ 10
-  8: 14,  // 130/60 × 8 × 0.80 = 13.8 ≈ 14
+  5: 9,   // 130/60 × 5 × 0.80 = 8.7 ≈ 9
   10: 17, // 130/60 × 10 × 0.80 = 17.3 ≈ 17
-  15: 26, // 130/60 × 15 × 0.80 = 26
-  25: 43, // 130/60 × 25 × 0.80 = 43.3 ≈ 43
 };
 
 /**
  * Get max words for duration
  */
 export function getMaxDialogueWords(durationSeconds: number): number {
-  // Exact match
   if (DIALOGUE_LIMITS[durationSeconds]) {
     return DIALOGUE_LIMITS[durationSeconds];
   }
-  // Calculate based on formula
   return Math.floor((130 / 60) * durationSeconds * 0.80);
 }
 
@@ -62,8 +54,6 @@ export function getMaxDialogueWords(durationSeconds: number): number {
  * Calculate required duration for word count
  */
 export function getRequiredDuration(wordCount: number): number {
-  // wordCount = (130/60) × duration × 0.80
-  // duration = wordCount / (130/60 × 0.80) = wordCount / 1.733
   return Math.ceil(wordCount / 1.733);
 }
 
@@ -71,121 +61,79 @@ export function getRequiredDuration(wordCount: number): number {
 // PLATFORM SELECTION
 // ============================================================================
 
-export type VideoPlatform = 'veo-3.1-fast' | 'sora-2' | 'sora-2-pro' | 'sora-2-pro-hd';
+export type VideoPlatform = 'kling-25-turbo' | 'wan-25';
 
 export interface PlatformConfig {
   key: VideoPlatform;
   displayName: string;
   maxDuration: number;
   supportedDurations: number[];
-  maxResolution: {
-    portrait: string;
-    landscape: string;
-  };
+  maxResolution: string;
   refImageParam: string;
+  supportsAudio: boolean;
+  supportsNegativePrompt: boolean;
+  supportsSeed: boolean;
   strengths: string[];
   bestFor: string[];
   costEstimate: string;
 }
 
 export const VIDEO_PLATFORMS: Record<VideoPlatform, PlatformConfig> = {
-  'veo-3.1-fast': {
-    key: 'veo-3.1-fast',
-    displayName: 'VEO 3.1 Fast',
-    maxDuration: 8,
-    supportedDurations: [4, 6, 8],
-    maxResolution: {
-      portrait: '720p',
-      landscape: '1080p',
-    },
-    refImageParam: 'ref_images',
-    strengths: ['Best lip-sync', 'Native audio', '1080p for 16:9'],
-    bestFor: ['HOOK', 'CTA', 'Creator talking head', 'Dialogue-heavy'],
-    costEstimate: '~$0.20/video',
+  'kling-25-turbo': {
+    key: 'kling-25-turbo',
+    displayName: 'Kling 2.5 Turbo',
+    maxDuration: 10,
+    supportedDurations: [5, 10],
+    maxResolution: 'auto',
+    refImageParam: 'image_url',
+    supportsAudio: false,
+    supportsNegativePrompt: true,
+    supportsSeed: false,
+    strengths: ['Top-tier motion fluidity', 'Cinematic visuals', 'Excellent prompt precision'],
+    bestFor: ['HOOK', 'CTA', 'Creator shots', 'Short clips'],
+    costEstimate: '~$0.10/video',
   },
-  'sora-2': {
-    key: 'sora-2',
-    displayName: 'Sora 2',
-    maxDuration: 15,
-    supportedDurations: [10, 15],
-    maxResolution: {
-      portrait: '720p',
-      landscape: '720p',
-    },
-    refImageParam: 'file_urls',
-    strengths: ['10-15s duration', 'Good motion', 'AI voiceover'],
-    bestFor: ['B-roll', 'Longer segments', 'Narrative sequences'],
-    costEstimate: '~$0.10/second',
-  },
-  'sora-2-pro': {
-    key: 'sora-2-pro',
-    displayName: 'Sora 2 Pro',
-    maxDuration: 25,
-    supportedDurations: [25],
-    maxResolution: {
-      portrait: '720p',
-      landscape: '720p',
-    },
-    refImageParam: 'file_urls',
-    strengths: ['25s long duration', 'Consistency'],
-    bestFor: ['Long-form content', 'Single-shot narratives'],
-    costEstimate: '~$0.30/second',
-  },
-  'sora-2-pro-hd': {
-    key: 'sora-2-pro-hd',
-    displayName: 'Sora 2 Pro HD',
-    maxDuration: 15,
-    supportedDurations: [15],
-    maxResolution: {
-      portrait: '1080p',
-      landscape: '1080p',
-    },
-    refImageParam: 'file_urls',
-    strengths: ['1080p HD quality', '15s duration'],
-    bestFor: ['Hero shots', 'Premium content', 'Hook/CTA'],
-    costEstimate: '~$0.50/second',
+  'wan-25': {
+    key: 'wan-25',
+    displayName: 'Wan 2.5',
+    maxDuration: 10,
+    supportedDurations: [5, 10],
+    maxResolution: '1080p',
+    refImageParam: 'image_url',
+    supportsAudio: true,
+    supportsNegativePrompt: true,
+    supportsSeed: true,
+    strengths: ['1080p resolution', 'Audio support', 'Prompt expansion', 'Seed for reproducibility'],
+    bestFor: ['B-roll with BGM', 'Longer narratives', 'High-res output'],
+    costEstimate: '~$0.15/video',
   },
 };
 
 /**
- * Select best video platform based on duration
+ * Select best video platform based on requirements
+ * DEFAULT: Kling 2.5 Turbo (best motion quality)
  */
 export function selectVideoPlatform(params: {
   duration: number;
-  needsHD?: boolean;
-  needsLipSync?: boolean;
+  needsAudio?: boolean;
+  needsHighRes?: boolean;
+  needsSeed?: boolean;
   segmentType?: string;
 }): VideoPlatform {
-  const { duration, needsHD, needsLipSync, segmentType } = params;
+  const { needsAudio, needsHighRes, needsSeed } = params;
   
-  // Creator segments (HOOK/CTA) always use VEO for best lip-sync
-  const creatorSegments = ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'];
-  if (segmentType && creatorSegments.includes(segmentType.toUpperCase())) {
-    if (duration <= 8) return 'veo-3.1-fast';
+  // If audio needed, use Wan 2.5
+  if (needsAudio) {
+    return 'wan-25';
   }
   
-  // If lip-sync critical and ≤8s, use VEO
-  if (needsLipSync && duration <= 8) {
-    return 'veo-3.1-fast';
+  // If high-res (1080p explicit) or seed needed, use Wan 2.5
+  if (needsHighRes || needsSeed) {
+    return 'wan-25';
   }
   
-  // If HD required and ≤15s
-  if (needsHD && duration <= 15) {
-    return 'sora-2-pro-hd';
-  }
-  
-  // Very long (>15s)
-  if (duration > 15) {
-    return 'sora-2-pro';
-  }
-  
-  // Medium duration (>8s, ≤15s)
-  if (duration > 8) {
-    return 'sora-2';
-  }
-  
-  // Default: VEO 3.1 Fast (best lip-sync)
-  return 'veo-3.1-fast';
+  // Default: Kling 2.5 Turbo (best motion quality)
+  return 'kling-25-turbo';
 }
 
 /**
@@ -210,12 +158,10 @@ export function getClosestDuration(platform: VideoPlatform, targetDuration: numb
   const config = VIDEO_PLATFORMS[platform];
   const supported = config.supportedDurations;
   
-  // Exact match
   if (supported.includes(targetDuration)) {
     return targetDuration;
   }
   
-  // Find closest
   return supported.reduce((prev, curr) => 
     Math.abs(curr - targetDuration) < Math.abs(prev - targetDuration) ? curr : prev
   );
@@ -235,16 +181,13 @@ export const ENVIRONMENT_AUDIO: Record<string, string> = {
   nature: 'Nature — birds chirping, gentle wind. No music, no subtitles.',
 };
 
-/**
- * Get environment audio prompt
- */
 export function getEnvironmentAudio(environment: string): string {
   const key = environment.toLowerCase();
   return ENVIRONMENT_AUDIO[key] || ENVIRONMENT_AUDIO.office;
 }
 
 // ============================================================================
-// VOICE CHARACTER ANCHOR
+// VOICE CHARACTER ANCHOR (for TTS - Chatterbox)
 // ============================================================================
 
 export interface VoiceCharacter {
@@ -254,6 +197,7 @@ export interface VoiceCharacter {
   accent: string;
   tone: string;
   pace: string;
+  suggestedPresetVoice?: string;  // Chatterbox preset
 }
 
 export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
@@ -264,6 +208,7 @@ export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
     accent: 'Indonesian native speaker with Jakarta accent',
     tone: 'warm, friendly, enthusiastic, casual Gen-Z energy',
     pace: 'medium-fast, natural conversational rhythm',
+    suggestedPresetVoice: 'dylan',
   },
   indonesian_female: {
     description: 'Indonesian female voice, 22-28 years old',
@@ -272,6 +217,7 @@ export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
     accent: 'Indonesian native speaker with modern Jakarta accent',
     tone: 'bright, engaging, relatable, Gen-Z energy',
     pace: 'medium-fast, animated conversational style',
+    suggestedPresetVoice: 'anaya',
   },
   hindi_male: {
     description: 'Hindi male voice, 25-32 years old',
@@ -280,6 +226,7 @@ export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
     accent: 'Pan-India neutral Hindi with urban inflection',
     tone: 'confident, friendly, engaging',
     pace: 'medium, clear enunciation',
+    suggestedPresetVoice: 'emmanuel',
   },
   hindi_female: {
     description: 'Hindi female voice, 22-30 years old',
@@ -288,6 +235,7 @@ export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
     accent: 'Pan-India neutral Hindi, modern urban',
     tone: 'warm, confident, approachable',
     pace: 'medium, expressive',
+    suggestedPresetVoice: 'meera',
   },
   english_male: {
     description: 'English male voice, 25-35 years old',
@@ -296,6 +244,7 @@ export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
     accent: 'Neutral global English',
     tone: 'professional yet casual, engaging',
     pace: 'medium, clear articulation',
+    suggestedPresetVoice: 'ethan',
   },
   english_female: {
     description: 'English female voice, 24-32 years old',
@@ -304,12 +253,10 @@ export const DEFAULT_VOICE_CHARACTERS: Record<string, VoiceCharacter> = {
     accent: 'Neutral global English',
     tone: 'friendly, professional, relatable',
     pace: 'medium, natural flow',
+    suggestedPresetVoice: 'lucy',
   },
 };
 
-/**
- * Get voice character for language and gender
- */
 export function getVoiceCharacter(language: string, gender: 'male' | 'female'): VoiceCharacter {
   const lang = language.toLowerCase();
   const key = `${lang.includes('id') || lang.includes('indonesian') ? 'indonesian' : 
@@ -317,106 +264,27 @@ export function getVoiceCharacter(language: string, gender: 'male' | 'female'): 
   return DEFAULT_VOICE_CHARACTERS[key] || DEFAULT_VOICE_CHARACTERS.english_male;
 }
 
-/**
- * Build voice anchor prompt
- */
-export function buildVoiceAnchorPrompt(voice: VoiceCharacter): string {
-  return `Voice character: ${voice.description}
-Accent: ${voice.accent}
-Tone: ${voice.tone}
-Pace: ${voice.pace}`;
-}
-
-// ============================================================================
-// AUDIO DIRECTIVE BUILDER
-// ============================================================================
-
-export interface AudioDirectiveParams {
-  environment: string;
-  dialogue?: string;
-  voiceCharacter?: VoiceCharacter;
-  isCreatorShot?: boolean;
-}
-
-/**
- * Build complete audio directive for video prompt
- */
-export function buildAudioDirective(params: AudioDirectiveParams): string {
-  const { environment, dialogue, voiceCharacter, isCreatorShot } = params;
-  
-  const parts: string[] = [];
-  
-  // Ambient
-  parts.push(`Ambient: ${getEnvironmentAudio(environment)}`);
-  
-  // Dialogue (for CREATOR shots)
-  if (dialogue && isCreatorShot) {
-    const wordCount = dialogue.split(/\s+/).length;
-    parts.push(`Dialogue: [Creator] says: "${dialogue}" (${wordCount} words)`);
-    
-    if (voiceCharacter) {
-      parts.push(`Voice style: ${voiceCharacter.tone}, ${voiceCharacter.accent}`);
-    }
-  } else if (dialogue) {
-    // Voiceover for B-roll
-    parts.push(`Voiceover (off-screen): "${dialogue}"`);
-  }
-  
-  // Required exclusions
-  parts.push('Exclude: no subtitles, no audience sounds, no background music');
-  
-  return `AUDIO:\n${parts.join('\n')}`;
-}
-
-// ============================================================================
-// CAMERA MOVEMENT (VEO-Verified)
-// ============================================================================
-
-export const VEO_CAMERA_MOVEMENTS: Record<string, { term: string; effect: string }> = {
-  'push-in': { term: 'smooth dolly push-in', effect: 'Intimacy, emphasis' },
-  'pull-back': { term: 'gentle dolly pull-back', effect: 'Reveal, context' },
-  'track': { term: 'tracking shot following subject', effect: 'Following, energy' },
-  'pan': { term: 'slow pan left/right', effect: 'Horizontal reveal' },
-  'orbit': { term: 'orbit shot circling subject', effect: 'Tension, interest' },
-  'static': { term: 'static locked-off shot', effect: 'Stability, authority' },
-  'drift': { term: 'subtle drift', effect: 'Natural, organic' },
-};
-
-/**
- * Get VEO-verified camera movement
- */
-export function getCameraMovement(type: string): { term: string; effect: string } {
-  const key = type.toLowerCase().replace(/[_\s]+/g, '-');
-  return VEO_CAMERA_MOVEMENTS[key] || VEO_CAMERA_MOVEMENTS.static;
-}
-
 // ============================================================================
 // SEGMENT DURATION RULES
 // ============================================================================
 
 export const SEGMENT_DURATION_RULES: Record<string, { min: number; max: number; default: number }> = {
-  HOOK: { min: 3, max: 5, default: 4 },
-  FORE: { min: 3, max: 5, default: 4 },
-  FORESHADOW: { min: 3, max: 5, default: 4 },
-  BODY: { min: 5, max: 8, default: 6 },
-  PEAK: { min: 4, max: 8, default: 6 },
-  TWIST: { min: 4, max: 6, default: 5 },
-  CTA: { min: 3, max: 5, default: 4 },
-  'LOOP-END': { min: 2, max: 3, default: 3 },
-  ENDING_CTA: { min: 3, max: 5, default: 4 },
+  HOOK: { min: 3, max: 5, default: 5 },
+  FORE: { min: 3, max: 5, default: 5 },
+  FORESHADOW: { min: 3, max: 5, default: 5 },
+  BODY: { min: 5, max: 10, default: 5 },
+  PEAK: { min: 5, max: 10, default: 5 },
+  TWIST: { min: 5, max: 10, default: 5 },
+  CTA: { min: 3, max: 5, default: 5 },
+  'LOOP-END': { min: 2, max: 5, default: 5 },
+  ENDING_CTA: { min: 3, max: 5, default: 5 },
 };
 
-/**
- * Get segment duration rules
- */
 export function getSegmentDurationRules(segmentType: string) {
   const type = segmentType.toUpperCase().replace(/[-_]/g, '-');
   return SEGMENT_DURATION_RULES[type] || SEGMENT_DURATION_RULES.BODY;
 }
 
-/**
- * Validate segment duration
- */
 export function validateSegmentDuration(segmentType: string, duration: number): {
   valid: boolean;
   suggestion?: number;
@@ -444,104 +312,108 @@ export function validateSegmentDuration(segmentType: string, duration: number): 
 }
 
 // ============================================================================
+// CAMERA MOVEMENT (Verified for fal.ai models)
+// ============================================================================
+
+export const CAMERA_MOVEMENTS: Record<string, { term: string; effect: string }> = {
+  'push-in': { term: 'smooth dolly push-in', effect: 'Intimacy, emphasis' },
+  'pull-back': { term: 'gentle dolly pull-back', effect: 'Reveal, context' },
+  'track': { term: 'tracking shot following subject', effect: 'Following, energy' },
+  'pan': { term: 'slow pan left/right', effect: 'Horizontal reveal' },
+  'orbit': { term: 'orbit shot circling subject', effect: 'Tension, interest' },
+  'static': { term: 'static locked-off shot', effect: 'Stability, authority' },
+  'drift': { term: 'subtle drift', effect: 'Natural, organic' },
+};
+
+export function getCameraMovement(type: string): { term: string; effect: string } {
+  const key = type.toLowerCase().replace(/[_\s]+/g, '-');
+  return CAMERA_MOVEMENTS[key] || CAMERA_MOVEMENTS.static;
+}
+
+// ============================================================================
 // VIDEO PROMPT BUILDER
 // ============================================================================
 
 export interface VideoPromptParams {
   duration: number;
-  aspectRatio: '9:16' | '16:9';
+  resolution?: string;
   cameraMovement: string;
   subjectMotion: string;
   ambientMotion?: string;
-  audioDirective: string;
-  transition?: string;
+  negativePrompt?: string;
 }
 
 /**
- * Build VEO 3.1 video prompt
+ * Build Kling 2.5 video prompt
  */
-export function buildVeoVideoPrompt(params: VideoPromptParams): string {
-  const {
-    duration,
-    aspectRatio,
-    cameraMovement,
-    subjectMotion,
-    ambientMotion,
-    audioDirective,
-    transition,
-  } = params;
-  
-  const resolution = aspectRatio === '9:16' ? '720p' : '1080p';
+export function buildKlingVideoPrompt(params: VideoPromptParams): {
+  prompt: string;
+  negative_prompt: string;
+  duration: string;
+  cfg_scale: number;
+} {
+  const { duration, cameraMovement, subjectMotion, ambientMotion, negativePrompt } = params;
   const cameraMove = getCameraMovement(cameraMovement);
   
-  return `[VEO 3.1 — VIDEO]
-
-Duration: ~${duration}s
-Resolution: ${resolution}
-Aspect: ${aspectRatio}
-
-CAMERA MOTION
-Movement: ${cameraMove.term}
-Speed: medium
-
-SUBJECT MOTION
-${subjectMotion}
-
-${ambientMotion ? `AMBIENT MOTION\n${ambientMotion}\n` : ''}
-${audioDirective}
-
-CONTINUITY
-Maintain exact lighting, environment, appearance from reference.
-
-${transition ? `TRANSITION\n${transition}\n` : ''}
-NEGATIVE
-No blurry elements, no distortion, no artifacts.`;
-}
-
-/**
- * Build Sora 2 video prompt
- */
-export function buildSoraVideoPrompt(params: VideoPromptParams & {
-  sceneAction: string;
-  beats?: Array<{ time: string; action: string }>;
-}): string {
-  const {
-    duration,
-    aspectRatio,
-    sceneAction,
-    cameraMovement,
+  const promptParts = [
+    `Camera: ${cameraMove.term}.`,
     subjectMotion,
-    audioDirective,
-    beats,
-  } = params;
+  ];
   
-  const cameraMove = getCameraMovement(cameraMovement);
-  
-  let beatSection = '';
-  if (beats && beats.length > 0) {
-    beatSection = '\nACTIONS (beat-based)\n' + 
-      beats.map(b => `- ${b.action} (${b.time})`).join('\n');
+  if (ambientMotion) {
+    promptParts.push(ambientMotion);
   }
   
-  return `[SORA 2 — VIDEO]
+  return {
+    prompt: promptParts.join(' '),
+    negative_prompt: negativePrompt || 'blur, distort, low quality, artifacts',
+    duration: String(duration) as '5' | '10',
+    cfg_scale: 0.5,
+  };
+}
 
-Duration: ~${duration}s
-Resolution: 720p
-Aspect: ${aspectRatio}
-
-SCENE ACTION
-${sceneAction}
-
-CINEMATOGRAPHY
-Camera: ${cameraMove.term}
-Movement: ONE camera move only
-
-SUBJECT MOTION
-${subjectMotion}
-${beatSection}
-
-${audioDirective}
-
-EXCLUSIONS
-No text on screen, no morphing, no artifacts.`;
+/**
+ * Build Wan 2.5 video prompt
+ */
+export function buildWanVideoPrompt(params: VideoPromptParams & {
+  audioUrl?: string;
+  enablePromptExpansion?: boolean;
+}): {
+  prompt: string;
+  negative_prompt: string;
+  duration: string;
+  resolution: string;
+  audio_url?: string;
+  enable_prompt_expansion: boolean;
+} {
+  const { 
+    duration, 
+    resolution, 
+    cameraMovement, 
+    subjectMotion, 
+    ambientMotion, 
+    negativePrompt,
+    audioUrl,
+    enablePromptExpansion = true,
+  } = params;
+  
+  const cameraMove = getCameraMovement(cameraMovement);
+  
+  const promptParts = [
+    `Camera: ${cameraMove.term}.`,
+    subjectMotion,
+  ];
+  
+  if (ambientMotion) {
+    promptParts.push(ambientMotion);
+  }
+  
+  return {
+    prompt: promptParts.join(' '),
+    negative_prompt: negativePrompt || 'low resolution, error, worst quality, low quality, defects',
+    duration: String(duration) as '5' | '10',
+    resolution: resolution || '1080p',
+    audio_url: audioUrl,
+    enable_prompt_expansion: enablePromptExpansion,
+  };
 }

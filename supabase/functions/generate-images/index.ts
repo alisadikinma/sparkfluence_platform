@@ -179,6 +179,14 @@ serve(async (req) => {
     }
 
     // ========================================================================
+    // MODE: REGENERATE_SINGLE - Create a new job for regenerating a single segment
+    // (v2.0 multi-image gallery feature)
+    // ========================================================================
+    if (mode === 'regenerate_single') {
+      return await handleRegenerateSingle(supabase, requestBody)
+    }
+
+    // ========================================================================
     // MODE: DEBUG_PROMPTS - Generate all prompts without executing (for debugging)
     // ========================================================================
     if (mode === 'debug_prompts') {
@@ -721,16 +729,114 @@ async function handleCheckStatus(supabase: any, requestBody: any) {
   const total = jobs?.length || 0
 
   return new Response(
-    JSON.stringify({ 
-      success: true, 
-      data: { 
+    JSON.stringify({
+      success: true,
+      data: {
         jobs,
         summary: { total, completed, failed, pending, processing },
         all_complete: pending === 0 && processing === 0 && total > 0
-      } 
+      }
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   )
+}
+
+// ============================================================================
+// REGENERATE_SINGLE - Create new job for regenerating a single segment
+// (v2.0 multi-image gallery feature)
+// ============================================================================
+async function handleRegenerateSingle(supabase: any, requestBody: any) {
+  const {
+    user_id,
+    session_id,
+    segment_number,
+    generation_number,
+    regeneration_notes,
+    reference_image_url,
+    visual_prompt,
+    script_text,
+    segment_type,
+    shot_type,
+    emotion,
+    aspect_ratio
+  } = requestBody
+
+  if (!user_id || !session_id || !segment_number) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: { code: 'INVALID_INPUT', message: 'Missing required fields: user_id, session_id, segment_number' }
+      }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  try {
+    // Create new job record with incremented generation_number
+    const segmentId = `${session_id}_${segment_number}`
+
+    const newJob = {
+      user_id,
+      session_id,
+      segment_id: segmentId,
+      segment_number,
+      segment_type: segment_type || 'UNKNOWN',
+      shot_type: shot_type || 'B-ROLL',
+      emotion: emotion || null,
+      visual_prompt: visual_prompt || '',
+      script_text: script_text || '',
+      aspect_ratio: aspect_ratio || '9:16',
+      generation_number: generation_number || 1,
+      regeneration_notes: regeneration_notes || null,
+      reference_image_url: reference_image_url || null,
+      source_type: 'generated',
+      is_selected: false,  // New generated image is not auto-selected
+      status: JOB_STATUS.PENDING,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    const { data: insertedJob, error: insertError } = await supabase
+      .from('image_generation_jobs')
+      .insert(newJob)
+      .select()
+      .single()
+
+    if (insertError) {
+      console.error('[REGENERATE_SINGLE] Insert error:', insertError)
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'DB_ERROR', message: `Failed to create job: ${insertError.message}` }
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    console.log(`[REGENERATE_SINGLE] ✅ Created job ${insertedJob.id} for segment ${segment_number} (generation #${generation_number})`)
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: {
+          job: insertedJob,
+          message: `Regeneration job created for segment ${segment_number}`
+        }
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    console.error(`[REGENERATE_SINGLE] ❌ Error: ${errorMessage}`)
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: errorMessage }
+      }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
 }
 
 // ============================================================================

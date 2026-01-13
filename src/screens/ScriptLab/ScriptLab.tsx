@@ -4,6 +4,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useOnboarding } from "../../contexts/OnboardingContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
+import { generateOrderId } from "../../lib/orderIdGenerator";
 import { AppSidebar } from "../../components/layout/AppSidebar";
 import { TopNavbar } from "../../components/layout/TopNavbar";
 import { ScriptForm, SelectedTopic } from "./components/ScriptForm";
@@ -118,6 +119,9 @@ export const ScriptLab = (): JSX.Element => {
       const segments = scriptData.data.segments;
       const sessionId = `video_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+      // Generate Order ID for tracking (SF-YYYYMMDD-XXXX)
+      const orderId = generateOrderId();
+
       const scriptLabData = {
         topic: formData.prompt,
         inputType: formData.inputType,
@@ -126,6 +130,7 @@ export const ScriptLab = (): JSX.Element => {
         duration: formData.duration,
         language: formData.language,
         useDnaTone: formData.useDnaTone,
+        orderId: orderId, // Add Order ID to local storage
         createdAt: new Date().toISOString(),
       };
       localStorage.setItem("script_lab_data", JSON.stringify(scriptLabData));
@@ -134,9 +139,10 @@ export const ScriptLab = (): JSX.Element => {
         platforms: formData.ratio === "9:16" ? ["tiktok", "instagram"] : ["youtube"],
       });
 
-      navigate("/video-editor", {
+      navigate("/image-generation", {
         state: {
           sessionId,
+          orderId, // Pass Order ID to next screen
           topic: formData.prompt.trim(),
           segments: segments,
           metadata: scriptData.data.metadata,

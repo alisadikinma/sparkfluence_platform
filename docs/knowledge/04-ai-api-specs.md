@@ -7,8 +7,10 @@
 | **Script LLM** | Google | Gemini 2.0 Flash | FREE |
 | **Embeddings** | Google | text-embedding-004 | FREE |
 | **Transcription** | Groq | Whisper | FREE |
-| **Images** | fal.ai | nano-banana-pro, wan/v2.6 | ~$0.02/img |
-| **Video** | GeminiGen | VEO 3.1, Sora 2 | ~$0.10-0.50/s |
+| **Images** | fal.ai | nano-banana-pro/edit, seedream-v4, qwen-image | ~$0.02-0.15/img |
+| **Video** | fal.ai | Kling 2.5 Turbo, Wan 2.5 | ~$0.05-0.15/video |
+| **TTS** | fal.ai | Chatterbox Turbo | ~$0.01/audio |
+| **Music** | fal.ai | Minimax Music v2 | ~$0.05/track |
 
 ---
 
@@ -18,176 +20,362 @@
 
 | Segment Type | Model | Style | Reference |
 |--------------|-------|-------|-----------|
-| HOOK, CTA, LOOP-END | `nano-banana-pro` | Portrait Cinematic | ✅ Avatar URL |
-| FORE, BODY, PEAK | `wan/v2.6` | Native cinematic | ❌ No face |
+| HOOK, CTA, LOOP-END | `nano-banana/edit` | Multi-reference | ✅ image_urls array |
+| FORE, BODY, PEAK | `seedream-v4` or `qwen-image` | Text-to-image | ❌ No face |
 
-### nano-banana-pro (CREATOR Shots)
+### nano-banana/edit (CREATOR Shots - Face Consistency)
 
 ```typescript
 // Endpoint
-POST https://fal.run/fal-ai/nano-banana-pro
+POST https://fal.run/fal-ai/nano-banana/edit
 
 // Headers
-Authorization: Key {key_id}:{key_secret}
+Authorization: Key {FAL_AI_API_KEY}
 Content-Type: application/json
 
 // Request
 {
+  prompt: string,                    // Edit instruction
+  image_urls: string[],              // Reference images (up to 14)
+  num_images: 1,                     // 1-4
+  aspect_ratio: "9:16",              // auto, 21:9, 16:9, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16
+  output_format: "png",              // jpeg, png, webp
+  limit_generations: false           // Set true to limit to 1 per prompt
+}
+
+// Response
+{
+  images: [{ url: string, file_name: string, content_type: string }],
+  description: string
+}
+```
+
+**Use Case:** CREATOR shots needing face consistency. Pass avatar reference in `image_urls` array.
+
+### Seedream v4 (B-ROLL - High Quality Text-to-Image)
+
+```typescript
+// Endpoint
+POST https://fal.run/fal-ai/bytedance/seedream/v4/text-to-image
+
+// Request
+{
   prompt: string,
-  image_size: { width: 1024, height: 1792 },
-  num_inference_steps: 25,        // 18-50
-  guidance_scale: 5.0,            // 0-20
-  style: "Portrait Cinematic",    // see style list
-  image_url: "https://...",       // reference image
-  output_format: "png"
+  image_size: { width: 1024, height: 1792 },  // 1024-4096
+  num_images: 1,                               // 1-6
+  max_images: 1,                               // Multi-image per gen (1-6)
+  seed: number,                                // Optional for reproducibility
+  enable_safety_checker: true,
+  enhance_prompt_mode: "standard"              // standard | fast
+}
+
+// Response
+{
+  images: [{ url: string }],
+  seed: number
+}
+```
+
+**Use Case:** B-ROLL with excellent text rendering. Default 2048x2048. Supports up to 4096px.
+
+### Qwen Image (B-ROLL - Turbo Mode Available)
+
+```typescript
+// Endpoint
+POST https://fal.run/fal-ai/qwen-image
+
+// Request
+{
+  prompt: string,
+  negative_prompt: "blurry, ugly, human face, person",  // SUPPORTED!
+  image_size: "portrait_3_4",                           // or custom { width, height }
+  num_inference_steps: 30,                              // 2-250
+  guidance_scale: 2.5,                                  // 0-20
+  num_images: 1,                                        // 1-4
+  output_format: "png",
+  acceleration: "none",                                 // none | regular | high
+  use_turbo: false,                                     // Faster with optimized settings
+  loras: []                                             // Up to 3 LoRAs
 }
 
 // Response
 {
   images: [{ url: string, width: number, height: number }],
-  seed: number
+  seed: number,
+  has_nsfw_concepts: boolean[]
 }
 ```
 
-**Style Presets:** None, Photorealistic, Portrait, Portrait Cinematic, Portrait Fashion, Ray Traced, Dynamic, Creative, 3D Render, Stock Photo
+**Use Case:** B-ROLL with negative prompt support. Turbo mode for speed. LoRA support for style.
 
-### wan/v2.6 (B-ROLL Shots)
+### FLUX Kontext Pro (Image Editing)
 
 ```typescript
 // Endpoint
-POST https://fal.run/wan/v2.6/text-to-image
+POST https://fal.run/fal-ai/flux-pro/kontext
 
 // Request
 {
-  prompt: string,
-  negative_prompt: string,        // REQUIRED for B-roll
-  image_size: { width: 1024, height: 1792 },
-  num_inference_steps: 30,        // 2-40
-  guidance_scale: 6.0,            // 0-20
-  shift: 5.0,                     // 0-10
-  sampler: "unipc",
-  output_format: "png"
+  prompt: string,                  // Edit instruction
+  image_url: string,               // Single reference image
+  guidance_scale: 3.5,             // 1-20
+  num_images: 1,                   // 1-4
+  aspect_ratio: "9:16",            // 21:9, 16:9, 4:3, 3:2, 1:1, 2:3, 3:4, 9:16, 9:21
+  output_format: "jpeg",
+  safety_tolerance: "2"            // 1-6 (1=strictest)
+}
+
+// Response
+{
+  images: [{ url: string, width: number, height: number }],
+  seed: number,
+  has_nsfw_concepts: boolean[]
 }
 ```
 
-**Standard Negative Prompt:**
-```
-blurry, low quality, distorted, artifacts, human face, person, 
-text, watermark, logo, cartoon, anime, illustration, painting, 
-oversaturated, underexposed, flat lighting
-```
+**Use Case:** Targeted local edits, scene transformations with single reference.
 
 ### Fallback Chain
 
 ```
-CREATOR: nano-banana-pro → GPT-Image-1 → FLUX
-B-ROLL:  wan/v2.6 → nano-banana-pro → FLUX
+CREATOR: nano-banana/edit → flux-kontext → qwen-image
+B-ROLL:  seedream-v4 → qwen-image → nano-banana
 ```
 
-### Quality Parameters
+### Image Model Comparison
 
-| Parameter | Safe Range | Notes |
-|-----------|------------|-------|
-| guidance_scale | 5.0-7.0 | Higher = more adherence |
-| inference_steps | 18-30 | Higher = better quality |
-| shift (wan) | 5.0 | Temporal dynamics |
+| Model | Reference Image | Negative Prompt | Max Size | Best For |
+|-------|-----------------|-----------------|----------|----------|
+| nano-banana/edit | ✅ Array (14) | ❌ | 1792px | Face consistency |
+| seedream-v4 | ❌ | ❌ | 4096px | High-res, text rendering |
+| qwen-image | ❌ | ✅ | 1024px | B-roll, turbo speed |
+| flux-kontext | ✅ Single | ❌ | 1024px | Scene editing |
 
 ---
 
-## Video Generation (GeminiGen.AI)
+## Video Generation (fal.ai)
 
 ### Platform Selection
 
-| Condition | Platform | Model | Max |
-|-----------|----------|-------|-----|
-| ≤8s, lip-sync critical | VEO 3.1 | `veo-3.1-fast` | 8s |
-| >8s narrative | Sora 2 | `sora-2` | 15s |
-| Long-form | Sora 2 Pro | `sora-2-pro` | 25s |
-| Premium 1080p | Sora 2 Pro HD | `sora-2-pro-hd` | 15s |
+| Condition | Model | Max Duration | Resolution |
+|-----------|-------|--------------|------------|
+| Default, short clips | Kling 2.5 Turbo | 5s/10s | Auto |
+| Longer narratives | Wan 2.5 | 5s/10s | 480p/720p/1080p |
+| With background audio | Wan 2.5 | 5s/10s | 1080p |
 
-### VEO 3.1 Fast (DEFAULT)
+### Kling 2.5 Turbo (DEFAULT)
 
 ```typescript
 // Endpoint
-POST https://api.geminigen.ai/uapi/v1/video-gen/veo
+POST https://fal.run/fal-ai/kling-video/v2.5-turbo/standard/image-to-video
 
 // Headers
-x-api-key: {VEO_API_KEY}
-Content-Type: multipart/form-data
+Authorization: Key {FAL_AI_API_KEY}
+Content-Type: application/json
 
-// FormData
-prompt: string
-model: "veo-3.1-fast"
-duration: "4" | "6" | "8"
-aspect_ratio: "9:16" | "16:9"
-resolution: "720p" | "1080p"
-ref_images: string              // Image URL
+// Request
+{
+  prompt: string,                              // Motion description
+  image_url: string,                           // Reference image URL
+  duration: "5" | "10",                        // Default: "5"
+  negative_prompt: "blur, distort, low quality",
+  cfg_scale: 0.5                               // 0-1 (default 0.5)
+}
+
+// Response
+{
+  video: { url: string }
+}
 ```
 
-### Sora 2
+**Strengths:** Top-tier motion fluidity, cinematic visuals, excellent prompt precision.
+
+### Wan 2.5 (With Audio Support)
 
 ```typescript
 // Endpoint
-POST https://api.geminigen.ai/uapi/v1/video-gen/sora
+POST https://fal.run/fal-ai/wan-25-preview/image-to-video
 
-// FormData
-prompt: string
-model: "sora-2" | "sora-2-pro" | "sora-2-pro-hd"
-duration: "10" | "15" | "25"
-aspect_ratio: "portrait" | "landscape"
-resolution: "small" | "medium"  // 720p | 1080p
-file_urls: string               // Image URL
+// Request
+{
+  prompt: string,                              // Max 800 chars
+  image_url: string,                           // Reference image
+  audio_url: string,                           // Optional BGM (WAV/MP3, 3-30s, max 15MB)
+  resolution: "1080p",                         // 480p | 720p | 1080p
+  duration: "5" | "10",
+  negative_prompt: "low resolution, error, worst quality",
+  enable_prompt_expansion: true,               // LLM enhances prompt
+  seed: number,                                // Optional
+  enable_safety_checker: true
+}
+
+// Response
+{
+  video: { url: string, content_type: string },
+  seed: number,
+  actual_prompt: string                        // If prompt expansion enabled
+}
 ```
 
-### Resolution Rules
+**Strengths:** 1080p support, audio integration, prompt expansion via LLM.
 
-| Aspect | VEO 3.1 | Sora 2 |
-|--------|---------|--------|
-| 9:16 | 720p | 720p |
-| 16:9 | 1080p | 720p/1080p |
+### Video Model Comparison
+
+| Model | Duration | Resolution | Audio | Negative Prompt | Seed |
+|-------|----------|------------|-------|-----------------|------|
+| Kling 2.5 Turbo | 5s/10s | Auto | ❌ | ✅ | ❌ |
+| Wan 2.5 | 5s/10s | Up to 1080p | ✅ | ✅ | ✅ |
 
 ### Dialogue Word Limits (CRITICAL)
 
 | Duration | Max Words | Calculation |
 |----------|-----------|-------------|
-| 4s | 7 | 130 WPM × 4s × 0.80 |
-| 6s | 10 | 130 WPM × 6s × 0.80 |
-| 8s | 14 | 130 WPM × 8s × 0.80 |
+| 5s | 9 | 130 WPM × 5s × 0.80 |
 | 10s | 17 | 130 WPM × 10s × 0.80 |
-| 15s | 26 | 130 WPM × 15s × 0.80 |
-| 25s | 43 | 130 WPM × 25s × 0.80 |
 
-### Audio Directive (MANDATORY)
+### Video Prompt Template
 
 ```
-AUDIO:
-Ambient: [environment sound]
-Dialogue: [Character] says: "[script within limit]"
-Voice style: [tone], natural [language] accent
-Exclude: no subtitles, no audience sounds, no background music
+[VIDEO GENERATION]
+
+Duration: ~[N]s
+Resolution: [480p/720p/1080p]
+
+CAMERA MOTION
+[Movement description - push-in, orbit, tracking, static]
+
+SUBJECT MOTION
+[What the subject does - expressions, gestures, movement]
+
+AMBIENT MOTION
+[Environmental motion - particles, lighting shifts]
+
+NEGATIVE
+blur, distort, low quality, artifacts
 ```
 
-### Voice Character Anchor
+---
+
+## Text-to-Speech (fal.ai)
+
+### Chatterbox Turbo
 
 ```typescript
-// Generate ONCE per session
-const voiceCharacter = {
-  description: "Indonesian male voice, 30-35 years old",
-  accent: "Jakarta Indonesian, natural",
-  tone: "warm, friendly, enthusiastic, Gen-Z energy",
-  pace: "medium-fast, conversational"
+// Endpoint
+POST https://fal.run/fal-ai/chatterbox/text-to-speech/turbo
+
+// Headers
+Authorization: Key {FAL_AI_API_KEY}
+Content-Type: application/json
+
+// Request
+{
+  text: string,                    // Text with paralinguistic tags
+  voice: "lucy",                   // Preset voice (see list below)
+  audio_url: string,               // Optional: 5-10s audio for voice cloning
+  temperature: 0.8,                // 0.05-2 (higher = more varied)
+  seed: number                     // 0 = random
 }
-// Store in job records for consistency
+
+// Response
+{
+  audio: { url: string }           // WAV file URL
+}
 ```
 
-### Job Status Codes
+### Preset Voices (20 available)
 
-| Code | Status | Action |
-|------|--------|--------|
-| 0 | Pending | Wait |
-| 1 | Processing | Poll |
-| 2 | Completed | Download |
-| 3 | Failed | Retry/fallback |
+```
+aaron, abigail, anaya, andy, archer,
+brian, chloe, dylan, emmanuel, ethan,
+evelyn, gavin, gordon, ivan, laura,
+lucy, madison, marisol, meera, walter
+```
+
+### Paralinguistic Tags
+
+Use inline tags to control emotion and breathing:
+
+```
+[clear throat], [sigh], [shush], [cough],
+[groan], [sniff], [gasp], [chuckle], [laugh]
+```
+
+**Example:**
+```
+"Oh, that's hilarious! [chuckle] I can't believe it worked!"
+```
+
+### Voice Cloning
+
+For consistent voice across videos, provide 5-10 second audio sample via `audio_url`:
+
+```typescript
+{
+  text: "Gue mau kasih tau lo rahasia...",
+  audio_url: "https://storage.example.com/creator-voice-sample.wav",
+  temperature: 0.7
+}
+```
+
+---
+
+## Music Generation (fal.ai)
+
+### Minimax Music v2
+
+```typescript
+// Endpoint
+POST https://fal.run/fal-ai/minimax-music/v2
+
+// Headers
+Authorization: Key {FAL_AI_API_KEY}
+Content-Type: application/json
+
+// Request
+{
+  prompt: string,                  // Style/mood description (10-300 chars)
+  lyrics_prompt: string,           // Lyrics with structure tags (10-3000 chars)
+  audio_setting: {}                // Optional audio config
+}
+
+// Response
+{
+  audio: { url: string }           // MP3 file URL
+}
+```
+
+### Prompt Format
+
+**prompt:** Describe style, mood, scenario (10-300 chars)
+```
+"Indie folk, melancholic, introspective, longing, solitary walk, coffee shop"
+```
+
+**lyrics_prompt:** Lyrics with optional structure tags (10-3000 chars)
+```
+[verse]
+Streetlights flicker, the night breeze sighs
+Shadows stretch as I walk alone
+
+[chorus]
+Pushing the wooden door, the aroma spreads
+In a familiar corner, a stranger gazes
+```
+
+### Structure Tags
+
+```
+[Intro], [Verse], [Chorus], [Bridge], [Outro]
+```
+
+### Use Cases
+
+| Scenario | Prompt Style |
+|----------|--------------|
+| Upbeat hook | "Pop, energetic, catchy, viral TikTok, modern" |
+| Emotional body | "Lo-fi, chill, introspective, late night study" |
+| CTA urgency | "EDM, building energy, climactic, drop incoming" |
 
 ---
 
@@ -261,18 +449,6 @@ timestamp_granularities: ["word"]
 
 ---
 
-## BGM/SFX (Pixabay)
-
-```typescript
-GET https://pixabay.com/api/videos/music/
-  ?key={PIXABAY_API_KEY}
-  &q={mood}
-  &category=music
-  &per_page=10
-```
-
----
-
 ## Environment Variables
 
 ```bash
@@ -285,17 +461,11 @@ SUPABASE_SERVICE_ROLE_KEY=xxx
 GEMINI_API_KEY=xxx
 OPENROUTER_API_KEY=xxx
 
-# AI - Images
+# AI - fal.ai (Images, Video, TTS, Music)
 FAL_AI_API_KEY=key_id:key_secret
-
-# AI - Video
-VEO_API_KEY=xxx
 
 # AI - Transcription
 GROQ_API_KEY=xxx
-
-# Audio
-PIXABAY_API_KEY=xxx
 ```
 
 ---
@@ -304,10 +474,10 @@ PIXABAY_API_KEY=xxx
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| 401 | Invalid API key | Check key format |
-| 400 | Invalid params | Validate input |
+| 401 | Invalid API key | Check key format (key_id:key_secret for fal.ai) |
+| 400 | Invalid params | Validate input against schema |
 | 429 | Rate limited | Backoff + retry |
-| timeout | Long generation | Poll with intervals |
+| timeout | Long generation | Use polling with fal_client.subscribe |
 
 ---
 
@@ -317,5 +487,63 @@ PIXABAY_API_KEY=xxx
 |---------|-------|
 | Gemini | 15 RPM (free) |
 | Groq Whisper | 14,400 req/day |
-| fal.ai | Per account |
-| GeminiGen | Per account |
+| fal.ai | Per account (check dashboard) |
+
+---
+
+## fal.ai Client Usage
+
+### JavaScript/TypeScript
+
+```typescript
+import { fal } from "@fal-ai/client";
+
+// Subscribe pattern (recommended for long-running tasks)
+const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image-to-video", {
+  input: {
+    prompt: "The character smiles warmly...",
+    image_url: "https://...",
+    duration: "5"
+  },
+  logs: true,
+  onQueueUpdate: (update) => {
+    if (update.status === "IN_PROGRESS") {
+      update.logs.map(log => log.message).forEach(console.log);
+    }
+  },
+});
+
+console.log(result.data.video.url);
+```
+
+### Python
+
+```python
+import fal_client
+
+result = fal_client.subscribe(
+    "fal-ai/kling-video/v2.5-turbo/standard/image-to-video",
+    arguments={
+        "prompt": "The character smiles warmly...",
+        "image_url": "https://...",
+        "duration": "5"
+    },
+    with_logs=True
+)
+
+print(result["video"]["url"])
+```
+
+### cURL (Direct API)
+
+```bash
+curl --request POST \
+  --url https://fal.run/fal-ai/kling-video/v2.5-turbo/standard/image-to-video \
+  --header "Authorization: Key $FAL_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "prompt": "The character smiles warmly...",
+    "image_url": "https://...",
+    "duration": "5"
+  }'
+```

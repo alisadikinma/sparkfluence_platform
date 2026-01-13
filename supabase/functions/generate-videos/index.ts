@@ -225,6 +225,120 @@ serve(async (req) => {
 })
 
 // ============================================================================
+// FAL.AI HELPER FUNCTIONS (Queue-based API)
+// ============================================================================
+
+/**
+ * Submit video generation job to fal.ai queue
+ * Returns request_id for polling
+ */
+async function submitToFalQueue(
+  modelSpecs: any,
+  videoPrompt: string,
+  imageUrl: string,
+  duration: number,
+  falApiKey: string,
+  audioUrl?: string  // NEW: Optional TTS audio URL
+): Promise<{ request_id: string; status_url: string }> {
+  const endpoint = modelSpecs.endpoint // e.g., https://queue.fal.run/fal-ai/wan/video
+
+  // Build request body based on model
+  const requestBody: any = {
+    prompt: videoPrompt,
+    image_url: imageUrl,
+  }
+
+  // Duration handling (BOTH models support duration parameter)
+  if (modelSpecs.key === 'wan-2.5' || modelSpecs.key === 'kling-2.5') {
+    requestBody.duration = String(duration) // "5" or "10"
+    console.log(`[FAL_SUBMIT] Duration: ${duration}s`)
+  }
+
+  // Audio handling (Wan 2.5 supports audio_url, Kling 2.5 doesn't)
+  if (audioUrl && modelSpecs.key === 'wan-2.5') {
+    requestBody.audio_url = audioUrl;
+    console.log(`[FAL_SUBMIT] Adding TTS audio: ${audioUrl}`);
+  } else if (audioUrl && modelSpecs.key === 'kling-2.5') {
+    console.warn(`[FAL_SUBMIT] ⚠️ Kling 2.5 doesn't support audio, TTS will be ignored`);
+  }
+
+  console.log(`[FAL_SUBMIT] Endpoint: ${endpoint}, Duration: ${duration}s, Model: ${modelSpecs.key}${audioUrl ? ', Audio: YES' : ''}`)
+
+  // Submit to queue
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Key ${falApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody)
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`fal.ai queue submit failed: ${response.status} - ${errorText}`)
+  }
+
+  const data = await response.json()
+
+  // fal.ai returns: { request_id: "...", status: "...", response_url: "..." }
+  if (!data.request_id) {
+    throw new Error('fal.ai did not return request_id')
+  }
+
+  console.log(`[FAL_SUBMIT] ✅ Queued with request_id: ${data.request_id}`)
+
+  return {
+    request_id: data.request_id,
+    status_url: data.response_url || data.status_url || `${endpoint}/requests/${data.request_id}`
+  }
+}
+
+/**
+ * Poll fal.ai status endpoint
+ * Returns: { status: 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED', video_url?: string, error?: string }
+ */
+async function pollFalStatus(
+  statusUrl: string,
+  falApiKey: string
+): Promise<{ status: string; video_url?: string; error?: string; logs?: any }> {
+  const response = await fetch(statusUrl, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Key ${falApiKey}`,
+    }
+  })
+
+  if (!response.ok) {
+    throw new Error(`fal.ai status poll failed: ${response.status}`)
+  }
+
+  const data = await response.json()
+
+  // fal.ai response format:
+  // { status: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED", response: { video: { url: "..." } } }
+
+  if (data.status === 'COMPLETED' && data.response?.video?.url) {
+    return {
+      status: 'COMPLETED',
+      video_url: data.response.video.url
+    }
+  }
+
+  if (data.status === 'FAILED' || data.error) {
+    return {
+      status: 'FAILED',
+      error: data.error?.message || 'Video generation failed'
+    }
+  }
+
+  // Still processing
+  return {
+    status: data.status || 'IN_PROGRESS'
+  }
+}
+
+// ============================================================================
 // MODE HANDLERS
 // ============================================================================
 
@@ -543,10 +657,10 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 async function handleProcessSingle(supabase: any, requestBody: any) {
   const { job_id, session_id, user_id } = requestBody
 
-  const veoApiKey = Deno.env.get('VEO_API_KEY')
-  if (!veoApiKey) {
+  const falApiKey = Deno.env.get('FAL_AI_API_KEY')
+  if (!falApiKey) {
     return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'VEO_API_KEY not configured' } }),
+      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'FAL_AI_API_KEY not configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
@@ -754,71 +868,103 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     console.log(`[PROCESS_SINGLE] Platform: ${selectedPlatform}, Prompt length: ${videoPrompt.length}`)
 
     // ========================================================================
-    // BUILD FORM DATA USING CENTRALIZED CONFIG (2026)
-    // API params differ between providers - config handles the mapping
+    // TTS GENERATION (for segments with script_text)
+    // ========================================================================
+    let audioUrl: string | undefined;
+
+    if (job.script_text && job.script_text.trim().length > 0) {
+      // Any segment with script needs TTS (CREATOR or B-ROLL with narration)
+      console.log(`[PROCESS_SINGLE] Generating TTS audio for segment...`);
+
+      try {
+        const { data: ttsData, error: ttsError } = await supabase.functions.invoke('generate-tts', {
+          body: {
+            text: job.script_text,
+            voice: job.voice_preference || 'aaron',  // From user profile
+            audio_url: job.voice_clone_url,          // Custom voice if available
+            temperature: 0.8,
+            model: 'chatterbox-turbo'
+          }
+        });
+
+        if (ttsError || !ttsData?.success) {
+          console.warn(`[PROCESS_SINGLE] ⚠️ TTS failed, continuing without audio:`, ttsError || ttsData?.error);
+        } else {
+          audioUrl = ttsData.data.audio_url;
+          console.log(`[PROCESS_SINGLE] ✅ TTS generated: ${audioUrl}`);
+
+          // Store audio URL in job for reference
+          await supabase
+            .from('video_generation_jobs')
+            .update({ audio_url: audioUrl })
+            .eq('id', job.id);
+        }
+      } catch (ttsError) {
+        console.error(`[PROCESS_SINGLE] ⚠️ TTS error:`, ttsError);
+        // Continue without audio rather than failing entire job
+      }
+    }
+
+    // ========================================================================
+    // PROVIDER DETECTION: fal.ai only (VEO/Sora removed)
     // ========================================================================
     const aspectRatioInternal = (job.aspect_ratio || '9:16') as AspectRatio
     const actualDuration = getClosestDuration(modelSpecs, duration)
-    
-    // Use helper from config to build FormData with correct API values
-    const formData = buildVideoFormData(modelSpecs, {
-      prompt: videoPrompt,
-      aspectRatio: aspectRatioInternal,
-      duration: actualDuration,
-      referenceImageUrl: job.image_url
-    })
-    
-    console.log(`[PROCESS_SINGLE] API: ${modelSpecs.endpoint}, model: ${modelSpecs.apiModelName}, duration: ${actualDuration}s`)
+    const isFalProvider = modelSpecs.provider === 'fal'
 
-    const apiResponse = await fetch(modelSpecs.endpoint, {
-      method: 'POST',
-      headers: { 'x-api-key': veoApiKey },
-      body: formData
-    })
-
-    const responseText = await apiResponse.text()
-
-    if (!apiResponse.ok) {
-      // Check for rate limit error
-      if (responseText.includes('GEMINI_RATE_LIMIT') || responseText.includes('high traffic')) {
-        throw new Error('RATE_LIMIT: Server sedang sibuk. Silakan coba lagi dalam 10 menit.')
+    if (isFalProvider) {
+      // ========================================================================
+      // FAL.AI PATH: Queue-based API with optional audio
+      // ========================================================================
+      if (!falApiKey) {
+        throw new Error('FAL_AI_API_KEY not configured')
       }
-      throw new Error(`VEO API error: ${apiResponse.status} - ${responseText}`)
+
+      console.log(`[PROCESS_SINGLE] Using fal.ai: ${modelSpecs.key}${audioUrl ? ' (with audio)' : ' (silent)'}`)
+
+      const { request_id, status_url } = await submitToFalQueue(
+        modelSpecs,
+        videoPrompt,
+        job.image_url,
+        actualDuration,
+        falApiKey,
+        audioUrl  // Pass TTS audio URL if available
+      )
+
+      // Update job with fal request_id (store in veo_uuid field for compatibility)
+      await supabase
+        .from('video_generation_jobs')
+        .update({
+          veo_uuid: request_id, // Store fal request_id in same field
+          platform: selectedPlatform,
+          prompt: videoPrompt.substring(0, 1000),
+          updated_at: new Date().toISOString(),
+          // Store fal status URL in error_message temporarily (hacky but works)
+          error_message: status_url // We'll use this for polling
+        })
+        .eq('id', job.id)
+
+      console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} submitted to fal.ai: request_id=${request_id}`)
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            job: {
+              id: job.id,
+              segment_number: job.segment_number,
+              segment_type: job.segment_type,
+              veo_uuid: request_id,
+              platform: selectedPlatform,
+              status: JOB_STATUS.PROCESSING,
+              provider: 'fal'
+            },
+            message: 'Job submitted to fal.ai. Poll check_and_update to get video URL.'
+          }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
-
-    const responseData = JSON.parse(responseText)
-    const veoUuid = responseData.uuid
-
-    console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} submitted to VEO: UUID=${veoUuid}`)
-
-    // Update job with UUID (status stays PROCESSING until video is ready)
-    await supabase
-      .from('video_generation_jobs')
-      .update({ 
-        veo_uuid: veoUuid,
-        platform: selectedPlatform,
-        prompt: videoPrompt.substring(0, 1000),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', job.id)
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        data: { 
-          job: {
-            id: job.id,
-            segment_number: job.segment_number,
-            segment_type: job.segment_type,
-            veo_uuid: veoUuid,
-            platform: selectedPlatform,
-            status: JOB_STATUS.PROCESSING
-          },
-          message: 'Job submitted to VEO. Poll check_and_update to get video URL.'
-        } 
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
@@ -854,10 +1000,10 @@ async function handleCheckAndUpdate(supabase: any, requestBody: any) {
     )
   }
 
-  const veoApiKey = Deno.env.get('VEO_API_KEY')
-  if (!veoApiKey) {
+  const falApiKey = Deno.env.get('FAL_AI_API_KEY')
+  if (!falApiKey) {
     return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'VEO_API_KEY not configured' } }),
+      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'FAL_AI_API_KEY not configured' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
@@ -883,53 +1029,60 @@ async function handleCheckAndUpdate(supabase: any, requestBody: any) {
     return await getSessionStatus(supabase, session_id, user_id)
   }
 
-  console.log(`[CHECK_AND_UPDATE] Checking ${processingJobs.length} processing jobs`)
-
-  // Check status for all UUIDs
-  const uuids = processingJobs.map((j: any) => j.veo_uuid)
-  
-  const { data: statusData } = await supabase.functions.invoke('check-video-status', {
-    body: { video_uuids: uuids, update_db: true }
-  })
+  console.log(`[CHECK_AND_UPDATE] Checking ${processingJobs.length} processing jobs (fal.ai only)`)
 
   const updatedJobs: any[] = []
 
-  if (statusData?.data?.videos) {
-    for (const videoInfo of statusData.data.videos) {
-      const job = processingJobs.find((j: any) => j.veo_uuid === videoInfo.uuid)
-      if (!job) continue
+  // ========================================================================
+  // CHECK FAL.AI JOBS (All jobs are now fal.ai)
+  // ========================================================================
+  for (const job of processingJobs) {
+      try {
+        const statusUrl = job.error_message // We stored status URL here temporarily
+        if (!statusUrl) {
+          console.warn(`[CHECK_AND_UPDATE] fal job ${job.id} missing status URL, skipping`)
+          continue
+        }
 
-      if (videoInfo.status === 2 && videoInfo.video_url) {
-        // Completed
-        await supabase
-          .from('video_generation_jobs')
-          .update({ 
-            status: JOB_STATUS.COMPLETED, 
-            video_url: videoInfo.video_url,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', job.id)
-        
-        updatedJobs.push({ ...job, status: JOB_STATUS.COMPLETED, video_url: videoInfo.video_url })
-        console.log(`[CHECK_AND_UPDATE] ✅ Job ${job.id} completed: ${videoInfo.video_url}`)
-        
-      } else if (videoInfo.status === 3) {
-        // Failed
-        await supabase
-          .from('video_generation_jobs')
-          .update({ 
-            status: JOB_STATUS.FAILED, 
-            error_message: videoInfo.error_message || 'Video generation failed',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', job.id)
-        
-        updatedJobs.push({ ...job, status: JOB_STATUS.FAILED })
-        console.log(`[CHECK_AND_UPDATE] ❌ Job ${job.id} failed`)
-      } else {
-        // Still processing
-        updatedJobs.push({ ...job, status_percentage: videoInfo.status_percentage || 0 })
-      }
+        const falStatus = await pollFalStatus(statusUrl, falApiKey)
+
+        if (falStatus.status === 'COMPLETED' && falStatus.video_url) {
+          // Update to completed
+          await supabase
+            .from('video_generation_jobs')
+            .update({
+              status: JOB_STATUS.COMPLETED,
+              video_url: falStatus.video_url,
+              error_message: null, // Clear the status URL
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', job.id)
+
+          updatedJobs.push({ ...job, status: JOB_STATUS.COMPLETED, video_url: falStatus.video_url })
+          console.log(`[CHECK_AND_UPDATE] ✅ fal.ai Job ${job.id} completed: ${falStatus.video_url}`)
+
+        } else if (falStatus.status === 'FAILED') {
+          // Update to failed
+          await supabase
+            .from('video_generation_jobs')
+            .update({
+              status: JOB_STATUS.FAILED,
+              error_message: falStatus.error || 'fal.ai video generation failed',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', job.id)
+
+          updatedJobs.push({ ...job, status: JOB_STATUS.FAILED })
+          console.log(`[CHECK_AND_UPDATE] ❌ fal.ai Job ${job.id} failed: ${falStatus.error}`)
+
+        } else {
+          // Still processing
+          updatedJobs.push({ ...job, status_percentage: 50 }) // Fake percentage for now
+          console.log(`[CHECK_AND_UPDATE] ⏳ fal.ai Job ${job.id} still processing (${falStatus.status})`)
+        }
+    } catch (err) {
+      console.error(`[CHECK_AND_UPDATE] Error polling fal.ai job ${job.id}:`, err)
+      updatedJobs.push({ ...job })
     }
   }
 

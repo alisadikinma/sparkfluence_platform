@@ -26,7 +26,7 @@ import { AvatarUpload } from "./screens/AvatarUpload";
 import { AvatarPreview } from "./screens/AvatarPreview";
 import { ContentCuration } from "./screens/ContentCuration";
 import { TopicSelection } from "./screens/TopicSelection";
-import { VideoEditor } from "./screens/VideoEditor";
+import { ImageGeneration } from "./screens/ImageGeneration";
 import { VideoGeneration } from "./screens/VideoGeneration";
 import { MusicSelector } from "./screens/MusicSelector";
 import { Loading } from "./screens/Loading";
@@ -83,7 +83,7 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/avatar-preview" element={<AvatarPreview />} />
                     <Route path="/content-curation" element={<ContentCuration />} />
                     <Route path="/topic-selection" element={<TopicSelection />} />
-                    <Route path="/video-editor" element={<VideoEditor />} />
+                    <Route path="/image-generation" element={<ImageGeneration />} />
                     <Route path="/video-generation" element={<VideoGeneration />} />
                     <Route path="/music-selector" element={<MusicSelector />} />
                     <Route path="/loading" element={<Loading />} />

@@ -420,7 +420,7 @@ export const Dashboard = (): JSX.Element => {
   const handleJobClick = (job: ActiveJob) => {
     // Navigate based on current stage
     if (job.stage === 'image') {
-      navigate(`/video-editor?session=${job.session_id}`);
+      navigate(`/image-generation?session=${job.session_id}`);
     } else if (job.stage === 'video') {
       navigate(`/video-generation?session=${job.session_id}`);
     } else {

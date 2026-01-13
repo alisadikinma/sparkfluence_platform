@@ -7,10 +7,11 @@ import { useOnboarding } from "../../contexts/OnboardingContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
+import { generateOrderId } from "../../lib/orderIdGenerator";
 import { useAvatarManager } from "../../hooks/useAvatarManager";
 import { AvatarDropdown, AvatarNameModal } from "../../components/ui/avatar-dropdown";
-import { 
-  Loader2, Sparkles, RefreshCw, 
+import {
+  Loader2, Sparkles, RefreshCw,
   ChevronDown, ScrollText, AlertCircle,
   Dna, Target, Lightbulb, Zap, Brain, PenTool
 } from "lucide-react";
@@ -38,12 +39,6 @@ const DURATION_OPTIONS = [
   { value: '30s', label: '30s' },
   { value: '60s', label: '60s' },
   { value: '90s', label: '90s' },
-];
-
-const MODEL_OPTIONS = [
-  { value: 'auto', label: 'AUTO' },       // Auto-select best model per segment
-  { value: 'veo31', label: 'VEO 3.1' },   // Best lip-sync, 8s max
-  { value: 'sora2', label: 'SORA 2.0' },  // Longer segments up to 15s
 ];
 
 const TOPICS_CACHE_KEY = 'sparkfluence_cached_topics';
@@ -111,7 +106,6 @@ export const TopicSelection = (): JSX.Element => {
   // Form state
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
-  const [model, setModel] = useState("auto"); // Default to VEO 3.1
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("60s"); // Default 60s for better content
   const [outputLang, setOutputLang] = useState<string>(uiLang);
@@ -465,8 +459,8 @@ export const TopicSelection = (): JSX.Element => {
           // DNA Tone: When enabled, use creative_dna styles for script generation
           use_dna_tone: useDnaTone && hasDnaTone,
           creative_dna: useDnaTone && hasDnaTone ? dbOnboardingData?.creative_dna : null,
-          // Video model for segment duration constraints (VEO 3.1 max 8s, Sora 2.0 max 15s)
-          video_model: model
+          // v2.0: Auto-select best model per segment
+          video_model: 'auto'
         }
       });
 
@@ -484,12 +478,16 @@ export const TopicSelection = (): JSX.Element => {
       const existingSessionId = location.state?.sessionId;
       const sessionId = existingSessionId || `video_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-      // Pass avatar data to VideoEditor
+      // Generate Order ID for tracking (SF-YYYYMMDD-XXXX)
+      const orderId = generateOrderId();
+
+      // Pass avatar data to ImageGeneration
       // PRIMARY: selectedAvatarUrl for image reference (gpt-image-1)
       // FALLBACK: characterDescription for providers without image reference (Z-Image, FLUX)
-      navigate("/video-editor", {
+      navigate("/image-generation", {
         state: {
           sessionId,
+          orderId, // Pass Order ID to next screen
           topic: prompt.trim(),
           segments: segments,
           metadata: scriptData.data.metadata,
@@ -497,7 +495,7 @@ export const TopicSelection = (): JSX.Element => {
             duration,
             aspectRatio: ratio,
             language: langMap[outputLang] || 'indonesian',
-            model: model
+            model: 'auto' // v2.0: Auto-select best model per segment
           },
           // Hybrid approach:
           // - selectedAvatarUrl: for gpt-image-1 image reference (primary)
@@ -881,20 +879,6 @@ export const TopicSelection = (): JSX.Element => {
 
           {/* Settings Row */}
           <div className="flex flex-wrap items-center gap-3 pt-4 border-t border-[#2b2b38]">
-            {/* Model Dropdown */}
-            <div className="relative">
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="appearance-none bg-[#2a2a38] border border-[#3b3b48] rounded-lg px-4 py-2 pr-8 text-white text-sm focus:outline-none focus:border-[#7c3aed] cursor-pointer"
-              >
-                {MODEL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60 pointer-events-none" />
-            </div>
-
             {/* Ratio Dropdown */}
             <div className="relative">
               <select

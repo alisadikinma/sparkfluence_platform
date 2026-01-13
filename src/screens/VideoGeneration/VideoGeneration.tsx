@@ -766,10 +766,10 @@ export const VideoGeneration = (): JSX.Element => {
             fetchVideoPrompts(reconstructedSegments, existingJobs[0]?.topic || "Your Video", null);
           }
         } else {
-          navigate('/video-editor');
+          navigate('/image-generation');
         }
       } else {
-        navigate('/video-editor');
+        navigate('/image-generation');
       }
     };
 
@@ -1441,8 +1441,8 @@ export const VideoGeneration = (): JSX.Element => {
   };
 
   const handleBackToDashboard = () => {
-    // Navigate back to video-editor (previous step)
-    navigate("/video-editor", {
+    // Navigate back to image-generation (previous step)
+    navigate("/image-generation", {
       state: {
         sessionId,
         segments,

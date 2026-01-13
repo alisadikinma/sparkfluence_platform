@@ -183,7 +183,7 @@ export const NotificationDropdown: React.FC = () => {
       if (notif.type.includes('video_generation')) {
         navigate(`/video-generation?session=${notif.data.session_id}`);
       } else if (notif.type.includes('image_generation')) {
-        navigate(`/video-editor?session=${notif.data.session_id}`);
+        navigate(`/image-generation?session=${notif.data.session_id}`);
       }
     }
   };

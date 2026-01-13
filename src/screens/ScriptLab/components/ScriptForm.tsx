@@ -53,7 +53,6 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
-  const [model, setModel] = useState("auto");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("60s");
   const [useDnaTone, setUseDnaTone] = useState(true);
@@ -400,7 +399,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
     onSubmit({
       prompt: prompt.trim(),
       inputType,
-      model,
+      model: 'auto', // v2.0: Auto-select best model per segment
       ratio,
       duration,
       language: scriptLang,
@@ -416,12 +415,6 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       onClearTopic();
     }
   };
-
-  const modelOptions = [
-    { value: "auto", label: "AUTO" },
-    { value: "veo31", label: "VEO 3.1" },
-    { value: "sora2", label: "SORA 2.0" },
-  ];
 
   const ratioOptions = [
     { value: "9:16", label: "9:16" },
@@ -587,22 +580,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
               className="hidden"
             />
             
-            <div className="grid grid-cols-5 gap-2 sm:gap-3">
-              {/* Model Dropdown */}
-              <div className="relative">
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  disabled={loading}
-                  className="w-full appearance-none bg-surface border border-border-default rounded-lg px-2 sm:px-3 py-2 sm:py-2.5 pr-6 sm:pr-8 text-text-primary text-xs sm:text-sm lg:text-base focus:outline-none focus:border-primary cursor-pointer truncate"
-                >
-                  {modelOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 sm:right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 sm:w-4 sm:h-4 text-text-secondary pointer-events-none" />
-              </div>
-
+            <div className="grid grid-cols-4 gap-2 sm:gap-3">
               {/* Ratio Dropdown */}
               <div className="relative">
                 <select

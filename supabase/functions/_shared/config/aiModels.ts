@@ -82,123 +82,65 @@ export interface VideoModelConfig {
 
 export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
   // ==========================================================================
-  // SORA 2 (GeminiGen) - 10s/15s, 720p
+  // WAN VIDEO 2.5 (FAL.AI) - 5s/10s, 1080p, image-to-video WITH AUDIO SUPPORT
+  // PRIMARY for ALL segments (CREATOR + B-ROLL) - Both 5s and 10s
   // ==========================================================================
-  'sora-2': {
-    key: 'sora-2',
-    displayName: 'Sora 2 (10s/15s)',
-    provider: 'geminigen',
-    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/sora',
-    apiModelName: 'sora-2',
-    supportedDurations: [10, 15],
-    defaultDuration: 10,
+  'wan-2.5': {
+    key: 'wan-2.5',
+    displayName: 'Wan Video 2.5 (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://queue.fal.run/fal-ai/wan/video',
+    apiModelName: 'fal-ai/wan/video',
+    supportedDurations: [5, 10],  // Updated: Supports both 5s and 10s
+    defaultDuration: 5,
     resolutions: {
-      '720p': { apiValue: 'small', dimensions: { width: 1280, height: 720 } },
-    },
-    aspectRatios: {
-      '9:16': { apiValue: 'portrait', maxResolution: '720p' },
-      '16:9': { apiValue: 'landscape', maxResolution: '720p' },
-    },
-    refImageParam: 'file_urls',
-    // Max words based on Indonesian speech rate (130 WPM * 0.80 safety margin)
-    // 10s: 130/60 * 10 * 0.80 = 17.3 ≈ 17 words
-    // 15s: 130/60 * 15 * 0.80 = 26 words
-    dialogueLimits: { 10: 17, 15: 26 },
-    costPerVideo: 0.20,
-    strengths: ['10s/15s duration', 'good motion', 'AI voiceover'],
-    weaknesses: ['720p only', 'lip-sync not best'],
-    bestFor: ['B-roll', 'longer segments', 'narrative sequences'],
-    enabled: true,
-    notes: 'Use for segments > 8s duration',
-  },
-
-  // ==========================================================================
-  // SORA 2 PRO (GeminiGen) - 25s, 720p
-  // ==========================================================================
-  'sora-2-pro': {
-    key: 'sora-2-pro',
-    displayName: 'Sora 2 Pro (25s)',
-    provider: 'geminigen',
-    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/sora',
-    apiModelName: 'sora-2-pro',
-    supportedDurations: [25],
-    defaultDuration: 25,
-    resolutions: {
-      '720p': { apiValue: 'small', dimensions: { width: 1280, height: 720 } },
-    },
-    aspectRatios: {
-      '9:16': { apiValue: 'portrait', maxResolution: '720p' },
-      '16:9': { apiValue: 'landscape', maxResolution: '720p' },
-    },
-    refImageParam: 'file_urls',
-    // 25s: 130/60 * 25 * 0.80 = 43.3 ≈ 43 words
-    dialogueLimits: { 25: 43 },
-    costPerVideo: 0.50,
-    strengths: ['25s long duration', 'consistency'],
-    weaknesses: ['720p only', 'expensive'],
-    bestFor: ['Long-form content', 'single-shot narratives'],
-    enabled: true,
-    notes: 'Use for segments requiring >15s',
-  },
-
-  // ==========================================================================
-  // SORA 2 PRO HD (GeminiGen) - 15s, 1080p
-  // ==========================================================================
-  'sora-2-pro-hd': {
-    key: 'sora-2-pro-hd',
-    displayName: 'Sora 2 Pro HD (15s, 1080p)',
-    provider: 'geminigen',
-    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/sora',
-    apiModelName: 'sora-2-pro-hd',
-    supportedDurations: [15],
-    defaultDuration: 15,
-    resolutions: {
-      '1080p': { apiValue: 'large', dimensions: { width: 1920, height: 1080 } },
-    },
-    aspectRatios: {
-      '9:16': { apiValue: 'portrait', maxResolution: '1080p' },
-      '16:9': { apiValue: 'landscape', maxResolution: '1080p' },
-    },
-    refImageParam: 'file_urls',
-    // 15s: 130/60 * 15 * 0.80 = 26 words
-    dialogueLimits: { 15: 26 },
-    costPerVideo: 0.50,
-    strengths: ['1080p HD quality', '15s duration'],
-    weaknesses: ['15s only', 'expensive'],
-    bestFor: ['Hero shots', 'premium content', 'Hook/CTA'],
-    enabled: true,
-    notes: 'Best quality option for important segments',
-  },
-
-  // ==========================================================================
-  // VEO 3.1 FAST (GeminiGen) - 8s, up to 1080p
-  // ==========================================================================
-  'veo-3.1-fast': {
-    key: 'veo-3.1-fast',
-    displayName: 'VEO 3.1 Fast (8s)',
-    provider: 'geminigen',
-    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
-    apiModelName: 'veo-3.1-fast',
-    supportedDurations: [4, 6, 8],
-    defaultDuration: 8,
-    resolutions: {
-      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
       '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
     },
     aspectRatios: {
-      '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '9:16': { apiValue: '9:16', maxResolution: '1080p' },
       '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+      '1:1': { apiValue: '1:1', maxResolution: '1080p' },
     },
-    refImageParam: 'ref_images',
-    // Based on Indonesian 130 WPM * 0.80 safety:
-    // 4s: 6.9 ≈ 7 words, 6s: 10.4 ≈ 10 words, 8s: 13.8 ≈ 14 words
-    dialogueLimits: { 4: 7, 6: 10, 8: 14 },
-    costPerVideo: 0.20,
-    strengths: ['best lip-sync', 'native audio', '1080p for 16:9'],
-    weaknesses: ['8s max', '720p for portrait'],
-    bestFor: ['Creator talking head', 'dialogue-heavy', 'lip-sync critical'],
+    refImageParam: 'image_url',
+    dialogueLimits: { 5: 9, 10: 17 },
+    costPerVideo: 0.10,
+    strengths: ['1080p resolution', 'fast generation', '5s/10s duration', 'AUDIO SUPPORT', 'cinematic', 'TTS integration'],
+    weaknesses: ['requires reference image', 'audio truncated if >10s'],
+    bestFor: ['ALL segments (CREATOR + B-ROLL)', '5s and 10s clips', 'segments with TTS audio'],
     enabled: true,
-    notes: 'DEFAULT model - best lip-sync quality for HOOK/CTA segments',
+    notes: 'PRIMARY model - supports audio_url for TTS integration on BOTH 5s and 10s. Use for all segments.',
+  },
+
+  // ==========================================================================
+  // KLING VIDEO 2.5 (FAL.AI) - 5s/10s, 1080p, image-to-video (NO AUDIO)
+  // BACKUP model only (if Wan 2.5 fails)
+  // ==========================================================================
+  'kling-2.5': {
+    key: 'kling-2.5',
+    displayName: 'Kling Video 2.5 (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://queue.fal.run/fal-ai/kling-video/v2.5/standard/image-to-video',
+    apiModelName: 'fal-ai/kling-video/v2.5/standard/image-to-video',
+    supportedDurations: [5, 10],
+    defaultDuration: 5,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '16:9', maxResolution: '1080p' }, // Note: Kling uses landscape naming
+      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+      '1:1': { apiValue: '1:1', maxResolution: '1080p' },
+    },
+    refImageParam: 'image_url',
+    dialogueLimits: { 5: 9, 10: 17 },
+    costPerVideo: 0.15,
+    strengths: ['1080p resolution', '5s/10s duration', 'image-to-video'],
+    weaknesses: ['NO AUDIO SUPPORT', 'slower than Wan 2.5', 'more expensive'],
+    bestFor: ['Backup when Wan 2.5 fails', 'silent B-ROLL only'],
+    enabled: true,
+    notes: 'BACKUP model only. NO audio support - audio will need FFmpeg merge in post-processing.',
   },
 };
 
@@ -555,6 +497,139 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
 };
 
 // ============================================================================
+// TTS (TEXT-TO-SPEECH) MODEL CONFIGURATION
+// ============================================================================
+
+export interface TTSModelConfig {
+  /** Unique key for this model */
+  key: string;
+  /** Display name for UI */
+  displayName: string;
+  /** Provider */
+  provider: Provider;
+  /** API endpoint URL */
+  endpoint: string;
+  /** Model name to send to API */
+  apiModelName: string;
+  /** Available preset voices */
+  presetVoices: {
+    [key: string]: {
+      id: string;
+      gender: 'male' | 'female';
+      language: string;
+      description: string;
+    };
+  };
+  /** Supports custom voice cloning via audio URL */
+  supportsVoiceCloning: boolean;
+  /** Required audio duration for voice cloning (seconds) */
+  voiceCloneDuration?: { min: number; max: number };
+  /** Supports paralinguistic tags ([laugh], [sigh], etc.) */
+  supportsParalinguisticTags: boolean;
+  /** Available paralinguistic tags */
+  paralinguisticTags?: string[];
+  /** Temperature range */
+  temperatureRange: { min: number; max: number; default: number };
+  /** Supports seed for reproducibility */
+  supportsSeed: boolean;
+  /** Max text length (characters) */
+  maxTextLength: number;
+  /** Output format */
+  outputFormat: 'wav' | 'mp3' | 'flac';
+  /** Estimated cost per request */
+  costPerRequest: number;
+  /** Estimated generation speed (seconds of audio per second of processing) */
+  generationSpeed: number;
+  /** Model strengths */
+  strengths: string[];
+  /** Model weaknesses */
+  weaknesses: string[];
+  /** Best use cases */
+  bestFor: string[];
+  /** Is this model active/enabled */
+  enabled: boolean;
+  /** Notes/comments */
+  notes?: string;
+}
+
+export const TTS_MODELS: Record<string, TTSModelConfig> = {
+  // ==========================================================================
+  // CHATTERBOX TURBO (fal.ai) - Fast TTS with paralinguistic tags
+  // ==========================================================================
+  'chatterbox-turbo': {
+    key: 'chatterbox-turbo',
+    displayName: 'Chatterbox Turbo (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/chatterbox/text-to-speech/turbo',
+    apiModelName: 'fal-ai/chatterbox/text-to-speech/turbo',
+    presetVoices: {
+      // Male voices
+      'aaron': { id: 'aaron', gender: 'male', language: 'en', description: 'Professional male voice' },
+      'andy': { id: 'andy', gender: 'male', language: 'en', description: 'Friendly male voice' },
+      'archer': { id: 'archer', gender: 'male', language: 'en', description: 'Confident male voice' },
+      'brian': { id: 'brian', gender: 'male', language: 'en', description: 'Mature male voice' },
+      'dylan': { id: 'dylan', gender: 'male', language: 'en', description: 'Young male voice' },
+      'emmanuel': { id: 'emmanuel', gender: 'male', language: 'en', description: 'Authoritative male voice' },
+      'ethan': { id: 'ethan', gender: 'male', language: 'en', description: 'Warm male voice' },
+      'gavin': { id: 'gavin', gender: 'male', language: 'en', description: 'Energetic male voice' },
+      'gordon': { id: 'gordon', gender: 'male', language: 'en', description: 'Deep male voice' },
+      'ivan': { id: 'ivan', gender: 'male', language: 'en', description: 'Smooth male voice' },
+      'walter': { id: 'walter', gender: 'male', language: 'en', description: 'Distinguished male voice' },
+      // Female voices
+      'abigail': { id: 'abigail', gender: 'female', language: 'en', description: 'Professional female voice' },
+      'anaya': { id: 'anaya', gender: 'female', language: 'en', description: 'Bright female voice' },
+      'chloe': { id: 'chloe', gender: 'female', language: 'en', description: 'Friendly female voice' },
+      'evelyn': { id: 'evelyn', gender: 'female', language: 'en', description: 'Elegant female voice' },
+      'laura': { id: 'laura', gender: 'female', language: 'en', description: 'Warm female voice' },
+      'lucy': { id: 'lucy', gender: 'female', language: 'en', description: 'Clear female voice (default)' },
+      'madison': { id: 'madison', gender: 'female', language: 'en', description: 'Young female voice' },
+      'marisol': { id: 'marisol', gender: 'female', language: 'en', description: 'Energetic female voice' },
+      'meera': { id: 'meera', gender: 'female', language: 'en', description: 'Confident female voice' },
+    },
+    supportsVoiceCloning: true,
+    voiceCloneDuration: { min: 5, max: 10 },
+    supportsParalinguisticTags: true,
+    paralinguisticTags: [
+      '[clear throat]',
+      '[sigh]',
+      '[shush]',
+      '[cough]',
+      '[groan]',
+      '[sniff]',
+      '[gasp]',
+      '[chuckle]',
+      '[laugh]'
+    ],
+    temperatureRange: { min: 0.05, max: 2.0, default: 0.8 },
+    supportsSeed: true,
+    maxTextLength: 5000,
+    outputFormat: 'wav',
+    costPerRequest: 0.05,
+    generationSpeed: 10, // ~10x real-time (10s audio in ~1s)
+    strengths: [
+      'Very fast generation (~10x real-time)',
+      'Paralinguistic tags for emotion',
+      'Voice cloning from 5-10s audio',
+      '20+ preset voices',
+      'Reproducible with seed'
+    ],
+    weaknesses: [
+      'English only',
+      'No multilingual support',
+      'Preset voices may not match all languages'
+    ],
+    bestFor: [
+      'CREATOR segment voiceovers',
+      'Fast turnaround needed',
+      'Emotional expression with tags',
+      'Voice cloning from user recordings'
+    ],
+    enabled: true,
+    notes: 'PRIMARY TTS for Sparkfluence v2. Use voice cloning for personalized creator voice.',
+  },
+};
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
@@ -570,6 +645,13 @@ export function getVideoModel(key: string): VideoModelConfig | undefined {
  */
 export function getImageModel(key: string): ImageModelConfig | undefined {
   return IMAGE_MODELS[key];
+}
+
+/**
+ * Get TTS model config by key
+ */
+export function getTTSModel(key: string): TTSModelConfig | undefined {
+  return TTS_MODELS[key];
 }
 
 /**

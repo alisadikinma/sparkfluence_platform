@@ -2,7 +2,23 @@
   "permissions": {
     "allow": [
       "Bash(tree:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(node -e:*)",
+      "Bash(move VideoEditor ImageGeneration)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(supabase secrets set:*)",
+      "Bash(curl:*)",
+      "Bash(supabase functions logs:*)",
+      "Bash(supabase secrets:*)",
+      "Bash(supabase functions:*)",
+      "Bash(npm run dev:*)",
+      "Bash(timeout /t 5)",
+      "Bash(node test-analyze-image.js:*)",
+      "Bash(node test-segment-duration.js:*)",
+      "Bash(node test-generate-video-prompt.js:*)",
+      "Bash(findstr:*)",
+      "Bash(node:*)",
+      "Bash(npm run test:*)"
     ]
   }
 }
