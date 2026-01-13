@@ -5,18 +5,20 @@
  * 1. Segment type (HOOK, FORE, BODY, PEAK, CTA, LOOP-END)
  * 2. Total video duration (30s, 60s, 90s)
  *
- * Updated Rules (Jan 13, 2026):
+ * Updated Rules (Jan 14, 2026) - VEO 3.1 HD Compatibility:
  * - HOOK: Always 5s (quick attention grab)
- * - FORE (Foreshadowing): 5-10s depending on video length
- * - BODY-X: Always 10s (standard pacing)
- * - PEAK: 5-10s depending on video length
- * - CTA: 5-10s depending on video length
+ * - FORE (Foreshadowing): 5-8s depending on video length
+ * - BODY-X: Always 8s (VEO 3.1 max duration)
+ * - PEAK: 5-8s depending on video length
+ * - CTA: 5-8s depending on video length
  * - LOOP-END: Always 5s (quick loop back)
  *
  * Strategy:
  * - 30s videos: Tight segments (mostly 5s)
- * - 60s videos: Standard segments (mix 5s+10s)
- * - 90s videos: Spacious segments (more 10s)
+ * - 60s videos: Standard segments (mix 5s+8s)
+ * - 90s videos: Spacious segments (more 8s)
+ *
+ * NOTE: VEO 3.1 HD max duration is 8 seconds, so all 10s changed to 8s
  */
 
 export type SegmentType = 'HOOK' | 'FORE' | 'BODY-1' | 'BODY-2' | 'BODY-3' | 'BODY-4' | 'BODY-5' | 'PEAK' | 'CTA' | 'LOOP-END';
@@ -44,22 +46,22 @@ export function calculateSegmentDuration(
 
   // FORE (Foreshadowing): Varies by video length
   if (normalizedType === 'FORE') {
-    return videoDuration === '30s' ? 5 : 10;
+    return videoDuration === '30s' ? 5 : 8;  // VEO 3.1 max 8s
   }
 
-  // BODY-X: Always 10s (standard pacing for narrative)
+  // BODY-X: Always 8s (VEO 3.1 max duration)
   if (normalizedType.startsWith('BODY')) {
-    return 10;
+    return 8;  // VEO 3.1 max 8s
   }
 
   // PEAK: Varies by video length (climax needs time)
   if (normalizedType === 'PEAK') {
-    return videoDuration === '30s' ? 5 : 10;
+    return videoDuration === '30s' ? 5 : 8;  // VEO 3.1 max 8s
   }
 
   // CTA: Varies by video length (call-to-action needs clarity)
   if (normalizedType === 'CTA') {
-    return videoDuration === '30s' ? 5 : 10;
+    return videoDuration === '30s' ? 5 : 8;  // VEO 3.1 max 8s
   }
 
   // Default fallback (should rarely happen)
@@ -145,12 +147,12 @@ export function getDurationExplanation(
   if (normalizedType === 'FORE') {
     return videoDuration === '30s'
       ? `${duration}s (tight pacing)`
-      : `${duration}s (setup time)`;
+      : `${duration}s (setup time, VEO 3.1 max)`;
   }
 
-  // BODY-X: Always 10s
+  // BODY-X: Always 8s (VEO 3.1 max)
   if (normalizedType.startsWith('BODY')) {
-    return `${duration}s (narrative pacing)`;
+    return `${duration}s (VEO 3.1 max duration)`;
   }
 
   // PEAK: Varies

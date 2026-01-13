@@ -46,6 +46,7 @@ interface Segment {
   jobId?: string;
   referenceImageUrl?: string;              // B-ROLL reference image (stock/uploaded)
   referenceImageSource?: 'unsplash' | 'pexels' | 'upload';
+  includeCreatorFace?: boolean;            // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
 }
 
 interface VideoSettings {
@@ -518,6 +519,50 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
 };
 
 // ReferenceImageModal Component - for B-ROLL segments to add reference images
+// localStorage cache helper functions
+const BROLL_CACHE_PREFIX = 'sf_broll_ref_';
+const BROLL_CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+
+interface CachedBrollResult {
+  results: StockImageResult[];
+  timestamp: number;
+}
+
+const getCachedBrollResults = (keyword: string): StockImageResult[] | null => {
+  try {
+    const cacheKey = BROLL_CACHE_PREFIX + keyword.toLowerCase().trim().replace(/\s+/g, '_');
+    const cached = localStorage.getItem(cacheKey);
+    if (!cached) return null;
+    
+    const parsed: CachedBrollResult = JSON.parse(cached);
+    const now = Date.now();
+    
+    // Check if expired (1 week)
+    if (now - parsed.timestamp > BROLL_CACHE_EXPIRY_MS) {
+      localStorage.removeItem(cacheKey);
+      return null;
+    }
+    
+    return parsed.results;
+  } catch (err) {
+    console.error('Cache read error:', err);
+    return null;
+  }
+};
+
+const setCachedBrollResults = (keyword: string, results: StockImageResult[]): void => {
+  try {
+    const cacheKey = BROLL_CACHE_PREFIX + keyword.toLowerCase().trim().replace(/\s+/g, '_');
+    const cacheData: CachedBrollResult = {
+      results,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+  } catch (err) {
+    console.error('Cache write error:', err);
+  }
+};
+
 interface ReferenceImageModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -538,6 +583,34 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadUrl, setUploadUrl] = useState('');
+  const modalContentRef = useRef<HTMLDivElement>(null);
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      // Prevent background scroll
+      const scrollY = window.scrollY;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.overflow = 'hidden';
+      
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [isOpen]);
+
+  // Prevent wheel events from propagating to background
+  const handleWheelCapture = (e: React.WheelEvent) => {
+    e.stopPropagation();
+  };
 
   // Auto-search when modal opens with keywords
   useEffect(() => {
@@ -553,6 +626,15 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
 
     setLoading(true);
     setError(null);
+
+    // Check localStorage cache first
+    const cachedResults = getCachedBrollResults(searchTerm);
+    if (cachedResults && cachedResults.length > 0) {
+      console.log('[BrollCache] Using cached results for:', searchTerm);
+      setResults(cachedResults);
+      setLoading(false);
+      return;
+    }
 
     try {
       const { data, error: searchError } = await supabase.functions.invoke('search-stock-images', {
@@ -570,6 +652,11 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
       }
       if (data?.success && data?.data?.results) {
         setResults(data.data.results);
+        // Cache results to localStorage
+        if (data.data.results.length > 0) {
+          setCachedBrollResults(searchTerm, data.data.results);
+          console.log('[BrollCache] Cached results for:', searchTerm);
+        }
         if (data.data.results.length === 0) {
           setError('No results found. Try different keywords or paste URL.');
         }
@@ -593,11 +680,26 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
     }
   };
 
+  // Handle click outside modal to close
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (modalContentRef.current && !modalContentRef.current.contains(e.target as Node)) {
+      onClose();
+    }
+  };
+
   if (!isOpen || !segment) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4">
-      <div className="bg-card border border-border-default rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col">
+    <div 
+      className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 isolate"
+      onClick={handleBackdropClick}
+      onWheelCapture={handleWheelCapture}
+    >
+      <div 
+        ref={modalContentRef}
+        className="bg-card border border-border-default rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col"
+        onWheel={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border-default">
           <div>
@@ -620,7 +722,7 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 placeholder="Search stock images..."
-                className="w-full pl-10 pr-4 py-2 bg-surface border border-border-default rounded-lg text-sm"
+                className="w-full pl-10 pr-4 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary"
               />
             </div>
             <Button onClick={() => handleSearch()} disabled={loading || !searchQuery.trim()}>
@@ -636,7 +738,7 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
               value={uploadUrl}
               onChange={(e) => setUploadUrl(e.target.value)}
               placeholder="Or paste image URL..."
-              className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm"
+              className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary"
             />
             <Button onClick={handleUploadUrl} disabled={!uploadUrl.trim()} variant="outline">
               <Upload className="w-4 h-4 mr-1" /> Use URL
@@ -644,8 +746,11 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
           </div>
         </div>
 
-        {/* Results grid */}
-        <div className="flex-1 overflow-y-auto p-4">
+        {/* Results grid - scrollable area */}
+        <div 
+          className="flex-1 overflow-y-auto p-4 overscroll-contain"
+          onWheel={(e) => e.stopPropagation()}
+        >
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -1124,7 +1229,11 @@ export const ImageGeneration = (): JSX.Element => {
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null,
           // Reference image for B-ROLL or CREATOR
-          reference_image_url: isCreatorShot ? referenceImage : seg.referenceImageUrl
+          reference_image_url: isCreatorShot ? referenceImage : seg.referenceImageUrl,
+          // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
+          include_creator_face: !isCreatorShot ? (seg.includeCreatorFace || false) : false,
+          // Pass creator ref for B-ROLL with include_creator_face
+          creator_ref_for_broll: (!isCreatorShot && seg.includeCreatorFace) ? referenceImage : null
         };
       });
       
@@ -1224,7 +1333,11 @@ export const ImageGeneration = (): JSX.Element => {
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null,
           // Reference image for B-ROLL
-          reference_image_url: !isCreatorShot ? seg.referenceImageUrl : undefined
+          reference_image_url: !isCreatorShot ? seg.referenceImageUrl : undefined,
+          // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
+          include_creator_face: !isCreatorShot ? (seg.includeCreatorFace || false) : false,
+          // Pass creator ref for B-ROLL with include_creator_face
+          creator_ref_for_broll: (!isCreatorShot && seg.includeCreatorFace) ? referenceImage : null
         };
       });
 
@@ -1302,7 +1415,11 @@ export const ImageGeneration = (): JSX.Element => {
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: referenceImage,
           // Reference image for B-ROLL
-          reference_image_url: !isCreatorShot ? segment.referenceImageUrl : undefined
+          reference_image_url: !isCreatorShot ? segment.referenceImageUrl : undefined,
+          // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
+          include_creator_face: !isCreatorShot ? (segment.includeCreatorFace || false) : false,
+          // Pass creator ref for B-ROLL with include_creator_face
+          creator_ref_for_broll: (!isCreatorShot && segment.includeCreatorFace) ? (characterRefPng || avatarUrl) : null
         }],
         style: 'cinematic',
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
@@ -1849,7 +1966,7 @@ export const ImageGeneration = (): JSX.Element => {
                           {segment.visualDirection && (
                             <div>
                               <label className="text-text-secondary text-xs mb-1.5 block">{uiText.visualDirection}</label>
-                              <div className="bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs max-h-24 overflow-y-auto">
+                              <div className="bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs min-h-[190px] max-h-72 overflow-y-auto">
                                 {segment.visualDirection}
                               </div>
                             </div>
@@ -1941,7 +2058,32 @@ export const ImageGeneration = (): JSX.Element => {
 
                           {/* Add Reference Image Button - Only for B-ROLL segments */}
                           {!isCreatorShot && (
-                            <div className="mt-2">
+                            <div className="mt-2 space-y-2">
+                              {/* Include Creator Face Checkbox */}
+                              <label className="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer hover:bg-surface/80 transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={segment.includeCreatorFace || false}
+                                  onChange={(e) => {
+                                    setSegments(prev => prev.map(s =>
+                                      s.id === segment.id
+                                        ? { ...s, includeCreatorFace: e.target.checked }
+                                        : s
+                                    ));
+                                  }}
+                                  className="w-4 h-4 rounded border-border-default text-primary focus:ring-primary"
+                                />
+                                <span className="text-xs text-text-secondary flex-1">
+                                  Include Creator Face
+                                </span>
+                                {segment.includeCreatorFace && (
+                                  <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
+                                    Multi-ref
+                                  </span>
+                                )}
+                              </label>
+
+                              {/* Reference Image */}
                               {segment.referenceImageUrl ? (
                                 <div className="flex items-center gap-2 p-2 bg-surface rounded-lg">
                                   <img 
@@ -1975,7 +2117,7 @@ export const ImageGeneration = (): JSX.Element => {
                                   className="w-full text-xs"
                                 >
                                   <Camera className="w-3 h-3 mr-1" />
-                                  Add Reference 📷
+                                  Add Reference
                                 </Button>
                               )}
                             </div>

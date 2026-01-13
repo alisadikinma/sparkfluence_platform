@@ -499,6 +499,44 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   },
 
   // ==========================================================================
+  // FAL.AI FLUX KONTEXT MAX MULTI - Multi-image reference support
+  // For B-ROLL with creator face + reference image (2 images in 1 generation)
+  // ==========================================================================
+  'fal-flux-kontext-multi': {
+    key: 'fal-flux-kontext-multi',
+    displayName: 'FLUX Kontext Max Multi (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/flux-pro/kontext/max/multi',
+    apiModelName: 'fal-ai/flux-pro/kontext/max/multi',
+    aspectRatios: {
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: 'image_urls', // Array of multiple image URLs
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.10,
+    isFree: false,
+    rateLimit: 0,
+    strengths: [
+      'multi-image reference (combine creator face + scene reference)',
+      'experimental FLUX Kontext',
+      'good quality output',
+      'supports 2+ reference images'
+    ],
+    weaknesses: ['no negative prompt', 'paid', 'experimental'],
+    bestFor: ['B-ROLL with creator face', 'multi-reference compositions', 'scene + character combination'],
+    enabled: true,
+    notes: 'USE FOR B-ROLL when user enables "Include Creator Face" checkbox - combines creator ref + scene ref',
+  },
+
+  // ==========================================================================
   // FAL.AI QWEN IMAGE - B-ROLL with negative prompt support
   // Turbo mode available, supports LoRAs
   // ==========================================================================

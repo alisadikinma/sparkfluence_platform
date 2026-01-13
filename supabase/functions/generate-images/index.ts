@@ -90,7 +90,9 @@ const DEFAULT_BROLL_MODEL: ImageModelKey = 'fal-seedream-v4'
 function selectImageProvider(
   isCreatorShot: boolean, 
   hasReferenceImage: boolean = false,
-  brollModel?: ImageModelKey  // User's B-ROLL model choice from header
+  brollModel?: ImageModelKey,  // User's B-ROLL model choice from header
+  includeCreatorFace: boolean = false,  // NEW: B-ROLL with creator face checkbox
+  hasCreatorRef: boolean = false  // NEW: Has creator avatar for B-ROLL multi-ref
 ): ProviderSelection {
   if (isCreatorShot) {
     // HOOK/CTA segments - need face consistency
@@ -109,6 +111,16 @@ function selectImageProvider(
     }
   } else {
     // B-ROLL segments
+    
+    // NEW: B-ROLL with "Include Creator Face" checkbox checked
+    // Use FLUX Kontext Multi for multi-image reference (creator face + scene ref)
+    if (includeCreatorFace && hasCreatorRef) {
+      return {
+        primary: 'fal-flux-kontext-multi',  // FLUX Kontext Max Multi (multi-image support)
+        fallback: 'fal-nano-banana-edit'     // Fallback to nano-banana-edit
+      }
+    }
+    
     if (hasReferenceImage) {
       // ✅ B-ROLL with reference → use /edit model (supports reference images)
       return {
@@ -285,15 +297,22 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     // REFERENCE IMAGE HANDLING (2026-01-14 Updated)
     // CREATOR shots: use character_ref_png (avatar for face consistency)
     // B-ROLL shots: use reference_image_url (scene reference from stock/upload)
+    // B-ROLL with include_creator_face: use BOTH creator_ref + reference_image
     // ========================================================================
     const creatorRefImage = isCreatorShot ? (segment.character_ref_png || character_ref_png) : null
     const brollRefImage = !isCreatorShot ? (segment.reference_image_url || null) : null
     const hasReferenceImage = !!(creatorRefImage || brollRefImage)
     
+    // NEW: B-ROLL with "Include Creator Face" checkbox
+    const includeCreatorFace = !isCreatorShot && (segment.include_creator_face || false)
+    const creatorRefForBroll = includeCreatorFace ? (segment.creator_ref_for_broll || character_ref_png || null) : null
+    const hasCreatorRef = !!creatorRefForBroll
+    
     // ========================================================================
-    // PROVIDER SELECTION (2026-01-14 - Updated with Seedream v4 + QWEN)
+    // PROVIDER SELECTION (2026-01-14 - Updated with FLUX Kontext Multi)
     // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
     // CREATOR no ref: fal-nano-banana → gpt-image-1
+    // B-ROLL with include_creator_face: fal-flux-kontext-multi → fal-nano-banana-edit
     // B-ROLL with ref: fal-nano-banana-edit → fal-nano-banana
     // B-ROLL no ref: broll_model (seedream-v4/qwen/etc) → fallback
     // ========================================================================
@@ -301,12 +320,18 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     let fallbackProvider: ImageModelKey = 'flux-schnell'
     
     if (defaultProvider === 'auto') {
-      const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage, broll_model as ImageModelKey)
+      const providerChoice = selectImageProvider(
+        isCreatorShot, 
+        hasReferenceImage, 
+        broll_model as ImageModelKey,
+        includeCreatorFace,
+        hasCreatorRef
+      )
       segmentProvider = providerChoice.primary
       fallbackProvider = providerChoice.fallback
     }
     
-    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} (ref: ${hasReferenceImage}, fallback: ${fallbackProvider})`)
+    console.log(`[CREATE_JOBS] Segment ${index + 1} (${segmentType}): ${shotType} → ${segmentProvider} (ref: ${hasReferenceImage}, creator_face: ${includeCreatorFace}, fallback: ${fallbackProvider})`)
     
     return {
       user_id,
@@ -326,6 +351,9 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       character_description: charDesc,
       character_ref_png: creatorRefImage,  // Avatar for CREATOR shots
       reference_image_url: brollRefImage,  // Scene reference for B-ROLL shots
+      // NEW: B-ROLL with creator face multi-ref fields
+      include_creator_face: includeCreatorFace,
+      creator_ref_for_broll: creatorRefForBroll,
       status: JOB_STATUS.PENDING,
       image_url: null,
       error_message: null
@@ -563,13 +591,33 @@ async function handleProcessSingle(
   let errorMessages: string[] = []
 
   // ========================================================================
-  // REFERENCE IMAGE SELECTION (2026-01-14)
+  // REFERENCE IMAGE SELECTION (2026-01-14 Updated with Multi-Ref Support)
   // CREATOR shots: use character_ref_png (avatar)
   // B-ROLL shots: use reference_image_url (scene reference)
+  // B-ROLL with include_creator_face: use BOTH (creator_ref + scene_ref)
   // ========================================================================
-  const referenceImageForGeneration = isCreatorShot 
-    ? (job.character_ref_png || undefined)
-    : (job.reference_image_url || undefined)
+  const includeCreatorFace = job.include_creator_face || false
+  const creatorRefForBroll = job.creator_ref_for_broll || null
+  
+  // Build reference image(s) for generation
+  let referenceImageForGeneration: string | undefined = undefined
+  let multiRefImages: string[] | undefined = undefined
+  
+  if (isCreatorShot) {
+    // CREATOR shots: single avatar reference
+    referenceImageForGeneration = job.character_ref_png || undefined
+  } else if (includeCreatorFace && creatorRefForBroll) {
+    // B-ROLL with "Include Creator Face": multi-image reference
+    // Use FLUX Kontext Multi which supports image_urls array
+    multiRefImages = [creatorRefForBroll]
+    if (job.reference_image_url) {
+      multiRefImages.push(job.reference_image_url)
+    }
+    console.log(`[PROCESS_SINGLE] Multi-ref mode: ${multiRefImages.length} images (creator + scene)`)
+  } else {
+    // B-ROLL with scene reference only
+    referenceImageForGeneration = job.reference_image_url || undefined
+  }
   
   if (referenceImageForGeneration) {
     console.log(`[PROCESS_SINGLE] Reference image: ${referenceImageForGeneration.substring(0, 60)}...`)
@@ -612,13 +660,15 @@ async function handleProcessSingle(
       return await generateWithFlux(hfApiKey, job.visual_prompt, aspectRatio, supabase)
     } else if (providerConfig.provider === 'fal') {
       if (!falApiKey) throw new Error('FAL_AI_API_KEY not configured')
+      // Pass multiRefImages for FLUX Kontext Multi model
       return await generateWithFalAi(
         falApiKey,
         job.visual_prompt,
         aspectRatio,
         providerKey,
         supabase,
-        referenceImageForGeneration
+        referenceImageForGeneration,
+        multiRefImages  // NEW: Array of images for multi-ref models
       )
     }
     
@@ -785,6 +835,7 @@ async function handleCheckStatus(supabase: any, requestBody: any) {
 // ============================================================================
 // REGENERATE_SINGLE - Create new job for regenerating a single segment
 // (v2.0 multi-image gallery feature)
+// Updated 2026-01-14: Added include_creator_face + creator_ref_for_broll support
 // ============================================================================
 async function handleRegenerateSingle(supabase: any, requestBody: any) {
   const {
@@ -799,7 +850,10 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
     segment_type,
     shot_type,
     emotion,
-    aspect_ratio
+    aspect_ratio,
+    // NEW: B-ROLL with creator face multi-ref fields
+    include_creator_face,
+    creator_ref_for_broll
   } = requestBody
 
   if (!user_id || !session_id || !segment_number) {
@@ -815,6 +869,21 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
   try {
     // Create new job record with incremented generation_number
     const segmentId = `${session_id}_${segment_number}`
+    
+    // Determine provider based on shot type and reference images
+    const isCreatorShot = shot_type === 'CREATOR' || 
+      ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes((segment_type || '').toUpperCase())
+    const hasReferenceImage = !!reference_image_url
+    const hasCreatorRef = !!creator_ref_for_broll
+    
+    // Select provider using same logic as handleCreateJobs
+    const providerChoice = selectImageProvider(
+      isCreatorShot,
+      hasReferenceImage,
+      undefined, // broll_model - use default
+      include_creator_face || false,
+      hasCreatorRef
+    )
 
     const newJob = {
       user_id,
@@ -830,12 +899,20 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
       generation_number: generation_number || 1,
       regeneration_notes: regeneration_notes || null,
       reference_image_url: reference_image_url || null,
+      // NEW: B-ROLL with creator face multi-ref fields
+      include_creator_face: include_creator_face || false,
+      creator_ref_for_broll: creator_ref_for_broll || null,
+      // Provider selection
+      provider: providerChoice.primary,
+      fallback_provider: providerChoice.fallback,
       source_type: 'generated',
       is_selected: false,  // New generated image is not auto-selected
       status: JOB_STATUS.PENDING,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }
+    
+    console.log(`[REGENERATE_SINGLE] Creating job: provider=${providerChoice.primary}, include_creator_face=${include_creator_face || false}`)
 
     const { data: insertedJob, error: insertError } = await supabase
       .from('image_generation_jobs')
@@ -1923,10 +2000,12 @@ async function downloadAndUploadImage(
 }
 
 // ============================================================================
-// FAL.AI IMAGE GENERATION (2026-01-11 Updated)
+// FAL.AI IMAGE GENERATION (2026-01-14 Updated with FLUX Kontext Multi)
 // fal-nano-banana: Text-to-image (NO reference image support!)
 // fal-nano-banana-edit: Image edit with image_urls array (face consistency)
-// fal-wan-t2i: Best for B-ROLL (supports negative prompt for no humans)
+// fal-flux-kontext-multi: Multi-image reference (B-ROLL with creator face)
+// fal-seedream-v4: High-res B-ROLL (ByteDance)
+// fal-qwen-image: B-ROLL with negative prompt support
 // ============================================================================
 
 async function generateWithFalAi(
@@ -1935,7 +2014,8 @@ async function generateWithFalAi(
   aspectRatio: AspectRatio,
   modelKey: ImageModelKey,
   supabase: any,
-  referenceImageUrl?: string
+  referenceImageUrl?: string,
+  multiRefImages?: string[]  // NEW: Array of images for multi-ref models
 ): Promise<string> {
   const modelConfig = IMAGE_MODELS[modelKey]
   if (!modelConfig || modelConfig.provider !== 'fal') {
@@ -1963,7 +2043,34 @@ async function generateWithFalAi(
   }
   
   // Model-specific configurations
-  if (modelKey === 'fal-nano-banana-edit') {
+  if (modelKey === 'fal-flux-kontext-multi') {
+    // ========================================================================
+    // FLUX KONTEXT MAX MULTI - Multi-image reference for B-ROLL with creator face
+    // Supports image_urls array (2+ reference images)
+    // Use case: Combine creator avatar + scene reference for consistent B-ROLL
+    // ========================================================================
+    if (!multiRefImages || multiRefImages.length === 0) {
+      console.warn(`[FAL.AI] fal-flux-kontext-multi called without multi-ref images - using single ref if available`)
+      if (referenceImageUrl) {
+        requestBody.image_urls = [referenceImageUrl]
+      }
+    } else {
+      // Use the multi-ref images array
+      requestBody.image_urls = multiRefImages
+      console.log(`[FAL.AI] Using FLUX Kontext Multi with ${multiRefImages.length} reference images:`)
+      multiRefImages.forEach((url, i) => {
+        console.log(`[FAL.AI]   Image ${i + 1}: ${url.substring(0, 60)}...`)
+      })
+    }
+    // FLUX Kontext specific settings
+    requestBody.guidance_scale = 3.5  // Recommended for Kontext
+    requestBody.num_images = 1
+    requestBody.safety_tolerance = '2'  // 1=strictest, 6=most permissive
+    // Remove image_size for Kontext - uses aspect_ratio instead
+    delete requestBody.image_size
+    requestBody.aspect_ratio = aspectRatio  // '9:16', '16:9', etc.
+    console.log(`[FAL.AI] FLUX Kontext Multi configured for B-ROLL with creator face`)
+  } else if (modelKey === 'fal-nano-banana-edit') {
     // ========================================================================
     // NANO BANANA PRO /EDIT - Supports image_urls array for face consistency
     // This is the KEY endpoint for CREATOR shots with avatar reference
