@@ -7,8 +7,7 @@ import { useOnboarding } from "../../contexts/OnboardingContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2, Camera, User, ArrowRight, ArrowLeft, Check, Mic } from "lucide-react";
-import { VoiceRecorder, AudioWaveform } from "../../components/features/VoiceRecorder";
+import { Loader2, Camera, User, ArrowRight, ArrowLeft, Check } from "lucide-react";
 
 interface LookupItem {
   id: string;
@@ -16,7 +15,7 @@ interface LookupItem {
   category: string;
 }
 
-type OnboardingStep = "profile" | "voice" | "preferences";
+type OnboardingStep = "profile" | "preferences";
 
 export const Onboarding = (): JSX.Element => {
   const navigate = useNavigate();
@@ -35,12 +34,6 @@ export const Onboarding = (): JSX.Element => {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Voice step state
-  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
-  const [voiceDuration, setVoiceDuration] = useState(0);
-  const [uploadingVoice, setUploadingVoice] = useState(false);
-  const [existingVoiceUrl, setExistingVoiceUrl] = useState<string | null>(null);
-  
   // Options from database
   const [interests, setInterests] = useState<LookupItem[]>([]);
   const [professions, setProfessions] = useState<LookupItem[]>([]);
@@ -68,11 +61,6 @@ export const Onboarding = (): JSX.Element => {
     photoHint: language === 'id' ? 'Opsional - bisa diubah nanti di Settings' : 'Optional - can be changed later in Settings',
     uploadPhoto: language === 'id' ? 'Upload Foto' : 'Upload Photo',
     changePhoto: language === 'id' ? 'Ganti Foto' : 'Change Photo',
-    voiceTitle: language === 'id' ? 'Rekam Suara Kamu' : 'Record Your Voice',
-    voiceSubtitle: language === 'id' ? 'Rekaman suara minimal 2 menit untuk hasil voice cloning terbaik' : 'Minimum 2 minutes recording for best voice cloning quality',
-    voiceHint: language === 'id' ? 'Bicara dengan natural tentang apapun - ceritakan tentang dirimu, hobimu, atau yang lagi kamu pikirkan' : 'Speak naturally about anything - tell us about yourself, your hobbies, or what\'s on your mind',
-    voiceOptional: language === 'id' ? 'Opsional - bisa dilewati dulu' : 'Optional - can be skipped for now',
-    skipVoice: language === 'id' ? 'Lewati Dulu' : 'Skip for Now',
     step2Title: language === 'id' ? 'Kenali Kamu Lebih Dekat' : 'Get to Know You Better',
     step2Subtitle: language === 'id' ? 'Semakin detail, semakin akurat rekomendasi niche-nya ✨' : 'The more detailed, the more accurate the niche recommendations ✨',
     interestLabel: language === 'id' ? 'Minat' : 'Interest',
@@ -108,7 +96,7 @@ export const Onboarding = (): JSX.Element => {
     try {
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("full_name, avatar_url, voice_reference_url, voice_reference_duration_seconds")
+        .select("full_name, avatar_url")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -117,10 +105,6 @@ export const Onboarding = (): JSX.Element => {
         if (profile.avatar_url) {
           setAvatarUrl(profile.avatar_url);
           setAvatarPreview(profile.avatar_url);
-        }
-        if (profile.voice_reference_url) {
-          setExistingVoiceUrl(profile.voice_reference_url);
-          setVoiceDuration(profile.voice_reference_duration_seconds || 0);
         }
       }
     } catch (err) {
@@ -291,33 +275,6 @@ export const Onboarding = (): JSX.Element => {
     }
   };
 
-  // Upload voice to Supabase
-  const uploadVoice = async (): Promise<{ url: string | null; duration: number }> => {
-    if (!voiceBlob || !user) return { url: existingVoiceUrl, duration: voiceDuration };
-
-    setUploadingVoice(true);
-    try {
-      const voiceFileName = `${user.id}-${Date.now()}.webm`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("voice-references")
-        .upload(voiceFileName, voiceBlob, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage
-        .from("voice-references")
-        .getPublicUrl(voiceFileName);
-
-      return { url: urlData.publicUrl, duration: voiceDuration };
-    } catch (err) {
-      console.error("Error uploading voice:", err);
-      return { url: null, duration: 0 };
-    } finally {
-      setUploadingVoice(false);
-    }
-  };
-
   // Platform icon component
   const PlatformIcon = ({ platformName }: { platformName: string }) => {
     switch (platformName.toLowerCase()) {
@@ -411,46 +368,7 @@ export const Onboarding = (): JSX.Element => {
       }
     }
 
-    // Move to voice step
-    setCurrentStep("voice");
-  };
-
-  // Handle voice recording completion
-  const handleVoiceRecordingComplete = (audioBlob: Blob, duration: number) => {
-    setVoiceBlob(audioBlob);
-    setVoiceDuration(duration);
-  };
-
-  // Handle voice step completion
-  const handleVoiceNext = async () => {
-    setError(null);
-
-    // Upload voice if recorded
-    if (voiceBlob && user) {
-      const { url, duration } = await uploadVoice();
-
-      if (url) {
-        try {
-          await supabase
-            .from("user_profiles")
-            .update({
-              voice_reference_url: url,
-              voice_reference_duration_seconds: duration,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("user_id", user.id);
-        } catch (err) {
-          console.error("Error saving voice reference:", err);
-        }
-      }
-    }
-
     // Move to preferences step
-    setCurrentStep("preferences");
-  };
-
-  // Skip voice step
-  const handleSkipVoice = () => {
     setCurrentStep("preferences");
   };
 
@@ -477,8 +395,6 @@ export const Onboarding = (): JSX.Element => {
 
   const handlePrevious = () => {
     if (currentStep === "preferences") {
-      setCurrentStep("voice");
-    } else if (currentStep === "voice") {
       setCurrentStep("profile");
     } else {
       navigate("/welcome");
@@ -494,7 +410,7 @@ export const Onboarding = (): JSX.Element => {
     );
   }
 
-  const stepNumber = currentStep === "profile" ? 1 : currentStep === "voice" ? 2 : 3;
+  const stepNumber = currentStep === "profile" ? 1 : 2;
 
   return (
     <div className="w-full min-h-screen bg-[#0a0a12] flex items-center justify-center px-4 py-8">
@@ -631,88 +547,7 @@ export const Onboarding = (): JSX.Element => {
           </div>
         )}
 
-        {/* Step 2: Voice Recording */}
-        {currentStep === "voice" && (
-          <div className="space-y-6">
-            <div className="text-center mb-8">
-              <h1 className="text-3xl font-bold text-white mb-2 flex items-center justify-center gap-2">
-                <Mic className="w-8 h-8 text-[#7c3aed]" />
-                {text.voiceTitle}
-              </h1>
-              <p className="text-white/60 text-sm mb-1">
-                {text.voiceSubtitle}
-              </p>
-              <p className="text-white/40 text-xs">
-                {text.voiceOptional}
-              </p>
-            </div>
-
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-3 mb-4">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-
-            {/* Voice Recorder Component */}
-            <div className="bg-[#1a1a24] border border-[#4e5562] rounded-2xl p-6 mb-4">
-              <VoiceRecorder
-                minDuration={120}
-                maxDuration={180}
-                onRecordingComplete={handleVoiceRecordingComplete}
-                existingAudioUrl={existingVoiceUrl || undefined}
-                disabled={uploadingVoice}
-              />
-            </div>
-
-            {/* Hint */}
-            <div className="bg-[#7c3aed]/10 border border-[#7c3aed]/30 rounded-xl p-4">
-              <p className="text-white/70 text-sm text-center">
-                {text.voiceHint}
-              </p>
-            </div>
-
-            {/* Navigation */}
-            <div className="flex items-center justify-between pt-6">
-              <Button
-                onClick={handlePrevious}
-                variant="secondary"
-                className="bg-white text-[#0a0a12] hover:bg-white/90 h-12 px-8 font-medium"
-                disabled={uploadingVoice}
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                {text.previous}
-              </Button>
-
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleSkipVoice}
-                  variant="outline"
-                  className="h-12 px-6 font-medium border-[#4e5562] text-white/70 hover:border-[#7c3aed]/50 hover:text-white"
-                  disabled={uploadingVoice}
-                >
-                  {text.skipVoice}
-                </Button>
-                <Button
-                  onClick={handleVoiceNext}
-                  disabled={uploadingVoice || (voiceBlob !== null && voiceDuration < 120)}
-                  className={`h-12 px-8 font-medium transition-all ${
-                    !uploadingVoice && (voiceBlob === null || voiceDuration >= 120)
-                      ? "bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
-                      : "bg-[#7c3aed]/50 text-white/50 cursor-not-allowed"
-                  }`}
-                >
-                  {uploadingVoice ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : null}
-                  {text.next}
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Preferences */}
+        {/* Step 2: Preferences */}
         {currentStep === "preferences" && (
           <div className="space-y-6">
             <div className="text-center mb-8">

@@ -39,7 +39,7 @@ interface VideoSettings {
   aspectRatio: '9:16' | '16:9';
   resolution: '720p' | '1080p';
   language?: string;
-  model?: 'auto' | 'veo31' | 'sora2'; // auto = VEO 3.1 (default)
+  model?: 'auto' | 'veo-3.1-hd' | 'veo-3.1-fast'; // auto = VEO 3.1 HD (default)
 }
 
 // Job status constants
@@ -229,8 +229,8 @@ export const VideoGeneration = (): JSX.Element => {
   const [isLoadingPrompts, setIsLoadingPrompts] = useState(false);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
   const [rateLimitWarning, setRateLimitWarning] = useState<string | null>(null);
-  // Per-segment video model override (key: segment.id, value: 'veo31' | 'sora2')
-  const [segmentModelOverrides, setSegmentModelOverrides] = useState<Record<string, 'veo31' | 'sora2'>>({});
+  // Per-segment video model override (key: segment.id, value: 'veo-3.1-hd' | 'veo-3.1-fast')
+  const [segmentModelOverrides, setSegmentModelOverrides] = useState<Record<string, 'veo-3.1-hd' | 'veo-3.1-fast'>>({});
   
   const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const checkStatusIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -1511,20 +1511,20 @@ export const VideoGeneration = (): JSX.Element => {
   };
 
   // Helper: Get effective video model for a segment
-  const getEffectiveModel = (segmentId: string): 'veo31' | 'sora2' => {
+  const getEffectiveModel = (segmentId: string): 'veo-3.1-hd' | 'veo-3.1-fast' => {
     // Per-segment override takes priority
     if (segmentModelOverrides[segmentId]) {
       return segmentModelOverrides[segmentId];
     }
     // Then use video settings from earlier selection
-    if (videoSettings?.model === 'sora2') return 'sora2';
-    // Default to VEO 3.1
-    return 'veo31';
+    if (videoSettings?.model === 'veo-3.1-fast') return 'veo-3.1-fast';
+    // Default to VEO 3.1 HD
+    return 'veo-3.1-hd';
   };
 
   // Helper: Get model display name
-  const getModelDisplayName = (model: 'veo31' | 'sora2'): string => {
-    return model === 'sora2' ? 'Sora 2.0' : 'VEO 3.1';
+  const getModelDisplayName = (model: 'veo-3.1-hd' | 'veo-3.1-fast'): string => {
+    return model === 'veo-3.1-fast' ? 'VEO 3.1 Fast' : 'VEO 3.1 HD';
   };
 
   // Helper: Get audio/ambient hint based on segment type
@@ -1898,7 +1898,7 @@ export const VideoGeneration = (): JSX.Element => {
                           <select
                             value={getEffectiveModel(segment.id)}
                             onChange={(e) => {
-                              const newModel = e.target.value as 'veo31' | 'sora2';
+                              const newModel = e.target.value as 'veo-3.1-hd' | 'veo-3.1-fast';
                               setSegmentModelOverrides(prev => ({
                                 ...prev,
                                 [segment.id]: newModel
@@ -1906,8 +1906,8 @@ export const VideoGeneration = (): JSX.Element => {
                             }}
                             className="bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1 text-white text-[10px] cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
                           >
-                            <option value="veo31">VEO 3.1</option>
-                            <option value="sora2">Sora 2.0</option>
+                            <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
+                            <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
                           </select>
                         </div>
                       )}

@@ -18,7 +18,8 @@
       "Bash(node test-generate-video-prompt.js:*)",
       "Bash(findstr:*)",
       "Bash(node:*)",
-      "Bash(npm run test:*)"
+      "Bash(npm run test:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

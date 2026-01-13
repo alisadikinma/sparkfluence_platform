@@ -237,8 +237,7 @@ async function submitToFalQueue(
   videoPrompt: string,
   imageUrl: string,
   duration: number,
-  falApiKey: string,
-  audioUrl?: string  // NEW: Optional TTS audio URL
+  falApiKey: string
 ): Promise<{ request_id: string; status_url: string }> {
   const endpoint = modelSpecs.endpoint // e.g., https://queue.fal.run/fal-ai/wan/video
 
@@ -254,15 +253,7 @@ async function submitToFalQueue(
     console.log(`[FAL_SUBMIT] Duration: ${duration}s`)
   }
 
-  // Audio handling (Wan 2.5 supports audio_url, Kling 2.5 doesn't)
-  if (audioUrl && modelSpecs.key === 'wan-2.5') {
-    requestBody.audio_url = audioUrl;
-    console.log(`[FAL_SUBMIT] Adding TTS audio: ${audioUrl}`);
-  } else if (audioUrl && modelSpecs.key === 'kling-2.5') {
-    console.warn(`[FAL_SUBMIT] ⚠️ Kling 2.5 doesn't support audio, TTS will be ignored`);
-  }
-
-  console.log(`[FAL_SUBMIT] Endpoint: ${endpoint}, Duration: ${duration}s, Model: ${modelSpecs.key}${audioUrl ? ', Audio: YES' : ''}`)
+  console.log(`[FAL_SUBMIT] Endpoint: ${endpoint}, Duration: ${duration}s, Model: ${modelSpecs.key}`)
 
   // Submit to queue
   const response = await fetch(endpoint, {
@@ -655,7 +646,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 }
 
 async function handleProcessSingle(supabase: any, requestBody: any) {
-  const { job_id, session_id, user_id } = requestBody
+  const { job_id, session_id, user_id, is_retry, force_retry } = requestBody
 
   const falApiKey = Deno.env.get('FAL_AI_API_KEY')
   if (!falApiKey) {
@@ -689,7 +680,42 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
-    
+
+    // ========================================================================
+    // RETRY HANDLING (2026 - VEO 3.1 Auto Retry)
+    // ========================================================================
+    if (is_retry && !force_retry) {
+      const retryCount = data.retry_count || 0
+      if (retryCount >= 3) {
+        console.log(`[PROCESS_SINGLE] Job ${job_id} max retries reached (${retryCount}/3)`)
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: 'MAX_RETRIES', message: 'Maximum retries reached. Use manual retry.' }
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
+
+    // Reset retry state if force_retry (manual retry)
+    if (force_retry) {
+      console.log(`[PROCESS_SINGLE] Force retry for job ${job_id} - resetting retry state`)
+      await supabase
+        .from('video_generation_jobs')
+        .update({
+          retry_count: 0,
+          next_retry_at: null,
+          error_message: null,
+          status: JOB_STATUS.PROCESSING,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', job_id)
+
+      data.status = JOB_STATUS.PROCESSING
+      data.retry_count = 0
+    }
+
     // Check if job is already processing or completed
     if (data.status === JOB_STATUS.PROCESSING) {
       // Check for stuck jobs: status=1 but no veo_uuid means previous attempt failed
@@ -868,45 +894,8 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     console.log(`[PROCESS_SINGLE] Platform: ${selectedPlatform}, Prompt length: ${videoPrompt.length}`)
 
     // ========================================================================
-    // TTS GENERATION (for segments with script_text)
-    // ========================================================================
-    let audioUrl: string | undefined;
-
-    if (job.script_text && job.script_text.trim().length > 0) {
-      // Any segment with script needs TTS (CREATOR or B-ROLL with narration)
-      console.log(`[PROCESS_SINGLE] Generating TTS audio for segment...`);
-
-      try {
-        const { data: ttsData, error: ttsError } = await supabase.functions.invoke('generate-tts', {
-          body: {
-            text: job.script_text,
-            voice: job.voice_preference || 'aaron',  // From user profile
-            audio_url: job.voice_clone_url,          // Custom voice if available
-            temperature: 0.8,
-            model: 'chatterbox-turbo'
-          }
-        });
-
-        if (ttsError || !ttsData?.success) {
-          console.warn(`[PROCESS_SINGLE] ⚠️ TTS failed, continuing without audio:`, ttsError || ttsData?.error);
-        } else {
-          audioUrl = ttsData.data.audio_url;
-          console.log(`[PROCESS_SINGLE] ✅ TTS generated: ${audioUrl}`);
-
-          // Store audio URL in job for reference
-          await supabase
-            .from('video_generation_jobs')
-            .update({ audio_url: audioUrl })
-            .eq('id', job.id);
-        }
-      } catch (ttsError) {
-        console.error(`[PROCESS_SINGLE] ⚠️ TTS error:`, ttsError);
-        // Continue without audio rather than failing entire job
-      }
-    }
-
-    // ========================================================================
     // PROVIDER DETECTION: fal.ai only (VEO/Sora removed)
+    // NOTE: TTS removed - VEO 3.1 has native audio generation
     // ========================================================================
     const aspectRatioInternal = (job.aspect_ratio || '9:16') as AspectRatio
     const actualDuration = getClosestDuration(modelSpecs, duration)
@@ -914,21 +903,20 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
     if (isFalProvider) {
       // ========================================================================
-      // FAL.AI PATH: Queue-based API with optional audio
+      // FAL.AI PATH: Queue-based API
       // ========================================================================
       if (!falApiKey) {
         throw new Error('FAL_AI_API_KEY not configured')
       }
 
-      console.log(`[PROCESS_SINGLE] Using fal.ai: ${modelSpecs.key}${audioUrl ? ' (with audio)' : ' (silent)'}`)
+      console.log(`[PROCESS_SINGLE] Using fal.ai: ${modelSpecs.key}`)
 
       const { request_id, status_url } = await submitToFalQueue(
         modelSpecs,
         videoPrompt,
         job.image_url,
         actualDuration,
-        falApiKey,
-        audioUrl  // Pass TTS audio URL if available
+        falApiKey
       )
 
       // Update job with fal request_id (store in veo_uuid field for compatibility)

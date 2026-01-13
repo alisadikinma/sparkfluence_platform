@@ -20,6 +20,9 @@ import threading
 from ffmpeg import VideoCombiner, CombineConfig, VideoSegmentInput, TransitionType
 from ffmpeg.subtitle_processor import SubtitleProcessor
 
+# Import webhook handler for GeminiGen auto-retry
+from webhook_handler import router as webhook_router
+
 # Load environment variables from root .env
 load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
@@ -87,6 +90,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include webhook router for GeminiGen callbacks
+app.include_router(webhook_router)
 
 # In-memory job storage (use Redis in production)
 jobs: Dict[str, Dict[str, Any]] = {}
@@ -163,6 +169,8 @@ class VideoSegment(BaseModel):
 class CombineOptions(BaseModel):
     bgm_url: Optional[str] = None
     bgm_volume: float = 0.15
+    preserve_native_audio: bool = True  # Keep VEO 3.1 native audio
+    audio_duck_during_speech: bool = True  # Lower BGM when speech detected
 
 class CombineVideoRequest(BaseModel):
     project_id: str
@@ -614,14 +622,15 @@ async def process_video_combination(
         update_job_status(job_id, 50, "Concatenating video segments")
         final_video = concatenate_videos(concat_file, work_dir)
 
-        # Step 4: Add BGM (optional)
+        # Step 4: Add BGM (optional) - with audio ducking for VEO 3.1 native audio
         if options.bgm_url:
             update_job_status(job_id, 70, "Adding background music")
             final_video = await add_background_music(
                 final_video,
                 options.bgm_url,
                 options.bgm_volume,
-                work_dir
+                work_dir,
+                duck_during_speech=options.audio_duck_during_speech
             )
 
         # Step 5: Upload to storage
@@ -835,8 +844,19 @@ async def add_background_music(
     video_file: Path,
     bgm_url: str,
     volume: float,
-    work_dir: Path
+    work_dir: Path,
+    duck_during_speech: bool = True
 ) -> Path:
+    """
+    Mix background music with video's native audio (VEO 3.1).
+
+    Args:
+        video_file: Input video with native audio
+        bgm_url: URL to background music
+        volume: BGM base volume (0.0-1.0)
+        work_dir: Working directory
+        duck_during_speech: Lower BGM when speech detected (sidechaincompress)
+    """
     bgm_file = work_dir / "bgm.mp3"
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -846,15 +866,32 @@ async def add_background_music(
         with open(bgm_file, 'wb') as f:
             f.write(response.content)
 
-    output_file = work_dir / "final_with_bgm.mp4"
+    output_file = work_dir / f"final_with_bgm_{uuid.uuid4().hex[:8]}.mp4"
+
+    if duck_during_speech:
+        # Audio ducking: BGM volume drops when native audio is loud (speech)
+        # sidechaincompress: threshold=0.02 (sensitive), ratio=4 (moderate ducking)
+        # attack=50ms (fast duck), release=500ms (smooth return)
+        filter_complex = (
+            f"[1:a]volume={volume}[bgm];"
+            f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=500[ducked_bgm];"
+            f"[0:a][ducked_bgm]amix=inputs=2:duration=first:normalize=0"
+        )
+    else:
+        # Simple mixing without ducking
+        filter_complex = (
+            f"[1:a]volume={volume}[bgm];"
+            f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0"
+        )
 
     cmd = [
         'ffmpeg', '-y',
         '-i', str(video_file),
         '-i', str(bgm_file),
-        '-filter_complex', f'[1:a]volume={volume}[a1];[0:a][a1]amix=inputs=2:normalize=1',
+        '-filter_complex', filter_complex,
         '-c:v', 'copy',
-        '-shortest',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
         str(output_file)
     ]
 
@@ -863,7 +900,7 @@ async def add_background_music(
     if result.returncode != 0:
         raise Exception(f"FFmpeg BGM mixing failed: {result.stderr}")
 
-    logger.info("Background music added successfully")
+    logger.info(f"Background music added successfully (ducking={'enabled' if duck_during_speech else 'disabled'})")
     return output_file
 
 
