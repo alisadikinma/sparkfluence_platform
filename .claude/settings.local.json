@@ -19,7 +19,8 @@
       "Bash(findstr:*)",
       "Bash(node:*)",
       "Bash(npm run test:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(find:*)"
     ]
   }
 }

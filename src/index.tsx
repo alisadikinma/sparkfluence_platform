@@ -39,6 +39,7 @@ import { AuthCallback } from "./screens/AuthCallback/AuthCallback";
 import { ScriptLab } from "./screens/ScriptLab";
 import { SparkfluenceEngineTest } from "./screens/EngineTest";
 import { Privacy, Terms } from "./screens/Legal";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // Wrapper component for smooth scroll
 const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -48,14 +49,15 @@ const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children
 
 createRoot(document.getElementById("app") as HTMLElement).render(
   <StrictMode>
-    <BrowserRouter>
-      <ThemeProvider>
-        <LanguageProvider>
-          <SmoothScrollWrapper>
-            <AuthProvider>
-              <OnboardingProvider>
-                <PlannerProvider>
-                  <Routes>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <ThemeProvider>
+          <LanguageProvider>
+            <SmoothScrollWrapper>
+              <AuthProvider>
+                <OnboardingProvider>
+                  <PlannerProvider>
+                    <Routes>
                     {/* Public pages with PublicLayout (Navbar + Footer) */}
                     <Route element={<PublicLayout />}>
                       <Route path="/" element={<Landing />} />
@@ -102,15 +104,16 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/app/billing" element={<Billing />} />
                     <Route path="/billing" element={<Billing />} />
 
-                    {/* Admin only - Engine Test Dashboard */}
-                    <Route path="/sparkfluence-engine-test" element={<SparkfluenceEngineTest />} />
-                  </Routes>
-                </PlannerProvider>
-              </OnboardingProvider>
-            </AuthProvider>
-          </SmoothScrollWrapper>
-        </LanguageProvider>
-      </ThemeProvider>
-    </BrowserRouter>
+                      {/* Admin only - Engine Test Dashboard */}
+                      <Route path="/sparkfluence-engine-test" element={<SparkfluenceEngineTest />} />
+                    </Routes>
+                  </PlannerProvider>
+                </OnboardingProvider>
+              </AuthProvider>
+            </SmoothScrollWrapper>
+          </LanguageProvider>
+        </ThemeProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>,
 );

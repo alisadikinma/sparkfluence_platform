@@ -1,12 +1,32 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+/**
+ * Timing-safe string comparison to prevent timing attacks on OTP verification.
+ * Uses constant-time comparison regardless of where strings differ.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // Still do the comparison to maintain constant time
+    // but return false at the end
+    let result = 1; // Will be non-zero
+    for (let i = 0; i < a.length; i++) {
+      result |= a.charCodeAt(i) ^ a.charCodeAt(i);
+    }
+    return false;
+  }
+
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -92,8 +112,8 @@ serve(async (req) => {
       );
     }
 
-    // 3. Verify OTP
-    if (otpData.otp_code !== normalizedOtp) {
+    // 3. Verify OTP using timing-safe comparison
+    if (!timingSafeEqual(otpData.otp_code, normalizedOtp)) {
       // Log failed attempt
       await supabase.from("phone_otp_attempts").insert({
         phone_number: normalizedPhone,

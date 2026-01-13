@@ -32,7 +32,11 @@ import {
 // P0: Product Naming - Entity Check & Fix
 import { injectProductNamingRule } from '../_shared/prompts/productNamingRule.ts'
 import { checkAndFixEntities } from '../_shared/entityCheck.ts'
+// Security: Input sanitization
+import { sanitizePromptInput, sanitizePlatform, sanitizeLanguage, sanitizeDuration } from '../_shared/inputSanitizer.ts'
+import { getCorsHeaders } from '../_shared/cors.ts'
 
+// Legacy corsHeaders for backward compatibility (will be replaced with dynamic CORS)
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -127,12 +131,23 @@ serve(async (req) => {
       )
     }
 
-    // Set defaults
-    const selectedDuration = duration || '60s'
+    // ============================================================
+    // SECURITY: Sanitize all user inputs before processing
+    // ============================================================
+    const sanitizedContent = sanitizePromptInput(content, 5000)
+    if (!sanitizedContent) {
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Content is empty or invalid' } }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Set defaults with sanitization
+    const selectedDuration = sanitizeDuration(duration)
     const selectedAspectRatio = aspect_ratio || '9:16'
     const selectedResolution = resolution || '1080p'
-    const selectedPlatform = platform || 'tiktok'
-    const selectedLanguage = language || 'indonesian'
+    const selectedPlatform = sanitizePlatform(platform)
+    const selectedLanguage = sanitizeLanguage(language)
     const selectedVideoModel = video_model || 'sora-2' // Default to Sora for backward compatibility
     
     console.log('[Script] Starting generation - NO DB QUERIES for knowledge')
@@ -140,7 +155,7 @@ serve(async (req) => {
 
     // Handle regenerate_segment differently
     if (input_type === 'regenerate_segment') {
-      const result = await regenerateSegment(supabase, content, segment_type, selectedLanguage)
+      const result = await regenerateSegment(supabase, sanitizedContent, segment_type, selectedLanguage)
       return new Response(
         JSON.stringify({ success: true, data: result }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -150,17 +165,17 @@ serve(async (req) => {
     // ============================================================
     // BUILD PROMPTS WITH STATIC KNOWLEDGE (NO DB QUERIES!)
     // ============================================================
-    
+
     // Build DNA style guide if enabled
     const dnaStyles = use_dna_tone && creative_dna && Array.isArray(creative_dna) ? creative_dna : null
     console.log(`[Script] DNA Tone: ${use_dna_tone ? 'ENABLED' : 'disabled'}${dnaStyles ? ` (${dnaStyles.length} styles)` : ''}`)
-    
+
     const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles, selectedVideoModel)
     // P0: Inject product naming rule for tech topics
     const systemPrompt = injectProductNamingRule(baseSystemPrompt)
     const userPrompt = buildUserPrompt(
       input_type,
-      content,
+      sanitizedContent, // Use sanitized content
       selectedDuration,
       selectedAspectRatio,
       selectedResolution,

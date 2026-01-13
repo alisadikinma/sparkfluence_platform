@@ -241,6 +241,60 @@ export const VideoGeneration = (): JSX.Element => {
   const isSequentialProcessingRef = useRef(false);
   const shouldStopProcessingRef = useRef(false);
 
+  // ============================================================================
+  // SESSION PERSISTENCE - Backup sessionId to sessionStorage for page refresh
+  // ============================================================================
+  const SESSION_STORAGE_KEY = 'vg_active_session';
+
+  // Save sessionId to sessionStorage when it changes
+  useEffect(() => {
+    if (sessionId && isLoaded) {
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+        sessionId,
+        topic: currentTopic,
+        timestamp: Date.now()
+      }));
+    }
+  }, [sessionId, currentTopic, isLoaded]);
+
+  // Restore from sessionStorage if no URL params or location state
+  useEffect(() => {
+    if (hasInitialized.current) return;
+
+    const urlSessionId = searchParams.get('session');
+    const stateData = location.state;
+
+    // If we have URL params or state, let the normal flow handle it
+    if (urlSessionId || stateData?.sessionId || stateData?.segments) {
+      return;
+    }
+
+    // Try to restore from sessionStorage
+    const saved = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (saved) {
+      try {
+        const { sessionId: savedSessionId, timestamp } = JSON.parse(saved);
+        // Only restore if session is less than 24 hours old
+        const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+        if (savedSessionId && (Date.now() - timestamp) < maxAge) {
+          console.log('[VideoGen] Restoring session from sessionStorage:', savedSessionId);
+          // Navigate with session param to trigger proper initialization
+          navigate(`/video-generation?session=${savedSessionId}`, { replace: true });
+        } else {
+          // Clear stale session
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        }
+      } catch (e) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+    }
+  }, [searchParams, location.state, navigate]);
+
+  // Clear sessionStorage when leaving the page successfully (going to combine/next step)
+  const clearSessionPersistence = useCallback(() => {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  }, []);
+
   // UI Text
   const uiText = {
     title: language === 'id' ? 'Generate Video' : 'Generate Video',
@@ -1481,7 +1535,10 @@ export const VideoGeneration = (): JSX.Element => {
     // Save to sessionStorage as backup (in case location.state is lost)
     sessionStorage.setItem('fullVideoState', JSON.stringify(navigationState));
     console.log('[VideoGen] Saved state to sessionStorage');
-    
+
+    // Clear video generation session persistence since we're moving to next step
+    clearSessionPersistence();
+
     navigate("/full-video", { state: navigationState });
   };
 
