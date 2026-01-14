@@ -410,7 +410,8 @@ export function getSegmentDefaults(segmentType: string): SegmentDefaults {
 }
 
 // ============================================================================
-// TOPIC → COSTUME MAPPING
+// TOPIC → COSTUME MAPPING (Enhanced 2026-01-14)
+// Now includes activity-based costumes, not just professional contexts
 // ============================================================================
 
 export const TOPIC_COSTUMES: Record<string, string> = {
@@ -443,6 +444,8 @@ export const TOPIC_COSTUMES: Record<string, string> = {
   food: 'chef apron, kitchen attire',
   restaurant: 'professional chef uniform',
   baking: 'baker apron with flour dusting',
+  cafe: 'casual comfortable outfit, relaxed style',
+  coffee: 'casual comfortable outfit, cozy sweater',
   
   // Fitness & Sports
   fitness: 'athletic wear, gym clothes',
@@ -458,16 +461,378 @@ export const TOPIC_COSTUMES: Record<string, string> = {
   fashion: 'trendy stylish outfit, on-trend',
   beauty: 'elegant fashionable attire',
   
-  // Travel & Lifestyle
-  travel: 'casual travel wear, light jacket',
+  // Travel & Lifestyle (CASUAL - not formal!)
+  travel: 'casual travel wear, comfortable t-shirt and light jacket',
   lifestyle: 'casual chic everyday wear',
+  vacation: 'relaxed vacation wear, casual shorts or pants with t-shirt',
+  tourist: 'casual tourist outfit, comfortable walking clothes',
+  explore: 'casual explorer outfit, comfortable streetwear',
+  adventure: 'outdoor adventure wear, casual practical clothes',
   
-  // Gaming
-  gaming: 'gaming headset, casual hoodie',
+  // Gaming & Entertainment (CASUAL - key fix!)
+  gaming: 'casual gamer outfit, graphic tee or hoodie, relaxed streetwear',
+  arcade: 'casual streetwear, graphic tee, relaxed comfortable clothes',
+  game: 'casual gamer style, comfortable hoodie or t-shirt',
+  esports: 'esports jersey, gaming team attire',
+  retro: 'vintage casual wear, retro graphic tee',
+  
+  // Nightlife & Social
+  club: 'stylish nightclub attire, trendy casual',
+  bar: 'smart casual evening wear',
+  party: 'party outfit, stylish casual',
   
   // Default
   default: 'smart casual professional attire',
 };
+
+// ============================================================================
+// LOCATION CONTEXT MAPPING (NEW 2026-01-14)
+// Extracts cultural/environmental context from location keywords
+// ============================================================================
+
+export interface LocationContext {
+  country: string;
+  environment: string;           // Visual environment hints
+  peopleDescription: string;     // Ethnicity/cultural appearance hints
+  architectureHints: string;     // Building/street style
+  signageHints: string;          // Text/signage language
+  atmosphereHints: string;       // Cultural atmosphere
+}
+
+export const LOCATION_CONTEXTS: Record<string, LocationContext> = {
+  // Japan
+  japan: {
+    country: 'Japan',
+    environment: 'Japanese urban setting',
+    peopleDescription: 'Japanese people, East Asian appearance',
+    architectureHints: 'Japanese architecture, neon signs with Japanese text, narrow streets',
+    signageHints: 'Japanese kanji and hiragana signage',
+    atmosphereHints: 'clean organized Japanese aesthetic, vending machines, konbini convenience stores',
+  },
+  tokyo: {
+    country: 'Japan',
+    environment: 'Tokyo metropolitan area, bustling Japanese city',
+    peopleDescription: 'Japanese locals, East Asian appearance, Tokyo fashion style',
+    architectureHints: 'Tokyo skyscrapers, dense urban Japanese architecture, train stations',
+    signageHints: 'Japanese neon signs, kanji text, Tokyo station signs',
+    atmosphereHints: 'busy Tokyo streets, Shibuya crossing vibe, Japanese pop culture',
+  },
+  shinjuku: {
+    country: 'Japan',
+    environment: 'Shinjuku district Tokyo, neon-lit entertainment area',
+    peopleDescription: 'Japanese locals and salarymen, East Asian appearance',
+    architectureHints: 'Shinjuku neon buildings, dense entertainment district, izakaya alleys',
+    signageHints: 'bright Japanese neon signs, kanji advertisements, pachinko parlor signs',
+    atmosphereHints: 'vibrant Shinjuku nightlife, Japanese arcade culture, Golden Gai vibes',
+  },
+  akihabara: {
+    country: 'Japan',
+    environment: 'Akihabara electronics district, otaku paradise',
+    peopleDescription: 'Japanese otaku culture, anime fans, East Asian appearance',
+    architectureHints: 'multi-story electronics stores, anime billboards, maid cafe signs',
+    signageHints: 'Japanese anime advertisements, electronics store kanji signs',
+    atmosphereHints: 'anime culture, gaming arcades, Japanese electronics heaven',
+  },
+  kyoto: {
+    country: 'Japan',
+    environment: 'traditional Kyoto, ancient Japanese temples',
+    peopleDescription: 'Japanese locals, some in traditional kimono, East Asian appearance',
+    architectureHints: 'traditional Japanese temples, wooden machiya houses, torii gates',
+    signageHints: 'elegant Japanese calligraphy signs, temple names in kanji',
+    atmosphereHints: 'serene traditional Japan, geisha district, zen garden aesthetic',
+  },
+  osaka: {
+    country: 'Japan',
+    environment: 'Osaka urban area, food paradise',
+    peopleDescription: 'Osaka locals, friendly Japanese people, East Asian appearance',
+    architectureHints: 'Dotonbori neon, Osaka castle, food stall streets',
+    signageHints: 'colorful Osaka neon signs, Japanese food advertisements',
+    atmosphereHints: 'Osaka street food culture, takoyaki stands, energetic atmosphere',
+  },
+  
+  // Korea
+  korea: {
+    country: 'South Korea',
+    environment: 'Korean urban setting',
+    peopleDescription: 'Korean people, East Asian appearance, K-fashion style',
+    architectureHints: 'Korean architecture, hangeul signage, modern Korean buildings',
+    signageHints: 'Korean hangeul text signs',
+    atmosphereHints: 'Korean pop culture aesthetic, clean modern Korean style',
+  },
+  seoul: {
+    country: 'South Korea',
+    environment: 'Seoul metropolitan, K-pop capital',
+    peopleDescription: 'Korean locals, trendy K-fashion, East Asian appearance',
+    architectureHints: 'Gangnam high-rises, traditional hanok mixed with modern, Myeongdong shopping',
+    signageHints: 'Korean hangeul neon signs, K-beauty advertisements',
+    atmosphereHints: 'trendy Seoul vibes, K-pop culture, Korean cafe culture',
+  },
+  
+  // China
+  china: {
+    country: 'China',
+    environment: 'Chinese urban setting',
+    peopleDescription: 'Chinese people, East Asian appearance',
+    architectureHints: 'Chinese architecture, red lanterns, Chinese characters signage',
+    signageHints: 'Chinese hanzi characters, Mandarin text signs',
+    atmosphereHints: 'Chinese cultural aesthetic, traditional meets modern',
+  },
+  shanghai: {
+    country: 'China',
+    environment: 'Shanghai metropolis, financial hub',
+    peopleDescription: 'Shanghai locals, cosmopolitan Chinese, East Asian appearance',
+    architectureHints: 'Shanghai skyline, The Bund, Pudong towers, old Shanghai lanes',
+    signageHints: 'Chinese characters with some English, modern Shanghai signage',
+    atmosphereHints: 'cosmopolitan Shanghai energy, East meets West',
+  },
+  beijing: {
+    country: 'China',
+    environment: 'Beijing capital, historical Chinese city',
+    peopleDescription: 'Beijing locals, Chinese people, East Asian appearance',
+    architectureHints: 'Forbidden City style, traditional hutongs, modern CBD',
+    signageHints: 'Chinese hanzi signs, government building style',
+    atmosphereHints: 'imperial Chinese heritage, capital city gravitas',
+  },
+  hongkong: {
+    country: 'Hong Kong',
+    environment: 'Hong Kong dense urban, neon-lit streets',
+    peopleDescription: 'Hong Kong locals, Cantonese Chinese, East Asian appearance',
+    architectureHints: 'dense Hong Kong high-rises, bamboo scaffolding, neon signs',
+    signageHints: 'traditional Chinese characters, some English, neon Cantonese signs',
+    atmosphereHints: 'Hong Kong noir aesthetic, Wong Kar-wai vibes, dense urban energy',
+  },
+  
+  // Southeast Asia
+  indonesia: {
+    country: 'Indonesia',
+    environment: 'Indonesian tropical setting',
+    peopleDescription: 'Indonesian people, Southeast Asian appearance, diverse ethnicities',
+    architectureHints: 'Indonesian architecture, tropical buildings, local markets',
+    signageHints: 'Bahasa Indonesia text signs',
+    atmosphereHints: 'warm tropical Indonesian atmosphere, friendly local vibes',
+  },
+  jakarta: {
+    country: 'Indonesia',
+    environment: 'Jakarta metropolitan, Indonesian capital',
+    peopleDescription: 'Jakarta locals, Indonesian people, Southeast Asian appearance',
+    architectureHints: 'Jakarta skyscrapers, malls, traditional markets, traffic',
+    signageHints: 'Bahasa Indonesia signage, local advertisements',
+    atmosphereHints: 'bustling Jakarta energy, Indonesian urban culture',
+  },
+  bali: {
+    country: 'Indonesia',
+    environment: 'Bali tropical paradise, Hindu-Balinese culture',
+    peopleDescription: 'Balinese locals, Indonesian people, traditional dress',
+    architectureHints: 'Balinese temples, rice terraces, beach resorts, pura gates',
+    signageHints: 'Balinese and Indonesian text, tourism signs',
+    atmosphereHints: 'spiritual Bali vibes, tropical paradise, yoga retreat energy',
+  },
+  singapore: {
+    country: 'Singapore',
+    environment: 'Singapore clean modern city-state',
+    peopleDescription: 'Singaporean locals, diverse Asian ethnicities (Chinese, Malay, Indian)',
+    architectureHints: 'Marina Bay Sands, HDB flats, Gardens by the Bay, hawker centers',
+    signageHints: 'multilingual signs (English, Chinese, Malay, Tamil)',
+    atmosphereHints: 'ultra-clean Singapore, efficient modern Asian city',
+  },
+  thailand: {
+    country: 'Thailand',
+    environment: 'Thai tropical setting',
+    peopleDescription: 'Thai people, Southeast Asian appearance',
+    architectureHints: 'Thai temples, Buddhist architecture, street food stalls',
+    signageHints: 'Thai script signage',
+    atmosphereHints: 'warm Thai hospitality, Buddhist culture, street food paradise',
+  },
+  bangkok: {
+    country: 'Thailand',
+    environment: 'Bangkok busy metropolis',
+    peopleDescription: 'Bangkok locals, Thai people, Southeast Asian appearance',
+    architectureHints: 'Bangkok temples, tuk-tuks, sky train, floating markets',
+    signageHints: 'Thai script neon signs, street food vendor signs',
+    atmosphereHints: 'chaotic Bangkok energy, Thai street food culture, temple visits',
+  },
+  vietnam: {
+    country: 'Vietnam',
+    environment: 'Vietnamese setting',
+    peopleDescription: 'Vietnamese people, Southeast Asian appearance',
+    architectureHints: 'Vietnamese architecture, French colonial influence, tube houses',
+    signageHints: 'Vietnamese text with diacritics',
+    atmosphereHints: 'Vietnamese coffee culture, motorbike traffic, pho restaurants',
+  },
+  
+  // India
+  india: {
+    country: 'India',
+    environment: 'Indian setting',
+    peopleDescription: 'Indian people, South Asian appearance, diverse regional looks',
+    architectureHints: 'Indian architecture, colorful buildings, temples, bazaars',
+    signageHints: 'Hindi Devanagari script and English signs',
+    atmosphereHints: 'vibrant Indian colors, busy markets, chai culture',
+  },
+  mumbai: {
+    country: 'India',
+    environment: 'Mumbai metropolitan, Bollywood capital',
+    peopleDescription: 'Mumbai locals, Indian people, South Asian appearance',
+    architectureHints: 'Mumbai skyline, Victorian Gothic buildings, film city',
+    signageHints: 'Hindi and Marathi signs, Bollywood posters',
+    atmosphereHints: 'Mumbai hustle, Bollywood energy, financial capital vibes',
+  },
+  delhi: {
+    country: 'India',
+    environment: 'Delhi capital city, historical Indian metropolis',
+    peopleDescription: 'Delhi locals, North Indian people, South Asian appearance',
+    architectureHints: 'Mughal architecture, Red Fort, modern New Delhi, old Delhi bazaars',
+    signageHints: 'Hindi Devanagari and English signs',
+    atmosphereHints: 'Delhi historical grandeur, street food paradise, political capital',
+  },
+  
+  // Middle East
+  dubai: {
+    country: 'UAE',
+    environment: 'Dubai luxury modern city',
+    peopleDescription: 'diverse international residents, Emirati locals, Middle Eastern appearance',
+    architectureHints: 'Burj Khalifa, luxury malls, desert architecture, Palm Jumeirah',
+    signageHints: 'Arabic and English bilingual signs',
+    atmosphereHints: 'Dubai luxury lifestyle, desert meets ultra-modern',
+  },
+  
+  // Europe
+  london: {
+    country: 'UK',
+    environment: 'London British capital',
+    peopleDescription: 'diverse London population, British people, European appearance',
+    architectureHints: 'Big Ben, red phone booths, Victorian buildings, tube stations',
+    signageHints: 'English signs, British spelling',
+    atmosphereHints: 'British culture, rainy London vibes, pub culture',
+  },
+  paris: {
+    country: 'France',
+    environment: 'Paris romantic French capital',
+    peopleDescription: 'Parisian locals, French people, European appearance',
+    architectureHints: 'Eiffel Tower, Haussmann buildings, cafes, metro entrances',
+    signageHints: 'French text signs',
+    atmosphereHints: 'romantic Paris aesthetic, cafe culture, fashion capital',
+  },
+  
+  // Americas
+  newyork: {
+    country: 'USA',
+    environment: 'New York City urban jungle',
+    peopleDescription: 'diverse New York population, American melting pot',
+    architectureHints: 'NYC skyscrapers, yellow taxis, subway, Times Square',
+    signageHints: 'English signs, Broadway marquees',
+    atmosphereHints: 'NYC hustle, diverse American culture, 24/7 city energy',
+  },
+  losangeles: {
+    country: 'USA',
+    environment: 'Los Angeles sunny California',
+    peopleDescription: 'diverse LA population, Hollywood celebrities, American appearance',
+    architectureHints: 'Hollywood sign, palm trees, beaches, freeways',
+    signageHints: 'English signs, Hollywood style',
+    atmosphereHints: 'LA sunshine, entertainment industry, beach vibes',
+  },
+  
+  // Default fallback
+  default: {
+    country: 'International',
+    environment: 'modern urban setting',
+    peopleDescription: 'diverse international people',
+    architectureHints: 'modern urban architecture',
+    signageHints: 'multilingual signage',
+    atmosphereHints: 'contemporary urban atmosphere',
+  },
+};
+
+/**
+ * Extract location context from text (script, topic, visual direction)
+ * Returns location context with cultural/environmental hints
+ * @param text - Text to analyze (script, topic, or visual direction)
+ * @returns LocationContext or null if no location detected
+ */
+export function extractLocationContext(text: string): LocationContext | null {
+  if (!text) return null;
+  
+  const textLower = text.toLowerCase();
+  
+  // Priority order: specific locations first, then countries
+  const locationPriority = [
+    // Japan specific (most detailed first)
+    'akihabara', 'shinjuku', 'shibuya', 'harajuku', 'ginza', 'roppongi',
+    'kyoto', 'osaka', 'tokyo',
+    // Korea specific
+    'gangnam', 'myeongdong', 'hongdae', 'seoul',
+    // China specific  
+    'shanghai', 'beijing', 'hongkong', 'hong kong', 'shenzhen',
+    // Southeast Asia specific
+    'bali', 'jakarta', 'singapore', 'bangkok', 'ho chi minh', 'hanoi',
+    // India specific
+    'mumbai', 'delhi', 'bangalore', 'goa',
+    // Middle East
+    'dubai', 'abu dhabi',
+    // Europe specific
+    'london', 'paris', 'berlin', 'amsterdam', 'rome', 'barcelona',
+    // Americas specific
+    'new york', 'newyork', 'los angeles', 'losangeles', 'san francisco',
+    // Countries (fallback)
+    'japan', 'japanese', 'korea', 'korean', 'china', 'chinese',
+    'indonesia', 'indonesian', 'thailand', 'thai', 'vietnam', 'vietnamese',
+    'india', 'indian', 'singapore', 'singaporean',
+    'uk', 'british', 'england', 'france', 'french', 'germany', 'german',
+    'usa', 'america', 'american',
+  ];
+  
+  for (const location of locationPriority) {
+    if (textLower.includes(location)) {
+      // Normalize location key
+      let key = location.replace(/\s+/g, '').toLowerCase();
+      
+      // Map variations to canonical keys
+      const keyMap: Record<string, string> = {
+        'japanese': 'japan',
+        'korean': 'korea', 
+        'chinese': 'china',
+        'indonesian': 'indonesia',
+        'thai': 'thailand',
+        'vietnamese': 'vietnam',
+        'singaporean': 'singapore',
+        'british': 'london',
+        'england': 'london',
+        'french': 'paris',
+        'german': 'berlin',
+        'american': 'newyork',
+        'usa': 'newyork',
+        'america': 'newyork',
+        'uk': 'london',
+        'shibuya': 'tokyo',
+        'harajuku': 'tokyo',
+        'ginza': 'tokyo',
+        'roppongi': 'tokyo',
+        'gangnam': 'seoul',
+        'myeongdong': 'seoul',
+        'hongdae': 'seoul',
+        'shenzhen': 'china',
+        'hochiminh': 'vietnam',
+        'hanoi': 'vietnam',
+        'abudhabi': 'dubai',
+        'bangalore': 'india',
+        'goa': 'india',
+        'berlin': 'paris', // Use Paris as European fallback
+        'amsterdam': 'paris',
+        'rome': 'paris',
+        'barcelona': 'paris',
+        'sanfrancisco': 'losangeles',
+      };
+      
+      key = keyMap[key] || key;
+      
+      if (LOCATION_CONTEXTS[key]) {
+        return LOCATION_CONTEXTS[key];
+      }
+    }
+  }
+  
+  return null;
+}
 
 /**
  * Get costume for topic (O(1) lookup with partial matching)
@@ -488,6 +853,79 @@ export function getCostumeForTopic(topic: string): string {
   }
   
   return TOPIC_COSTUMES.default;
+}
+
+/**
+ * Get CONTEXTUAL costume based on topic AND script/activity analysis (NEW 2026-01-14)
+ * This is smarter than getCostumeForTopic() - analyzes actual activity keywords
+ * 
+ * @param topic - Video topic
+ * @param scriptText - Optional script text to analyze for activity context
+ * @returns Appropriate costume string
+ */
+export function getContextualCostume(topic: string, scriptText?: string): string {
+  const combinedText = `${topic} ${scriptText || ''}`.toLowerCase();
+  
+  // Activity keyword priorities (check these first before topic-based)
+  const activityKeywords: Array<{ keywords: string[]; costume: string }> = [
+    // Gaming/Entertainment (CASUAL - must override formal defaults)
+    {
+      keywords: ['gaming', 'arcade', 'game center', 'video game', 'esports', 'gamer', 'playing games', 'retro gaming', 'gaming cafe'],
+      costume: 'casual gamer outfit, comfortable graphic tee or hoodie, relaxed streetwear',
+    },
+    // Travel/Exploration (CASUAL - tourist style)
+    {
+      keywords: ['travel', 'exploring', 'vacation', 'tourist', 'trip', 'journey', 'adventure', 'backpack', 'sightseeing'],
+      costume: 'casual travel wear, comfortable t-shirt and light jacket, tourist style',
+    },
+    // Food/Cafe (CASUAL)
+    {
+      keywords: ['cafe', 'coffee shop', 'restaurant visit', 'food tour', 'eating', 'dining', 'food review'],
+      costume: 'casual comfortable outfit, relaxed cafe style, cozy sweater or casual shirt',
+    },
+    // Nightlife (STYLISH CASUAL)
+    {
+      keywords: ['nightlife', 'club', 'bar', 'party', 'night out', 'clubbing'],
+      costume: 'stylish casual nightlife attire, trendy evening wear',
+    },
+    // Sports/Fitness (ATHLETIC)
+    {
+      keywords: ['gym', 'workout', 'fitness', 'exercise', 'running', 'yoga', 'sports'],
+      costume: 'athletic wear, fitness outfit, gym clothes',
+    },
+    // Beach/Outdoor (CASUAL)
+    {
+      keywords: ['beach', 'outdoor', 'hiking', 'nature', 'park', 'camping'],
+      costume: 'outdoor casual wear, comfortable adventure clothes',
+    },
+    // Tech/Coding (CASUAL TECH)
+    {
+      keywords: ['coding', 'programming', 'developer', 'tech', 'startup', 'hacking'],
+      costume: 'casual tech wear, comfortable hoodie, developer style',
+    },
+    // Business/Professional (FORMAL)
+    {
+      keywords: ['business', 'meeting', 'corporate', 'office', 'presentation', 'pitch', 'investor'],
+      costume: 'professional business attire, navy blazer over white shirt',
+    },
+    // Medical/Health (PROFESSIONAL)
+    {
+      keywords: ['medical', 'doctor', 'hospital', 'health', 'clinic', 'pharmacy'],
+      costume: 'white doctor coat with stethoscope',
+    },
+  ];
+  
+  // Check activity keywords first (higher priority than topic)
+  for (const activity of activityKeywords) {
+    for (const keyword of activity.keywords) {
+      if (combinedText.includes(keyword)) {
+        return activity.costume;
+      }
+    }
+  }
+  
+  // Fallback to topic-based costume
+  return getCostumeForTopic(topic);
 }
 
 // ============================================================================

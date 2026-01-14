@@ -26,6 +26,8 @@ import {
   getEmotionSpecs,
   getSegmentDefaults,
   getCostumeForTopic,
+  getContextualCostume,     // NEW 2026-01-14: Smart costume based on activity
+  extractLocationContext,   // NEW 2026-01-14: Extract location from script
   buildCinematographyPrompt,
   buildFullCinematographyPrompt,
   SEGMENT_DEFAULTS,
@@ -1532,7 +1534,7 @@ interface PromptParams {
 }
 
 // ============================================================================
-// CINEMATIC PROMPT BUILDER (2026-01-10 - Using New Lookup Modules)
+// CINEMATIC PROMPT BUILDER (2026-01-14 - Enhanced with Location + Contextual Costume)
 // ============================================================================
 
 function buildCinematicPrompt(params: PromptParams): string {
@@ -1541,6 +1543,7 @@ function buildCinematicPrompt(params: PromptParams): string {
   const shotType = segment.shot_type || 'B-ROLL'
   const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
   const visualDirection = segment.visual_prompt || segment.visual_direction || ''
+  const scriptText = segment.script_text || segment.voiceover || segment.text || ''
   
   // Get segment defaults from new lookup module
   const segmentDefaults = getSegmentDefaults(segmentType) || getSegmentDefaults('BODY')
@@ -1551,6 +1554,13 @@ function buildCinematicPrompt(params: PromptParams): string {
   if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)) {
     const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
     
+    // ========================================================================
+    // 2026-01-14: Use CONTEXTUAL COSTUME based on topic + script activity
+    // Gaming → casual gamer outfit, Fitness → gym clothes, Doctor → medical attire
+    // ========================================================================
+    const contextualCostume = getContextualCostume(topic, `${scriptText} ${visualDirection}`)
+    console.log(`[buildCinematicPrompt] CREATOR contextual costume: "${contextualCostume}"`)
+    
     // Use FULL prompt builder (2026-01-11 enhanced)
     const fullPrompt = buildFullCinematographyPrompt({
       characterDescription: charDesc,
@@ -1559,7 +1569,7 @@ function buildCinematicPrompt(params: PromptParams): string {
       shotType: mappedShotType,
       segmentType: segmentType,
       aspectRatio: aspectRatio,
-      costume: costume,
+      costume: contextualCostume, // Dynamic costume based on activity
       visualReference: undefined // Can add film reference if needed
     })
     
@@ -1568,27 +1578,59 @@ function buildCinematicPrompt(params: PromptParams): string {
   }
   
   // ========================================================================
-  // B-ROLL SHOT - Use visual_direction directly from script generation
-  // CRITICAL FIX (2026-01-11): Script gen already produces excellent prompts!
-  // visual_direction contains segment-specific cinematic prompts.
-  // DO NOT use buildVisualBrief() - it causes topic keywords to override segment content.
+  // B-ROLL SHOT - Enhanced with LOCATION CONTEXT (2026-01-14)
+  // Extract location/cultural context from visual_direction per segment
+  // Inject environment, ethnicity, architecture hints for authentic visuals
   // ========================================================================
   
   // Debug logging
   console.log(`[buildCinematicPrompt] Segment: ${segmentType}, Shot: ${shotType}`)
   console.log(`[buildCinematicPrompt] visual_direction: "${visualDirection.substring(0, 100)}..."`)
   
-  // PRIMARY: Use visual_direction from script generation (already cinematic prompt)
+  // Extract location context from this segment's visual_direction
+  const locationContext = extractLocationContext(visualDirection)
+  if (locationContext) {
+    console.log(`[buildCinematicPrompt] 🌍 Location detected: ${locationContext.country} - ${locationContext.environment}`)
+  }
+  
+  // PRIMARY: Use visual_direction from script generation + INJECT LOCATION CONTEXT
   if (visualDirection && visualDirection.length > 50) {
+    // ========================================================================
+    // 2026-01-14: Enhance prompt with location-specific cultural context
+    // This makes B-ROLL images more authentic (Japanese arcade, Indian market, etc.)
+    // ========================================================================
+    if (locationContext) {
+      // Build enhanced prompt with cultural/environmental hints
+      const enhancedPrompt = `${visualDirection}
+
+Location context: ${locationContext.environment}.
+${locationContext.architectureHints ? `Architecture: ${locationContext.architectureHints}.` : ''}
+${locationContext.signageHints ? `Signage: ${locationContext.signageHints}.` : ''}
+${locationContext.atmosphereHints ? `Atmosphere: ${locationContext.atmosphereHints}.` : ''}
+${locationContext.peopleDescription ? `People: ${locationContext.peopleDescription}.` : ''}`
+      
+      console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with ${locationContext.country} context (${enhancedPrompt.length} chars)`)
+      return enhancedPrompt.trim()
+    }
+    
     console.log(`[buildCinematicPrompt] ✅ Using visual_direction directly (${visualDirection.length} chars)`)
     return visualDirection
   }
   
-  // FALLBACK: If no visual_direction, build basic cinematic prompt from topic
+  // FALLBACK: If no visual_direction, build basic cinematic prompt from topic + location
   console.log(`[buildCinematicPrompt] ⚠️ No visual_direction, using topic-based fallback`)
-  const visual = topic 
-    ? `Professional ${topic} concept visualization - modern technology scene`
+  
+  let visual = topic 
+    ? `Professional ${topic} concept visualization`
     : 'Modern technology concept - clean professional imagery'
+  
+  // Add location context to fallback if detected from topic
+  const topicLocationContext = extractLocationContext(topic)
+  if (topicLocationContext) {
+    visual = `${visual} in ${topicLocationContext.environment}.
+${topicLocationContext.architectureHints ? `Setting: ${topicLocationContext.architectureHints}.` : ''}
+${topicLocationContext.atmosphereHints ? `Atmosphere: ${topicLocationContext.atmosphereHints}.` : ''}`
+  }
   
   return `Cinematic ${mappedShotType} of ${visual}.
 Film stock: Vision3 500T. Color: Teal-orange grade.

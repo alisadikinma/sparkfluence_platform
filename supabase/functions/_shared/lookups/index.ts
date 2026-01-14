@@ -29,12 +29,15 @@ export {
   TRANSITIONS,
   DEFAULT_CHARACTER_BIBLE,  // Character Bible for CREATOR shots
   NEGATIVE_PROMPTS,         // Moved from metaphorLookup.ts (2026-01-11)
+  LOCATION_CONTEXTS,        // NEW 2026-01-14: Location → Cultural context mapping
   getEmotionSpecs,
   getLightingPattern,
   getShotType,
   getMoodSetup,
   getSegmentDefaults,
   getCostumeForTopic,
+  getContextualCostume,     // NEW 2026-01-14: Smart costume based on activity
+  extractLocationContext,   // NEW 2026-01-14: Extract location from text
   buildCinematographyPrompt,
   buildFullCinematographyPrompt,
   getVisualSpecs,
@@ -51,6 +54,7 @@ export {
   type MoodSetup,
   type SegmentDefaults,
   type VisualSpecs,
+  type LocationContext,     // NEW 2026-01-14
 } from './cinematographyLookup.ts';
 
 // Slang Lookup - Language-Specific Slang Validation

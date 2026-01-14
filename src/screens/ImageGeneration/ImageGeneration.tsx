@@ -95,31 +95,163 @@ interface ImageModelSettings {
 }
 
 // Enhanced keyword extraction - extracts products, brands, people, core subjects
+// ============================================================================
+// LOCATION KEYWORDS - Frontend mapping for search suggestions (2026-01-14)
+// Mirrors backend LOCATION_CONTEXTS for consistent keyword extraction
+// ============================================================================
+const LOCATION_KEYWORDS: Record<string, { searchTerms: string[]; suggestedKeywords: string[] }> = {
+  // Japan
+  japan: { searchTerms: ['japanese', 'japan', 'nippon'], suggestedKeywords: ['japanese', 'tokyo', 'neon signs'] },
+  tokyo: { searchTerms: ['tokyo', 'shibuya', 'shinjuku', 'akihabara', 'harajuku', 'ginza'], suggestedKeywords: ['tokyo street', 'japanese neon', 'tokyo night'] },
+  shinjuku: { searchTerms: ['shinjuku'], suggestedKeywords: ['shinjuku neon', 'tokyo arcade', 'japanese nightlife'] },
+  shibuya: { searchTerms: ['shibuya'], suggestedKeywords: ['shibuya crossing', 'tokyo fashion', 'harajuku style'] },
+  akihabara: { searchTerms: ['akihabara', 'akiba'], suggestedKeywords: ['anime street', 'gaming arcade', 'otaku culture'] },
+  osaka: { searchTerms: ['osaka', 'dotonbori', 'namba'], suggestedKeywords: ['osaka street', 'dotonbori lights', 'japanese food'] },
+  kyoto: { searchTerms: ['kyoto', 'gion'], suggestedKeywords: ['kyoto temple', 'japanese garden', 'traditional japan'] },
+  
+  // Korea
+  korea: { searchTerms: ['korean', 'korea', 'hangul'], suggestedKeywords: ['korean', 'seoul', 'kpop style'] },
+  seoul: { searchTerms: ['seoul', 'gangnam', 'hongdae', 'myeongdong'], suggestedKeywords: ['seoul street', 'korean neon', 'kbeauty'] },
+  
+  // China
+  china: { searchTerms: ['chinese', 'china'], suggestedKeywords: ['chinese', 'shanghai', 'beijing'] },
+  shanghai: { searchTerms: ['shanghai', 'pudong', 'bund'], suggestedKeywords: ['shanghai skyline', 'chinese modern', 'pudong lights'] },
+  beijing: { searchTerms: ['beijing', 'forbidden city'], suggestedKeywords: ['beijing architecture', 'chinese traditional', 'great wall'] },
+  hongkong: { searchTerms: ['hong kong', 'hongkong', 'hk'], suggestedKeywords: ['hong kong neon', 'victoria harbour', 'chinese signs'] },
+  
+  // Southeast Asia
+  singapore: { searchTerms: ['singapore', 'sg'], suggestedKeywords: ['singapore skyline', 'marina bay', 'asian modern'] },
+  thailand: { searchTerms: ['thai', 'thailand', 'bangkok'], suggestedKeywords: ['bangkok street', 'thai temple', 'southeast asian'] },
+  bali: { searchTerms: ['bali', 'ubud', 'kuta'], suggestedKeywords: ['bali rice field', 'balinese temple', 'tropical paradise'] },
+  jakarta: { searchTerms: ['jakarta', 'indonesia'], suggestedKeywords: ['jakarta city', 'indonesian street', 'southeast asian'] },
+  vietnam: { searchTerms: ['vietnam', 'vietnamese', 'hanoi', 'saigon', 'ho chi minh'], suggestedKeywords: ['vietnamese street', 'hanoi old quarter', 'vietnam food'] },
+  
+  // India
+  india: { searchTerms: ['indian', 'india', 'hindi'], suggestedKeywords: ['indian', 'mumbai', 'colorful market'] },
+  mumbai: { searchTerms: ['mumbai', 'bombay'], suggestedKeywords: ['mumbai street', 'bollywood', 'indian city'] },
+  delhi: { searchTerms: ['delhi', 'new delhi'], suggestedKeywords: ['delhi architecture', 'indian culture', 'mughal style'] },
+  
+  // Middle East
+  dubai: { searchTerms: ['dubai', 'uae', 'abu dhabi'], suggestedKeywords: ['dubai skyline', 'burj khalifa', 'luxury modern'] },
+  
+  // Europe
+  paris: { searchTerms: ['paris', 'french', 'france'], suggestedKeywords: ['paris street', 'eiffel tower', 'french cafe'] },
+  london: { searchTerms: ['london', 'british', 'uk', 'england'], suggestedKeywords: ['london street', 'british style', 'big ben'] },
+  berlin: { searchTerms: ['berlin', 'german', 'germany'], suggestedKeywords: ['berlin urban', 'german street', 'european city'] },
+  amsterdam: { searchTerms: ['amsterdam', 'dutch', 'netherlands'], suggestedKeywords: ['amsterdam canal', 'dutch architecture', 'european style'] },
+  rome: { searchTerms: ['rome', 'italian', 'italy'], suggestedKeywords: ['rome architecture', 'italian street', 'colosseum'] },
+  
+  // Americas
+  newyork: { searchTerms: ['new york', 'nyc', 'manhattan', 'brooklyn', 'times square'], suggestedKeywords: ['new york city', 'manhattan skyline', 'times square'] },
+  losangeles: { searchTerms: ['los angeles', 'la', 'hollywood', 'venice beach'], suggestedKeywords: ['los angeles', 'hollywood sign', 'california'] },
+  miami: { searchTerms: ['miami', 'south beach'], suggestedKeywords: ['miami beach', 'art deco', 'florida'] },
+  sanfrancisco: { searchTerms: ['san francisco', 'sf', 'silicon valley'], suggestedKeywords: ['san francisco', 'golden gate', 'tech hub'] },
+};
+
+// Activity keywords for costume context (used in search suggestions)
+const ACTIVITY_KEYWORDS: Record<string, { searchTerms: string[]; suggestedKeywords: string[] }> = {
+  gaming: { searchTerms: ['gaming', 'arcade', 'game center', 'video game', 'esports', 'gamer'], suggestedKeywords: ['gaming setup', 'arcade machine', 'esports'] },
+  fitness: { searchTerms: ['gym', 'workout', 'fitness', 'exercise', 'running', 'yoga'], suggestedKeywords: ['gym interior', 'fitness equipment', 'workout'] },
+  food: { searchTerms: ['cafe', 'coffee shop', 'restaurant', 'food', 'cooking', 'kitchen'], suggestedKeywords: ['cafe interior', 'food photography', 'restaurant'] },
+  tech: { searchTerms: ['coding', 'programming', 'developer', 'tech', 'startup', 'computer'], suggestedKeywords: ['tech office', 'coding setup', 'startup'] },
+  medical: { searchTerms: ['medical', 'doctor', 'hospital', 'health', 'clinic'], suggestedKeywords: ['hospital', 'medical equipment', 'healthcare'] },
+  travel: { searchTerms: ['travel', 'vacation', 'tourist', 'adventure', 'backpack'], suggestedKeywords: ['travel destination', 'tourist spot', 'adventure'] },
+  nightlife: { searchTerms: ['nightlife', 'club', 'bar', 'party', 'night out'], suggestedKeywords: ['nightclub', 'bar interior', 'party lights'] },
+  business: { searchTerms: ['business', 'meeting', 'corporate', 'office', 'presentation'], suggestedKeywords: ['office space', 'business meeting', 'corporate'] },
+};
+
+/**
+ * Extract location context from text
+ * Returns detected locations with search suggestions
+ */
+const extractLocationFromText = (text: string): { location: string; suggestions: string[] } | null => {
+  if (!text) return null;
+  const lowerText = text.toLowerCase();
+  
+  // Check specific locations first (more specific = higher priority)
+  const locationPriority = ['shinjuku', 'shibuya', 'akihabara', 'gangnam', 'hongdae', 'pudong', 
+    'tokyo', 'osaka', 'kyoto', 'seoul', 'shanghai', 'beijing', 'hongkong',
+    'singapore', 'bangkok', 'bali', 'jakarta', 'mumbai', 'delhi', 'dubai',
+    'newyork', 'losangeles', 'miami', 'sanfrancisco', 'paris', 'london', 'berlin', 'amsterdam', 'rome',
+    'japan', 'korea', 'china', 'thailand', 'vietnam', 'india'];
+  
+  for (const locKey of locationPriority) {
+    const locData = LOCATION_KEYWORDS[locKey];
+    if (!locData) continue;
+    
+    for (const term of locData.searchTerms) {
+      if (lowerText.includes(term)) {
+        return { location: locKey, suggestions: locData.suggestedKeywords };
+      }
+    }
+  }
+  
+  return null;
+};
+
+/**
+ * Extract activity context from text
+ * Returns detected activity with search suggestions
+ */
+const extractActivityFromText = (text: string): { activity: string; suggestions: string[] } | null => {
+  if (!text) return null;
+  const lowerText = text.toLowerCase();
+  
+  for (const [actKey, actData] of Object.entries(ACTIVITY_KEYWORDS)) {
+    for (const term of actData.searchTerms) {
+      if (lowerText.includes(term)) {
+        return { activity: actKey, suggestions: actData.suggestedKeywords };
+      }
+    }
+  }
+  
+  return null;
+};
+
 const extractKeywords = (visualDirection: string, script: string): string => {
   const text = visualDirection || script;
   if (!text) return '';
   
   const keywords: string[] = [];
   
-  // 1. Extract capitalized phrases (likely proper nouns/brands)
+  // ========================================================================
+  // 2026-01-14: PRIORITY 1 - Extract location-specific keywords
+  // If text mentions Shinjuku/Tokyo/Japan, prioritize location terms
+  // ========================================================================
+  const locationContext = extractLocationFromText(text);
+  if (locationContext) {
+    // Add the first suggested keyword for location
+    keywords.push(locationContext.suggestions[0]);
+  }
+  
+  // ========================================================================
+  // 2026-01-14: PRIORITY 2 - Extract activity-specific keywords
+  // If text mentions gaming/arcade/gym, add activity terms
+  // ========================================================================
+  const activityContext = extractActivityFromText(text);
+  if (activityContext) {
+    keywords.push(activityContext.suggestions[0]);
+  }
+  
+  // 3. Extract capitalized phrases (likely proper nouns/brands)
   // Matches: "Tesla Model S", "Elon Musk", "iPhone 17 Pro"
   const properNouns = text.match(/[A-Z][a-zA-Z]*(?:\s+[A-Z0-9][a-zA-Z0-9]*)+/g) || [];
   keywords.push(...properNouns.slice(0, 2));
   
-  // 2. Extract product patterns (brand + model)
+  // 4. Extract product patterns (brand + model)
   // Matches: "iPhone 17", "Model S", "Galaxy S24", "RTX 4090"
   const productPatterns = text.match(/\b(?:iPhone|iPad|MacBook|Galaxy|Pixel|Tesla|Model|RTX|GTX|AMD|Intel|Nike|Adidas|BMW|Mercedes|Porsche|Ferrari|Samsung|Sony|Canon|Nikon|GoPro|DJI)\s*[A-Z0-9]+(?:\s*(?:Pro|Max|Ultra|Plus|Mini|Air|SE))?/gi) || [];
   keywords.push(...productPatterns.slice(0, 2));
   
-  // 3. Extract quoted terms (often key subjects)
+  // 5. Extract quoted terms (often key subjects)
   const quoted = text.match(/"([^"]+)"|'([^']+)'/g)?.map(q => q.replace(/['"]/g, '')) || [];
   keywords.push(...quoted.slice(0, 1));
   
-  // 4. Fallback: Extract noun phrases after "of" (e.g., "shot of coffee shop")
+  // 6. Fallback: Extract noun phrases after "of" (e.g., "shot of coffee shop")
   const ofPhrases = text.match(/(?:of|showing|featuring)\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/gi) || [];
   keywords.push(...ofPhrases.map(p => p.replace(/^(?:of|showing|featuring)\s+(?:a\s+)?/i, '')).slice(0, 1));
   
-  // 5. Last fallback: First capitalized word or meaningful noun
+  // 7. Last fallback: First capitalized word or meaningful noun
   if (keywords.length === 0) {
     const fallback = text.match(/[A-Z][a-z]+/);
     if (fallback) keywords.push(fallback[0]);
@@ -133,7 +265,33 @@ const extractKeywords = (visualDirection: string, script: string): string => {
   
   // Dedupe and join
   const unique = [...new Set(keywords.map(k => k.trim()))].filter(k => k.length > 1);
-  return unique.slice(0, 3).join(' ');
+  return unique.slice(0, 4).join(' '); // Increased from 3 to 4 keywords
+};
+
+/**
+ * Get all suggested keywords for a segment (location + activity + extracted)
+ * Used for keyword chips in ReferenceImageModal
+ */
+const getSuggestedKeywords = (visualDirection: string, script: string): string[] => {
+  const text = visualDirection || script;
+  if (!text) return [];
+  
+  const suggestions: string[] = [];
+  
+  // Get location suggestions
+  const locationContext = extractLocationFromText(text);
+  if (locationContext) {
+    suggestions.push(...locationContext.suggestions);
+  }
+  
+  // Get activity suggestions
+  const activityContext = extractActivityFromText(text);
+  if (activityContext) {
+    suggestions.push(...activityContext.suggestions);
+  }
+  
+  // Dedupe
+  return [...new Set(suggestions)].slice(0, 6);
 };
 
 // ImageGallery Component - displays multiple images per segment
@@ -473,7 +631,7 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
         </div>
 
         {/* Reference image */}
-        <div className="mb-6">
+        <div className="mb-4">
           <label className="text-sm text-text-muted block mb-1">Reference Image URL (optional):</label>
           <div className="flex gap-2">
             <input
@@ -492,6 +650,29 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
             </Button>
           </div>
         </div>
+        
+        {/* Suggested Keywords Chips - 2026-01-14 */}
+        {(() => {
+          const suggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
+          if (suggestions.length === 0) return null;
+          return (
+            <div className="mb-6">
+              <label className="text-xs text-text-muted block mb-2">Search suggestions based on segment content:</label>
+              <div className="flex flex-wrap gap-2">
+                {suggestions.map((keyword, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setShowStockSearch(true)}
+                    className="px-2.5 py-1 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-full transition-colors"
+                    title={`Search for: ${keyword}`}
+                  >
+                    {keyword}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Action buttons */}
         <div className="flex gap-3">
@@ -730,6 +911,29 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
             </Button>
           </div>
           {error && <p className="text-xs text-red-500">{error}</p>}
+          
+          {/* Suggested Keywords Chips - 2026-01-14 */}
+          {segment && (() => {
+            const suggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
+            if (suggestions.length === 0) return null;
+            return (
+              <div className="flex flex-wrap gap-2">
+                <span className="text-xs text-text-muted self-center">Suggestions:</span>
+                {suggestions.map((keyword, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setSearchQuery(keyword);
+                      handleSearch(keyword);
+                    }}
+                    className="px-2.5 py-1 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-full transition-colors"
+                  >
+                    {keyword}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
           
           {/* Upload URL option */}
           <div className="flex gap-2">
