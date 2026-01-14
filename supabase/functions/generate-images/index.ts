@@ -38,6 +38,20 @@ import {
 } from '../_shared/lookups/index.ts'
 
 // ============================================================================
+// SMART KEYWORD EXTRACTION (2026-01-14 - Enhanced with Fuzzy + LLM)
+// 3-Layer extraction: Cache → Fuzzy Match → LLM Fallback
+// ============================================================================
+import {
+  extractKeywordsStructured,
+  extractKeywordsStructuredAsync,
+  enhancePromptWithKeywords,
+  enhancePromptWithKeywordsAsync,
+  extractLocationSmart,
+  type KeywordExtractionResult,
+  type LLMLocationResult,
+} from '../_shared/keywordExtractor.ts'
+
+// ============================================================================
 // STOCK IMAGE SEARCH - TEMPORARILY DISABLED (2026-01-11)
 // All segments use AI generation via fal.ai
 // TODO: Re-enable when stock image feature is ready
@@ -401,6 +415,7 @@ async function handleProcessSingle(
 ) {
   const { job_id, session_id, user_id } = requestBody
   const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
+  // Note: LLM location extraction uses api_keys_pool via supabase client (not direct API key)
 
   // Find job to process - either by job_id or find next pending in session
   let job: any = null
@@ -625,6 +640,50 @@ async function handleProcessSingle(
     console.log(`[PROCESS_SINGLE] Reference image: ${referenceImageForGeneration.substring(0, 60)}...`)
   }
 
+  // ========================================================================
+  // 2026-01-14: ASYNC PROMPT ENHANCEMENT for B-ROLL with LLM fallback
+  // Enhance visual_prompt with smart location extraction (Cache → Fuzzy → LLM)
+  // Uses api_keys_pool for Gemini rotation (handles rate limits automatically)
+  // ========================================================================
+  let finalVisualPrompt = job.visual_prompt || ''
+  
+  if (!isCreatorShot) {
+    try {
+      console.log(`[PROCESS_SINGLE] 🔍 Enhancing B-ROLL prompt with smart extraction...`)
+      
+      // Extract keywords with LLM fallback via api_keys_pool
+      const scriptText = job.script_text || ''
+      const keywordResult = await extractKeywordsStructuredAsync(
+        finalVisualPrompt, 
+        scriptText, 
+        supabase  // Pass supabase for api_keys_pool rotation
+      )
+      
+      if (keywordResult.locationFull) {
+        console.log(`[PROCESS_SINGLE] 📍 Location: ${keywordResult.locationFull} (via ${keywordResult.locationSource})`)
+      }
+      if (keywordResult.venue) {
+        console.log(`[PROCESS_SINGLE] 🏢 Venue: ${keywordResult.venue}`)
+      }
+      
+      // Enhance prompt with extracted keywords
+      const enhancedPrompt = await enhancePromptWithKeywordsAsync(
+        finalVisualPrompt,
+        scriptText,
+        finalVisualPrompt,
+        supabase  // Pass supabase for api_keys_pool rotation
+      )
+      
+      if (enhancedPrompt.length > finalVisualPrompt.length) {
+        console.log(`[PROCESS_SINGLE] ✅ Prompt enhanced: ${finalVisualPrompt.length} → ${enhancedPrompt.length} chars`)
+        finalVisualPrompt = enhancedPrompt
+      }
+    } catch (enhanceError) {
+      console.warn(`[PROCESS_SINGLE] ⚠️ Prompt enhancement failed, using original: ${enhanceError}`)
+      // Continue with original prompt
+    }
+  }
+
   // Helper function to generate image with a specific provider
   const generateWithProvider = async (providerKey: ImageModelKey): Promise<string | null> => {
     const providerConfig = IMAGE_MODELS[providerKey]
@@ -637,11 +696,11 @@ async function handleProcessSingle(
     if (providerConfig.provider === 'openai') {
       if (!openaiApiKey) throw new Error('OPENAI_API_KEY not configured')
       if (providerKey === 'dall-e-3') {
-        return await generateWithDalle(openaiApiKey, job.visual_prompt, aspectRatio, supabase)
+        return await generateWithDalle(openaiApiKey, finalVisualPrompt, aspectRatio, supabase)
       } else {
         return await generateWithGptImage1(
           openaiApiKey, 
-          job.visual_prompt, 
+          finalVisualPrompt, 
           aspectRatio, 
           supabase,
           referenceImageForGeneration
@@ -651,7 +710,7 @@ async function handleProcessSingle(
       if (!geminiGenApiKey) throw new Error('VEO_API_KEY (GeminiGen) not configured')
       return await generateWithGeminiGen(
         geminiGenApiKey,
-        job.visual_prompt,
+        finalVisualPrompt,
         aspectRatio,
         providerKey,
         supabase,
@@ -659,13 +718,13 @@ async function handleProcessSingle(
       )
     } else if (providerConfig.provider === 'huggingface') {
       if (!hfApiKey) throw new Error('HUGGINGFACE_API_KEY not configured')
-      return await generateWithFlux(hfApiKey, job.visual_prompt, aspectRatio, supabase)
+      return await generateWithFlux(hfApiKey, finalVisualPrompt, aspectRatio, supabase)
     } else if (providerConfig.provider === 'fal') {
       if (!falApiKey) throw new Error('FAL_AI_API_KEY not configured')
       // Pass multiRefImages for FLUX Kontext Multi model
       return await generateWithFalAi(
         falApiKey,
-        job.visual_prompt,
+        finalVisualPrompt,
         aspectRatio,
         providerKey,
         supabase,
@@ -1535,6 +1594,7 @@ interface PromptParams {
 
 // ============================================================================
 // CINEMATIC PROMPT BUILDER (2026-01-14 - Enhanced with Location + Contextual Costume)
+// SYNC version: Uses Cache + Fuzzy matching only
 // ============================================================================
 
 function buildCinematicPrompt(params: PromptParams): string {
@@ -1593,15 +1653,32 @@ function buildCinematicPrompt(params: PromptParams): string {
     console.log(`[buildCinematicPrompt] 🌍 Location detected: ${locationContext.country} - ${locationContext.environment}`)
   }
   
+  // ========================================================================
+  // 2026-01-14: SMART KEYWORD EXTRACTION for B-ROLL
+  // Extract location/venue/context from visual_direction + script for better prompts
+  // ========================================================================
+  const keywordResult = extractKeywordsStructured(visualDirection, scriptText)
+  if (keywordResult.fullKeywords) {
+    console.log(`[buildCinematicPrompt] 🔍 Keywords extracted: "${keywordResult.fullKeywords}"`)
+    if (keywordResult.locationFull) {
+      console.log(`[buildCinematicPrompt] 📍 Location resolved: ${keywordResult.locationFull}`)
+    }
+  }
+  
   // PRIMARY: Use visual_direction from script generation + INJECT LOCATION CONTEXT
   if (visualDirection && visualDirection.length > 50) {
     // ========================================================================
-    // 2026-01-14: Enhance prompt with location-specific cultural context
-    // This makes B-ROLL images more authentic (Japanese arcade, Indian market, etc.)
+    // 2026-01-14: Enhance prompt with:
+    // 1. Location-specific cultural context (from extractLocationContext)
+    // 2. Smart keyword extraction (venue, location hierarchy, context words)
     // ========================================================================
+    
+    // First: Apply keyword-based enhancements (venue names, location hierarchy)
+    let enhancedPrompt = enhancePromptWithKeywords(visualDirection, scriptText, visualDirection)
+    
+    // Second: Add location context if detected (architecture, signage, atmosphere)
     if (locationContext) {
-      // Build enhanced prompt with cultural/environmental hints
-      const enhancedPrompt = `${visualDirection}
+      enhancedPrompt = `${enhancedPrompt}
 
 Location context: ${locationContext.environment}.
 ${locationContext.architectureHints ? `Architecture: ${locationContext.architectureHints}.` : ''}
@@ -1609,27 +1686,153 @@ ${locationContext.signageHints ? `Signage: ${locationContext.signageHints}.` : '
 ${locationContext.atmosphereHints ? `Atmosphere: ${locationContext.atmosphereHints}.` : ''}
 ${locationContext.peopleDescription ? `People: ${locationContext.peopleDescription}.` : ''}`
       
-      console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with ${locationContext.country} context (${enhancedPrompt.length} chars)`)
-      return enhancedPrompt.trim()
+      console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with ${locationContext.country} context + keywords (${enhancedPrompt.length} chars)`)
+    } else {
+      console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with keywords (${enhancedPrompt.length} chars)`)
     }
     
-    console.log(`[buildCinematicPrompt] ✅ Using visual_direction directly (${visualDirection.length} chars)`)
-    return visualDirection
+    return enhancedPrompt.trim()
   }
   
-  // FALLBACK: If no visual_direction, build basic cinematic prompt from topic + location
-  console.log(`[buildCinematicPrompt] ⚠️ No visual_direction, using topic-based fallback`)
+  // FALLBACK: If no visual_direction, build basic cinematic prompt from topic + keywords
+  console.log(`[buildCinematicPrompt] ⚠️ No visual_direction, using topic + keyword fallback`)
   
-  let visual = topic 
-    ? `Professional ${topic} concept visualization`
-    : 'Modern technology concept - clean professional imagery'
+  // Use extracted keywords if available
+  let visual = keywordResult.fullKeywords && keywordResult.fullKeywords.length > 5
+    ? `${keywordResult.fullKeywords} - professional visualization`
+    : topic 
+      ? `Professional ${topic} concept visualization`
+      : 'Modern technology concept - clean professional imagery'
   
-  // Add location context to fallback if detected from topic
-  const topicLocationContext = extractLocationContext(topic)
+  // Add location context to fallback if detected from keywords or topic
+  const topicLocationContext = keywordResult.locationFull 
+    ? { environment: keywordResult.locationFull } 
+    : extractLocationContext(topic)
+  
   if (topicLocationContext) {
-    visual = `${visual} in ${topicLocationContext.environment}.
-${topicLocationContext.architectureHints ? `Setting: ${topicLocationContext.architectureHints}.` : ''}
-${topicLocationContext.atmosphereHints ? `Atmosphere: ${topicLocationContext.atmosphereHints}.` : ''}`
+    visual = `${visual} in ${topicLocationContext.environment}.`
+    if ((topicLocationContext as any).architectureHints) {
+      visual += `\nSetting: ${(topicLocationContext as any).architectureHints}.`
+    }
+    if ((topicLocationContext as any).atmosphereHints) {
+      visual += `\nAtmosphere: ${(topicLocationContext as any).atmosphereHints}.`
+    }
+  }
+  
+  console.log(`[buildCinematicPrompt] Fallback visual: "${visual.substring(0, 100)}..."`)
+  
+  return `Cinematic ${mappedShotType} of ${visual}.
+Film stock: Vision3 500T. Color: Teal-orange grade.
+Professional cinematography, 8K quality.
+Clean frame, no text, no watermarks.`
+}
+
+// ============================================================================
+// CINEMATIC PROMPT BUILDER - ASYNC VERSION (2026-01-14)
+// Uses Cache + Fuzzy + LLM fallback for unknown locations
+// Call this from handleProcessSingle where Gemini API key is available
+// ============================================================================
+
+interface AsyncPromptParams extends PromptParams {
+  geminiApiKey?: string
+}
+
+async function buildCinematicPromptAsync(params: AsyncPromptParams): Promise<string> {
+  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, geminiApiKey } = params
+  
+  const shotType = segment.shot_type || 'B-ROLL'
+  const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
+  const visualDirection = segment.visual_prompt || segment.visual_direction || ''
+  const scriptText = segment.script_text || segment.voiceover || segment.text || ''
+  
+  // Get segment defaults from lookup module
+  const segmentDefaults = getSegmentDefaults(segmentType) || getSegmentDefaults('BODY')
+  const defaultShot = ['HOOK', 'CTA', 'LOOP-END'].includes(segmentType) ? 'CU' : 'MS'
+  const mappedShotType = segmentDefaults?.shot || defaultShot
+
+  // CREATOR SHOT - Use ENHANCED cinematography prompt builder (same as sync)
+  if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)) {
+    const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
+    const contextualCostume = getContextualCostume(topic, `${scriptText} ${visualDirection}`)
+    
+    const fullPrompt = buildFullCinematographyPrompt({
+      characterDescription: charDesc,
+      emotion: emotion,
+      topic: topic,
+      shotType: mappedShotType,
+      segmentType: segmentType,
+      aspectRatio: aspectRatio,
+      costume: contextualCostume,
+      visualReference: undefined
+    })
+    
+    return fullPrompt
+  }
+  
+  // ========================================================================
+  // B-ROLL SHOT - ASYNC with LLM fallback for unknown locations
+  // Layer 1: Cache → Layer 2: Fuzzy → Layer 3: LLM (Gemini 2.0 Flash)
+  // ========================================================================
+  
+  console.log(`[buildCinematicPromptAsync] B-ROLL Segment: ${segmentType}`)
+  
+  // Extract location context (sync - from lookups)
+  const locationContext = extractLocationContext(visualDirection)
+  
+  // ========================================================================
+  // SMART KEYWORD EXTRACTION with LLM fallback
+  // ========================================================================
+  const keywordResult = await extractKeywordsStructuredAsync(visualDirection, scriptText, geminiApiKey)
+  
+  if (keywordResult.fullKeywords) {
+    console.log(`[buildCinematicPromptAsync] 🔍 Keywords: "${keywordResult.fullKeywords}"`)
+    console.log(`[buildCinematicPromptAsync] 📍 Location: ${keywordResult.locationFull || 'none'} (via ${keywordResult.locationSource || 'none'})`)
+  }
+  
+  // PRIMARY: Use visual_direction + enhanced location extraction
+  if (visualDirection && visualDirection.length > 50) {
+    // Use async enhancement with LLM fallback
+    let enhancedPrompt = await enhancePromptWithKeywordsAsync(
+      visualDirection, 
+      scriptText, 
+      visualDirection,
+      geminiApiKey
+    )
+    
+    // Add location context if detected (architecture, signage, atmosphere)
+    if (locationContext) {
+      enhancedPrompt = `${enhancedPrompt}
+
+Location context: ${locationContext.environment}.
+${locationContext.architectureHints ? `Architecture: ${locationContext.architectureHints}.` : ''}
+${locationContext.signageHints ? `Signage: ${locationContext.signageHints}.` : ''}
+${locationContext.atmosphereHints ? `Atmosphere: ${locationContext.atmosphereHints}.` : ''}
+${locationContext.peopleDescription ? `People: ${locationContext.peopleDescription}.` : ''}`
+      
+      console.log(`[buildCinematicPromptAsync] ✅ B-ROLL enhanced with ${locationContext.country} context (${enhancedPrompt.length} chars)`)
+    } else {
+      console.log(`[buildCinematicPromptAsync] ✅ B-ROLL enhanced (${enhancedPrompt.length} chars)`)
+    }
+    
+    return enhancedPrompt.trim()
+  }
+  
+  // FALLBACK: Build from topic + async keywords
+  console.log(`[buildCinematicPromptAsync] ⚠️ No visual_direction, using fallback`)
+  
+  let visual = keywordResult.fullKeywords && keywordResult.fullKeywords.length > 5
+    ? `${keywordResult.fullKeywords} - professional visualization`
+    : topic 
+      ? `Professional ${topic} concept visualization`
+      : 'Modern technology concept - clean professional imagery'
+  
+  // Add location context if detected
+  const topicLocationContext = keywordResult.locationFull 
+    ? { environment: keywordResult.locationFull } 
+    : extractLocationContext(topic)
+  
+  if (topicLocationContext) {
+    visual = `${visual} in ${topicLocationContext.environment}.`
   }
   
   return `Cinematic ${mappedShotType} of ${visual}.

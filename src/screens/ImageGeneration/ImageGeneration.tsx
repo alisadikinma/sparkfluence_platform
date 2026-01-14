@@ -6,6 +6,8 @@ import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segmentDuration";
+import { extractKeywords, extractKeywordsStructured, getSuggestedKeywords, LOCATION_HIERARCHY } from "../../lib/keywordExtractor";
+import { VisualPreviewGallery } from "./components/VisualPreviewGallery";
 import {
   RefreshCw, ImageIcon, Loader2,
   Sparkles, X, Maximize2, AlertCircle,
@@ -94,205 +96,7 @@ interface ImageModelSettings {
   bRoll: 'auto' | 'qwen-image' | 'seedream-v4';
 }
 
-// Enhanced keyword extraction - extracts products, brands, people, core subjects
-// ============================================================================
-// LOCATION KEYWORDS - Frontend mapping for search suggestions (2026-01-14)
-// Mirrors backend LOCATION_CONTEXTS for consistent keyword extraction
-// ============================================================================
-const LOCATION_KEYWORDS: Record<string, { searchTerms: string[]; suggestedKeywords: string[] }> = {
-  // Japan
-  japan: { searchTerms: ['japanese', 'japan', 'nippon'], suggestedKeywords: ['japanese', 'tokyo', 'neon signs'] },
-  tokyo: { searchTerms: ['tokyo', 'shibuya', 'shinjuku', 'akihabara', 'harajuku', 'ginza'], suggestedKeywords: ['tokyo street', 'japanese neon', 'tokyo night'] },
-  shinjuku: { searchTerms: ['shinjuku'], suggestedKeywords: ['shinjuku neon', 'tokyo arcade', 'japanese nightlife'] },
-  shibuya: { searchTerms: ['shibuya'], suggestedKeywords: ['shibuya crossing', 'tokyo fashion', 'harajuku style'] },
-  akihabara: { searchTerms: ['akihabara', 'akiba'], suggestedKeywords: ['anime street', 'gaming arcade', 'otaku culture'] },
-  osaka: { searchTerms: ['osaka', 'dotonbori', 'namba'], suggestedKeywords: ['osaka street', 'dotonbori lights', 'japanese food'] },
-  kyoto: { searchTerms: ['kyoto', 'gion'], suggestedKeywords: ['kyoto temple', 'japanese garden', 'traditional japan'] },
-  
-  // Korea
-  korea: { searchTerms: ['korean', 'korea', 'hangul'], suggestedKeywords: ['korean', 'seoul', 'kpop style'] },
-  seoul: { searchTerms: ['seoul', 'gangnam', 'hongdae', 'myeongdong'], suggestedKeywords: ['seoul street', 'korean neon', 'kbeauty'] },
-  
-  // China
-  china: { searchTerms: ['chinese', 'china'], suggestedKeywords: ['chinese', 'shanghai', 'beijing'] },
-  shanghai: { searchTerms: ['shanghai', 'pudong', 'bund'], suggestedKeywords: ['shanghai skyline', 'chinese modern', 'pudong lights'] },
-  beijing: { searchTerms: ['beijing', 'forbidden city'], suggestedKeywords: ['beijing architecture', 'chinese traditional', 'great wall'] },
-  hongkong: { searchTerms: ['hong kong', 'hongkong', 'hk'], suggestedKeywords: ['hong kong neon', 'victoria harbour', 'chinese signs'] },
-  
-  // Southeast Asia
-  singapore: { searchTerms: ['singapore', 'sg'], suggestedKeywords: ['singapore skyline', 'marina bay', 'asian modern'] },
-  thailand: { searchTerms: ['thai', 'thailand', 'bangkok'], suggestedKeywords: ['bangkok street', 'thai temple', 'southeast asian'] },
-  bali: { searchTerms: ['bali', 'ubud', 'kuta'], suggestedKeywords: ['bali rice field', 'balinese temple', 'tropical paradise'] },
-  jakarta: { searchTerms: ['jakarta', 'indonesia'], suggestedKeywords: ['jakarta city', 'indonesian street', 'southeast asian'] },
-  vietnam: { searchTerms: ['vietnam', 'vietnamese', 'hanoi', 'saigon', 'ho chi minh'], suggestedKeywords: ['vietnamese street', 'hanoi old quarter', 'vietnam food'] },
-  
-  // India
-  india: { searchTerms: ['indian', 'india', 'hindi'], suggestedKeywords: ['indian', 'mumbai', 'colorful market'] },
-  mumbai: { searchTerms: ['mumbai', 'bombay'], suggestedKeywords: ['mumbai street', 'bollywood', 'indian city'] },
-  delhi: { searchTerms: ['delhi', 'new delhi'], suggestedKeywords: ['delhi architecture', 'indian culture', 'mughal style'] },
-  
-  // Middle East
-  dubai: { searchTerms: ['dubai', 'uae', 'abu dhabi'], suggestedKeywords: ['dubai skyline', 'burj khalifa', 'luxury modern'] },
-  
-  // Europe
-  paris: { searchTerms: ['paris', 'french', 'france'], suggestedKeywords: ['paris street', 'eiffel tower', 'french cafe'] },
-  london: { searchTerms: ['london', 'british', 'uk', 'england'], suggestedKeywords: ['london street', 'british style', 'big ben'] },
-  berlin: { searchTerms: ['berlin', 'german', 'germany'], suggestedKeywords: ['berlin urban', 'german street', 'european city'] },
-  amsterdam: { searchTerms: ['amsterdam', 'dutch', 'netherlands'], suggestedKeywords: ['amsterdam canal', 'dutch architecture', 'european style'] },
-  rome: { searchTerms: ['rome', 'italian', 'italy'], suggestedKeywords: ['rome architecture', 'italian street', 'colosseum'] },
-  
-  // Americas
-  newyork: { searchTerms: ['new york', 'nyc', 'manhattan', 'brooklyn', 'times square'], suggestedKeywords: ['new york city', 'manhattan skyline', 'times square'] },
-  losangeles: { searchTerms: ['los angeles', 'la', 'hollywood', 'venice beach'], suggestedKeywords: ['los angeles', 'hollywood sign', 'california'] },
-  miami: { searchTerms: ['miami', 'south beach'], suggestedKeywords: ['miami beach', 'art deco', 'florida'] },
-  sanfrancisco: { searchTerms: ['san francisco', 'sf', 'silicon valley'], suggestedKeywords: ['san francisco', 'golden gate', 'tech hub'] },
-};
-
-// Activity keywords for costume context (used in search suggestions)
-const ACTIVITY_KEYWORDS: Record<string, { searchTerms: string[]; suggestedKeywords: string[] }> = {
-  gaming: { searchTerms: ['gaming', 'arcade', 'game center', 'video game', 'esports', 'gamer'], suggestedKeywords: ['gaming setup', 'arcade machine', 'esports'] },
-  fitness: { searchTerms: ['gym', 'workout', 'fitness', 'exercise', 'running', 'yoga'], suggestedKeywords: ['gym interior', 'fitness equipment', 'workout'] },
-  food: { searchTerms: ['cafe', 'coffee shop', 'restaurant', 'food', 'cooking', 'kitchen'], suggestedKeywords: ['cafe interior', 'food photography', 'restaurant'] },
-  tech: { searchTerms: ['coding', 'programming', 'developer', 'tech', 'startup', 'computer'], suggestedKeywords: ['tech office', 'coding setup', 'startup'] },
-  medical: { searchTerms: ['medical', 'doctor', 'hospital', 'health', 'clinic'], suggestedKeywords: ['hospital', 'medical equipment', 'healthcare'] },
-  travel: { searchTerms: ['travel', 'vacation', 'tourist', 'adventure', 'backpack'], suggestedKeywords: ['travel destination', 'tourist spot', 'adventure'] },
-  nightlife: { searchTerms: ['nightlife', 'club', 'bar', 'party', 'night out'], suggestedKeywords: ['nightclub', 'bar interior', 'party lights'] },
-  business: { searchTerms: ['business', 'meeting', 'corporate', 'office', 'presentation'], suggestedKeywords: ['office space', 'business meeting', 'corporate'] },
-};
-
-/**
- * Extract location context from text
- * Returns detected locations with search suggestions
- */
-const extractLocationFromText = (text: string): { location: string; suggestions: string[] } | null => {
-  if (!text) return null;
-  const lowerText = text.toLowerCase();
-  
-  // Check specific locations first (more specific = higher priority)
-  const locationPriority = ['shinjuku', 'shibuya', 'akihabara', 'gangnam', 'hongdae', 'pudong', 
-    'tokyo', 'osaka', 'kyoto', 'seoul', 'shanghai', 'beijing', 'hongkong',
-    'singapore', 'bangkok', 'bali', 'jakarta', 'mumbai', 'delhi', 'dubai',
-    'newyork', 'losangeles', 'miami', 'sanfrancisco', 'paris', 'london', 'berlin', 'amsterdam', 'rome',
-    'japan', 'korea', 'china', 'thailand', 'vietnam', 'india'];
-  
-  for (const locKey of locationPriority) {
-    const locData = LOCATION_KEYWORDS[locKey];
-    if (!locData) continue;
-    
-    for (const term of locData.searchTerms) {
-      if (lowerText.includes(term)) {
-        return { location: locKey, suggestions: locData.suggestedKeywords };
-      }
-    }
-  }
-  
-  return null;
-};
-
-/**
- * Extract activity context from text
- * Returns detected activity with search suggestions
- */
-const extractActivityFromText = (text: string): { activity: string; suggestions: string[] } | null => {
-  if (!text) return null;
-  const lowerText = text.toLowerCase();
-  
-  for (const [actKey, actData] of Object.entries(ACTIVITY_KEYWORDS)) {
-    for (const term of actData.searchTerms) {
-      if (lowerText.includes(term)) {
-        return { activity: actKey, suggestions: actData.suggestedKeywords };
-      }
-    }
-  }
-  
-  return null;
-};
-
-const extractKeywords = (visualDirection: string, script: string): string => {
-  const text = visualDirection || script;
-  if (!text) return '';
-  
-  const keywords: string[] = [];
-  
-  // ========================================================================
-  // 2026-01-14: PRIORITY 1 - Extract location-specific keywords
-  // If text mentions Shinjuku/Tokyo/Japan, prioritize location terms
-  // ========================================================================
-  const locationContext = extractLocationFromText(text);
-  if (locationContext) {
-    // Add the first suggested keyword for location
-    keywords.push(locationContext.suggestions[0]);
-  }
-  
-  // ========================================================================
-  // 2026-01-14: PRIORITY 2 - Extract activity-specific keywords
-  // If text mentions gaming/arcade/gym, add activity terms
-  // ========================================================================
-  const activityContext = extractActivityFromText(text);
-  if (activityContext) {
-    keywords.push(activityContext.suggestions[0]);
-  }
-  
-  // 3. Extract capitalized phrases (likely proper nouns/brands)
-  // Matches: "Tesla Model S", "Elon Musk", "iPhone 17 Pro"
-  const properNouns = text.match(/[A-Z][a-zA-Z]*(?:\s+[A-Z0-9][a-zA-Z0-9]*)+/g) || [];
-  keywords.push(...properNouns.slice(0, 2));
-  
-  // 4. Extract product patterns (brand + model)
-  // Matches: "iPhone 17", "Model S", "Galaxy S24", "RTX 4090"
-  const productPatterns = text.match(/\b(?:iPhone|iPad|MacBook|Galaxy|Pixel|Tesla|Model|RTX|GTX|AMD|Intel|Nike|Adidas|BMW|Mercedes|Porsche|Ferrari|Samsung|Sony|Canon|Nikon|GoPro|DJI)\s*[A-Z0-9]+(?:\s*(?:Pro|Max|Ultra|Plus|Mini|Air|SE))?/gi) || [];
-  keywords.push(...productPatterns.slice(0, 2));
-  
-  // 5. Extract quoted terms (often key subjects)
-  const quoted = text.match(/"([^"]+)"|'([^']+)'/g)?.map(q => q.replace(/['"]/g, '')) || [];
-  keywords.push(...quoted.slice(0, 1));
-  
-  // 6. Fallback: Extract noun phrases after "of" (e.g., "shot of coffee shop")
-  const ofPhrases = text.match(/(?:of|showing|featuring)\s+(?:a\s+)?([a-z]+(?:\s+[a-z]+){0,2})/gi) || [];
-  keywords.push(...ofPhrases.map(p => p.replace(/^(?:of|showing|featuring)\s+(?:a\s+)?/i, '')).slice(0, 1));
-  
-  // 7. Last fallback: First capitalized word or meaningful noun
-  if (keywords.length === 0) {
-    const fallback = text.match(/[A-Z][a-z]+/);
-    if (fallback) keywords.push(fallback[0]);
-    else {
-      // Extract first 2-3 non-stopword words
-      const stopwords = new Set(['the', 'a', 'an', 'is', 'are', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'yang', 'dan', 'di', 'ke', 'cinematic', 'shot', 'scene', 'frame']);
-      const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !stopwords.has(w)).slice(0, 2);
-      keywords.push(...words);
-    }
-  }
-  
-  // Dedupe and join
-  const unique = [...new Set(keywords.map(k => k.trim()))].filter(k => k.length > 1);
-  return unique.slice(0, 4).join(' '); // Increased from 3 to 4 keywords
-};
-
-/**
- * Get all suggested keywords for a segment (location + activity + extracted)
- * Used for keyword chips in ReferenceImageModal
- */
-const getSuggestedKeywords = (visualDirection: string, script: string): string[] => {
-  const text = visualDirection || script;
-  if (!text) return [];
-  
-  const suggestions: string[] = [];
-  
-  // Get location suggestions
-  const locationContext = extractLocationFromText(text);
-  if (locationContext) {
-    suggestions.push(...locationContext.suggestions);
-  }
-  
-  // Get activity suggestions
-  const activityContext = extractActivityFromText(text);
-  if (activityContext) {
-    suggestions.push(...activityContext.suggestions);
-  }
-  
-  // Dedupe
-  return [...new Set(suggestions)].slice(0, 6);
-};
+// Keyword extraction functions imported from lib/keywordExtractor.ts
 
 // ImageGallery Component - displays multiple images per segment
 interface ImageGalleryProps {
@@ -1748,6 +1552,51 @@ export const ImageGeneration = (): JSX.Element => {
     }
   }, [user, sessionId]);
 
+  // Delete image from gallery
+  const handleDeleteImage = useCallback(async (imageId: string) => {
+    if (!user || !sessionId) return;
+
+    // Confirm deletion
+    const confirmMsg = language === 'id'
+      ? 'Hapus gambar ini?'
+      : 'Delete this image?';
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      // Delete from database
+      const { error } = await supabase
+        .from('image_generation_jobs')
+        .delete()
+        .eq('id', imageId)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      // Update local state - remove the image
+      setSegments(prev => prev.map(seg => {
+        const updatedImages = seg.images.filter(img => img.id !== imageId);
+        const wasSelected = seg.images.find(img => img.id === imageId)?.isSelected;
+
+        // If deleted image was selected, select the first remaining
+        let newSelectedImage = updatedImages.find(img => img.isSelected);
+        if (wasSelected && updatedImages.length > 0 && !newSelectedImage) {
+          updatedImages[0].isSelected = true;
+          newSelectedImage = updatedImages[0];
+        }
+
+        return {
+          ...seg,
+          images: updatedImages,
+          imageUrl: newSelectedImage?.imageUrl || null
+        };
+      }));
+
+    } catch (err) {
+      console.error('Failed to delete image:', err);
+      alert(language === 'id' ? 'Gagal menghapus gambar' : 'Failed to delete image');
+    }
+  }, [user, sessionId, language]);
+
   const handleRegenerateWithNotes = useCallback(async (notes: string, referenceImageUrl?: string) => {
     if (!user || !sessionId || !regenerateModal.segment) return;
 
@@ -2186,80 +2035,24 @@ export const ImageGeneration = (): JSX.Element => {
                               <span className="text-pink-600 dark:text-pink-400 ml-1">({uiText.creatorShot})</span>
                             )}
                           </label>
-                          <div className="w-full aspect-[9/16] sm:h-56 bg-surface border border-border-default rounded-lg overflow-hidden relative">
-                            {segment.isGeneratingImage ? (
-                              <div className="w-full h-full flex flex-col items-center justify-center">
-                                <Loader2 className="w-6 h-6 text-primary animate-spin mb-2" />
-                                <span className="text-text-secondary text-xs">{uiText.generating}</span>
-                              </div>
-                            ) : segment.imageUrl ? (
-                              <>
-                                <img
-                                  src={segment.imageUrl}
-                                  alt={`${segment.type} visual`}
-                                  className="w-full h-full object-cover cursor-pointer"
-                                  onClick={() => setPreviewImage(segment.imageUrl)}
-                                />
-                                {isCreatorShot && (
-                                  <div className="absolute bottom-1 left-1 bg-pink-500/80 text-white text-[10px] px-1.5 py-0.5 rounded">
-                                    Creator
-                                  </div>
-                                )}
-                                <div className="absolute inset-0 bg-black/0 hover:bg-black/50 transition-all flex items-center justify-center gap-2 opacity-0 hover:opacity-100">
-                                  <button
-                                    onClick={() => setPreviewImage(segment.imageUrl)}
-                                    className="p-2 bg-white/20 rounded-lg backdrop-blur-sm"
-                                    title="Preview"
-                                  >
-                                    <Maximize2 className="w-4 h-4 text-white" />
-                                  </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (segment.imageUrl) handleDownloadImage(segment.imageUrl, segment.type, segment.id);
-                                    }}
-                                    className="p-2 bg-green-600 rounded-lg"
-                                    title="Download"
-                                  >
-                                    <Download className="w-4 h-4 text-white" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleGenerateImage(segment.id)}
-                                    className="p-2 bg-primary rounded-lg"
-                                    title="Regenerate"
-                                    disabled={isBackgroundMode}
-                                  >
-                                    <RefreshCw className="w-4 h-4 text-white" />
-                                  </button>
-                                </div>
-                              </>
-                            ) : segment.imageError ? (
-                              <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center">
-                                <AlertCircle className="w-6 h-6 text-red-500 dark:text-red-400 mb-2" />
-                                <p className="text-red-500 dark:text-red-400 text-xs mb-3 line-clamp-2">{segment.imageError}</p>
-                                <Button
-                                  onClick={() => handleGenerateImage(segment.id)}
-                                  size="sm"
-                                  disabled={isBackgroundMode}
-                                  className="bg-primary hover:bg-primary-hover text-white text-xs"
-                                >
-                                  <RefreshCw className="w-3 h-3 mr-1" />
-                                  Retry
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center p-3">
-                                <Button
-                                  onClick={() => handleGenerateImage(segment.id)}
-                                  disabled={isGeneratingAll || isBackgroundMode}
-                                  className="bg-primary hover:bg-primary-hover text-white"
-                                >
-                                  <ImageIcon className="w-4 h-4 mr-2" />
-                                  {uiText.generateImage}
-                                </Button>
-                              </div>
-                            )}
-                          </div>
+                          {/* NEW: VisualPreviewGallery with WOW effects */}
+                          <VisualPreviewGallery
+                            images={segment.images || []}
+                            segmentId={segment.id}
+                            segmentType={segment.type}
+                            isCreatorShot={isCreatorShot}
+                            isGenerating={segment.isGeneratingImage}
+                            imageError={segment.imageError || null}
+                            selectedImageUrl={segment.imageUrl}
+                            onGenerate={() => handleGenerateImage(segment.id)}
+                            onRegenerate={() => setRegenerateModal({ isOpen: true, segment })}
+                            onSelectImage={(imageId) => handleSelectImage(imageId, parseInt(segment.id))}
+                            onDeleteImage={handleDeleteImage}
+                            onPreview={setPreviewImage}
+                            onDownload={(imageUrl) => handleDownloadImage(imageUrl, segment.type, segment.id)}
+                            disabled={isBackgroundMode || isGeneratingAll}
+                            language={language}
+                          />
 
                           {/* Add Reference Image Button - Only for B-ROLL segments */}
                           {!isCreatorShot && (
@@ -2439,19 +2232,7 @@ export const ImageGeneration = (): JSX.Element => {
                             </div>
                           )}
 
-                          {/* Image Gallery - Multi-image support */}
-                          <ImageGallery
-                            images={segment.images || []}
-                            segmentNumber={parseInt(segment.id)}
-                            sessionId={sessionId}
-                            onSelectImage={(imageId) => handleSelectImage(imageId, parseInt(segment.id))}
-                            onRegenerateImage={() => setRegenerateModal({ isOpen: true, segment })}
-                            onDeleteImage={(imageId) => {
-                              console.log('Delete image:', imageId);
-                              // TODO: Implement handleDeleteImage (optional feature)
-                            }}
-                            disabled={isBackgroundMode}
-                          />
+
                         </div>
                       </div>
                     </div>
