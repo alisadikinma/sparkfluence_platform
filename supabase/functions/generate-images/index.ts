@@ -53,12 +53,17 @@ import {
 } from '../_shared/keywordExtractor.ts'
 
 // ============================================================================
-// PROMPT SYNTHESIZER (2026-01-14 - Comprehensive Prompt Synthesis)
+// PROMPT SYNTHESIZER (2026-01-15 - Comprehensive Prompt Synthesis v2.0)
 // Combines visual_direction + notes + flags into ONE coherent prompt via LLM
+// NEW: getContextualOutfitAsync + buildCreatorPromptAsync
 // ============================================================================
 import {
   synthesizeImagePrompt,
+  getContextualOutfitAsync,
+  buildCreatorPromptAsync,
   type PromptSynthesisInput,
+  type ContextualOutfitInput,
+  type CreatorPromptInput,
 } from '../_shared/promptSynthesizer.ts'
 
 // ============================================================================
@@ -96,13 +101,17 @@ const JOB_STATUS = {
 }
 
 // ============================================================================
-// IMAGE PROVIDER SELECTION (2026-01-14 Updated with Seedream v4 + QWEN)
+// IMAGE PROVIDER SELECTION (2026-01-15 SIMPLIFIED)
 // ============================================================================
-// PRIORITY:
-//   - CREATOR (HOOK/CTA) WITH ref: fal-nano-banana-edit (face consistency via image_urls)
-//   - CREATOR (HOOK/CTA) NO ref: fal-nano-banana (text-to-image)
-//   - B-ROLL WITH ref: fal-nano-banana-edit (scene reference via image_urls)
-//   - B-ROLL NO ref: Use brollModel from header (seedream-v4 / qwen-image / default)
+// UNIFIED LOGIC:
+//   - ANY reference image (1+): fal-nano-banana-edit (up to 14 refs, best face consistency)
+//   - NO reference image: fal-seedream-v4 (high-quality text-to-image)
+//
+// Rationale (from flux-multiimage-research.md):
+//   - Nano Banana Pro /edit has intelligent semantic weighting (auto-prioritizes face)
+//   - Supports up to 14 reference images vs FLUX Kontext's practical 2-4 limit
+//   - Better for "same person + different environment" workflows
+//   - $0.15/edit cost-effective for iteration
 // ============================================================================
 
 interface ProviderSelection {
@@ -110,77 +119,42 @@ interface ProviderSelection {
   fallback: ImageModelKey;
 }
 
-// Default B-ROLL model when 'auto' mode
-const DEFAULT_BROLL_MODEL: ImageModelKey = 'fal-seedream-v4'
-
 function selectImageProvider(
-  isCreatorShot: boolean, 
+  _isCreatorShot: boolean,           // Unused in simplified logic (kept for API compat)
   hasReferenceImage: boolean = false,
-  brollModel?: ImageModelKey,  // User's B-ROLL model choice from header
-  includeCreatorFace: boolean = false,  // NEW: B-ROLL with creator face checkbox
-  hasCreatorRef: boolean = false  // NEW: Has creator avatar for B-ROLL multi-ref
+  _brollModel?: ImageModelKey,       // Unused in simplified logic (kept for API compat)
+  includeCreatorFace: boolean = false,
+  hasCreatorRef: boolean = false
 ): ProviderSelection {
-  if (isCreatorShot) {
+  // ========================================================================
+  // SIMPLIFIED DECISION: Check if ANY reference image exists
+  // ========================================================================
+  const hasAnyReference = hasReferenceImage || hasCreatorRef || includeCreatorFace
+  
+  if (hasAnyReference) {
     // ========================================================================
-    // CREATOR SHOTS (HOOK/CTA/LOOP-END) - Face consistency
+    // WITH REFERENCE IMAGE(S) → Nano Banana Pro /edit
+    // - Supports up to 14 reference images in image_urls array
+    // - Intelligent semantic weighting (auto-prioritizes based on prompt)
+    // - Best for face consistency across segments
+    // - Works for both CREATOR shots (avatar) and B-ROLL (scene ref)
     // ========================================================================
-    if (hasReferenceImage) {
-      // With avatar reference: use /edit endpoint for face consistency
-      return {
-        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (face consistency via image_urls)
-        fallback: 'gpt-image-1'            // OpenAI fallback for face consistency
-      }
-    } else {
-      // Without avatar reference: use text-to-image
-      return {
-        primary: 'fal-nano-banana',  // fal.ai Nano Banana Pro T2I
-        fallback: 'gpt-image-1'      // OpenAI fallback
-      }
+    console.log(`[selectImageProvider] Has reference(s) → fal-nano-banana-edit`)
+    return {
+      primary: 'fal-nano-banana-edit',
+      fallback: 'fal-seedream-v4'  // Fallback to T2I if edit fails
     }
   } else {
     // ========================================================================
-    // B-ROLL SEGMENTS - Model selection based on reference images
+    // NO REFERENCE IMAGE → Seedream v4 (Text-to-Image)
+    // - ByteDance's high-quality T2I model
+    // - Up to 4096px resolution
+    // - Excellent for B-ROLL cinematic shots
     // ========================================================================
-    
-    // CASE 1: Multi-ref (creator face + scene reference) → FLUX Kontext Multi
-    // Requires BOTH creator avatar AND scene reference image
-    if (includeCreatorFace && hasCreatorRef && hasReferenceImage) {
-      return {
-        primary: 'fal-flux-kontext-multi',  // FLUX Kontext Max Multi (2 images: creator + scene)
-        fallback: 'fal-nano-banana-edit'     // Fallback to single-ref if multi-ref fails
-      }
-    }
-    
-    // CASE 2: Single scene reference (no creator face) → Nano Banana Edit
-    // User uploaded scene reference, no creator face checkbox
-    if (!includeCreatorFace && hasReferenceImage) {
-      return {
-        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (1 image: scene reference)
-        fallback: 'fal-nano-banana'        // Fallback to T2I
-      }
-    }
-    
-    // CASE 3: Creator face only (no scene reference) → Nano Banana Edit
-    // Edge case: User checked creator face but didn't upload scene reference
-    // Treat creator avatar as single reference image
-    if (includeCreatorFace && hasCreatorRef && !hasReferenceImage) {
-      console.log(`[selectImageProvider] ⚠️ B-ROLL has creator face but no scene reference - using creator as single ref`)
-      return {
-        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (1 image: creator as reference)
-        fallback: 'fal-nano-banana'        // Fallback to T2I
-      }
-    }
-    
-    // CASE 4: No reference images at all → Use default B-ROLL model (Seedream v4 / Qwen)
-    // Pure text-to-image generation based on visual_direction
-    const selectedModel = brollModel || DEFAULT_BROLL_MODEL
-    const fallbackModel: ImageModelKey = selectedModel === 'fal-seedream-v4' 
-      ? 'fal-qwen-image' 
-      : 'fal-seedream-v4'
-    
+    console.log(`[selectImageProvider] No reference → fal-seedream-v4 (T2I)`)
     return {
-      primary: selectedModel,   // User's choice (Seedream v4 / Qwen) or default
-      fallback: fallbackModel   // Swap between Seedream <-> Qwen
+      primary: 'fal-seedream-v4',
+      fallback: 'fal-qwen-image'  // Qwen as backup T2I
     }
   }
 }
@@ -354,15 +328,12 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     const hasCreatorRef = !!creatorRefForBroll
     
     // ========================================================================
-    // PROVIDER SELECTION (2026-01-14 - Updated with FLUX Kontext Multi)
-    // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
-    // CREATOR no ref: fal-nano-banana → gpt-image-1
-    // B-ROLL with include_creator_face: fal-flux-kontext-multi → fal-nano-banana-edit
-    // B-ROLL with ref: fal-nano-banana-edit → fal-nano-banana
-    // B-ROLL no ref: broll_model (seedream-v4/qwen/etc) → fallback
+    // PROVIDER SELECTION (2026-01-15 - SIMPLIFIED)
+    // ANY reference image (1+): fal-nano-banana-edit → fal-seedream-v4
+    // NO reference image: fal-seedream-v4 → fal-qwen-image
     // ========================================================================
     let segmentProvider: ImageModelKey = defaultProvider as ImageModelKey
-    let fallbackProvider: ImageModelKey = 'flux-schnell'
+    let fallbackProvider: ImageModelKey = 'fal-seedream-v4'
     
     if (defaultProvider === 'auto') {
       const providerChoice = selectImageProvider(
@@ -633,7 +604,7 @@ async function handleProcessSingle(
   // Try primary provider first, then fallback if fails
   // ========================================================================
   const primaryProvider = (job.provider || 'nano-banana-pro') as ImageModelKey
-  const fallbackProvider = (job.fallback_provider || 'flux-schnell') as ImageModelKey
+  const fallbackProvider = (job.fallback_provider || 'fal-seedream-v4') as ImageModelKey
   const aspectRatio = (job.aspect_ratio || '9:16') as AspectRatio
   
   let imageUrl: string | null = null
@@ -674,17 +645,64 @@ async function handleProcessSingle(
   }
 
   // ========================================================================
-  // 2026-01-14: COMPREHENSIVE PROMPT SYNTHESIS
-  // Synthesizes visual_direction + script + notes + flags into ONE coherent prompt
-  // Uses LLM (Gemini) for intelligent synthesis, not simple append
+  // 2026-01-15: CREATOR SHOT PROMPT BUILDING (v2.0)
+  // - Uses LLM to determine contextual outfit based on topic
+  // - Does NOT describe age/ethnicity when reference image exists
+  // - Only describes: expression, pose, camera, lighting, outfit
   // ========================================================================
   let finalVisualPrompt = job.visual_prompt || ''
   const regenerationNotes = job.regeneration_notes || ''
   const hasNotes = !!regenerationNotes.trim()
   const hasRefImage = !!(referenceImageForGeneration || multiRefImages?.length)
   
-  // Check if synthesis is needed (notes, creator face in B-ROLL, or reference image)
-  const needsSynthesis = hasNotes || (includeCreatorFace && !isCreatorShot) || hasRefImage
+  if (isCreatorShot) {
+    console.log(`[PROCESS_SINGLE] 🎬 CREATOR shot detected - using v2.0 prompt builder`)
+    
+    try {
+      // Step 1: Get contextual outfit via LLM
+      const outfitInput: ContextualOutfitInput = {
+        topic: job.topic || '',
+        scriptSnippet: job.script_text || '',
+        segmentType: job.segment_type || 'HOOK'
+      }
+      
+      const outfitResult = await getContextualOutfitAsync(outfitInput, supabase)
+      console.log(`[PROCESS_SINGLE] 👔 Outfit: "${outfitResult.outfit}" (LLM: ${outfitResult.wasLLMUsed}, ${outfitResult.processingTimeMs}ms)`)
+      console.log(`[PROCESS_SINGLE]   Reasoning: ${outfitResult.reasoning}`)
+      
+      // Step 2: Build CREATOR prompt (without hardcoded age/appearance)
+      const creatorInput: CreatorPromptInput = {
+        topic: job.topic || '',
+        emotion: job.emotion || 'authority',
+        segmentType: job.segment_type || 'HOOK',
+        aspectRatio: aspectRatio,
+        hasReferenceImage: hasRefImage,
+        contextualOutfit: outfitResult.outfit,
+        refinementNotes: regenerationNotes
+      }
+      
+      const creatorResult = await buildCreatorPromptAsync(creatorInput, supabase)
+      finalVisualPrompt = creatorResult.prompt
+      
+      console.log(`[PROCESS_SINGLE] ✅ CREATOR prompt built (${finalVisualPrompt.length} chars)`)
+      console.log(`[PROCESS_SINGLE]   Has reference: ${hasRefImage} - ${hasRefImage ? 'NO age/appearance in prompt' : 'includes character description'}`)
+      
+    } catch (creatorError) {
+      console.warn(`[PROCESS_SINGLE] ⚠️ CREATOR prompt build failed: ${creatorError}`)
+      // Fallback: use original prompt with notes appended
+      if (hasNotes) {
+        finalVisualPrompt = `${finalVisualPrompt}\n\nAdditional requirements: ${regenerationNotes.trim()}`
+      }
+    }
+  } else {
+    // ========================================================================
+    // B-ROLL PROMPT SYNTHESIS (existing logic)
+    // Synthesizes visual_direction + script + notes + flags into ONE coherent prompt
+    // Uses LLM (Gemini) for intelligent synthesis, not simple append
+    // ========================================================================
+  
+    // Check if synthesis is needed (notes, creator face in B-ROLL, or reference image)
+    const needsSynthesis = hasNotes || includeCreatorFace || hasRefImage
   
   if (needsSynthesis) {
     console.log(`[PROCESS_SINGLE] 🎯 Synthesizing comprehensive prompt...`)
@@ -721,6 +739,7 @@ async function handleProcessSingle(
       }
     }
   }
+  }  // Close else block for B-ROLL prompt synthesis
   
   if (!isCreatorShot) {
     try {
@@ -1212,7 +1231,7 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
 
     // Provider selection
     let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
-    let fallbackProvider: ImageModelKey = 'flux-schnell'
+    let fallbackProvider: ImageModelKey = 'fal-seedream-v4'
     let selectionReason = ''
     
     if (defaultProvider === 'auto') {
@@ -1471,14 +1490,12 @@ async function handleLegacyMode(
     const hasReferenceImage = !!refImage
     
     // ========================================================================
-    // PROVIDER SELECTION (2026-01-14 - Updated with Seedream v4 + QWEN)
-    // CREATOR with ref: fal-nano-banana-edit → gpt-image-1
-    // CREATOR no ref: fal-nano-banana → gpt-image-1
-    // B-ROLL with ref: fal-nano-banana-edit → fal-nano-banana
-    // B-ROLL no ref: brollModel (seedream-v4/qwen/etc) → fallback
+    // PROVIDER SELECTION (2026-01-15 - SIMPLIFIED)
+    // ANY reference image (1+): fal-nano-banana-edit → fal-seedream-v4
+    // NO reference image: fal-seedream-v4 → fal-qwen-image
     // ========================================================================
     let primaryProvider: ImageModelKey = defaultProvider as ImageModelKey
-    let fallbackProvider: ImageModelKey = 'flux-schnell'
+    let fallbackProvider: ImageModelKey = 'fal-seedream-v4'
     
     if (defaultProvider === 'auto') {
       const providerChoice = selectImageProvider(isCreatorShot, hasReferenceImage, brollModel as ImageModelKey)
@@ -2387,12 +2404,14 @@ async function downloadAndUploadImage(
 }
 
 // ============================================================================
-// FAL.AI IMAGE GENERATION (2026-01-14 Updated with FLUX Kontext Multi)
-// fal-nano-banana: Text-to-image (NO reference image support!)
-// fal-nano-banana-edit: Image edit with image_urls array (face consistency)
-// fal-flux-kontext-multi: Multi-image reference (B-ROLL with creator face)
-// fal-seedream-v4: High-res B-ROLL (ByteDance)
-// fal-qwen-image: B-ROLL with negative prompt support
+// FAL.AI IMAGE GENERATION (2026-01-15 SIMPLIFIED)
+// PRIMARY SELECTION:
+//   - fal-nano-banana-edit: ALL reference image scenarios (up to 14 refs)
+//   - fal-seedream-v4: NO reference image (high-quality T2I)
+// FALLBACK:
+//   - fal-qwen-image: Backup T2I with negative prompt support
+//   - fal-flux-kontext-multi: Legacy (no longer primary, kept for compatibility)
+//   - fal-nano-banana: Legacy T2I (no longer used)
 // ============================================================================
 
 async function generateWithFalAi(
@@ -2541,16 +2560,34 @@ Match the environment and style from the second reference image.`
     console.log(`[FAL.AI] FLUX Kontext Multi configured for B-ROLL with creator face`)
   } else if (modelKey === 'fal-nano-banana-edit') {
     // ========================================================================
-    // NANO BANANA PRO /EDIT - Supports image_urls array for face consistency
-    // This is the KEY endpoint for CREATOR shots with avatar reference
+    // NANO BANANA PRO /EDIT (2026-01-15 - PRIMARY MODEL FOR ALL REF IMAGES)
+    // - Supports up to 14 reference images via image_urls array
+    // - Intelligent semantic weighting (auto-prioritizes based on prompt)
+    // - Best for face consistency, scene reference, or multi-ref scenarios
+    // - Works for CREATOR shots (avatar) AND B-ROLL (scene/multi-ref)
     // ========================================================================
-    if (!referenceImageUrl) {
-      console.warn(`[FAL.AI] fal-nano-banana-edit called without reference image - falling back to T2I behavior`)
-    } else {
-      // image_urls is an ARRAY of reference images (up to 14)
+    
+    // Priority: multiRefImages > single referenceImageUrl
+    if (multiRefImages && multiRefImages.length > 0) {
+      // Multi-ref mode: combine all reference images
+      requestBody.image_urls = multiRefImages
+      console.log(`[FAL.AI] Using Nano Banana /edit with ${multiRefImages.length} reference images:`)
+      multiRefImages.forEach((url, i) => {
+        console.log(`[FAL.AI]   Image ${i + 1}: ${url.substring(0, 60)}...`)
+      })
+      
+      // Add face preservation language to prompt if creator face is included
+      if (!prompt.toLowerCase().includes('maintain') && !prompt.toLowerCase().includes('preserve')) {
+        requestBody.prompt = `${prompt}\n\nMaintain exact facial features, eye color, hairstyle, and expression from the first reference image.`
+        console.log(`[FAL.AI] Added face preservation instruction to prompt`)
+      }
+    } else if (referenceImageUrl) {
+      // Single ref mode
       requestBody.image_urls = [referenceImageUrl]
-      console.log(`[FAL.AI] Using /edit endpoint with image_urls for face consistency`)
+      console.log(`[FAL.AI] Using Nano Banana /edit with single reference`)
       console.log(`[FAL.AI] Reference: ${referenceImageUrl.substring(0, 80)}...`)
+    } else {
+      console.warn(`[FAL.AI] fal-nano-banana-edit called without reference image - falling back to T2I behavior`)
     }
   } else if (modelKey === 'fal-nano-banana') {
     // ========================================================================

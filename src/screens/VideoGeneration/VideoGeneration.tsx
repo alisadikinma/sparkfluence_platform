@@ -206,6 +206,65 @@ function getShotTypeFromSegmentType(segmentType: string): string {
   return creatorTypes.includes(upperType) ? 'CREATOR' : 'B-ROLL';
 }
 
+// ============================================================================
+// WORD COUNT VALIDATION - Shows warning if script exceeds duration-based limit
+// ============================================================================
+
+/**
+ * Calculate max words allowed for a duration (in seconds)
+ * Based on speech rate: Indonesian ~130 WPM, English ~150 WPM, Hindi ~125 WPM
+ * Using 80% safety margin to prevent rushed speech
+ */
+function getMaxWordsForDuration(durationSeconds: number, language: string = 'indonesian'): number {
+  const speechRates: Record<string, number> = {
+    indonesian: 130, // WPM
+    id: 130,
+    hindi: 125,
+    hi: 125,
+    english: 150,
+    en: 150,
+  };
+  const safetyMargin = 0.80;
+  const wpm = speechRates[language?.toLowerCase()] || 130;
+  const wordsPerSecond = wpm / 60;
+  return Math.floor(durationSeconds * wordsPerSecond * safetyMargin);
+}
+
+/**
+ * Count words in a text string
+ */
+function countWords(text: string): number {
+  if (!text || typeof text !== 'string') return 0;
+  const words = text.trim().split(/\s+/).filter(w => w.replace(/[^\w]/g, '').length > 0);
+  return words.length;
+}
+
+interface WordCountStatus {
+  actual: number;
+  max: number;
+  percentage: number;
+  status: 'ok' | 'warning' | 'over';
+}
+
+/**
+ * Get word count status for a segment
+ * Returns { actual, max, percentage, status }
+ */
+function getWordCountStatus(script: string, durationSeconds: number, language: string = 'indonesian'): WordCountStatus {
+  const actual = countWords(script);
+  const max = getMaxWordsForDuration(durationSeconds, language);
+  const percentage = max > 0 ? Math.round((actual / max) * 100) : 0;
+  
+  let status: 'ok' | 'warning' | 'over' = 'ok';
+  if (actual > max) {
+    status = 'over';
+  } else if (percentage >= 80) {
+    status = 'warning';
+  }
+  
+  return { actual, max, percentage, status };
+}
+
 export const VideoGeneration = (): JSX.Element => {
   const navigate = useNavigate();
   const location = useLocation();

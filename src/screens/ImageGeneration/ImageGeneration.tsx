@@ -6,6 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segmentDuration";
+import { getWordLimitStatus, type LanguageCode } from "../../lib/wordLimits";
 import { getSuggestedKeywords } from "../../lib/keywordExtractor";  // Only need fallback function
 import { VisualPreviewGallery, GenerateBRollModal } from "./components";
 import {
@@ -2325,12 +2326,21 @@ export const ImageGeneration = (): JSX.Element => {
                             }
                           </span>
                           <span className="text-text-muted text-xs sm:text-sm">{segment.timing}</span>
-                          <span
-                            className="text-text-muted text-xs"
+                          <select
+                            value={segment.durationSeconds}
+                            onChange={(e) => {
+                              const newDuration = parseInt(e.target.value);
+                              setSegments(prev => prev.map(seg =>
+                                seg.id === segment.id ? { ...seg, durationSeconds: newDuration } : seg
+                              ));
+                            }}
+                            className="text-text-muted text-xs bg-transparent border border-border-default rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer hover:border-primary"
                             title={videoSettings ? getDurationExplanation(segment.type, videoSettings.duration) : ''}
                           >
-                            ({segment.durationSeconds}s)
-                          </span>
+                            {[3, 4, 5, 6, 7, 8].map(d => (
+                              <option key={d} value={d}>{d}s</option>
+                            ))}
+                          </select>
                         </div>
                         
                         {/* Tags */}
@@ -2361,12 +2371,57 @@ export const ImageGeneration = (): JSX.Element => {
                       <div className="flex flex-col sm:flex-row gap-4">
                         {/* Script + Visual Direction */}
                         <div className="flex-1 space-y-3">
-                          {/* Script */}
+                          {/* Script with Word Count - Editable */}
                           <div>
-                            <label className="text-text-secondary text-xs mb-1.5 block">{uiText.script}</label>
-                            <div className="bg-surface border border-border-default rounded-lg p-3 text-text-primary text-sm min-h-[80px]">
-                              {segment.script}
-                            </div>
+                            {(() => {
+                              const wordStatus = getWordLimitStatus(
+                                segment.script, 
+                                segment.durationSeconds, 
+                                (videoSettings?.language || language || 'id') as LanguageCode
+                              );
+                              return (
+                                <>
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-text-secondary text-xs">{uiText.script}</label>
+                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                      wordStatus.status === 'error' 
+                                        ? 'bg-red-500/20 text-red-500' 
+                                        : wordStatus.status === 'warning'
+                                        ? 'bg-amber-500/20 text-amber-500'
+                                        : 'bg-green-500/20 text-green-500'
+                                    }`}>
+                                      {wordStatus.count}/{wordStatus.max} {language === 'id' ? 'kata' : 'words'}
+                                      {wordStatus.status === 'error' && ` (+${wordStatus.overBy})`}
+                                    </span>
+                                  </div>
+                                  <textarea
+                                    value={segment.script}
+                                    onChange={(e) => {
+                                      const newScript = e.target.value;
+                                      setSegments(prev => prev.map(seg =>
+                                        seg.id === segment.id ? { ...seg, script: newScript } : seg
+                                      ));
+                                    }}
+                                    className={`w-full bg-surface border rounded-lg p-3 text-text-primary text-sm min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 ${
+                                      wordStatus.status === 'error' 
+                                        ? 'border-red-500/50' 
+                                        : wordStatus.status === 'warning'
+                                        ? 'border-amber-500/50'
+                                        : 'border-border-default'
+                                    }`}
+                                    placeholder={language === 'id' ? 'Tulis script...' : 'Write script...'}
+                                  />
+                                  {wordStatus.status === 'error' && (
+                                    <p className="text-[10px] text-red-500 mt-1">
+                                      {language === 'id' 
+                                        ? `⚠️ Script terlalu panjang! Kurangi ${wordStatus.overBy} kata agar sesuai durasi ${segment.durationSeconds}s`
+                                        : `⚠️ Script too long! Remove ${wordStatus.overBy} words to fit ${segment.durationSeconds}s duration`
+                                      }
+                                    </p>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
 
                           {/* Visual Direction - smaller height when no image */}

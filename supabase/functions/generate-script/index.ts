@@ -7,7 +7,8 @@ import {
   INDONESIAN_GENZ_PLAYBOOK, 
   TOP_HOOK_TEMPLATES,
   CINEMATIC_VISUAL_GUIDE,
-  getStructureByDuration 
+  getStructureByDuration,
+  getMaxWordsForDuration 
 } from '../_shared/prompts/viralScriptKnowledge.ts'
 import { 
   validateSlangUsage, 
@@ -323,6 +324,42 @@ serve(async (req) => {
     }
 
     // ============================================================
+    // P0 #2.5: WORD COUNT VALIDATION (Critical for TTS/Video timing)
+    // ============================================================
+    if (scriptData.segments && scriptData.segments.length > 0) {
+      console.log('[WordCount] Running word count validation...')
+      
+      const wordCountResult = validateWordCounts(
+        scriptData.segments,
+        selectedLanguage
+      )
+      
+      // Add word count report to quality_report
+      scriptData.quality_report = {
+        ...scriptData.quality_report,
+        word_count: {
+          total_segments: wordCountResult.total_segments,
+          segments_over_limit: wordCountResult.segments_over_limit,
+          segments_warning: wordCountResult.segments_warning,
+          all_passed: wordCountResult.all_passed,
+          details: wordCountResult.details,
+        },
+      }
+      
+      // Log summary
+      if (wordCountResult.all_passed) {
+        console.log(`[WordCount] ✅ All ${wordCountResult.total_segments} segments within word limits`)
+      } else {
+        console.warn(`[WordCount] ⚠️ ${wordCountResult.segments_over_limit} segments OVER limit, ${wordCountResult.segments_warning} at warning level`)
+        wordCountResult.details
+          .filter((d: any) => d.status !== 'ok')
+          .forEach((d: any) => {
+            console.warn(`  - ${d.segment_id} (${d.type}): ${d.actual_words}/${d.max_words} words (${d.status.toUpperCase()})`)
+          })
+      }
+    }
+
+    // ============================================================
     // P0 #3: VISUAL ENHANCEMENT
     // ============================================================
     if (scriptData.segments && scriptData.segments.length > 0) {
@@ -409,7 +446,7 @@ function buildSystemPrompt(language: string, duration: string, dnaStyles: string
     segmentCount = duration === '30s' ? 4 : duration === '60s' ? 5 : 7
   }
   
-  const structureGuide = getStructureByDuration(duration, videoModel)
+  const structureGuide = getStructureByDuration(duration, videoModel, language)
   
   // Get slang knowledge for language
   const slangGuide = getSlangKnowledge(language)
@@ -495,11 +532,25 @@ ${structureGuide}
    - Creates FOMO if viewer skips
    - Example in ${langConfig.name}: "${langConfig.foreshadow.example}"
 
-8. VISUAL DIRECTION REQUIREMENTS (50-80 WORDS EACH):
+8. ⚠️ SCRIPT WORD LIMIT (CRITICAL - COUNT YOUR WORDS!):
+   - Each script_text MUST stay UNDER the MAX WORDS in structure table above
+   - COUNT words BEFORE finalizing - if over limit, REWRITE SHORTER
+   - Short + impactful > Long + rushed
+   - Video generation will FAIL if script exceeds word limit!
+   
+   Example for 5s segment (max 9 words):
+   ❌ WRONG (15 words): "Jadi, lo sudah siap untuk menjelajahi kota tersembunyi di Indonesia yang viral ini?"
+   ✅ RIGHT (8 words): "Lo wajib tau kota tersembunyi viral ini!"
+   
+   Example for 8s segment (max 14 words):
+   ❌ WRONG (24 words): "Share pengalaman serupa di comment below, dan jangan lupa follow buat rekomendasi travel lainnya!"
+   ✅ RIGHT (12 words): "Share di comment, follow gue buat rekomendasi travel seru lainnya!"
+
+9. VISUAL DIRECTION REQUIREMENTS (50-80 WORDS EACH):
    - For CREATOR: facial expression, gesture, energy level, eye contact, background
    - For B-ROLL: main subject, composition, lighting mood, motion, text overlays
 
-9. CREATOR COSTUME REQUIREMENTS (MANDATORY FOR CREATOR SHOTS):
+10. CREATOR COSTUME REQUIREMENTS (MANDATORY FOR CREATOR SHOTS):
    - For HOOK/CTA segments, add "creator_costume" field with topic-appropriate outfit
    - Examples by topic:
      * Agriculture/Farming → "farmer outfit with straw hat, plaid shirt, denim overalls"
@@ -512,7 +563,7 @@ ${structureGuide}
    - Costume should enhance credibility and match topic theme
    - Keep description concise: 10-20 words max
 
-10. CREATOR APPEARANCE (FALLBACK FOR NO-AVATAR USERS):
+11. CREATOR APPEARANCE (FALLBACK FOR NO-AVATAR USERS):
    - For CREATOR shots, ALWAYS add "creator_appearance" field
    - This describes a GENERIC FACE matching the target audience country + topic profession
    - Format: "[ethnicity] [gender], [age], [profession-related appearance]"
@@ -1023,4 +1074,98 @@ Return JSON:
   const result = JSON.parse(jsonMatch ? jsonMatch[0] : jsonStr)
   
   return result
+}
+
+// ============================================================================
+// WORD COUNT VALIDATION (P0 #2.5 - Critical for TTS/Video timing)
+// ============================================================================
+
+interface WordCountDetail {
+  segment_id: string
+  type: string
+  duration_seconds: number
+  max_words: number
+  actual_words: number
+  percentage: number
+  status: 'ok' | 'warning' | 'over'
+}
+
+interface WordCountResult {
+  total_segments: number
+  segments_over_limit: number
+  segments_warning: number
+  all_passed: boolean
+  details: WordCountDetail[]
+}
+
+/**
+ * Count words in a text string
+ * Handles mixed Indonesian/English text and filters out punctuation-only tokens
+ */
+function countWords(text: string): number {
+  if (!text || typeof text !== 'string') return 0
+  
+  // Split by whitespace and filter out empty strings and punctuation-only tokens
+  const words = text
+    .trim()
+    .split(/\s+/)
+    .filter(word => {
+      // Remove punctuation-only tokens like "..." or "!"
+      const cleaned = word.replace(/[^\w\u0900-\u097F\u00C0-\u024F]/g, '')
+      return cleaned.length > 0
+    })
+  
+  return words.length
+}
+
+/**
+ * Validate word counts for all segments against their duration-based limits
+ * 
+ * Thresholds:
+ * - OK: ≤100% of max words
+ * - WARNING: 80-100% of max words (close to limit)
+ * - OVER: >100% of max words (will cause rushed speech)
+ */
+function validateWordCounts(segments: any[], language: string = 'indonesian'): WordCountResult {
+  const details: WordCountDetail[] = []
+  let segmentsOverLimit = 0
+  let segmentsWarning = 0
+  
+  for (const segment of segments) {
+    const scriptText = segment.script_text || ''
+    const durationSeconds = segment.duration_seconds || 8
+    
+    // Get max words for this segment's duration
+    const maxWords = getMaxWordsForDuration(durationSeconds, language)
+    const actualWords = countWords(scriptText)
+    const percentage = maxWords > 0 ? Math.round((actualWords / maxWords) * 100) : 0
+    
+    // Determine status
+    let status: 'ok' | 'warning' | 'over' = 'ok'
+    if (actualWords > maxWords) {
+      status = 'over'
+      segmentsOverLimit++
+    } else if (percentage >= 80) {
+      status = 'warning'
+      segmentsWarning++
+    }
+    
+    details.push({
+      segment_id: segment.segment_id || 'unknown',
+      type: segment.type || 'unknown',
+      duration_seconds: durationSeconds,
+      max_words: maxWords,
+      actual_words: actualWords,
+      percentage,
+      status
+    })
+  }
+  
+  return {
+    total_segments: segments.length,
+    segments_over_limit: segmentsOverLimit,
+    segments_warning: segmentsWarning,
+    all_passed: segmentsOverLimit === 0,
+    details
+  }
 }
