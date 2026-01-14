@@ -1774,18 +1774,56 @@ export const ImageGeneration = (): JSX.Element => {
     const segment = regenerateModal.segment;
     const segmentNumber = parseInt(segment.id);
 
-    // Max 3 images validation
-    const currentImageCount = segment.images?.length || 0;
-    if (currentImageCount >= 3) {
-      alert(language === 'id' 
-        ? 'Maksimal 3 gambar per segment. Hapus gambar lama dulu.'
-        : 'Maximum 3 images per segment. Delete old images first.');
-      return;
-    }
+    // ✅ FIX Bug 1: Set loading state IMMEDIATELY before async operation
+    // This ensures UI shows loading animation for CREATOR shots (HOOK/CTA)
+    setSegments(prev => prev.map(seg =>
+      seg.id === segment.id
+        ? { ...seg, isGeneratingImage: true, imageError: null }
+        : seg
+    ));
+
+    // Close modal immediately so user sees loading state
+    setRegenerateModal({ isOpen: false, segment: null });
 
     try {
-      // Get max generation number for this segment
-      const maxGenNumber = Math.max(...segment.images.map(img => img.generationNumber), 0);
+      // ✅ FIX Bug 2: Query database to get accurate max generation_number AND count
+      // segment.images might be empty/stale, but DB has the truth
+      const { data: existingJobs, error: queryError } = await supabase
+        .from('image_generation_jobs')
+        .select('id, generation_number')
+        .eq('session_id', sessionId)
+        .eq('segment_number', segmentNumber)
+        .eq('user_id', user.id)
+        .order('generation_number', { ascending: false });
+
+      if (queryError) {
+        console.error('Error querying existing jobs:', queryError);
+      }
+
+      // Get max generation number from DB (more reliable than local state)
+      const dbMaxGenNumber = existingJobs?.[0]?.generation_number || 0;
+      const localMaxGenNumber = segment.images?.length > 0 
+        ? Math.max(...segment.images.map(img => img.generationNumber), 0) 
+        : 0;
+      const maxGenNumber = Math.max(dbMaxGenNumber, localMaxGenNumber);
+
+      // Count from DB (all records, not just limit 1)
+      const dbImageCount = existingJobs?.length || 0;
+      const localImageCount = segment.images?.length || 0;
+      const currentImageCount = Math.max(dbImageCount, localImageCount);
+
+      console.log('[Regenerate CREATOR] Gen numbers - DB:', dbMaxGenNumber, 'Local:', localMaxGenNumber, 'Using:', maxGenNumber + 1, 'Count:', currentImageCount);
+      if (currentImageCount >= 3) {
+        setSegments(prev => prev.map(seg =>
+          seg.id === segment.id
+            ? { ...seg, isGeneratingImage: false }
+            : seg
+        ));
+        alert(language === 'id' 
+          ? 'Maksimal 3 gambar per segment. Hapus gambar lama dulu.'
+          : 'Maximum 3 images per segment. Delete old images first.');
+        return;
+      }
 
       // Determine if CREATOR shot and prepare reference images
       const isCreatorShot = segment.shotType === 'CREATOR';
@@ -1837,14 +1875,17 @@ export const ImageGeneration = (): JSX.Element => {
       // Start background processing to poll for the new image
       startBackgroundProcessing(sessionId);
 
-      // Close modal
-      setRegenerateModal({ isOpen: false, segment: null });
-
     } catch (err) {
       console.error('Regenerate failed:', err);
+      // Reset loading state on error
+      setSegments(prev => prev.map(seg =>
+        seg.id === segment.id
+          ? { ...seg, isGeneratingImage: false, imageError: 'Regeneration failed' }
+          : seg
+      ));
       alert('Failed to regenerate image. Please try again.');
     }
-  }, [user, sessionId, regenerateModal.segment, videoSettings, startBackgroundProcessing]);
+  }, [user, sessionId, regenerateModal.segment, videoSettings, startBackgroundProcessing, language]);
 
   // Handle reference image selection for B-ROLL segments
   const handleReferenceImageSelect = useCallback((imageUrl: string, source: 'unsplash' | 'pexels' | 'upload') => {

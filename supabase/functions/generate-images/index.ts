@@ -2517,10 +2517,12 @@ async function generateWithFalAi(
         if (lowerPrompt.includes('golden hour') || lowerPrompt.includes('sunset')) lighting = 'golden hour sunlight'
         else if (lowerPrompt.includes('sun') || lowerPrompt.includes('bright')) lighting = 'bright natural sunlight'
         
-        // Build natural, cohesive prompt
+        // Build natural, cohesive prompt with BOTH reference image instructions
+        // CRITICAL: Must explicitly reference BOTH images for proper face + environment consistency
         const correctedPrompt = `A cinematic shot of a person ${costume ? costume + ', ' : ''}${action} ${sceneObject} ${environment}. ${lighting.charAt(0).toUpperCase() + lighting.slice(1)} creates a dramatic atmosphere. Medium shot, 50mm lens, eye-level angle. Professional cinematography, photorealistic quality.
 
-Preserve the exact facial features, skin tone, and face structure from the person in the first reference image.`
+Maintain the person's face and appearance from the first reference image.
+Match the environment and style from the second reference image.`
         
         requestBody.prompt = correctedPrompt
         console.log(`[FAL.AI] ✅ Reconstructed with natural multi-ref structure (${correctedPrompt.length} chars)`)

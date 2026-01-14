@@ -135,19 +135,29 @@ export const History = (): JSX.Element => {
       
       console.log('[History] Video jobs loaded:', videoJobs?.length || 0);
 
-      // Fetch image generation jobs for better status info
+      // Fetch image generation jobs with full details
       const { data: imageJobs } = await supabase
         .from("image_generation_jobs")
-        .select("session_id, topic, status, image_url")
-        .eq("user_id", user.id);
+        .select("id, session_id, segment_id, segment_type, topic, status, image_url, script_text, created_at, updated_at")
+        .eq("user_id", user.id)
+        .order("updated_at", { ascending: false });
+      
+      console.log('[History] Image jobs loaded:', imageJobs?.length || 0);
 
-      // Create image jobs map by session_id - with null safety
+      // Create image jobs map by session_id - with full job data
       const imageJobsMap = new Map<string, { topic: string | null; hasImages: boolean }>();
+      const imageJobsBySession = new Map<string, any[]>();
       if (imageJobs && Array.isArray(imageJobs)) {
         imageJobs.forEach((job: any) => {
           // Skip invalid jobs
           if (!job || !job.session_id) return;
           
+          // Group full job data by session
+          const existingJobs = imageJobsBySession.get(job.session_id) || [];
+          existingJobs.push(job);
+          imageJobsBySession.set(job.session_id, existingJobs);
+          
+          // Also maintain simple map for topic lookup
           const existing = imageJobsMap.get(job.session_id);
           if (!existing) {
             imageJobsMap.set(job.session_id, { 
@@ -211,12 +221,23 @@ export const History = (): JSX.Element => {
           const isProcessing = videosProcessing > 0 || (videosPending > 0 && videosReady > 0); // Processing if any job is running OR resuming
           const planned = sessionToPlanned.get(sessionId);
 
-          // Get topic from multiple sources (priority order)
-          const topicFromJob = validSegments[0]?.topic;
-          const topicFromImageJob = imageJobsMap.get(sessionId)?.topic;
-          const topicFromPlannedData = planned?.video_data?.topic;
-          const topicFromPlannedTitle = planned?.title;
-          const topicTitle = topicFromJob || topicFromImageJob || topicFromPlannedData || topicFromPlannedTitle || `Video Project ${sessionId.slice(0, 8)}`;
+          // Get topic from multiple sources with proper empty string handling
+          const topicFromJob = validSegments[0]?.topic?.trim();
+          const topicFromImageJob = imageJobsMap.get(sessionId)?.topic?.trim();
+          const topicFromPlannedData = planned?.video_data?.topic?.trim();
+          const topicFromPlannedTitle = planned?.title?.trim();
+          const topicFromScript = validSegments[0]?.script_text?.split('\n')[0]?.slice(0, 60)?.trim();
+          const topicTitle = (topicFromJob && topicFromJob.length > 0) 
+            ? topicFromJob 
+            : (topicFromImageJob && topicFromImageJob.length > 0)
+              ? topicFromImageJob
+              : (topicFromPlannedData && topicFromPlannedData.length > 0)
+                ? topicFromPlannedData
+                : (topicFromPlannedTitle && topicFromPlannedTitle.length > 0)
+                  ? topicFromPlannedTitle
+                  : (topicFromScript && topicFromScript.length > 0)
+                    ? topicFromScript
+                    : `Project ${sessionId.slice(0, 8)}`;
 
           // Get metadata from first segment OR from planned_content.video_data
           const firstSeg = validSegments[0];
@@ -314,8 +335,207 @@ export const History = (): JSX.Element => {
           new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
         );
 
+        // Also add image-only sessions (sessions with images but no video jobs)
+        const videoSessionIds = new Set(sessionMap.keys());
+        imageJobsBySession.forEach((imgJobs, sessionId) => {
+          // Skip if this session already has video jobs
+          if (videoSessionIds.has(sessionId)) return;
+          
+          try {
+            const validImgJobs = imgJobs.filter((j: any) => j && typeof j.status === 'number');
+            if (validImgJobs.length === 0) return;
+            
+            const planned = sessionToPlanned.get(sessionId);
+            
+            // Get topic from multiple sources with proper empty string handling
+            const topicFromJob = validImgJobs[0]?.topic?.trim();
+            const topicFromPlanned = planned?.title?.trim() || planned?.video_data?.topic?.trim();
+            const topicFromScript = validImgJobs[0]?.script_text?.split('\n')[0]?.slice(0, 60)?.trim();
+            const topicTitle = (topicFromJob && topicFromJob.length > 0) 
+              ? topicFromJob 
+              : (topicFromPlanned && topicFromPlanned.length > 0)
+                ? topicFromPlanned
+                : (topicFromScript && topicFromScript.length > 0)
+                  ? topicFromScript
+                  : `Project ${sessionId.slice(0, 8)}`;
+            
+            // Calculate image stats
+            const imagesCompleted = validImgJobs.filter((j: any) => j.status === JOB_STATUS.COMPLETED && j.image_url).length;
+            const imagesFailed = validImgJobs.filter((j: any) => j.status === JOB_STATUS.FAILED).length;
+            const imagesProcessing = validImgJobs.filter((j: any) => j.status === JOB_STATUS.PROCESSING).length;
+            const imagesPending = validImgJobs.filter((j: any) => j.status === JOB_STATUS.PENDING).length;
+            
+            // Status text for image-only projects
+            let statusText = '';
+            if (imagesProcessing > 0) {
+              statusText = `${t.videoEditor?.status?.processing || 'Processing'} ${imagesCompleted}/${validImgJobs.length}`;
+            } else if (imagesFailed > 0 && imagesPending === 0) {
+              statusText = `${imagesFailed} ${t.common?.failed || 'failed'}`;
+            } else if (imagesCompleted === validImgJobs.length) {
+              statusText = language === 'id' ? 'Gambar Siap' : 'Images Ready';
+            } else {
+              statusText = `${t.videoEditor?.status?.images || 'Images'} ${imagesCompleted}/${validImgJobs.length}`;
+            }
+            
+            // Convert image jobs to VideoJob-like segments for compatibility
+            const segments: VideoJob[] = validImgJobs.map((j: any) => ({
+              id: j.id,
+              session_id: j.session_id,
+              segment_id: j.segment_id || '0',
+              segment_type: j.segment_type || 'BODY',
+              veo_uuid: null,
+              status: j.status,
+              video_url: null,
+              image_url: j.image_url,
+              script_text: j.script_text,
+              topic: j.topic,
+              error_message: null,
+              created_at: j.created_at,
+              updated_at: j.updated_at
+            }));
+            
+            projectList.push({
+              session_id: sessionId,
+              topic_title: topicTitle,
+              segments: segments.sort((a, b) => {
+                const aId = parseInt(a.segment_id) || 0;
+                const bId = parseInt(b.segment_id) || 0;
+                return aId - bId;
+              }),
+              total_segments: validImgJobs.length,
+              images_ready: imagesCompleted,
+              videos_ready: 0,
+              videos_failed: 0,
+              videos_processing: 0,
+              videos_pending: 0,
+              is_complete: false,
+              has_failed: imagesFailed > 0 && imagesProcessing === 0 && imagesPending === 0,
+              is_processing: imagesProcessing > 0,
+              status_text: statusText,
+              created_at: validImgJobs[0]?.created_at || new Date().toISOString(),
+              updated_at: validImgJobs[0]?.updated_at || new Date().toISOString(),
+              planned_content_id: planned?.id,
+              thumbnail_url: validImgJobs.find((j: any) => j.image_url)?.image_url,
+              platforms: planned?.platforms || [],
+              description: planned?.description,
+              language: 'id',
+              resolution: '1080p',
+              model: 'veo31',
+              total_duration_seconds: validImgJobs.length * 8,
+              has_subtitles: false
+            });
+          } catch (err) {
+            console.warn('[History] Error processing image-only session:', sessionId, err);
+          }
+        });
+
+        // Sort by updated_at
+        projectList.sort((a, b) => 
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        );
+
         console.log('[History] Projects loaded:', projectList.length);
         setProjects(projectList);
+      } else if (imageJobsBySession.size > 0) {
+        // No video jobs but have image jobs - show image-only sessions
+        const projectList: ProjectGroup[] = [];
+        
+        imageJobsBySession.forEach((imgJobs, sessionId) => {
+          try {
+            const validImgJobs = imgJobs.filter((j: any) => j && typeof j.status === 'number');
+            if (validImgJobs.length === 0) return;
+            
+            const planned = sessionToPlanned.get(sessionId);
+            
+            // Get topic from multiple sources with proper empty string handling
+            const topicFromJob = validImgJobs[0]?.topic?.trim();
+            const topicFromPlanned = planned?.title?.trim() || planned?.video_data?.topic?.trim();
+            const topicFromScript = validImgJobs[0]?.script_text?.split('\n')[0]?.slice(0, 60)?.trim();
+            const topicTitle = (topicFromJob && topicFromJob.length > 0) 
+              ? topicFromJob 
+              : (topicFromPlanned && topicFromPlanned.length > 0)
+                ? topicFromPlanned
+                : (topicFromScript && topicFromScript.length > 0)
+                  ? topicFromScript
+                  : `Project ${sessionId.slice(0, 8)}`;
+            
+            // Calculate image stats
+            const imagesCompleted = validImgJobs.filter((j: any) => j.status === JOB_STATUS.COMPLETED && j.image_url).length;
+            const imagesFailed = validImgJobs.filter((j: any) => j.status === JOB_STATUS.FAILED).length;
+            const imagesProcessing = validImgJobs.filter((j: any) => j.status === JOB_STATUS.PROCESSING).length;
+            const imagesPending = validImgJobs.filter((j: any) => j.status === JOB_STATUS.PENDING).length;
+            
+            // Status text for image-only projects
+            let statusText = '';
+            if (imagesProcessing > 0) {
+              statusText = `${t.videoEditor?.status?.processing || 'Processing'} ${imagesCompleted}/${validImgJobs.length}`;
+            } else if (imagesFailed > 0 && imagesPending === 0) {
+              statusText = `${imagesFailed} ${t.common?.failed || 'failed'}`;
+            } else if (imagesCompleted === validImgJobs.length) {
+              statusText = language === 'id' ? 'Gambar Siap' : 'Images Ready';
+            } else {
+              statusText = `${t.videoEditor?.status?.images || 'Images'} ${imagesCompleted}/${validImgJobs.length}`;
+            }
+            
+            // Convert image jobs to VideoJob-like segments for compatibility
+            const segments: VideoJob[] = validImgJobs.map((j: any) => ({
+              id: j.id,
+              session_id: j.session_id,
+              segment_id: j.segment_id || '0',
+              segment_type: j.segment_type || 'BODY',
+              veo_uuid: null,
+              status: j.status,
+              video_url: null,
+              image_url: j.image_url,
+              script_text: j.script_text,
+              topic: j.topic,
+              error_message: null,
+              created_at: j.created_at,
+              updated_at: j.updated_at
+            }));
+            
+            projectList.push({
+              session_id: sessionId,
+              topic_title: topicTitle,
+              segments: segments.sort((a, b) => {
+                const aId = parseInt(a.segment_id) || 0;
+                const bId = parseInt(b.segment_id) || 0;
+                return aId - bId;
+              }),
+              total_segments: validImgJobs.length,
+              images_ready: imagesCompleted,
+              videos_ready: 0,
+              videos_failed: 0,
+              videos_processing: 0,
+              videos_pending: 0,
+              is_complete: false,
+              has_failed: imagesFailed > 0 && imagesProcessing === 0 && imagesPending === 0,
+              is_processing: imagesProcessing > 0,
+              status_text: statusText,
+              created_at: validImgJobs[0]?.created_at || new Date().toISOString(),
+              updated_at: validImgJobs[0]?.updated_at || new Date().toISOString(),
+              planned_content_id: planned?.id,
+              thumbnail_url: validImgJobs.find((j: any) => j.image_url)?.image_url,
+              platforms: planned?.platforms || [],
+              description: planned?.description,
+              language: 'id',
+              resolution: '1080p',
+              model: 'veo31',
+              total_duration_seconds: validImgJobs.length * 8,
+              has_subtitles: false
+            });
+          } catch (err) {
+            console.warn('[History] Error processing image-only session:', sessionId, err);
+          }
+        });
+        
+        if (projectList.length > 0) {
+          projectList.sort((a, b) => 
+            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+          );
+          console.log('[History] Image-only projects loaded:', projectList.length);
+          setProjects(projectList);
+        }
       }
     } catch (err: any) {
       console.error("Error fetching projects:", err);
@@ -337,24 +557,34 @@ export const History = (): JSX.Element => {
       setVideoError(false);
       setActionError(null);
     } else {
-      navigate("/video-generation", {
-        state: {
-          sessionId: project.session_id,
-          topic: project.topic_title,
-          segments: project.segments.map(s => ({
-            id: s.segment_id,
-            type: s.segment_type,
-            script: s.script_text || '',
-            imageUrl: s.image_url,
-            videoUrl: s.video_url,
-            veoUuid: s.veo_uuid,
-            durationSeconds: 8,
-            visualDirection: '',
-            emotion: ''
-          })),
-          fromDraft: true
-        }
-      });
+      // Check if this is an image-only project (no video jobs)
+      const isImageOnly = project.videos_ready === 0 && project.videos_pending === 0 && 
+                          project.videos_processing === 0 && project.videos_failed === 0;
+      
+      if (isImageOnly) {
+        // Navigate to image generation page
+        navigate(`/image-generation?session=${project.session_id}`);
+      } else {
+        // Navigate to video generation page
+        navigate("/video-generation", {
+          state: {
+            sessionId: project.session_id,
+            topic: project.topic_title,
+            segments: project.segments.map(s => ({
+              id: s.segment_id,
+              type: s.segment_type,
+              script: s.script_text || '',
+              imageUrl: s.image_url,
+              videoUrl: s.video_url,
+              veoUuid: s.veo_uuid,
+              durationSeconds: 8,
+              visualDirection: '',
+              emotion: ''
+            })),
+            fromDraft: true
+          }
+        });
+      }
     }
   };
 
@@ -370,13 +600,21 @@ export const History = (): JSX.Element => {
 
     setDeletingId(sessionId);
     try {
-      const { error } = await supabase
+      // Delete from both tables
+      const { error: videoError } = await supabase
         .from("video_generation_jobs")
         .delete()
         .eq("session_id", sessionId)
         .eq("user_id", user?.id);
 
-      if (error) throw error;
+      const { error: imageError } = await supabase
+        .from("image_generation_jobs")
+        .delete()
+        .eq("session_id", sessionId)
+        .eq("user_id", user?.id);
+
+      if (videoError) console.warn("Error deleting video jobs:", videoError);
+      if (imageError) console.warn("Error deleting image jobs:", imageError);
 
       setProjects(prev => prev.filter(p => p.session_id !== sessionId));
       if (selectedProject?.session_id === sessionId) {
