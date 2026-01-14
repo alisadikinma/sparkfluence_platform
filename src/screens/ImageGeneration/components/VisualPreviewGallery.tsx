@@ -78,13 +78,13 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
   const remainingSlots = MAX_IMAGES_PER_SEGMENT - usedSlots;
   const canAddMore = remainingSlots > 0;
   
-  // Handle regenerate with max check
-  const handleRegenerateClick = () => {
+  // Handle add new image click
+  const handleAddNewClick = () => {
     if (!canAddMore) {
       setShowMaxWarning(true);
       return;
     }
-    onRegenerate();
+    onRegenerate(); // Opens modal for B-ROLL or regenerate for CREATOR
   };
 
   const uiText = {
@@ -136,7 +136,7 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
           </div>
           
         ) : displayImageUrl ? (
-          /* Image Preview */
+          /* Image Preview - Has Image */
           <>
             <img
               src={displayImageUrl}
@@ -144,7 +144,7 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.02]"
             />
             
-            {/* Creator Badge */}
+            {/* Creator Badge - top left */}
             {isCreatorShot && (
               <div className="absolute top-2 left-2 z-10">
                 <div className="flex items-center gap-1 px-2 py-1 bg-gradient-to-r from-pink-500/90 to-purple-500/90 text-white text-[10px] font-semibold rounded-full shadow-lg backdrop-blur-sm">
@@ -154,15 +154,13 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
               </div>
             )}
             
-            {/* Selected indicator */}
-            {selectedImage?.isSelected && completedImages.length > 1 && (
-              <div className="absolute top-2 right-2 z-10">
-                <div className="flex items-center gap-1 px-2 py-1 bg-green-500/90 text-white text-[10px] font-semibold rounded-full shadow-lg backdrop-blur-sm">
-                  <CheckCircle2 className="w-3 h-3" />
-                  {uiText.selected}
-                </div>
+            {/* Selected indicator - top right (always show when has image) */}
+            <div className="absolute top-2 right-2 z-10">
+              <div className="flex items-center gap-1 px-2 py-1 bg-green-500/90 text-white text-[10px] font-semibold rounded-full shadow-lg backdrop-blur-sm">
+                <CheckCircle2 className="w-3 h-3" />
+                {uiText.selected}
               </div>
-            )}
+            </div>
             
             {/* Hover Actions Overlay */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col items-center justify-end pb-4 gap-3 z-10">
@@ -182,31 +180,6 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
                 >
                   <Download className="w-4 h-4 text-white" />
                 </button>
-                {!disabled && (
-                  <button
-                    onClick={handleRegenerateClick}
-                    className={`p-2.5 rounded-xl backdrop-blur-md transition-all duration-200 hover:scale-110 ${
-                      canAddMore 
-                        ? 'bg-primary/80 hover:bg-primary' 
-                        : 'bg-amber-500/80 hover:bg-amber-500'
-                    }`}
-                    title={canAddMore ? uiText.regenerate : uiText.maxReached}
-                  >
-                    {canAddMore ? (
-                      <Plus className="w-4 h-4 text-white" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-white" />
-                    )}
-                  </button>
-                )}
-              </div>
-              
-              {/* Slots indicator */}
-              <div className="text-[10px] text-white/70 font-medium">
-                {remainingSlots > 0 
-                  ? `${remainingSlots} ${uiText.slots}${remainingSlots > 1 ? 's' : ''} remaining`
-                  : uiText.maxReached
-                }
               </div>
             </div>
           </>
@@ -251,30 +224,39 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
         )}
       </div>
 
-      {/* Thumbnail Gallery Strip */}
-      {(completedImages.length > 0 || processingImages.length > 0) && (
-        <div className="mt-3 relative">
-          {/* Gallery container with gradient edges */}
+      {/* Thumbnail Gallery Strip - Always show when has image (even if images array empty for backward compat) */}
+      {(completedImages.length > 0 || processingImages.length > 0 || displayImageUrl) && (
+        <div className="mt-3">
+          {/* Thumbnail row - 3 fixed slots */}
           <div className="flex items-center gap-2">
-            {/* Thumbnail slots - always show 3 */}
             {[0, 1, 2].map((slotIndex) => {
+              // Handle backward compat: if images array empty but displayImageUrl exists, show it in slot 0
+              const hasLegacyImage = completedImages.length === 0 && displayImageUrl && slotIndex === 0;
               const image = completedImages[slotIndex] || processingImages[slotIndex - completedImages.length];
               const isProcessing = image?.status === JOB_STATUS.PROCESSING;
-              const isSelected = image?.isSelected;
-              const isEmpty = !image;
+              const isSelected = hasLegacyImage || image?.isSelected || (slotIndex === 0 && completedImages.length === 1 && !completedImages[0]?.isSelected);
+              const isEmpty = !image && !hasLegacyImage;
+              const isEmptySlotClickable = isEmpty && canAddMore && !disabled;
+              const thumbnailUrl = hasLegacyImage ? displayImageUrl : image?.imageUrl;
               
               return (
                 <div
                   key={slotIndex}
-                  className={`relative flex-1 aspect-[9/16] max-w-[60px] rounded-lg overflow-hidden transition-all duration-300 ${
+                  className={`relative flex-1 aspect-[9/16] max-w-[52px] rounded-lg overflow-hidden transition-all duration-200 ${
                     isEmpty 
-                      ? 'bg-surface/50 border-2 border-dashed border-border-default/50' 
+                      ? isEmptySlotClickable
+                        ? 'bg-surface/80 border-2 border-dashed border-primary/40 hover:border-primary hover:bg-primary/10 cursor-pointer' 
+                        : 'bg-surface/50 border-2 border-dashed border-border-default/30'
                       : isSelected
-                        ? 'ring-2 ring-primary ring-offset-2 ring-offset-card shadow-lg shadow-primary/20'
-                        : 'border-2 border-border-default hover:border-primary/50'
-                  } ${!isEmpty && !isProcessing ? 'cursor-pointer hover:scale-105' : ''}`}
+                        ? 'ring-2 ring-green-500 ring-offset-1 ring-offset-card'
+                        : 'border border-border-default hover:border-primary/50 cursor-pointer'
+                  }`}
                   onClick={() => {
-                    if (image && !isProcessing && !isEmpty) {
+                    if (isEmpty && isEmptySlotClickable) {
+                      // Empty slot click -> open modal to add new image
+                      handleAddNewClick();
+                    } else if (image && !isProcessing) {
+                      // Image click -> select it
                       onSelectImage(image.id);
                     }
                   }}
@@ -282,11 +264,11 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
                   onMouseLeave={() => setHoveredThumbnail(null)}
                 >
                   {isEmpty ? (
-                    /* Empty slot */
+                    /* Empty slot - clickable "+" */
                     <div className="w-full h-full flex items-center justify-center">
-                      <div className="text-text-muted/30">
-                        <Plus className="w-4 h-4" />
-                      </div>
+                      <Plus className={`w-5 h-5 ${
+                        isEmptySlotClickable ? 'text-primary' : 'text-text-muted/20'
+                      }`} />
                     </div>
                   ) : isProcessing ? (
                     /* Processing thumbnail */
@@ -294,33 +276,29 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
                       <Loader2 className="w-4 h-4 text-primary animate-spin" />
                     </div>
                   ) : (
-                    /* Image thumbnail */
+                    /* Image thumbnail (including legacy backward compat) */
                     <>
                       <img
-                        src={image.imageUrl}
+                        src={thumbnailUrl}
                         alt={`Variant ${slotIndex + 1}`}
                         className="w-full h-full object-cover"
                       />
                       
-                      {/* Generation number badge */}
-                      <div className="absolute top-0.5 left-0.5 bg-black/70 text-white text-[8px] font-bold px-1 py-0.5 rounded">
-                        #{image.generationNumber}
+                      {/* Generation number badge with checkmark if selected */}
+                      <div className={`absolute top-0.5 left-0.5 flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold ${
+                        isSelected ? 'bg-green-500 text-white' : 'bg-black/70 text-white'
+                      }`}>
+                        #{hasLegacyImage ? 1 : image?.generationNumber || 1}
+                        {isSelected && <CheckCircle2 className="w-2.5 h-2.5" />}
                       </div>
                       
-                      {/* Selected checkmark */}
-                      {isSelected && (
-                        <div className="absolute top-0.5 right-0.5 bg-green-500 rounded-full p-0.5">
-                          <CheckCircle2 className="w-2.5 h-2.5 text-white" />
-                        </div>
-                      )}
-                      
-                      {/* Hover overlay with delete */}
-                      {hoveredThumbnail === image.id && !isSelected && !disabled && (
+                      {/* Hover overlay with delete (only for non-selected, non-legacy) */}
+                      {!hasLegacyImage && hoveredThumbnail === image?.id && !isSelected && !disabled && (
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              onDeleteImage(image.id);
+                              if (image?.id) onDeleteImage(image.id);
                             }}
                             className="p-1.5 bg-red-500 hover:bg-red-600 rounded-full transition-colors"
                             title="Delete"
@@ -334,27 +312,11 @@ export const VisualPreviewGallery: React.FC<VisualPreviewGalleryProps> = ({
                 </div>
               );
             })}
-            
-            {/* Add New Variant Button */}
-            {canAddMore && completedImages.length > 0 && !disabled && (
-              <button
-                onClick={handleRegenerateClick}
-                className="flex-shrink-0 w-9 h-9 rounded-lg bg-gradient-to-br from-primary/20 to-accent-pink/20 border border-primary/30 hover:border-primary flex items-center justify-center transition-all duration-200 hover:scale-110 hover:shadow-lg hover:shadow-primary/20"
-                title={uiText.regenerate}
-              >
-                <Plus className="w-4 h-4 text-primary" />
-              </button>
-            )}
           </div>
           
           {/* Hint text */}
           <p className="text-[10px] text-text-muted mt-1.5 text-center">
-            {completedImages.length > 1 
-              ? uiText.clickToSelect
-              : completedImages.length === 1 && canAddMore
-                ? `${uiText.regenerate} (+${remainingSlots})`
-                : ''
-            }
+            {uiText.clickToSelect}
           </p>
         </div>
       )}

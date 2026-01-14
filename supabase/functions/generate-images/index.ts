@@ -38,18 +38,28 @@ import {
 } from '../_shared/lookups/index.ts'
 
 // ============================================================================
-// SMART KEYWORD EXTRACTION (2026-01-14 - Enhanced with Fuzzy + LLM)
-// 3-Layer extraction: Cache → Fuzzy Match → LLM Fallback
+// SMART KEYWORD EXTRACTION v2.0 (2026-01-14 - LLM-First Design)
+// Layer 1: LLM (Gemini via api_keys_pool) - Primary extraction
+// Layer 2: Tavily Search (optional) - Real-time enrichment
 // ============================================================================
 import {
-  extractKeywordsStructured,
+  // Async versions (with LLM)
   extractKeywordsStructuredAsync,
-  enhancePromptWithKeywords,
   enhancePromptWithKeywordsAsync,
-  extractLocationSmart,
+  // Sync versions (limited - for backward compatibility)
+  extractKeywordsStructured,
+  enhancePromptWithKeywords,
   type KeywordExtractionResult,
-  type LLMLocationResult,
 } from '../_shared/keywordExtractor.ts'
+
+// ============================================================================
+// PROMPT SYNTHESIZER (2026-01-14 - Comprehensive Prompt Synthesis)
+// Combines visual_direction + notes + flags into ONE coherent prompt via LLM
+// ============================================================================
+import {
+  synthesizeImagePrompt,
+  type PromptSynthesisInput,
+} from '../_shared/promptSynthesizer.ts'
 
 // ============================================================================
 // STOCK IMAGE SEARCH - TEMPORARILY DISABLED (2026-01-11)
@@ -111,47 +121,66 @@ function selectImageProvider(
   hasCreatorRef: boolean = false  // NEW: Has creator avatar for B-ROLL multi-ref
 ): ProviderSelection {
   if (isCreatorShot) {
-    // HOOK/CTA segments - need face consistency
+    // ========================================================================
+    // CREATOR SHOTS (HOOK/CTA/LOOP-END) - Face consistency
+    // ========================================================================
     if (hasReferenceImage) {
-      // With reference: use /edit endpoint for face consistency
+      // With avatar reference: use /edit endpoint for face consistency
       return {
         primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (face consistency via image_urls)
         fallback: 'gpt-image-1'            // OpenAI fallback for face consistency
       }
     } else {
-      // Without reference: use text-to-image
+      // Without avatar reference: use text-to-image
       return {
         primary: 'fal-nano-banana',  // fal.ai Nano Banana Pro T2I
         fallback: 'gpt-image-1'      // OpenAI fallback
       }
     }
   } else {
-    // B-ROLL segments
+    // ========================================================================
+    // B-ROLL SEGMENTS - Model selection based on reference images
+    // ========================================================================
     
-    // NEW: B-ROLL with "Include Creator Face" checkbox checked
-    // Use FLUX Kontext Multi for multi-image reference (creator face + scene ref)
-    if (includeCreatorFace && hasCreatorRef) {
+    // CASE 1: Multi-ref (creator face + scene reference) → FLUX Kontext Multi
+    // Requires BOTH creator avatar AND scene reference image
+    if (includeCreatorFace && hasCreatorRef && hasReferenceImage) {
       return {
-        primary: 'fal-flux-kontext-multi',  // FLUX Kontext Max Multi (multi-image support)
-        fallback: 'fal-nano-banana-edit'     // Fallback to nano-banana-edit
+        primary: 'fal-flux-kontext-multi',  // FLUX Kontext Max Multi (2 images: creator + scene)
+        fallback: 'fal-nano-banana-edit'     // Fallback to single-ref if multi-ref fails
       }
     }
     
-    if (hasReferenceImage) {
-      // ✅ B-ROLL with reference → use /edit model (supports reference images)
+    // CASE 2: Single scene reference (no creator face) → Nano Banana Edit
+    // User uploaded scene reference, no creator face checkbox
+    if (!includeCreatorFace && hasReferenceImage) {
       return {
-        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (image_urls support)
-        fallback: 'fal-nano-banana'        // fal.ai Nano Banana fallback
+        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (1 image: scene reference)
+        fallback: 'fal-nano-banana'        // Fallback to T2I
       }
     }
-    // B-ROLL without reference - use user's selected model or default
+    
+    // CASE 3: Creator face only (no scene reference) → Nano Banana Edit
+    // Edge case: User checked creator face but didn't upload scene reference
+    // Treat creator avatar as single reference image
+    if (includeCreatorFace && hasCreatorRef && !hasReferenceImage) {
+      console.log(`[selectImageProvider] ⚠️ B-ROLL has creator face but no scene reference - using creator as single ref`)
+      return {
+        primary: 'fal-nano-banana-edit',  // fal.ai Nano Banana Pro /edit (1 image: creator as reference)
+        fallback: 'fal-nano-banana'        // Fallback to T2I
+      }
+    }
+    
+    // CASE 4: No reference images at all → Use default B-ROLL model (Seedream v4 / Qwen)
+    // Pure text-to-image generation based on visual_direction
     const selectedModel = brollModel || DEFAULT_BROLL_MODEL
     const fallbackModel: ImageModelKey = selectedModel === 'fal-seedream-v4' 
       ? 'fal-qwen-image' 
       : 'fal-seedream-v4'
+    
     return {
-      primary: selectedModel,
-      fallback: fallbackModel
+      primary: selectedModel,   // User's choice (Seedream v4 / Qwen) or default
+      fallback: fallbackModel   // Swap between Seedream <-> Qwen
     }
   }
 }
@@ -370,6 +399,10 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       // NEW: B-ROLL with creator face multi-ref fields
       include_creator_face: includeCreatorFace,
       creator_ref_for_broll: creatorRefForBroll,
+      // Multi-image gallery support
+      generation_number: 1,  // First generation for each segment
+      is_selected: true,     // Auto-select first image
+      source_type: 'generated',
       status: JOB_STATUS.PENDING,
       image_url: null,
       error_message: null
@@ -641,17 +674,59 @@ async function handleProcessSingle(
   }
 
   // ========================================================================
-  // 2026-01-14: ASYNC PROMPT ENHANCEMENT for B-ROLL with LLM fallback
-  // Enhance visual_prompt with smart location extraction (Cache → Fuzzy → LLM)
-  // Uses api_keys_pool for Gemini rotation (handles rate limits automatically)
+  // 2026-01-14: COMPREHENSIVE PROMPT SYNTHESIS
+  // Synthesizes visual_direction + script + notes + flags into ONE coherent prompt
+  // Uses LLM (Gemini) for intelligent synthesis, not simple append
   // ========================================================================
   let finalVisualPrompt = job.visual_prompt || ''
+  const regenerationNotes = job.regeneration_notes || ''
+  const hasNotes = !!regenerationNotes.trim()
+  const hasRefImage = !!(referenceImageForGeneration || multiRefImages?.length)
+  
+  // Check if synthesis is needed (notes, creator face in B-ROLL, or reference image)
+  const needsSynthesis = hasNotes || (includeCreatorFace && !isCreatorShot) || hasRefImage
+  
+  if (needsSynthesis) {
+    console.log(`[PROCESS_SINGLE] 🎯 Synthesizing comprehensive prompt...`)
+    console.log(`[PROCESS_SINGLE]   - Has notes: ${hasNotes}`)
+    console.log(`[PROCESS_SINGLE]   - Include creator face: ${includeCreatorFace}`)
+    console.log(`[PROCESS_SINGLE]   - Has reference image: ${hasRefImage}`)
+    
+    try {
+      const synthesisInput: PromptSynthesisInput = {
+        visualDirection: job.visual_prompt || '',
+        scriptText: job.script_text || '',
+        regenerationNotes: regenerationNotes,
+        includeCreatorFace: includeCreatorFace,
+        hasReferenceImage: hasRefImage,
+        segmentType: job.segment_type || 'BODY',
+        shotType: shotType,
+        emotion: job.emotion || 'neutral',
+        aspectRatio: aspectRatio
+      }
+      
+      const synthesisResult = await synthesizeImagePrompt(synthesisInput, supabase)
+      
+      if (synthesisResult.synthesizedPrompt) {
+        finalVisualPrompt = synthesisResult.synthesizedPrompt
+        console.log(`[PROCESS_SINGLE] ✅ Prompt synthesized via ${synthesisResult.source} (${synthesisResult.processingTimeMs}ms)`)
+        console.log(`[PROCESS_SINGLE]   - Original: ${(job.visual_prompt || '').length} chars`)
+        console.log(`[PROCESS_SINGLE]   - Final: ${finalVisualPrompt.length} chars`)
+      }
+    } catch (synthError) {
+      console.warn(`[PROCESS_SINGLE] ⚠️ Synthesis failed, using fallback append: ${synthError}`)
+      // Fallback to simple append if synthesis fails
+      if (hasNotes) {
+        finalVisualPrompt = `${finalVisualPrompt}\n\nAdditional requirements: ${regenerationNotes.trim()}`
+      }
+    }
+  }
   
   if (!isCreatorShot) {
     try {
-      console.log(`[PROCESS_SINGLE] 🔍 Enhancing B-ROLL prompt with smart extraction...`)
+      console.log(`[PROCESS_SINGLE] 🔍 Enhancing B-ROLL prompt with LLM extraction...`)
       
-      // Extract keywords with LLM fallback via api_keys_pool
+      // Extract keywords with LLM (Gemini via api_keys_pool)
       const scriptText = job.script_text || ''
       const keywordResult = await extractKeywordsStructuredAsync(
         finalVisualPrompt, 
@@ -659,12 +734,17 @@ async function handleProcessSingle(
         supabase  // Pass supabase for api_keys_pool rotation
       )
       
-      if (keywordResult.locationFull) {
-        console.log(`[PROCESS_SINGLE] 📍 Location: ${keywordResult.locationFull} (via ${keywordResult.locationSource})`)
+      // Log extraction results (v2.0 interface)
+      if (keywordResult.location) {
+        console.log(`[PROCESS_SINGLE] 📍 Location: ${keywordResult.location.full} (${keywordResult.location.type}, via ${keywordResult.source})`)
       }
       if (keywordResult.venue) {
         console.log(`[PROCESS_SINGLE] 🏢 Venue: ${keywordResult.venue}`)
       }
+      if (keywordResult.atmosphere.length > 0) {
+        console.log(`[PROCESS_SINGLE] 🌊 Atmosphere: ${keywordResult.atmosphere.join(', ')}`)
+      }
+      console.log(`[PROCESS_SINGLE] ⏱️ Extraction time: ${keywordResult.processingTimeMs}ms`)
       
       // Enhance prompt with extracted keywords
       const enhancedPrompt = await enhancePromptWithKeywordsAsync(
@@ -912,7 +992,10 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
     shot_type,
     emotion,
     aspect_ratio,
-    // NEW: B-ROLL with creator face multi-ref fields
+    // CREATOR shots: character description + avatar
+    character_description,
+    character_ref_png,
+    // B-ROLL with creator face multi-ref fields
     include_creator_face,
     creator_ref_for_broll
   } = requestBody
@@ -934,7 +1017,13 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
     // Determine provider based on shot type and reference images
     const isCreatorShot = shot_type === 'CREATOR' || 
       ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes((segment_type || '').toUpperCase())
-    const hasReferenceImage = !!reference_image_url
+    
+    // Reference image logic:
+    // - CREATOR shots: use character_ref_png
+    // - B-ROLL shots: use reference_image_url
+    const creatorRefImage = isCreatorShot ? character_ref_png : null
+    const brollRefImage = !isCreatorShot ? reference_image_url : null
+    const hasReferenceImage = !!(creatorRefImage || brollRefImage)
     const hasCreatorRef = !!creator_ref_for_broll
     
     // Select provider using same logic as handleCreateJobs
@@ -959,8 +1048,12 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
       aspect_ratio: aspect_ratio || '9:16',
       generation_number: generation_number || 1,
       regeneration_notes: regeneration_notes || null,
-      reference_image_url: reference_image_url || null,
-      // NEW: B-ROLL with creator face multi-ref fields
+      // CREATOR shots: character description + avatar
+      character_description: isCreatorShot ? (character_description || null) : null,
+      character_ref_png: creatorRefImage,
+      // B-ROLL shots: scene reference image
+      reference_image_url: brollRefImage,
+      // B-ROLL with creator face multi-ref fields
       include_creator_face: include_creator_face || false,
       creator_ref_for_broll: creator_ref_for_broll || null,
       // Provider selection
@@ -973,7 +1066,12 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
       updated_at: new Date().toISOString()
     }
     
-    console.log(`[REGENERATE_SINGLE] Creating job: provider=${providerChoice.primary}, include_creator_face=${include_creator_face || false}`)
+    console.log(`[REGENERATE_SINGLE] Creating job:`)    
+    console.log(`  - Provider: ${providerChoice.primary}`)    
+    console.log(`  - Is CREATOR: ${isCreatorShot}`)    
+    console.log(`  - Has ref image: ${hasReferenceImage}`)    
+    console.log(`  - Include creator face: ${include_creator_face || false}`)    
+    console.log(`  - Has notes: ${!!(regeneration_notes?.trim())}`)
 
     const { data: insertedJob, error: insertError } = await supabase
       .from('image_generation_jobs')
@@ -1641,11 +1739,55 @@ function buildCinematicPrompt(params: PromptParams): string {
   // B-ROLL SHOT - Enhanced with LOCATION CONTEXT (2026-01-14)
   // Extract location/cultural context from visual_direction per segment
   // Inject environment, ethnicity, architecture hints for authentic visuals
+  // 
+  // NEW (2026-01-14): Support for include_creator_face multi-ref mode
+  // When B-ROLL has creator face, must use explicit reference pattern
   // ========================================================================
   
+  // Check if this B-ROLL segment needs multi-ref handling (creator face included)
+  const includeCreatorFace = segment.include_creator_face || false
+  
   // Debug logging
-  console.log(`[buildCinematicPrompt] Segment: ${segmentType}, Shot: ${shotType}`)
+  console.log(`[buildCinematicPrompt] Segment: ${segmentType}, Shot: ${shotType}, CreatorFace: ${includeCreatorFace}`)
   console.log(`[buildCinematicPrompt] visual_direction: "${visualDirection.substring(0, 100)}..."`)
+  
+  // ========================================================================
+  // MULTI-REF MODE (B-ROLL with creator face) - CRITICAL PATTERN
+  // For FLUX Kontext Multi, MUST explicitly reference "first image" for face
+  // ========================================================================
+  if (includeCreatorFace) {
+    console.log(`[buildCinematicPrompt] 🎭 Multi-ref mode: Including creator face in B-ROLL`)
+    
+    // Extract action from visual direction
+    let action = 'standing'
+    const lowerVD = visualDirection.toLowerCase()
+    
+    if (lowerVD.includes('explor')) action = 'exploring'
+    else if (lowerVD.includes('walk')) action = 'walking through'
+    else if (lowerVD.includes('look') || lowerVD.includes('watch')) action = 'looking at'
+    else if (lowerVD.includes('work') || lowerVD.includes('typ')) action = 'working in'
+    else if (lowerVD.includes('present') || lowerVD.includes('show')) action = 'presenting in'
+    else if (lowerVD.includes('sit')) action = 'sitting in'
+    else if (lowerVD.includes('stand')) action = 'standing in'
+    
+    // Build scene description from visual direction
+    const sceneDesc = visualDirection
+      .replace(/^Cinematic\s+(shot|view|scene)?\s*(of)?\s*/i, '')
+      .replace(/^(A|An|The)\s+/i, '')
+      .trim()
+    
+    // Build proper multi-ref prompt
+    const multiRefPrompt = `A cinematic shot of the person from the first reference image ${action} ${sceneDesc}.
+
+Maintain the person's face, features, and appearance from the first reference image.
+Match the environment, lighting, and atmosphere from the second reference image.
+
+Cinematography: Professional, medium shot, natural lighting.
+Style: Photorealistic, high-quality, 8K.`
+    
+    console.log(`[buildCinematicPrompt] ✅ Multi-ref prompt built (${multiRefPrompt.length} chars)`)
+    return multiRefPrompt
+  }
   
   // Extract location context from this segment's visual_direction
   const locationContext = extractLocationContext(visualDirection)
@@ -1654,14 +1796,14 @@ function buildCinematicPrompt(params: PromptParams): string {
   }
   
   // ========================================================================
-  // 2026-01-14: SMART KEYWORD EXTRACTION for B-ROLL
+  // 2026-01-14: SMART KEYWORD EXTRACTION for B-ROLL (non-multi-ref)
   // Extract location/venue/context from visual_direction + script for better prompts
   // ========================================================================
   const keywordResult = extractKeywordsStructured(visualDirection, scriptText)
   if (keywordResult.fullKeywords) {
     console.log(`[buildCinematicPrompt] 🔍 Keywords extracted: "${keywordResult.fullKeywords}"`)
-    if (keywordResult.locationFull) {
-      console.log(`[buildCinematicPrompt] 📍 Location resolved: ${keywordResult.locationFull}`)
+    if (keywordResult.location?.full) {
+      console.log(`[buildCinematicPrompt] 📍 Location resolved: ${keywordResult.location.full}`)
     }
   }
   
@@ -1705,8 +1847,8 @@ ${locationContext.peopleDescription ? `People: ${locationContext.peopleDescripti
       : 'Modern technology concept - clean professional imagery'
   
   // Add location context to fallback if detected from keywords or topic
-  const topicLocationContext = keywordResult.locationFull 
-    ? { environment: keywordResult.locationFull } 
+  const topicLocationContext = keywordResult.location?.full 
+    ? { environment: keywordResult.location.full } 
     : extractLocationContext(topic)
   
   if (topicLocationContext) {
@@ -1734,11 +1876,11 @@ Clean frame, no text, no watermarks.`
 // ============================================================================
 
 interface AsyncPromptParams extends PromptParams {
-  geminiApiKey?: string
+  supabase?: any  // For api_keys_pool rotation
 }
 
 async function buildCinematicPromptAsync(params: AsyncPromptParams): Promise<string> {
-  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, geminiApiKey } = params
+  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, supabase } = params
   
   const shotType = segment.shot_type || 'B-ROLL'
   const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
@@ -1782,11 +1924,11 @@ async function buildCinematicPromptAsync(params: AsyncPromptParams): Promise<str
   // ========================================================================
   // SMART KEYWORD EXTRACTION with LLM fallback
   // ========================================================================
-  const keywordResult = await extractKeywordsStructuredAsync(visualDirection, scriptText, geminiApiKey)
+  const keywordResult = await extractKeywordsStructuredAsync(visualDirection, scriptText, supabase)
   
   if (keywordResult.fullKeywords) {
     console.log(`[buildCinematicPromptAsync] 🔍 Keywords: "${keywordResult.fullKeywords}"`)
-    console.log(`[buildCinematicPromptAsync] 📍 Location: ${keywordResult.locationFull || 'none'} (via ${keywordResult.locationSource || 'none'})`)
+    console.log(`[buildCinematicPromptAsync] 📍 Location: ${keywordResult.location?.full || 'none'} (via ${keywordResult.source || 'none'})`)
   }
   
   // PRIMARY: Use visual_direction + enhanced location extraction
@@ -1796,7 +1938,7 @@ async function buildCinematicPromptAsync(params: AsyncPromptParams): Promise<str
       visualDirection, 
       scriptText, 
       visualDirection,
-      geminiApiKey
+      supabase
     )
     
     // Add location context if detected (architecture, signage, atmosphere)
@@ -1827,8 +1969,8 @@ ${locationContext.peopleDescription ? `People: ${locationContext.peopleDescripti
       : 'Modern technology concept - clean professional imagery'
   
   // Add location context if detected
-  const topicLocationContext = keywordResult.locationFull 
-    ? { environment: keywordResult.locationFull } 
+  const topicLocationContext = keywordResult.location?.full 
+    ? { environment: keywordResult.location.full } 
     : extractLocationContext(topic)
   
   if (topicLocationContext) {
@@ -2293,6 +2435,9 @@ async function generateWithFalAi(
     // FLUX KONTEXT MAX MULTI - Multi-image reference for B-ROLL with creator face
     // Supports image_urls array (2+ reference images)
     // Use case: Combine creator avatar + scene reference for consistent B-ROLL
+    // 
+    // CRITICAL: Prompt MUST reference images explicitly:
+    // "The person from the first image is [action] in [scene from second image]"
     // ========================================================================
     if (!multiRefImages || multiRefImages.length === 0) {
       console.warn(`[FAL.AI] fal-flux-kontext-multi called without multi-ref images - using single ref if available`)
@@ -2306,6 +2451,83 @@ async function generateWithFalAi(
       multiRefImages.forEach((url, i) => {
         console.log(`[FAL.AI]   Image ${i + 1}: ${url.substring(0, 60)}...`)
       })
+      
+      // ========================================================================
+      // CRITICAL SAFETY CHECK: FLUX Kontext Multi REQUIRES proper structure
+      // Must be natural language scene description with face-only preservation
+      // ========================================================================
+      const hasNaturalStructure = (
+        // Check for natural description patterns (not "person from first image")
+        /^A (cinematic )?shot of (a |an )?(man|woman|person|asian|middle-aged)/i.test(prompt) ||
+        // Or has explicit face preservation instruction
+        prompt.toLowerCase().includes('preserve') && prompt.toLowerCase().includes('facial features')
+      )
+      
+      if (!hasNaturalStructure && multiRefImages.length >= 1) {
+        console.log(`[FAL.AI] ⚠️ CRITICAL: Prompt missing natural multi-ref structure!`)
+        console.log(`[FAL.AI] Original: "${prompt.substring(0, 100)}..."`)
+        
+        // ========================================================================
+        // Extract key elements for natural reconstruction
+        // ========================================================================
+        const lowerPrompt = prompt.toLowerCase()
+        
+        // Extract action
+        let action = 'standing'
+        if (lowerPrompt.includes('explor')) action = 'exploring'
+        else if (lowerPrompt.includes('walk')) action = 'walking'
+        else if (lowerPrompt.includes('look') || lowerPrompt.includes('watch')) action = 'looking at'
+        else if (lowerPrompt.includes('work') || lowerPrompt.includes('typ')) action = 'working with'
+        else if (lowerPrompt.includes('present') || lowerPrompt.includes('show')) action = 'presenting'
+        else if (lowerPrompt.includes('pos')) action = 'posing with'
+        else if (lowerPrompt.includes('sit')) action = 'sitting near'
+        else if (lowerPrompt.includes('stand')) action = 'standing next to'
+        
+        // Extract costume/clothing from refinements if present
+        let costume = ''
+        if (lowerPrompt.includes('baju adat') || lowerPrompt.includes('traditional clothing')) {
+          if (lowerPrompt.includes('batak')) costume = 'wearing traditional Batak ceremonial attire'
+          else if (lowerPrompt.includes('jawa')) costume = 'wearing traditional Javanese clothing'
+          else costume = 'wearing traditional cultural attire'
+        } else if (lowerPrompt.includes('wearing')) {
+          // Try to extract what they're wearing
+          const wearingMatch = prompt.match(/wearing ([^,\.]+)/i)
+          if (wearingMatch) costume = `wearing ${wearingMatch[1]}`
+        }
+        
+        // Extract main subject/object from scene
+        let sceneObject = 'the scene'
+        if (lowerPrompt.includes('komodo')) sceneObject = 'a large Komodo dragon'
+        else if (lowerPrompt.includes('dragon')) sceneObject = 'a dragon'
+        else if (lowerPrompt.includes('cave')) sceneObject = 'a cave entrance'
+        else if (lowerPrompt.includes('mountain')) sceneObject = 'mountains'
+        
+        // Extract environment/location
+        let environment = ''
+        if (lowerPrompt.includes('rugged') || lowerPrompt.includes('landscape')) {
+          environment = 'in a rugged natural landscape with dry grasslands and distant mountains'
+        } else if (lowerPrompt.includes('cave')) {
+          environment = 'in a dramatic cave setting'
+        } else if (lowerPrompt.includes('nature') || lowerPrompt.includes('outdoor')) {
+          environment = 'in a natural outdoor setting'
+        }
+        
+        // Extract lighting
+        let lighting = 'natural lighting'
+        if (lowerPrompt.includes('golden hour') || lowerPrompt.includes('sunset')) lighting = 'golden hour sunlight'
+        else if (lowerPrompt.includes('sun') || lowerPrompt.includes('bright')) lighting = 'bright natural sunlight'
+        
+        // Build natural, cohesive prompt
+        const correctedPrompt = `A cinematic shot of a person ${costume ? costume + ', ' : ''}${action} ${sceneObject} ${environment}. ${lighting.charAt(0).toUpperCase() + lighting.slice(1)} creates a dramatic atmosphere. Medium shot, 50mm lens, eye-level angle. Professional cinematography, photorealistic quality.
+
+Preserve the exact facial features, skin tone, and face structure from the person in the first reference image.`
+        
+        requestBody.prompt = correctedPrompt
+        console.log(`[FAL.AI] ✅ Reconstructed with natural multi-ref structure (${correctedPrompt.length} chars)`)
+        console.log(`[FAL.AI] Corrected: "${correctedPrompt.substring(0, 150)}..."`)
+      } else {
+        console.log(`[FAL.AI] ✅ Prompt has proper natural structure for FLUX Kontext Multi`)
+      }
     }
     // FLUX Kontext specific settings
     requestBody.guidance_scale = 3.5  // Recommended for Kontext

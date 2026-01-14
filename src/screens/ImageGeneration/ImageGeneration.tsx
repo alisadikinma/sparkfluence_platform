@@ -6,12 +6,12 @@ import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segmentDuration";
-import { extractKeywords, extractKeywordsStructured, getSuggestedKeywords, LOCATION_HIERARCHY } from "../../lib/keywordExtractor";
-import { VisualPreviewGallery } from "./components/VisualPreviewGallery";
+import { getSuggestedKeywords } from "../../lib/keywordExtractor";  // Only need fallback function
+import { VisualPreviewGallery, GenerateBRollModal } from "./components";
 import {
   RefreshCw, ImageIcon, Loader2,
   Sparkles, X, Maximize2, AlertCircle,
-  CloudOff, Cloud, CheckCircle2, Info, Download,
+  CloudOff, Cloud, CheckCircle2, Download,
   ChevronDown, Upload, Search, Camera
 } from "lucide-react";
 
@@ -371,7 +371,7 @@ interface RegenerateModalProps {
   isOpen: boolean;
   onClose: () => void;
   segment: Segment | null;
-  onRegenerate: (notes: string, referenceImageUrl?: string) => void;
+  onRegenerate: (notes: string) => void;
 }
 
 const RegenerateModal: React.FC<RegenerateModalProps> = ({
@@ -381,15 +381,19 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
   onRegenerate
 }) => {
   const [notes, setNotes] = useState('');
-  const [referenceImageUrl, setReferenceImageUrl] = useState('');
-  const [showStockSearch, setShowStockSearch] = useState(false);
+
+  // Reset notes when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setNotes('');
+    }
+  }, [isOpen]);
 
   if (!isOpen || !segment) return null;
 
   const handleSubmit = () => {
-    onRegenerate(notes, referenceImageUrl || undefined);
+    onRegenerate(notes);
     setNotes('');
-    setReferenceImageUrl('');
     onClose();
   };
 
@@ -424,7 +428,7 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
         </div>
 
         {/* Notes input */}
-        <div className="mb-4">
+        <div className="mb-6">
           <label className="text-sm text-text-muted block mb-1">Additional Notes (optional):</label>
           <textarea
             value={notes}
@@ -432,51 +436,10 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
             placeholder="e.g., Make it darker, add more contrast, change lighting..."
             className="w-full bg-surface border border-border-default rounded-lg p-3 text-text-primary resize-none h-24 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           />
+          <p className="text-xs text-text-muted mt-1.5">
+            Notes akan ditambahkan ke prompt untuk hasil yang lebih sesuai
+          </p>
         </div>
-
-        {/* Reference image */}
-        <div className="mb-4">
-          <label className="text-sm text-text-muted block mb-1">Reference Image URL (optional):</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={referenceImageUrl}
-              onChange={(e) => setReferenceImageUrl(e.target.value)}
-              placeholder="Paste image URL or search stock images"
-              className="flex-1 bg-surface border border-border-default rounded-lg px-3 py-2 text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-            <Button
-              onClick={() => setShowStockSearch(true)}
-              variant="outline"
-              className="flex-shrink-0"
-            >
-              <ImageIcon className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-        
-        {/* Suggested Keywords Chips - 2026-01-14 */}
-        {(() => {
-          const suggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
-          if (suggestions.length === 0) return null;
-          return (
-            <div className="mb-6">
-              <label className="text-xs text-text-muted block mb-2">Search suggestions based on segment content:</label>
-              <div className="flex flex-wrap gap-2">
-                {suggestions.map((keyword, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setShowStockSearch(true)}
-                    className="px-2.5 py-1 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-full transition-colors"
-                    title={`Search for: ${keyword}`}
-                  >
-                    {keyword}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
 
         {/* Action buttons */}
         <div className="flex gap-3">
@@ -489,16 +452,6 @@ const RegenerateModal: React.FC<RegenerateModalProps> = ({
           </Button>
         </div>
       </div>
-
-      {/* Stock Image Search Modal */}
-      <StockImageModal
-        isOpen={showStockSearch}
-        onClose={() => setShowStockSearch(false)}
-        onSelect={(imageUrl, metadata) => {
-          setReferenceImageUrl(imageUrl);
-          setShowStockSearch(false);
-        }}
-      />
     </div>
   );
 };
@@ -569,6 +522,11 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [uploadUrl, setUploadUrl] = useState('');
   const modalContentRef = useRef<HTMLDivElement>(null);
+  
+  // Smart extraction state (from LLM)
+  const [smartSuggestions, setSmartSuggestions] = useState<string[]>([]);
+  const [extractionSource, setExtractionSource] = useState<'llm' | 'tavily' | 'fallback' | null>(null);
+  const [isExtractingKeywords, setIsExtractingKeywords] = useState(false);
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -597,18 +555,122 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
     e.stopPropagation();
   };
 
-  // Auto-search when modal opens with keywords
+  // Smart extraction + auto-search when modal opens
+  // Use segment.id to force re-trigger even if same segment object
   useEffect(() => {
-    if (isOpen && initialKeywords) {
-      setSearchQuery(initialKeywords);
-      handleSearch(initialKeywords);
+    if (isOpen && segment) {
+      // Reset ALL state including searchQuery
+      setSearchQuery('');  // Clear textbox first!
+      setSmartSuggestions([]);
+      setExtractionSource(null);
+      setResults([]);
+      setError(null);
+      setUploadUrl('');
+      
+      // Trigger smart search with LLM extraction
+      handleSmartSearch();
     }
-  }, [isOpen, initialKeywords]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, segment?.id]);  // Use segment.id instead of segment object
 
-  const handleSearch = async (query?: string) => {
+  // Smart search: Extract keywords via LLM then search
+  const handleSmartSearch = async () => {
+    if (!segment) return;
+    
+    setIsExtractingKeywords(true);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data, error: searchError } = await supabase.functions.invoke('search-stock-images', {
+        body: {
+          visualDirection: segment.visualDirection || '',
+          script: segment.script || '',
+          enableSmartExtraction: true,
+          orientation: 'portrait',
+          per_page: 20,
+          provider: 'both'
+        }
+      });
+
+      setIsExtractingKeywords(false);
+
+      if (searchError) {
+        console.error('Smart search error:', searchError);
+        throw new Error('Smart keyword extraction unavailable. Try manual search.');
+      }
+
+      if (data?.success) {
+        // STEP 1: Extract keywords from LLM response
+        let bestQuery = '';
+        if (data.data?.smartExtraction?.suggestedQueries?.length > 0) {
+          const suggestions = data.data.smartExtraction.suggestedQueries;
+          bestQuery = data.data.query || suggestions[0] || '';
+          setSearchQuery(bestQuery);  // Fill textbox
+          setSmartSuggestions(suggestions);
+          setExtractionSource(data.data.smartExtraction.source);
+          console.log(`[SmartSearch] LLM extracted keyword: "${bestQuery}"`);
+        } else {
+          // Fallback to frontend suggestions
+          const fallbackSuggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
+          if (fallbackSuggestions.length > 0) {
+            bestQuery = fallbackSuggestions[0];
+            setSearchQuery(bestQuery);
+          }
+          setSmartSuggestions(fallbackSuggestions);
+          setExtractionSource('fallback');
+          console.log(`[SmartSearch] Fallback keyword: "${bestQuery}"`);
+        }
+        
+        // STEP 2: ALWAYS trigger fresh search with extracted keyword
+        // Don't use backend results directly - they may be stale/cached
+        if (bestQuery) {
+          console.log(`[SmartSearch] Triggering fresh search with: "${bestQuery}"`);
+          setTimeout(() => handleSearch(bestQuery), 100);
+          return;  // handleSearch will handle loading state
+        } else {
+          setLoading(false);
+          setError('No keywords extracted. Try manual search.');
+          return;
+        }
+      } else {
+        throw new Error(data?.error?.message || 'Search failed');
+      }
+    } catch (err: any) {
+      setIsExtractingKeywords(false);
+      setLoading(false);
+      console.error('Smart search error:', err);
+      
+      // Fallback to frontend suggestions
+      const fallbackSuggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
+      setSmartSuggestions(fallbackSuggestions);
+      setExtractionSource('fallback');
+      
+      // Auto-fill textbox and search with first suggestion
+      if (fallbackSuggestions.length > 0) {
+        const firstSuggestion = fallbackSuggestions[0];
+        setSearchQuery(firstSuggestion);
+        setError(null);  // Clear error since we're auto-searching
+        // Delay search slightly to avoid state conflicts
+        setTimeout(() => handleSearch(firstSuggestion), 100);
+      } else {
+        setError(err.message || 'Smart search failed. Use manual search.');
+      }
+      return;  // Early return to skip finally
+    }
+  };
+
+  // Manual search (when user types query or clicks suggestion)
+  // Use useCallback to ensure stable function reference
+  const handleSearch = useCallback(async (query?: string) => {
     const searchTerm = query || searchQuery;
-    if (!searchTerm.trim()) return;
+    console.log(`[handleSearch] Called with: "${searchTerm}", loading: ${loading}`);
+    if (!searchTerm.trim()) {
+      console.log('[handleSearch] Empty search term, skipping');
+      return;
+    }
 
+    // Don't block if already loading - let new search override
     setLoading(true);
     setError(null);
 
@@ -622,9 +684,11 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
     }
 
     try {
+      // Simple search (no LLM extraction for manual queries)
       const { data, error: searchError } = await supabase.functions.invoke('search-stock-images', {
         body: {
           query: searchTerm.trim(),
+          enableSmartExtraction: false,  // Disable LLM for manual search
           orientation: 'portrait',
           per_page: 20,
           provider: 'both'
@@ -656,7 +720,7 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchQuery]);  // Include searchQuery for cases where query param is undefined
 
   const handleUploadUrl = () => {
     if (uploadUrl.trim()) {
@@ -716,28 +780,36 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
           </div>
           {error && <p className="text-xs text-red-500">{error}</p>}
           
-          {/* Suggested Keywords Chips - 2026-01-14 */}
-          {segment && (() => {
-            const suggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
-            if (suggestions.length === 0) return null;
-            return (
-              <div className="flex flex-wrap gap-2">
-                <span className="text-xs text-text-muted self-center">Suggestions:</span>
-                {suggestions.map((keyword, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      setSearchQuery(keyword);
-                      handleSearch(keyword);
-                    }}
-                    className="px-2.5 py-1 text-xs bg-primary/10 text-primary hover:bg-primary/20 rounded-full transition-colors"
-                  >
-                    {keyword}
-                  </button>
-                ))}
-              </div>
-            );
-          })()}
+          {/* Smart Keyword Suggestions from LLM - 2026-01-14 */}
+          {smartSuggestions.length > 0 && (
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-text-muted flex items-center gap-1">
+                {isExtractingKeywords ? (
+                  <><Loader2 className="w-3 h-3 animate-spin" /> Extracting...</>
+                ) : (
+                  <>✨ AI Suggestions {extractionSource === 'llm' && <span className="text-[10px] text-green-500">(LLM)</span>}:</>
+                )}
+              </span>
+              {smartSuggestions.map((keyword, idx) => (
+                <button
+                  key={idx}
+                  disabled={loading}
+                  onClick={() => {
+                    console.log('[SuggestionChip] Clicked:', keyword);
+                    setSearchQuery(keyword);
+                    handleSearch(keyword);  // Direct call - useCallback makes it stable
+                  }}
+                  className={`px-2.5 py-1 text-xs rounded-full transition-colors disabled:opacity-50 ${
+                    idx === 0 
+                      ? 'bg-primary text-white hover:bg-primary-hover' 
+                      : 'bg-primary/10 text-primary hover:bg-primary/20'
+                  }`}
+                >
+                  {keyword}
+                </button>
+              ))}
+            </div>
+          )}
           
           {/* Upload URL option */}
           <div className="flex gap-2">
@@ -818,8 +890,8 @@ export const ImageGeneration = (): JSX.Element => {
   // NEW: Image model selection state
   const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null; initialKeywords: string }>({ isOpen: false, segment: null, initialKeywords: '' });
-  const [openTooltip, setOpenTooltip] = useState<{ segmentId: string; type: 'creator-face' | 'add-reference' } | null>(null);
+  const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
+  const [bRollModal, setBRollModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
 
   const fromScriptLab = location.state?.fromScriptLab === true;
 
@@ -1137,6 +1209,37 @@ export const ImageGeneration = (): JSX.Element => {
     initializeEditor();
   }, [location.state, searchParams, navigate, user]);
 
+  // NEW: Sync images array from database after initialization
+  // This ensures VisualPreviewGallery displays all regenerated images on page refresh
+  useEffect(() => {
+    const syncImagesOnLoad = async () => {
+      // Only run after initialization is complete and we have segments
+      if (!sessionId || !isLoaded || !user || segments.length === 0) return;
+      
+      // Skip if any segment is currently generating (will be handled by background processing)
+      if (segments.some(seg => seg.isGeneratingImage)) return;
+      
+      // Skip if images are already populated (avoid unnecessary re-fetch)
+      const hasPopulatedImages = segments.some(seg => seg.images && seg.images.length > 0);
+      if (hasPopulatedImages) return;
+      
+      console.log('[InitSync] Syncing images from database...');
+      
+      try {
+        const imageMap = await fetchSegmentImages(sessionId);
+        
+        if (imageMap.size > 0) {
+          setSegments(prev => syncImagesWithSegments(imageMap, prev));
+          console.log(`[InitSync] Synced ${imageMap.size} segments with images`);
+        }
+      } catch (err) {
+        console.error('[InitSync] Failed to sync images:', err);
+      }
+    };
+    
+    syncImagesOnLoad();
+  }, [sessionId, isLoaded, user, segments.length]); // Run when these change
+
   const startBackgroundProcessing = useCallback((sid: string) => {
     if (processingIntervalRef.current) {
       clearInterval(processingIntervalRef.current);
@@ -1170,14 +1273,75 @@ export const ImageGeneration = (): JSX.Element => {
           });
         }
         
+        // ✅ FIX: When job completes, fetch ALL images for segment and update images array
         if (result?.job?.image_url) {
+          const segmentNumber = result.job.segment_number;
+          
+          // Fetch all images for this segment from database
+          const { data: segmentImages, error: fetchError } = await supabase
+            .from('image_generation_jobs')
+            .select('*')
+            .eq('session_id', sid)
+            .eq('segment_number', segmentNumber)
+            .eq('user_id', user.id)
+            .order('generation_number', { ascending: true });
+          
+          if (fetchError) {
+            console.error('Error fetching segment images:', fetchError);
+          }
+          
+          // Transform DB records to SegmentImage format
+          const imagesArray: SegmentImage[] = (segmentImages || []).map(job => ({
+            id: job.id,
+            imageUrl: job.image_url || '',
+            generationNumber: job.generation_number || 1,
+            sourceType: job.source_type || 'generated',
+            isSelected: job.is_selected || false,
+            scriptText: job.script_text || undefined,
+            regenerationNotes: job.regeneration_notes || undefined,
+            referenceImageUrl: job.reference_image_url || undefined,
+            status: job.status,
+            errorMessage: job.error_message || undefined,
+            createdAt: job.created_at
+          }));
+          
+          // Find selected image or use latest completed
+          const completedImages = imagesArray.filter(img => img.status === JOB_STATUS.COMPLETED && img.imageUrl);
+          let selectedImage = completedImages.find(img => img.isSelected);
+          
+          // If no image is selected, auto-select the latest one
+          if (!selectedImage && completedImages.length > 0) {
+            const latestImage = completedImages[completedImages.length - 1];
+            selectedImage = latestImage;
+            
+            // Update database to mark as selected
+            await supabase
+              .from('image_generation_jobs')
+              .update({ is_selected: false })
+              .eq('session_id', sid)
+              .eq('segment_number', segmentNumber)
+              .eq('user_id', user.id);
+            
+            await supabase
+              .from('image_generation_jobs')
+              .update({ is_selected: true })
+              .eq('id', latestImage.id)
+              .eq('user_id', user.id);
+            
+            // Update local array
+            imagesArray.forEach(img => {
+              img.isSelected = img.id === latestImage.id;
+            });
+          }
+          
           setSegments(prev => {
             const updated = prev.map(seg => {
-              if (seg.jobId === result.job.id || parseInt(seg.id) === result.job.segment_number) {
+              if (seg.jobId === result.job.id || parseInt(seg.id) === segmentNumber) {
                 return {
                   ...seg,
-                  imageUrl: result.job.image_url,
-                  isGeneratingImage: false,
+                  images: imagesArray,  // ✅ Update images array
+                  imageUrl: selectedImage?.imageUrl || result.job.image_url,
+                  isGeneratingImage: imagesArray.some(img => img.status === JOB_STATUS.PROCESSING),
                   imageError: null
                 };
               }
@@ -1186,6 +1350,8 @@ export const ImageGeneration = (): JSX.Element => {
             saveProgress(updated, currentTopic, videoSettings);
             return updated;
           });
+          
+          console.log(`[BackgroundProcessing] Segment ${segmentNumber} updated with ${imagesArray.length} images`);
         }
         
         if (result?.all_complete) {
@@ -1196,6 +1362,11 @@ export const ImageGeneration = (): JSX.Element => {
             clearInterval(processingIntervalRef.current);
             processingIntervalRef.current = null;
           }
+          
+          // ✅ Final sync: Fetch ALL images for ALL segments
+          const imageMap = await fetchSegmentImages(sid);
+          setSegments(prev => syncImagesWithSegments(imageMap, prev));
+          console.log('[BackgroundProcessing] All complete - final sync done');
         }
         
       } catch (err) {
@@ -1597,7 +1768,7 @@ export const ImageGeneration = (): JSX.Element => {
     }
   }, [user, sessionId, language]);
 
-  const handleRegenerateWithNotes = useCallback(async (notes: string, referenceImageUrl?: string) => {
+  const handleRegenerateWithNotes = useCallback(async (notes: string) => {
     if (!user || !sessionId || !regenerateModal.segment) return;
 
     const segment = regenerateModal.segment;
@@ -1616,23 +1787,47 @@ export const ImageGeneration = (): JSX.Element => {
       // Get max generation number for this segment
       const maxGenNumber = Math.max(...segment.images.map(img => img.generationNumber), 0);
 
+      // Determine if CREATOR shot and prepare reference images
+      const isCreatorShot = segment.shotType === 'CREATOR';
+      const creatorRef = characterRefPng || userAvatarUrl || null;
+
+      // Build request body with ALL relevant fields for comprehensive prompt synthesis
+      const requestBody: Record<string, any> = {
+        mode: 'regenerate_single',
+        user_id: user.id,
+        session_id: sessionId,
+        segment_number: segmentNumber,
+        generation_number: maxGenNumber + 1,
+        regeneration_notes: notes,  // ✅ Notes untuk prompt synthesis
+        visual_prompt: segment.visualDirection,
+        script_text: segment.script,
+        segment_type: segment.type,
+        shot_type: segment.shotType,
+        emotion: segment.emotion,
+        aspect_ratio: videoSettings?.aspectRatio || '9:16',
+      };
+
+      // Add CREATOR-specific fields
+      if (isCreatorShot) {
+        requestBody.character_description = characterDescription;
+        requestBody.character_ref_png = creatorRef;
+      } else {
+        // B-ROLL fields
+        requestBody.reference_image_url = segment.referenceImageUrl || null;
+        requestBody.include_creator_face = segment.includeCreatorFace || false;
+        requestBody.creator_ref_for_broll = segment.includeCreatorFace ? creatorRef : null;
+      }
+
+      console.log('[Regenerate] Request:', {
+        isCreator: isCreatorShot,
+        hasNotes: !!notes,
+        hasRef: !!(isCreatorShot ? creatorRef : segment.referenceImageUrl),
+        includeCreatorFace: segment.includeCreatorFace,
+      });
+
       // Call Edge Function to create new regeneration job
       const { data, error } = await supabase.functions.invoke('generate-images', {
-        body: {
-          mode: 'regenerate_single',
-          user_id: user.id,
-          session_id: sessionId,
-          segment_number: segmentNumber,
-          generation_number: maxGenNumber + 1,
-          regeneration_notes: notes,
-          reference_image_url: referenceImageUrl,
-          visual_prompt: segment.visualDirection,
-          script_text: segment.script,
-          segment_type: segment.type,
-          shot_type: segment.shotType,
-          emotion: segment.emotion,
-          aspect_ratio: videoSettings?.aspectRatio || '9:16'
-        }
+        body: requestBody
       });
 
       if (error) throw error;
@@ -1663,6 +1858,123 @@ export const ImageGeneration = (): JSX.Element => {
     
     setReferenceImageModal({ isOpen: false, segment: null, initialKeywords: '' });
   }, [referenceImageModal.segment]);
+
+  // Handle B-ROLL modal generation
+  const handleBRollGenerate = useCallback(async (options: {
+    additionalNotes: string;
+    includeCreatorFace: boolean;
+    referenceImages: { url: string; source: 'unsplash' | 'pexels' | 'upload'; photographer?: string }[];
+  }) => {
+    if (!user || !sessionId || !bRollModal.segment) return;
+
+    const segment = bRollModal.segment;
+    const segmentNumber = parseInt(segment.id);
+    const isFirstGeneration = !segment.images || segment.images.length === 0;
+
+    // Max 3 images validation
+    const currentImageCount = segment.images?.length || 0;
+    if (currentImageCount >= 3) {
+      alert(language === 'id' 
+        ? 'Maksimal 3 gambar per segment. Hapus gambar lama dulu.'
+        : 'Maximum 3 images per segment. Delete old images first.');
+      return;
+    }
+
+    // Close modal immediately
+    setBRollModal({ isOpen: false, segment: null });
+
+    // Update segment state to show loading
+    setSegments(prev => prev.map(seg =>
+      seg.id === segment.id
+        ? { 
+            ...seg, 
+            isGeneratingImage: true, 
+            imageError: null,
+            includeCreatorFace: options.includeCreatorFace,
+            // Store first reference image for backward compatibility
+            referenceImageUrl: options.referenceImages[0]?.url || seg.referenceImageUrl,
+            referenceImageSource: options.referenceImages[0]?.source || seg.referenceImageSource
+          }
+        : seg
+    ));
+
+    try {
+      const creatorRef = characterRefPng || userAvatarUrl || null;
+      const maxGenNumber = Math.max(...(segment.images?.map(img => img.generationNumber) || []), 0);
+
+      // Build request body
+      const requestBody: Record<string, any> = {
+        mode: isFirstGeneration ? 'create_jobs' : 'regenerate_single',
+        user_id: user.id,
+        session_id: sessionId,
+        segment_number: segmentNumber,
+        generation_number: maxGenNumber + 1,
+        regeneration_notes: options.additionalNotes || '',
+        visual_prompt: segment.visualDirection || '',
+        visual_direction: segment.visualDirection || '',
+        script_text: segment.script,
+        segment_type: segment.type,
+        shot_type: segment.shotType,
+        emotion: segment.emotion,
+        aspect_ratio: videoSettings?.aspectRatio || '9:16',
+        // B-ROLL specific
+        include_creator_face: options.includeCreatorFace,
+        creator_ref_for_broll: options.includeCreatorFace ? creatorRef : null,
+        // Reference images (use first one for now, multi-ref support coming)
+        reference_image_url: options.referenceImages[0]?.url || null,
+        // For create_jobs mode
+        segments: isFirstGeneration ? [{
+          segment_id: segment.segmentId,
+          segment_number: segmentNumber,
+          segment_type: segment.type,
+          shot_type: segment.shotType,
+          emotion: segment.emotion,
+          visual_prompt: segment.visualDirection || '',
+          visual_direction: segment.visualDirection || '',
+          script_text: segment.script,
+          reference_image_url: options.referenceImages[0]?.url || null,
+          include_creator_face: options.includeCreatorFace,
+          creator_ref_for_broll: options.includeCreatorFace ? creatorRef : null,
+        }] : undefined,
+        broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
+      };
+
+      console.log('[BRollGenerate] Request:', {
+        isFirst: isFirstGeneration,
+        hasNotes: !!options.additionalNotes,
+        refCount: options.referenceImages.length,
+        includeCreatorFace: options.includeCreatorFace,
+      });
+
+      const { data, error } = await supabase.functions.invoke('generate-images', {
+        body: requestBody
+      });
+
+      if (error) throw error;
+
+      console.log('B-ROLL job created:', data);
+
+      // Update jobId if returned
+      if (data?.data?.jobs?.[0]?.id || data?.data?.job?.id) {
+        const jobId = data?.data?.jobs?.[0]?.id || data?.data?.job?.id;
+        setSegments(prev => prev.map(seg =>
+          seg.id === segment.id ? { ...seg, jobId } : seg
+        ));
+      }
+
+      // Start background processing
+      startBackgroundProcessing(sessionId);
+
+    } catch (err) {
+      console.error('B-ROLL generate failed:', err);
+      setSegments(prev => prev.map(seg =>
+        seg.id === segment.id
+          ? { ...seg, isGeneratingImage: false, imageError: 'Generation failed' }
+          : seg
+      ));
+      alert(language === 'id' ? 'Gagal generate gambar' : 'Failed to generate image');
+    }
+  }, [user, sessionId, bRollModal.segment, videoSettings, characterRefPng, userAvatarUrl, imageModels, startBackgroundProcessing, language]);
 
   const handlePrevious = () => {
     saveProgress(segments, currentTopic, videoSettings);
@@ -2016,11 +2328,13 @@ export const ImageGeneration = (): JSX.Element => {
                             </div>
                           </div>
 
-                          {/* Visual Direction */}
+                          {/* Visual Direction - smaller height when no image */}
                           {segment.visualDirection && (
                             <div>
                               <label className="text-text-secondary text-xs mb-1.5 block">{uiText.visualDirection}</label>
-                              <div className="bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs min-h-[190px] max-h-72 overflow-y-auto">
+                              <div className={`bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs overflow-y-auto ${
+                                segment.imageUrl ? 'min-h-[190px] max-h-72' : 'min-h-[100px] max-h-40'
+                              }`}>
                                 {segment.visualDirection}
                               </div>
                             </div>
@@ -2044,8 +2358,22 @@ export const ImageGeneration = (): JSX.Element => {
                             isGenerating={segment.isGeneratingImage}
                             imageError={segment.imageError || null}
                             selectedImageUrl={segment.imageUrl}
-                            onGenerate={() => handleGenerateImage(segment.id)}
-                            onRegenerate={() => setRegenerateModal({ isOpen: true, segment })}
+                            onGenerate={() => {
+                              // CREATOR: Generate langsung, B-ROLL: Buka modal
+                              if (isCreatorShot) {
+                                handleGenerateImage(segment.id);
+                              } else {
+                                setBRollModal({ isOpen: true, segment });
+                              }
+                            }}
+                            onRegenerate={() => {
+                              // CREATOR: Regenerate modal, B-ROLL: Buka B-ROLL modal
+                              if (isCreatorShot) {
+                                setRegenerateModal({ isOpen: true, segment });
+                              } else {
+                                setBRollModal({ isOpen: true, segment });
+                              }
+                            }}
                             onSelectImage={(imageId) => handleSelectImage(imageId, parseInt(segment.id))}
                             onDeleteImage={handleDeleteImage}
                             onPreview={setPreviewImage}
@@ -2054,180 +2382,18 @@ export const ImageGeneration = (): JSX.Element => {
                             language={language}
                           />
 
-                          {/* Add Reference Image Button - Only for B-ROLL segments */}
-                          {!isCreatorShot && (
-                            <div className="mt-2 space-y-2" style={{ overflow: 'visible' }}>
-                              {/* Include Creator Face Checkbox with Info Tooltip */}
-                              <div className="relative">
-                                <label className="flex items-center gap-2 p-2 bg-surface rounded-lg cursor-pointer hover:bg-surface/80 transition-colors">
-                                  <input
-                                    type="checkbox"
-                                    checked={segment.includeCreatorFace || false}
-                                    onChange={(e) => {
-                                      setSegments(prev => prev.map(s =>
-                                        s.id === segment.id
-                                          ? { ...s, includeCreatorFace: e.target.checked }
-                                          : s
-                                      ));
-                                    }}
-                                    className="w-4 h-4 rounded border-border-default text-primary focus:ring-primary"
-                                  />
-                                  <span className="text-xs text-text-secondary flex-1">
-                                    Include Creator Face
-                                  </span>
-                                  {segment.includeCreatorFace && (
-                                    <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
-                                      Multi-ref
-                                    </span>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      setOpenTooltip(prev => 
-                                        prev?.segmentId === segment.id && prev?.type === 'creator-face' 
-                                          ? null 
-                                          : { segmentId: segment.id, type: 'creator-face' }
-                                      );
-                                    }}
-                                    className="p-0.5 hover:bg-primary/20 rounded-full transition-colors"
-                                  >
-                                    <Info className="w-3.5 h-3.5 text-text-muted hover:text-primary" />
-                                  </button>
-                                </label>
-                                {/* Tooltip for Include Creator Face */}
-                                {openTooltip?.segmentId === segment.id && openTooltip?.type === 'creator-face' && (
-                                  <>
-                                    <div className="fixed inset-0 z-[99]" onClick={() => setOpenTooltip(null)} />
-                                    <div className="absolute left-auto right-0 top-full mt-1 w-80 p-3 bg-card border border-border-default rounded-lg shadow-2xl text-xs z-[100]">
-                                      <div className="flex items-center gap-2 mb-2">
-                                        <div className="p-1 bg-pink-500/20 rounded">
-                                          <Camera className="w-3 h-3 text-pink-500" />
-                                        </div>
-                                        <p className="text-text-primary font-semibold">
-                                          {language === 'id' ? 'Include Creator Face' : 'Include Creator Face'}
-                                        </p>
-                                        <button onClick={() => setOpenTooltip(null)} className="ml-auto p-0.5 hover:bg-surface rounded">
-                                          <X className="w-3 h-3 text-text-muted" />
-                                        </button>
-                                      </div>
-                                      <p className="text-text-secondary leading-relaxed mb-2">
-                                        {language === 'id' 
-                                          ? 'Fitur ini akan menambahkan wajah kamu ke dalam gambar B-ROLL. AI menggunakan model FLUX Kontext Multi-Reference yang menggabungkan foto profil kamu dengan scene yang diminta.' 
-                                          : 'This feature adds your face into B-ROLL images. AI uses FLUX Kontext Multi-Reference model that combines your profile photo with the requested scene.'}
-                                      </p>
-                                      <div className="bg-surface rounded p-2 mb-2">
-                                        <p className="text-text-primary font-medium text-[10px] mb-1">
-                                          {language === 'id' ? '✅ Kapan Digunakan:' : '✅ When to Use:'}
-                                        </p>
-                                        <ul className="text-text-muted text-[10px] space-y-0.5 list-disc list-inside">
-                                          <li>{language === 'id' ? 'Vlog atau storytelling personal' : 'Personal vlog or storytelling'}</li>
-                                          <li>{language === 'id' ? 'Tutorial dimana kamu perlu terlihat di scene' : 'Tutorials where you need to appear in scene'}</li>
-                                          <li>{language === 'id' ? 'Review produk dengan tampilan realistis' : 'Product reviews with realistic appearance'}</li>
-                                        </ul>
-                                      </div>
-                                      <div className="bg-amber-500/10 rounded p-2">
-                                        <p className="text-amber-600 dark:text-amber-400 text-[10px]">
-                                          ⚠️ {language === 'id' ? 'Pastikan foto profil kamu sudah diupload di Settings > Profile' : 'Make sure your profile photo is uploaded in Settings > Profile'}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-
-                              {/* Reference Image with Info Tooltip */}
-                              {segment.referenceImageUrl ? (
-                                <div className="flex items-center gap-2 p-2 bg-surface rounded-lg">
-                                  <img 
-                                    src={segment.referenceImageUrl} 
-                                    alt="Reference" 
-                                    className="w-8 h-10 object-cover rounded"
-                                  />
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-xs text-text-secondary truncate">Reference added</p>
-                                    <p className="text-[10px] text-text-muted capitalize">{segment.referenceImageSource}</p>
-                                  </div>
-                                  <button
-                                    onClick={() => {
-                                      setSegments(prev => prev.map(s => 
-                                        s.id === segment.id ? { ...s, referenceImageUrl: undefined, referenceImageSource: undefined } : s
-                                      ));
-                                    }}
-                                    className="p-1 hover:bg-red-500/20 rounded"
-                                  >
-                                    <X className="w-3 h-3 text-red-500" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="relative">
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      onClick={() => {
-                                        const keywords = extractKeywords(segment.visualDirection, segment.script);
-                                        setReferenceImageModal({ isOpen: true, segment, initialKeywords: keywords });
-                                      }}
-                                      variant="outline"
-                                      size="sm"
-                                      className="flex-1 text-xs"
-                                    >
-                                      <Camera className="w-3 h-3 mr-1" />
-                                      Add Reference
-                                    </Button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setOpenTooltip(prev => 
-                                          prev?.segmentId === segment.id && prev?.type === 'add-reference' 
-                                            ? null 
-                                            : { segmentId: segment.id, type: 'add-reference' }
-                                        );
-                                      }}
-                                      className="p-1.5 hover:bg-surface rounded-lg transition-colors border border-border-default"
-                                    >
-                                      <Info className="w-3.5 h-3.5 text-text-muted hover:text-primary" />
-                                    </button>
-                                  </div>
-                                  {/* Tooltip for Add Reference */}
-                                  {openTooltip?.segmentId === segment.id && openTooltip?.type === 'add-reference' && (
-                                    <>
-                                      <div className="fixed inset-0 z-[99]" onClick={() => setOpenTooltip(null)} />
-                                      <div className="absolute left-auto right-0 top-full mt-1 w-80 p-3 bg-card border border-border-default rounded-lg shadow-2xl text-xs z-[100]">
-                                        <div className="flex items-center gap-2 mb-2">
-                                          <div className="p-1 bg-blue-500/20 rounded">
-                                            <ImageIcon className="w-3 h-3 text-blue-500" />
-                                          </div>
-                                          <p className="text-text-primary font-semibold">
-                                            {language === 'id' ? 'Reference Image' : 'Reference Image'}
-                                          </p>
-                                          <button onClick={() => setOpenTooltip(null)} className="ml-auto p-0.5 hover:bg-surface rounded">
-                                            <X className="w-3 h-3 text-text-muted" />
-                                          </button>
-                                        </div>
-                                        <p className="text-text-secondary leading-relaxed mb-2">
-                                          {language === 'id' 
-                                            ? 'Gambar referensi membantu AI memahami style visual yang kamu inginkan. AI akan menggunakan gambar ini sebagai panduan untuk menghasilkan hasil yang lebih sesuai.' 
-                                            : 'Reference images help AI understand the visual style you want. AI will use this image as a guide to generate more accurate results.'}
-                                        </p>
-                                        <div className="bg-surface rounded p-2 mb-2">
-                                          <p className="text-text-primary font-medium text-[10px] mb-1">
-                                            {language === 'id' ? '🎯 Contoh Penggunaan:' : '🎯 Example Uses:'}
-                                          </p>
-                                          <ul className="text-text-muted text-[10px] space-y-0.5 list-disc list-inside">
-                                            <li>{language === 'id' ? 'Foto produk spesifik yang ingin ditampilkan' : 'Specific product photo to be shown'}</li>
-                                            <li>{language === 'id' ? 'Lokasi atau gedung tertentu' : 'Specific location or building'}</li>
-                                            <li>{language === 'id' ? 'Style visual atau mood tertentu' : 'Specific visual style or mood'}</li>
-                                          </ul>
-                                        </div>
-                                        <p className="text-primary text-[10px]">
-                                          💡 {language === 'id' ? 'Cari dari Unsplash/Pexels gratis atau paste URL gambar sendiri' : 'Search from free Unsplash/Pexels or paste your own image URL'}
-                                        </p>
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
+                          {/* B-ROLL Status Badges Only (no duplicate button - generation via VisualPreviewGallery) */}
+                          {!isCreatorShot && (segment.includeCreatorFace || segment.referenceImageUrl) && (
+                            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                              {segment.includeCreatorFace && (
+                                <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
+                                  + Face
+                                </span>
+                              )}
+                              {segment.referenceImageUrl && (
+                                <span className="text-[10px] text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                                  + Ref
+                                </span>
                               )}
                             </div>
                           )}
@@ -2310,10 +2476,21 @@ export const ImageGeneration = (): JSX.Element => {
       {/* Reference Image Modal for B-ROLL */}
       <ReferenceImageModal
         isOpen={referenceImageModal.isOpen}
-        onClose={() => setReferenceImageModal({ isOpen: false, segment: null, initialKeywords: '' })}
+        onClose={() => setReferenceImageModal({ isOpen: false, segment: null })}
         segment={referenceImageModal.segment}
-        initialKeywords={referenceImageModal.initialKeywords}
+        initialKeywords=""  // Not used anymore - smart extraction in backend
         onSelect={handleReferenceImageSelect}
+      />
+
+      {/* B-ROLL Generation Modal - Consolidated Controls */}
+      <GenerateBRollModal
+        isOpen={bRollModal.isOpen}
+        onClose={() => setBRollModal({ isOpen: false, segment: null })}
+        segment={bRollModal.segment}
+        onGenerate={handleBRollGenerate}
+        language={language}
+        maxReferenceImages={3}
+        hasCreatorAvatar={!!(characterRefPng || userAvatarUrl)}  // NEW: Show warning if no avatar
       />
     </div>
   );

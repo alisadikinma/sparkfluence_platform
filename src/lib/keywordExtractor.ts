@@ -63,6 +63,39 @@ export const LOCATION_HIERARCHY: Record<string, string> = {
   // Bali areas
   seminyak: 'Bali Indonesia', ubud: 'Bali Indonesia', canggu: 'Bali Indonesia',
   kuta: 'Bali Indonesia', sanur: 'Bali Indonesia', nusa: 'Bali Indonesia',
+  uluwatu: 'Bali Indonesia', tanah: 'Bali Indonesia', tegallalang: 'Bali Indonesia',
+  
+  // Yogyakarta areas & landmarks
+  yogyakarta: 'Indonesia', jogja: 'Indonesia', malioboro: 'Yogyakarta Indonesia',
+  prambanan: 'Yogyakarta Indonesia', borobudur: 'Central Java Indonesia',
+  jomblang: 'Yogyakarta Indonesia', pindul: 'Yogyakarta Indonesia',
+  parangtritis: 'Yogyakarta Indonesia', kalibiru: 'Yogyakarta Indonesia',
+  
+  // Bandung areas
+  bandung: 'Indonesia', dago: 'Bandung Indonesia', lembang: 'Bandung Indonesia',
+  ciwidey: 'Bandung Indonesia', tangkuban: 'Bandung Indonesia',
+  kawah: 'Bandung Indonesia',
+  
+  // Lombok & NTT
+  lombok: 'Indonesia', gili: 'Lombok Indonesia', senggigi: 'Lombok Indonesia',
+  rinjani: 'Lombok Indonesia', komodo: 'NTT Indonesia', labuan: 'NTT Indonesia',
+  flores: 'Indonesia', kelimutu: 'Flores Indonesia',
+  
+  // Sumatra landmarks
+  toba: 'North Sumatra Indonesia', danau: 'Indonesia', samosir: 'North Sumatra Indonesia',
+  bukittinggi: 'West Sumatra Indonesia', padang: 'Indonesia',
+  
+  // Java landmarks
+  bromo: 'East Java Indonesia', ijen: 'East Java Indonesia',
+  malang: 'Indonesia', surabaya: 'Indonesia', semarang: 'Indonesia',
+  dieng: 'Central Java Indonesia',
+  
+  // Raja Ampat & Papua
+  rajaampat: 'Papua Indonesia', wayag: 'Raja Ampat Indonesia',
+  
+  // Sulawesi
+  makassar: 'Indonesia', toraja: 'South Sulawesi Indonesia',
+  bunaken: 'North Sulawesi Indonesia', manado: 'Indonesia',
   
   // Mumbai areas
   bandra: 'Mumbai India', colaba: 'Mumbai India', juhu: 'Mumbai India',
@@ -109,7 +142,11 @@ const NOUN_PATTERNS: string[] = [
   'center', 'complex', 'campus', 'warehouse', 'factory',
   'gym', 'spa', 'salon', 'clinic', 'hospital',
   'school', 'university', 'library', 'bookstore',
-  'kitchen', 'bedroom', 'living', 'bathroom', 'balcony'
+  'kitchen', 'bedroom', 'living', 'bathroom', 'balcony',
+  // Travel & Nature - Indonesia focus
+  'cave', 'goa', 'waterfall', 'volcano', 'crater', 'forest',
+  'rice', 'terrace', 'cliff', 'island', 'coral', 'diving',
+  'sunrise', 'sunset', 'viewpoint', 'hiking', 'trekking'
 ];
 
 // ============================================================================
