@@ -24,6 +24,7 @@ import {
 import {
   // Cinematography
   getEmotionSpecs,
+  getEmotionSpecsWithOverride,  // NEW 2026-01-15: CTA emotion override
   getSegmentDefaults,
   getCostumeForTopic,
   getContextualCostume,     // NEW 2026-01-14: Smart costume based on activity
@@ -34,6 +35,9 @@ import {
   TOPIC_COSTUMES,
   // Negative prompt for B-roll
   getBRollNegativePrompt,
+  // NEW 2026-01-15: Language → Ethnicity for B-ROLL
+  getEthnicityForLanguage,
+  buildEthnicityPrompt,
   // NOTE: buildVisualBrief REMOVED (2026-01-11) - B-ROLL now uses visual_direction directly
 } from '../_shared/lookups/index.ts'
 
@@ -264,17 +268,18 @@ serve(async (req) => {
 // ============================================================================
 
 async function handleCreateJobs(supabase: any, requestBody: any) {
-  const { 
-    user_id, 
-    session_id, 
-    segments, 
-    topic, 
-    style = 'cinematic', 
+  const {
+    user_id,
+    session_id,
+    segments,
+    topic,
+    style = 'cinematic',
     aspect_ratio = '9:16',
     provider: defaultProvider = 'auto', // 'auto' = intelligent selection
     broll_model = 'fal-seedream-v4',    // User's B-ROLL model choice from header
     character_description = '',
-    character_ref_png = '' // Avatar URL for face consistency
+    character_ref_png = '', // Avatar URL for face consistency
+    language = 'id'  // NEW 2026-01-15: Content language for B-ROLL ethnicity (id/hi/en)
   } = requestBody
 
   if (!user_id || !session_id || !segments || !Array.isArray(segments)) {
@@ -286,6 +291,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 
   console.log(`[CREATE_JOBS] Creating ${segments.length} jobs for session: ${session_id}`)
   console.log(`[CREATE_JOBS] Provider mode: ${defaultProvider}`)
+  console.log(`[CREATE_JOBS] Language for B-ROLL ethnicity: "${language}" (type: ${typeof language})`)
 
   // Get costume based on topic
   const costume = topic ? getCostumeForTopic(topic) : 'Navy blazer over white crew-neck tee'
@@ -305,7 +311,8 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       topic,
       costume,
       characterDescription: charDesc,
-      emotion
+      emotion,
+      language  // NEW 2026-01-15: For B-ROLL ethnicity injection
     })
 
     // Determine if this is a CREATOR shot (has face)
@@ -411,13 +418,13 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 }
 
 async function handleProcessSingle(
-  supabase: any, 
-  requestBody: any, 
-  openaiApiKey: string | undefined, 
-  hfApiKey: string | undefined, 
+  supabase: any,
+  requestBody: any,
+  openaiApiKey: string | undefined,
+  hfApiKey: string | undefined,
   falApiKey: string | undefined
 ) {
-  const { job_id, session_id, user_id } = requestBody
+  const { job_id, session_id, user_id, language = 'id' } = requestBody  // NEW: language for B-ROLL ethnicity
   const geminiGenApiKey = Deno.env.get('VEO_API_KEY') // GeminiGen uses same key as VEO
   // Note: LLM location extraction uses api_keys_pool via supabase client (not direct API key)
 
@@ -781,6 +788,23 @@ async function handleProcessSingle(
       console.warn(`[PROCESS_SINGLE] ⚠️ Prompt enhancement failed, using original: ${enhanceError}`)
       // Continue with original prompt
     }
+
+    // ========================================================================
+    // NEW 2026-01-15: Inject/Replace ethnicity based on content language
+    // Always apply correct ethnicity - replace any existing "People in scene:" line
+    // ========================================================================
+    if (language) {
+      const ethnicityPrompt = buildEthnicityPrompt(language)
+
+      // Remove any existing "People in scene:" line (may have wrong ethnicity from create_jobs)
+      finalVisualPrompt = finalVisualPrompt
+        .replace(/\n*People in scene:.*(\n|$)/gi, '')
+        .trim()
+
+      // Add correct ethnicity
+      finalVisualPrompt = `${finalVisualPrompt}\n\n${ethnicityPrompt}`
+      console.log(`[PROCESS_SINGLE] 🌍 Injected ${language} ethnicity: "${ethnicityPrompt}"`)
+    }
   }
 
   // Helper function to generate image with a specific provider
@@ -1016,7 +1040,9 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
     character_ref_png,
     // B-ROLL with creator face multi-ref fields
     include_creator_face,
-    creator_ref_for_broll
+    creator_ref_for_broll,
+    // NEW 2026-01-15: Content language for B-ROLL ethnicity
+    language = 'id'
   } = requestBody
 
   if (!user_id || !session_id || !segment_number) {
@@ -1189,15 +1215,16 @@ interface DebugSegmentResult {
 }
 
 async function handleDebugPrompts(requestBody: any): Promise<Response> {
-  const { 
-    segments, 
-    topic, 
-    style = 'cinematic', 
+  const {
+    segments,
+    topic,
+    style = 'cinematic',
     aspect_ratio = '9:16',
     provider: defaultProvider = 'auto',
     broll_model = 'fal-seedream-v4',  // User's B-ROLL model choice
     character_description = '',
-    character_ref_png = ''
+    character_ref_png = '',
+    language = 'id'  // NEW 2026-01-15: Content language for B-ROLL ethnicity
   } = requestBody
 
   if (!segments || !Array.isArray(segments) || segments.length === 0) {
@@ -1302,7 +1329,8 @@ async function handleDebugPrompts(requestBody: any): Promise<Response> {
       topic,
       costume,
       characterDescription: charDesc,
-      emotion
+      emotion,
+      language  // NEW 2026-01-15: For B-ROLL ethnicity injection
     })
 
     // Get negative prompt (for B-roll with fal-wan-t2i)
@@ -1396,6 +1424,7 @@ async function handleLegacyMode(
   const topic = requestBody.topic || ''
   const characterDescription = requestBody.character_description || ''
   const characterRefPng = requestBody.character_ref_png || '' // Avatar URL for face consistency
+  const language = requestBody.language || 'id'  // NEW 2026-01-15: For B-ROLL ethnicity
   const geminiGenApiKey = Deno.env.get('VEO_API_KEY')
 
   if (!segments || !Array.isArray(segments) || segments.length === 0) {
@@ -1511,9 +1540,10 @@ async function handleLegacyMode(
       topic,
       costume,
       characterDescription: segment.character_description || characterDescription,
-      emotion
+      emotion,
+      language  // NEW 2026-01-15: For B-ROLL ethnicity injection
     })
-    
+
     console.log(`[LEGACY] ${i + 1}/${segments.length}: ${segmentType} (${shotType}) → ${primaryProvider} (ref: ${hasReferenceImage}, fallback: ${fallbackProvider})`)
 
     // ========================================================================
@@ -1705,6 +1735,7 @@ interface PromptParams {
   costume: string
   characterDescription: string
   emotion: string
+  language?: string  // NEW 2026-01-15: For B-ROLL ethnicity injection
 }
 
 // ============================================================================
@@ -1713,8 +1744,8 @@ interface PromptParams {
 // ============================================================================
 
 function buildCinematicPrompt(params: PromptParams): string {
-  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion } = params
-  
+  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, language } = params
+
   const shotType = segment.shot_type || 'B-ROLL'
   const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
   const visualDirection = segment.visual_prompt || segment.visual_direction || ''
@@ -1824,17 +1855,18 @@ Style: Photorealistic, high-quality, 8K.`
     }
   }
   
-  // PRIMARY: Use visual_direction from script generation + INJECT LOCATION CONTEXT
+  // PRIMARY: Use visual_direction from script generation + INJECT LOCATION CONTEXT + ETHNICITY
   if (visualDirection && visualDirection.length > 50) {
     // ========================================================================
-    // 2026-01-14: Enhance prompt with:
+    // 2026-01-15: Enhance prompt with:
     // 1. Location-specific cultural context (from extractLocationContext)
     // 2. Smart keyword extraction (venue, location hierarchy, context words)
+    // 3. NEW: Ethnicity injection based on content language
     // ========================================================================
-    
+
     // First: Apply keyword-based enhancements (venue names, location hierarchy)
     let enhancedPrompt = enhancePromptWithKeywords(visualDirection, scriptText, visualDirection)
-    
+
     // Second: Add location context if detected (architecture, signage, atmosphere)
     if (locationContext) {
       enhancedPrompt = `${enhancedPrompt}
@@ -1844,12 +1876,22 @@ ${locationContext.architectureHints ? `Architecture: ${locationContext.architect
 ${locationContext.signageHints ? `Signage: ${locationContext.signageHints}.` : ''}
 ${locationContext.atmosphereHints ? `Atmosphere: ${locationContext.atmosphereHints}.` : ''}
 ${locationContext.peopleDescription ? `People: ${locationContext.peopleDescription}.` : ''}`
-      
+
       console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with ${locationContext.country} context + keywords (${enhancedPrompt.length} chars)`)
     } else {
-      console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with keywords (${enhancedPrompt.length} chars)`)
+      // ========================================================================
+      // NEW 2026-01-15: If no location context, inject ethnicity based on language
+      // This ensures B-ROLL people match the target audience
+      // ========================================================================
+      if (language) {
+        const ethnicityPrompt = buildEthnicityPrompt(language)
+        enhancedPrompt = `${enhancedPrompt}\n\n${ethnicityPrompt}`
+        console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with "${language}" ethnicity → "${ethnicityPrompt}"`)
+      } else {
+        console.log(`[buildCinematicPrompt] ✅ B-ROLL enhanced with keywords (${enhancedPrompt.length} chars)`)
+      }
     }
-    
+
     return enhancedPrompt.trim()
   }
   

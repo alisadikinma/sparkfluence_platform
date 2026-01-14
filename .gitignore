@@ -12,3 +12,4 @@ __pycache__/
 - Copy.env 
 *.env 
 .env* 
+tmpclaude-*

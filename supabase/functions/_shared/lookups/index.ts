@@ -30,14 +30,22 @@ export {
   DEFAULT_CHARACTER_BIBLE,  // Character Bible for CREATOR shots
   NEGATIVE_PROMPTS,         // Moved from metaphorLookup.ts (2026-01-11)
   LOCATION_CONTEXTS,        // NEW 2026-01-14: Location → Cultural context mapping
+  COSTUME_CATEGORIES,       // NEW 2026-01-15: Constrained outfit categories for LLM
+  LANGUAGE_ETHNICITY_MAP,   // NEW 2026-01-15: Language → Ethnicity for B-ROLL
+  CTA_EMOTION_OVERRIDE,     // NEW 2026-01-15: Friendly expression for CTA
   getEmotionSpecs,
+  getEmotionSpecsWithOverride,  // NEW 2026-01-15: CTA always gets smile
   getLightingPattern,
   getShotType,
   getMoodSetup,
   getSegmentDefaults,
   getCostumeForTopic,
   getContextualCostume,     // NEW 2026-01-14: Smart costume based on activity
+  getCostumeByCategory,     // NEW 2026-01-15: Get costume from category key
+  getCostumeCategoryKeys,   // NEW 2026-01-15: Get all valid category keys
   extractLocationContext,   // NEW 2026-01-14: Extract location from text
+  getEthnicityForLanguage,  // NEW 2026-01-15: Language → Ethnicity context
+  buildEthnicityPrompt,     // NEW 2026-01-15: Build ethnicity injection string
   buildCinematographyPrompt,
   buildFullCinematographyPrompt,
   getVisualSpecs,
@@ -55,6 +63,8 @@ export {
   type SegmentDefaults,
   type VisualSpecs,
   type LocationContext,     // NEW 2026-01-14
+  type CostumeCategory,     // NEW 2026-01-15
+  type EthnicityContext,    // NEW 2026-01-15
 } from './cinematographyLookup.ts';
 
 // Slang Lookup - Language-Specific Slang Validation

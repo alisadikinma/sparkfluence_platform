@@ -1,17 +1,25 @@
 /**
- * Prompt Synthesizer v2.0 (2026-01-15)
+ * Prompt Synthesizer v3.0 (2026-01-15)
  * 
  * Synthesizes multiple inputs (visual direction, script, notes, reference flags)
  * into a single comprehensive, coherent image prompt using LLM.
  * 
- * NEW in v2.0:
- * - getContextualOutfitAsync() - LLM determines outfit based on topic
- * - buildCreatorPromptAsync() - Builds CREATOR prompt without hardcoded age/appearance
+ * NEW in v3.0:
+ * - getContextualOutfitAsync() - LLM picks CATEGORY from constrained list + DB cache
+ * - buildCreatorPromptAsync() - CTA emotion override (always smile/friendly)
+ * - Improved fallback using getContextualCostume() instead of generic text
  * 
  * NOT simple append - creates a well-structured prompt following best practices.
  */
 
 import { getApiKeyFromPool } from './apiKeyRotation.ts'
+import { 
+  COSTUME_CATEGORIES,
+  getCostumeByCategory,
+  getCostumeCategoryKeys,
+  getContextualCostume,
+  CTA_EMOTION_OVERRIDE
+} from './lookups/index.ts'
 
 // ============================================================================
 // TYPES
@@ -37,7 +45,7 @@ export interface PromptSynthesisResult {
 }
 
 // ============================================================================
-// LLM PROMPT TEMPLATE
+// LLM PROMPT TEMPLATE (for prompt synthesis)
 // ============================================================================
 
 const SYNTHESIS_SYSTEM_PROMPT = `You are an expert cinematographer and AI image prompt engineer for FLUX Kontext Multi model.
@@ -73,12 +81,6 @@ COSTUME HANDLING:
 - Example: "creator pakai baju adat Batak" → "a person wearing traditional Batak ceremonial clothing"
 - NEVER say "maintain appearance" or "keep original clothing" - these conflict
 
-EXAMPLE (Good):
-"A cinematic shot of an Asian man wearing traditional Batak ceremonial clothing, standing confidently next to a large Komodo dragon in a rugged natural habitat. The landscape features dry grasslands, scattered trees, and distant mountains under golden hour sunlight. The man poses naturally with arms crossed while the dragon rests beside him. Medium shot, 50mm lens, eye-level angle. Warm cinematic color grade with natural lighting. Photorealistic, high-quality. Preserve the exact facial features and face structure from the person in the first reference image."
-
-EXAMPLE (Bad):
-"The person from the first image is standing with Komodo. Maintain face and appearance from first image. Match scene from second image. Refinements: wear Batak clothing."
-
 INTEGRATION PRIORITY:
 - Base visual direction = foundation (scene description)
 - User notes = modifications (costume, pose, specific details)
@@ -86,7 +88,6 @@ INTEGRATION PRIORITY:
 - Write as one cohesive scene description`
 
 function buildSynthesisUserPrompt(input: PromptSynthesisInput): string {
-  // Determine multi-ref mode (B-ROLL with creator face)
   const isMultiRef = input.includeCreatorFace && input.shotType !== 'CREATOR'
   
   let multiRefInstructions = ''
@@ -101,13 +102,10 @@ You MUST:
 1. Start with natural description: "A [description] person wearing [costume] [action]..."
 2. Integrate costume/clothing from notes into main description
 3. Never say "maintain appearance" - only preserve FACIAL FEATURES
-4. Write as one cohesive scene, not separate instructions
-
-EXAMPLE:
-"A middle-aged Asian man wearing traditional Batak ceremonial attire, standing next to a Komodo dragon in a rugged landscape. Golden hour lighting, mountains in background. Medium shot, cinematic. Preserve exact facial features from first reference image."`
+4. Write as one cohesive scene, not separate instructions`
   }
   
-  let userPrompt = `Synthesize these inputs into ONE natural, coherent prompt for FLUX Kontext Multi:
+  return `Synthesize these inputs into ONE natural, coherent prompt for FLUX Kontext Multi:
 
 === BASE VISUAL DIRECTION ===
 ${input.visualDirection || 'No visual direction provided'}
@@ -127,8 +125,6 @@ ${multiRefInstructions}
 - Aspect Ratio: ${input.aspectRatio || '9:16'}
 
 OUTPUT: Write ONLY the synthesized prompt in natural language (no explanation, no JSON, no markdown).`
-
-  return userPrompt
 }
 
 // ============================================================================
@@ -138,20 +134,10 @@ OUTPUT: Write ONLY the synthesized prompt in natural language (no explanation, n
 function fallbackSynthesis(input: PromptSynthesisInput): string {
   let prompt = input.visualDirection || ''
   
-  // ========================================================================
-  // CRITICAL: FLUX Kontext Multi requires explicit reference to which image
-  // First image = creator face, Second image = scene reference
-  // Pattern: "The person from the first image is [action] in [scene]."
-  // ========================================================================
   if (input.includeCreatorFace && input.shotType !== 'CREATOR') {
-    // Extract action/scene from original prompt
     const originalPrompt = prompt.toLowerCase()
     
-    // Try to extract what the person should be doing
     let action = 'standing'
-    let scene = 'the scene'
-    
-    // Common action patterns in visual directions
     if (originalPrompt.includes('exploration') || originalPrompt.includes('exploring')) {
       action = 'exploring'
     } else if (originalPrompt.includes('walking') || originalPrompt.includes('walk')) {
@@ -168,36 +154,27 @@ function fallbackSynthesis(input: PromptSynthesisInput): string {
       action = 'sitting in'
     }
     
-    // Extract scene description (remove common prefixes)
-    scene = prompt
+    const scene = prompt
       .replace(/^Cinematic\s+(shot|view|scene)?\s*(of)?\s*/i, '')
       .replace(/^(A|An|The)\s+/i, '')
       .replace(/\.$/, '')
     
-    // Build proper multi-ref prompt
     prompt = `The person from the first image is ${action} ${scene}.
 
 Maintain the person's face and appearance from the first reference image.
 Match the environment and style from the second reference image.`
-  }
-  
-  // Add reference image matching instruction if needed (single ref)
-  else if (input.hasReferenceImage && !input.includeCreatorFace) {
+  } else if (input.hasReferenceImage && !input.includeCreatorFace) {
     prompt += '\n\nStyle: Match the provided reference image aesthetic and composition.'
   }
   
-  // Add regeneration notes with smart integration
   if (input.regenerationNotes?.trim()) {
     const notes = input.regenerationNotes.trim()
-    
-    // Check if notes contain specific modifications
     const isLightingNote = /light|dark|bright|shadow|contrast/i.test(notes)
     const isColorNote = /color|tone|grade|saturation|warm|cool/i.test(notes)
     const isMoodNote = /mood|atmosphere|vibe|feel|emotion/i.test(notes)
     const isCompositionNote = /angle|shot|zoom|close|wide|frame/i.test(notes)
     
     if (isLightingNote) {
-      // Replace or append to lighting section
       prompt += `\n\nLighting modification: ${notes}`
     } else if (isColorNote) {
       prompt += `\n\nColor adjustment: ${notes}`
@@ -206,7 +183,6 @@ Match the environment and style from the second reference image.`
     } else if (isCompositionNote) {
       prompt += `\n\nComposition: ${notes}`
     } else {
-      // General refinement
       prompt += `\n\nRefinements: ${notes}`
     }
   }
@@ -224,7 +200,6 @@ export async function synthesizeImagePrompt(
 ): Promise<PromptSynthesisResult> {
   const startTime = Date.now()
   
-  // Skip LLM if no notes and no special flags - use original prompt
   const needsSynthesis = !!(
     input.regenerationNotes?.trim() ||
     (input.includeCreatorFace && input.shotType !== 'CREATOR') ||
@@ -240,9 +215,7 @@ export async function synthesizeImagePrompt(
     }
   }
   
-  // Try LLM synthesis
   try {
-    // Get API key from pool with rotation
     const keyResult = await getApiKeyFromPool(supabase, 'gemini')
     
     if (!keyResult.success || !keyResult.apiKey) {
@@ -258,7 +231,6 @@ export async function synthesizeImagePrompt(
     const apiKey = keyResult.apiKey
     const userPrompt = buildSynthesisUserPrompt(input)
     
-    // Call Gemini 2.0 Flash
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
@@ -272,7 +244,7 @@ export async function synthesizeImagePrompt(
             ]
           }],
           generationConfig: {
-            temperature: 0.4,  // Lower temperature for consistency
+            temperature: 0.4,
             maxOutputTokens: 1024,
             topP: 0.8
           }
@@ -284,7 +256,6 @@ export async function synthesizeImagePrompt(
       const errorText = await response.text()
       console.warn(`[PromptSynthesizer] Gemini error: ${response.status} - ${errorText}`)
       
-      // Mark key as potentially rate-limited if 429
       if (response.status === 429 && keyResult.keyId) {
         await supabase
           .from('api_keys_pool')
@@ -316,7 +287,6 @@ export async function synthesizeImagePrompt(
       }
     }
     
-    // Update key usage
     if (keyResult.keyId) {
       await supabase
         .from('api_keys_pool')
@@ -349,47 +319,78 @@ export async function synthesizeImagePrompt(
 }
 
 // ============================================================================
-// CONTEXTUAL OUTFIT via LLM (NEW v2.0 - 2026-01-15)
-// Uses LLM to determine appropriate outfit based on topic + script context
+// CONTEXTUAL OUTFIT v3.0 (2026-01-15)
+// LLM picks CATEGORY from constrained list + DB cache
+// Ensures output is ALWAYS valid and consistent
 // ============================================================================
 
 export interface ContextualOutfitInput {
   topic: string
   scriptSnippet?: string
-  segmentType?: string  // HOOK, CTA, BODY, etc.
-  language?: string     // id, hi, en
+  segmentType?: string
+  language?: string
 }
 
 export interface ContextualOutfitResult {
   outfit: string
+  category: string
   reasoning: string
   wasLLMUsed: boolean
+  wasCached: boolean
   processingTimeMs: number
 }
 
-const OUTFIT_SYSTEM_PROMPT = `You are a wardrobe consultant for video content creators.
+// Generate category list for LLM prompt
+const CATEGORY_LIST = getCostumeCategoryKeys().join(', ')
 
-Given a video topic and context, determine what outfit the creator should wear to look CREDIBLE and RELEVANT.
+const OUTFIT_CATEGORY_SYSTEM_PROMPT = `You are a wardrobe category classifier for video content creators.
+
+Given a video topic, pick the MOST APPROPRIATE category from this list:
+${CATEGORY_LIST}
 
 RULES:
-1. OUTPUT ONLY valid JSON: {"outfit": "description", "reasoning": "why"}
-2. Be SPECIFIC: colors, style, accessories (e.g., "white lab coat with stethoscope around neck")
-3. Match the topic's professional context
-4. Keep it REALISTIC and achievable
-5. Consider cultural appropriateness
-6. NO generic answers like "professional attire" - be specific!
+1. OUTPUT ONLY the category name - nothing else
+2. Pick the category that best matches the topic's context
+3. If unsure, pick DEFAULT
+4. Consider the activity/context, not just keywords
 
 EXAMPLES:
-- Topic: "Cara melamar kerja di rumah sakit" → {"outfit": "white doctor coat over light blue scrubs with stethoscope around neck", "reasoning": "Medical job topic requires healthcare professional appearance for credibility"}
-- Topic: "Review arcade games di Jepang" → {"outfit": "casual gamer hoodie with graphic tee underneath, comfortable jeans", "reasoning": "Gaming/entertainment content requires relaxed casual style, not formal"}
-- Topic: "Tips investasi saham untuk pemula" → {"outfit": "navy blazer over crisp white shirt, no tie for approachable look", "reasoning": "Finance topic needs professional but not intimidating appearance"}
-- Topic: "Street food tour Bangkok" → {"outfit": "casual comfortable t-shirt with light jacket, practical travel wear", "reasoning": "Food/travel content needs casual tourist-friendly appearance"}
-- Topic: "Workout routine untuk pemula" → {"outfit": "fitted athletic tank top or compression shirt with gym shorts", "reasoning": "Fitness content requires proper athletic wear"}
-- Topic: "NASA dan misi ke Mars" → {"outfit": "NASA-style flight suit or space agency polo shirt with mission patches", "reasoning": "Space topic benefits from authentic aerospace aesthetic"}`
+- "Cara melamar kerja di rumah sakit" → MEDICAL
+- "Review arcade games di Jepang" → GAMING
+- "Tips investasi saham untuk pemula" → FINANCE
+- "Street food tour Bangkok" → TRAVEL
+- "Workout routine untuk pemula" → FITNESS
+- "Tutorial makeup natural" → BEAUTY
+- "Cara merawat kucing" → PETS
+- "Review laptop gaming terbaru" → TECH
+- "Resep masak nasi goreng" → COOKING_CASUAL
+- "Tips presentasi bisnis" → BUSINESS
+
+OUTPUT: Just the category name (e.g., FITNESS)`
 
 /**
- * Get contextual outfit using LLM (Gemini 2.0 Flash)
- * Falls back to generic smart casual if LLM fails
+ * Simple MD5-like hash for topic (for cache key)
+ */
+function hashTopic(topic: string): string {
+  const normalized = topic.toLowerCase().trim()
+  let hash = 0
+  for (let i = 0; i < normalized.length; i++) {
+    const char = normalized.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0')
+}
+
+/**
+ * Get contextual outfit using LLM category classification + DB cache
+ * 
+ * Flow:
+ * 1. Check cache by topic_hash
+ * 2. If MISS → Call LLM to classify into category
+ * 3. Validate category is in COSTUME_CATEGORIES
+ * 4. Cache result
+ * 5. Return outfit from category
  */
 export async function getContextualOutfitAsync(
   input: ContextualOutfitInput,
@@ -399,135 +400,179 @@ export async function getContextualOutfitAsync(
   
   // Skip if no topic
   if (!input.topic?.trim()) {
+    const fallbackOutfit = getContextualCostume('', input.scriptSnippet || '')
     return {
-      outfit: 'smart casual professional attire',
+      outfit: fallbackOutfit,
+      category: 'DEFAULT',
       reasoning: 'No topic provided',
       wasLLMUsed: false,
+      wasCached: false,
       processingTimeMs: Date.now() - startTime
     }
   }
   
+  const topicHash = hashTopic(input.topic)
+  
+  // ========================================================================
+  // STEP 1: Check cache
+  // ========================================================================
   try {
-    // Get API key from pool
+    const { data: cached, error: cacheError } = await supabase
+      .from('topic_outfit_cache')
+      .select('category, outfit')
+      .eq('topic_hash', topicHash)
+      .single()
+    
+    if (!cacheError && cached?.category && cached?.outfit) {
+      console.log(`[getContextualOutfitAsync] ✅ Cache HIT: ${cached.category} → "${cached.outfit.substring(0, 50)}..."`)
+      return {
+        outfit: cached.outfit,
+        category: cached.category,
+        reasoning: 'Cached result',
+        wasLLMUsed: false,
+        wasCached: true,
+        processingTimeMs: Date.now() - startTime
+      }
+    }
+  } catch (cacheErr) {
+    console.warn(`[getContextualOutfitAsync] Cache check failed: ${cacheErr}`)
+  }
+  
+  // ========================================================================
+  // STEP 2: Call LLM to classify topic into category
+  // ========================================================================
+  let category = 'DEFAULT'
+  let wasLLMUsed = false
+  
+  try {
     const keyResult = await getApiKeyFromPool(supabase, 'gemini')
     
-    if (!keyResult.success || !keyResult.apiKey) {
-      console.warn('[getContextualOutfitAsync] No API key available')
-      return {
-        outfit: 'smart casual professional attire',
-        reasoning: 'API key unavailable',
-        wasLLMUsed: false,
-        processingTimeMs: Date.now() - startTime
-      }
-    }
-    
-    const userPrompt = `Video Topic: "${input.topic}"
-${input.scriptSnippet ? `Script Context: "${input.scriptSnippet.substring(0, 200)}..."` : ''}
-Segment: ${input.segmentType || 'BODY'}
+    if (keyResult.success && keyResult.apiKey) {
+      const userPrompt = `Video Topic: "${input.topic}"
+${input.scriptSnippet ? `Context: "${input.scriptSnippet.substring(0, 150)}..."` : ''}
 
-What outfit should the creator wear? Return JSON only.`
-    
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keyResult.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: OUTFIT_SYSTEM_PROMPT },
-              { text: userPrompt }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.3,  // Low temperature for consistency
-            maxOutputTokens: 256,
-            topP: 0.8
+Pick ONE category from the list. Output ONLY the category name.`
+      
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keyResult.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: OUTFIT_CATEGORY_SYSTEM_PROMPT },
+                { text: userPrompt }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.1,  // Very low for consistency
+              maxOutputTokens: 50,
+              topP: 0.8
+            }
+          })
+        }
+      )
+      
+      if (response.ok) {
+        const data = await response.json()
+        const rawCategory = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || ''
+        
+        // Clean and validate category
+        const cleanCategory = rawCategory.toUpperCase().replace(/[^A-Z_]/g, '')
+        
+        if (cleanCategory && cleanCategory in COSTUME_CATEGORIES) {
+          category = cleanCategory
+          wasLLMUsed = true
+          console.log(`[getContextualOutfitAsync] ✅ LLM classified: "${input.topic}" → ${category}`)
+          
+          // Update key usage
+          if (keyResult.keyId) {
+            await supabase
+              .from('api_keys_pool')
+              .update({ 
+                request_count: (keyResult.requestCount || 0) + 1,
+                last_used_at: new Date().toISOString()
+              })
+              .eq('id', keyResult.keyId)
           }
-        })
-      }
-    )
-    
-    if (!response.ok) {
-      console.warn(`[getContextualOutfitAsync] Gemini error: ${response.status}`)
-      return {
-        outfit: 'smart casual professional attire',
-        reasoning: 'LLM request failed',
-        wasLLMUsed: false,
-        processingTimeMs: Date.now() - startTime
-      }
-    }
-    
-    const data = await response.json()
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || ''
-    
-    // Parse JSON response
-    try {
-      // Clean up potential markdown code blocks
-      const cleanJson = rawText
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim()
-      
-      const parsed = JSON.parse(cleanJson)
-      
-      if (parsed.outfit && parsed.outfit.length > 10) {
-        console.log(`[getContextualOutfitAsync] ✅ Outfit: "${parsed.outfit}"`)
-        
-        // Update key usage
-        if (keyResult.keyId) {
-          await supabase
-            .from('api_keys_pool')
-            .update({ 
-              request_count: (keyResult.requestCount || 0) + 1,
-              last_used_at: new Date().toISOString()
-            })
-            .eq('id', keyResult.keyId)
+        } else {
+          console.warn(`[getContextualOutfitAsync] ⚠️ Invalid category from LLM: "${rawCategory}", using fallback`)
         }
-        
-        return {
-          outfit: parsed.outfit,
-          reasoning: parsed.reasoning || 'LLM determined',
-          wasLLMUsed: true,
-          processingTimeMs: Date.now() - startTime
-        }
+      } else {
+        console.warn(`[getContextualOutfitAsync] LLM request failed: ${response.status}`)
       }
-    } catch (parseError) {
-      console.warn(`[getContextualOutfitAsync] JSON parse error: ${parseError}`)
+    }
+  } catch (llmErr) {
+    console.warn(`[getContextualOutfitAsync] LLM error: ${llmErr}`)
+  }
+  
+  // ========================================================================
+  // STEP 3: If LLM failed, use keyword-based fallback
+  // ========================================================================
+  if (!wasLLMUsed) {
+    const fallbackOutfit = getContextualCostume(input.topic, input.scriptSnippet || '')
+    
+    // Try to reverse-map fallback outfit to a category
+    for (const [cat, outfit] of Object.entries(COSTUME_CATEGORIES)) {
+      if (outfit === fallbackOutfit) {
+        category = cat
+        break
+      }
     }
     
-    return {
-      outfit: 'smart casual professional attire',
-      reasoning: 'LLM response invalid',
-      wasLLMUsed: false,
-      processingTimeMs: Date.now() - startTime
-    }
+    console.log(`[getContextualOutfitAsync] 📋 Fallback: "${input.topic}" → ${category}`)
+  }
+  
+  // ========================================================================
+  // STEP 4: Get outfit from category
+  // ========================================================================
+  const outfit = getCostumeByCategory(category)
+  
+  // ========================================================================
+  // STEP 5: Cache the result
+  // ========================================================================
+  try {
+    await supabase
+      .from('topic_outfit_cache')
+      .upsert({
+        topic_hash: topicHash,
+        topic_original: input.topic,
+        category: category,
+        outfit: outfit
+      }, {
+        onConflict: 'topic_hash'
+      })
     
-  } catch (error) {
-    console.warn(`[getContextualOutfitAsync] Error: ${error}`)
-    return {
-      outfit: 'smart casual professional attire',
-      reasoning: 'Exception occurred',
-      wasLLMUsed: false,
-      processingTimeMs: Date.now() - startTime
-    }
+    console.log(`[getContextualOutfitAsync] 💾 Cached: ${topicHash} → ${category}`)
+  } catch (cacheInsertErr) {
+    console.warn(`[getContextualOutfitAsync] Cache insert failed: ${cacheInsertErr}`)
+  }
+  
+  return {
+    outfit,
+    category,
+    reasoning: wasLLMUsed ? 'LLM classification' : 'Keyword fallback',
+    wasLLMUsed,
+    wasCached: false,
+    processingTimeMs: Date.now() - startTime
   }
 }
 
 // ============================================================================
-// CREATOR PROMPT BUILDER (NEW v2.0 - 2026-01-15)
-// Builds CREATOR shot prompt WITHOUT hardcoded age/appearance
-// When reference image exists: only describe expression, pose, camera, outfit
+// CREATOR PROMPT BUILDER v3.0 (2026-01-15)
+// - CTA emotion override: ALWAYS smile/friendly
+// - Uses imported CTA_EMOTION_OVERRIDE from lookups
 // ============================================================================
 
 export interface CreatorPromptInput {
   topic: string
   emotion: string
-  segmentType: string        // HOOK, CTA, BODY, etc.
-  aspectRatio: string        // 9:16, 16:9
-  hasReferenceImage: boolean // CRITICAL: determines if we describe appearance
-  contextualOutfit?: string  // From getContextualOutfitAsync()
-  refinementNotes?: string   // User's regeneration notes
+  segmentType: string
+  aspectRatio: string
+  hasReferenceImage: boolean
+  contextualOutfit?: string
+  refinementNotes?: string
 }
 
 export interface CreatorPromptResult {
@@ -537,19 +582,18 @@ export interface CreatorPromptResult {
 }
 
 /**
- * Build CREATOR shot prompt
- * 
- * CRITICAL LOGIC:
- * - WITH reference image: Only describe expression, pose, camera, outfit changes
- * - WITHOUT reference: Include full character description
+ * Build CREATOR shot prompt with CTA emotion override
  */
 export async function buildCreatorPromptAsync(
   input: CreatorPromptInput,
-  supabase: any
+  _supabase: any
 ): Promise<CreatorPromptResult> {
   const startTime = Date.now()
   
-  // Get emotion specs (from cinematographyLookup)
+  // ========================================================================
+  // EMOTION SPECS - CTA OVERRIDE
+  // CTA segments ALWAYS get friendly/smile expression regardless of script emotion
+  // ========================================================================
   const emotionMap: Record<string, { expression: string; body: string }> = {
     shock: { expression: 'wide startled eyes, raised eyebrows, open mouth', body: 'frozen posture, slight lean back' },
     curiosity: { expression: 'bright engaged eyes, slight head tilt, raised eyebrows', body: 'leaning forward slightly' },
@@ -561,7 +605,22 @@ export async function buildCreatorPromptAsync(
     hope: { expression: 'warm smile, bright optimistic eyes', body: 'open posture, slight upward gaze' },
   }
   
-  const emotionSpecs = emotionMap[input.emotion.toLowerCase()] || emotionMap.authority
+  // CHECK FOR CTA OVERRIDE
+  const segmentUpper = input.segmentType.toUpperCase()
+  const isCTA = segmentUpper === 'CTA' || segmentUpper === 'ENDING_CTA'
+  
+  let emotionSpecs: { expression: string; body: string }
+  
+  if (isCTA) {
+    // CTA ALWAYS gets friendly/smile expression
+    emotionSpecs = {
+      expression: CTA_EMOTION_OVERRIDE.expression,
+      body: CTA_EMOTION_OVERRIDE.body
+    }
+    console.log(`[buildCreatorPromptAsync] 😊 CTA emotion override applied: friendly smile`)
+  } else {
+    emotionSpecs = emotionMap[input.emotion.toLowerCase()] || emotionMap.authority
+  }
   
   // Camera specs based on segment type
   const cameraMap: Record<string, string> = {
@@ -570,17 +629,12 @@ export async function buildCreatorPromptAsync(
     'LOOP-END': 'Close-up (CU), 85mm f/1.8, matching HOOK composition',
     'BODY': 'Medium close-up (MCU), 50mm f/2.8, eye-level',
   }
-  const cameraSpecs = cameraMap[input.segmentType.toUpperCase()] || cameraMap['BODY']
+  const cameraSpecs = cameraMap[segmentUpper] || cameraMap['BODY']
   
-  // Build prompt based on whether reference image exists
+  // Build prompt
   let prompt: string
   
   if (input.hasReferenceImage) {
-    // ========================================================================
-    // WITH REFERENCE IMAGE: Do NOT describe age, ethnicity, face features
-    // Only describe: expression, pose, camera, lighting, outfit (if changing)
-    // ========================================================================
-    
     const outfitLine = input.contextualOutfit 
       ? `Outfit: ${input.contextualOutfit}` 
       : '(Outfit from reference image)'
@@ -593,7 +647,7 @@ ${outfitLine}
 Camera: ${cameraSpecs}
 Composition: Rule of thirds, subject positioned for visual balance
 
-Lighting: Professional studio lighting, Rembrandt pattern, 4:1 ratio
+Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : '4:1'} ratio
 Color: Cinematic warm tones, Vision3 500T film stock look
 Background: Contextual for ${input.topic || 'content creation'}, moderate depth blur
 
@@ -602,11 +656,6 @@ Style: Cinematic photorealistic, natural skin texture, high quality.
 Clean frame, no text overlays, no watermarks.`
     
   } else {
-    // ========================================================================
-    // WITHOUT REFERENCE IMAGE: Include character description
-    // This is less ideal for face consistency but necessary as fallback
-    // ========================================================================
-    
     const outfitLine = input.contextualOutfit || 'smart casual professional attire'
     
     prompt = `A professional content creator with ${emotionSpecs.expression}.
@@ -617,7 +666,7 @@ Outfit: ${outfitLine}
 Camera: ${cameraSpecs}
 Composition: Rule of thirds, subject positioned for visual balance
 
-Lighting: Professional studio lighting, Rembrandt pattern, 4:1 ratio
+Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : '4:1'} ratio
 Color: Cinematic warm tones, Vision3 500T film stock look
 Background: Modern setting appropriate for ${input.topic || 'content creation'}
 
@@ -625,14 +674,13 @@ Style: Cinematic photorealistic, natural skin texture, high quality.
 Clean frame, no text overlays, no watermarks.`
   }
   
-  // Add refinement notes if present
   if (input.refinementNotes?.trim()) {
     prompt += `\n\nAdditional requirements: ${input.refinementNotes.trim()}`
   }
   
   return {
     prompt,
-    wasLLMUsed: false, // This function doesn't use LLM, outfit comes from getContextualOutfitAsync
+    wasLLMUsed: false,
     processingTimeMs: Date.now() - startTime
   }
 }

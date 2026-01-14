@@ -1146,3 +1146,227 @@ export function getBRollNegativePrompt(
 ): string {
   return NEGATIVE_PROMPTS[type] || NEGATIVE_PROMPTS.combined;
 }
+
+// ============================================================================
+// COSTUME CATEGORIES (2026-01-15)
+// Constrained list for LLM classification - ensures consistent, valid outputs
+// LLM picks category, we return predefined costume description
+// ============================================================================
+
+export const COSTUME_CATEGORIES = {
+  // ===== PROFESSIONAL =====
+  MEDICAL: 'white doctor coat with stethoscope around neck',
+  LEGAL: 'formal black suit with tie, lawyer attire',
+  BUSINESS: 'navy blazer over crisp white shirt, professional',
+  FINANCE: 'formal suit with power tie, banker style',
+  CORPORATE: 'executive business attire, tailored suit',
+  
+  // ===== TECH & DIGITAL =====
+  TECH: 'dark tech hoodie over minimal tee, developer style',
+  STARTUP: 'casual smart, hoodie with company logo tee',
+  GAMING: 'casual gamer hoodie, graphic tee, relaxed streetwear',
+  ESPORTS: 'esports jersey, gaming team attire',
+  STREAMING: 'trendy casual, comfortable streaming setup attire',
+  
+  // ===== HEALTH & FITNESS =====
+  FITNESS: 'athletic wear, fitted gym clothes, sports attire',
+  YOGA: 'yoga attire, comfortable stretchy activewear',
+  MARTIAL_ARTS: 'martial arts gi or athletic training wear',
+  SPORTS: 'sports jersey or athletic team wear',
+  WELLNESS: 'comfortable athleisure, relaxed health-conscious style',
+  
+  // ===== FOOD & CULINARY =====
+  CHEF: 'professional white chef coat with apron',
+  COOKING_CASUAL: 'casual apron over comfortable home clothes',
+  BARISTA: 'cafe worker style, apron over casual hipster outfit',
+  FOOD_REVIEW: 'smart casual, food blogger style',
+  
+  // ===== CREATIVE & ARTS =====
+  ARTIST: 'creative casual, paint-splattered apron or artsy layers',
+  MUSICIAN: 'rock casual, leather jacket or band tee style',
+  FASHION: 'trendy designer outfit, fashion-forward statement piece',
+  PHOTOGRAPHY: 'functional casual with camera strap aesthetic',
+  
+  // ===== EDUCATION =====
+  TEACHER: 'smart casual teacher attire, approachable professional',
+  ACADEMIC: 'professorial style, blazer with elbow patches',
+  TUTOR: 'casual smart, friendly approachable educator look',
+  STUDENT: 'casual student style, backpack-ready comfort',
+  
+  // ===== LIFESTYLE & TRAVEL =====
+  TRAVEL: 'casual travel wear, comfortable light jacket, tourist style',
+  ADVENTURE: 'outdoor adventure gear, hiking-ready practical wear',
+  BEACH: 'resort casual, tropical vacation wear',
+  URBAN_EXPLORE: 'streetwear casual, city explorer style',
+  LUXURY: 'upscale elegant casual, designer accessories',
+  
+  // ===== ENTERTAINMENT =====
+  NIGHTLIFE: 'stylish club attire, trendy evening wear',
+  PARTY: 'festive party outfit, celebration ready',
+  CINEMA: 'casual movie buff style, comfortable entertainment wear',
+  COMEDY: 'casual relatable everyday clothes',
+  
+  // ===== HOME & FAMILY =====
+  PARENTING: 'comfortable casual parent attire, practical family wear',
+  HOME_DIY: 'work clothes, practical DIY project attire',
+  GARDENING: 'outdoor gardening wear, practical earth-toned clothes',
+  PETS: 'casual comfortable pet-owner style',
+  
+  // ===== AUTOMOTIVE & MECHANICAL =====
+  AUTOMOTIVE: 'mechanic jumpsuit or car enthusiast casual',
+  MOTORCYCLE: 'biker jacket, motorcycle enthusiast style',
+  
+  // ===== BEAUTY & PERSONAL CARE =====
+  BEAUTY: 'elegant polished look, beauty influencer style',
+  SKINCARE: 'clean minimal aesthetic, spa-ready fresh look',
+  HAIR_STYLING: 'trendy salon professional style',
+  
+  // ===== SPIRITUAL & CULTURAL =====
+  RELIGIOUS: 'modest respectful attire appropriate for worship',
+  MEDITATION: 'comfortable loose meditation wear, zen aesthetic',
+  CULTURAL_ID: 'Indonesian traditional or batik-inspired modern wear',
+  CULTURAL_IN: 'Indian traditional or kurta-inspired modern wear',
+  
+  // ===== SCIENCE & NATURE =====
+  SCIENCE: 'lab coat, scientific researcher attire',
+  NATURE: 'nature documentary style, khaki outdoor wear',
+  ENVIRONMENTAL: 'eco-conscious casual, sustainable fashion',
+  
+  // ===== FINANCE & INVESTING =====
+  CRYPTO: 'tech-finance hybrid, modern smart casual',
+  INVESTING: 'professional but approachable, business casual',
+  REAL_ESTATE: 'polished real estate agent professional wear',
+  
+  // ===== TRADES & SKILLS =====
+  CONSTRUCTION: 'work site attire, hard hat and safety vest',
+  ELECTRICAL: 'technician uniform, practical work wear',
+  CRAFTS: 'artisan workshop attire, maker aesthetic',
+  
+  // ===== DEFAULT =====
+  DEFAULT: 'smart casual professional attire, versatile neutral'
+} as const;
+
+export type CostumeCategory = keyof typeof COSTUME_CATEGORIES;
+
+/**
+ * Get costume by category key
+ */
+export function getCostumeByCategory(category: string): string {
+  const key = category.toUpperCase() as CostumeCategory;
+  return COSTUME_CATEGORIES[key] || COSTUME_CATEGORIES.DEFAULT;
+}
+
+/**
+ * Get all valid category keys (for LLM prompt)
+ */
+export function getCostumeCategoryKeys(): string[] {
+  return Object.keys(COSTUME_CATEGORIES);
+}
+
+// ============================================================================
+// LANGUAGE → ETHNICITY MAPPING (2026-01-15)
+// Maps selected content language to appropriate ethnicity for B-ROLL people
+// ============================================================================
+
+export interface EthnicityContext {
+  ethnicity: string;           // Primary ethnicity description
+  appearance: string;          // Detailed appearance hints
+  culturalHints: string;       // Cultural styling hints
+}
+
+export const LANGUAGE_ETHNICITY_MAP: Record<string, EthnicityContext> = {
+  // Indonesian
+  id: {
+    ethnicity: 'Indonesian',
+    appearance: 'Southeast Asian appearance, Indonesian features, warm brown skin tone',
+    culturalHints: 'Indonesian people, local Indonesian style, Nusantara aesthetic'
+  },
+  // Hindi (India)
+  hi: {
+    ethnicity: 'Indian',
+    appearance: 'South Asian appearance, Indian features, brown skin tone',
+    culturalHints: 'Indian people, desi style, Bollywood-inspired aesthetic'
+  },
+  // English (default to American/Western)
+  en: {
+    ethnicity: 'American',
+    appearance: 'diverse Western appearance, American features',
+    culturalHints: 'American people, Western style, Hollywood aesthetic'
+  },
+  // Fallback
+  default: {
+    ethnicity: 'diverse international',
+    appearance: 'diverse global appearance',
+    culturalHints: 'international diverse people'
+  }
+};
+
+/**
+ * Get ethnicity context for B-ROLL based on content language
+ * @param language - Content language code (id, hi, en) or full name (indonesian, hindi, english)
+ * @returns EthnicityContext with appearance hints
+ */
+export function getEthnicityForLanguage(language: string): EthnicityContext {
+  const langLower = (language || 'en').toLowerCase().trim();
+
+  // Map full language names to codes
+  const langNameMap: Record<string, string> = {
+    'indonesian': 'id',
+    'indonesia': 'id',
+    'bahasa': 'id',
+    'tamil': 'hi',
+    'hindi': 'hi',
+    'india': 'hi',
+    'indian': 'hi',
+    'english': 'en',
+    'american': 'en',
+    'uk': 'en',
+    'us': 'en',
+  };
+
+  // Try full name mapping first
+  if (langNameMap[langLower]) {
+    return LANGUAGE_ETHNICITY_MAP[langNameMap[langLower]];
+  }
+
+  // Try first 2 characters (id, hi, en)
+  const langCode = langLower.substring(0, 2);
+  return LANGUAGE_ETHNICITY_MAP[langCode] || LANGUAGE_ETHNICITY_MAP.default;
+}
+
+/**
+ * Build ethnicity prompt injection for B-ROLL
+ * @param language - Content language code
+ * @returns String to inject into B-ROLL prompts
+ */
+export function buildEthnicityPrompt(language: string): string {
+  const ctx = getEthnicityForLanguage(language);
+  return `People in scene: ${ctx.appearance}. ${ctx.culturalHints}.`;
+}
+
+// ============================================================================
+// CTA EMOTION OVERRIDE (2026-01-15)
+// CTA segments MUST have friendly/smile expression regardless of script emotion
+// ============================================================================
+
+export const CTA_EMOTION_OVERRIDE: EmotionSpecs = {
+  expression: 'warm genuine smile, bright friendly eyes, inviting expression',
+  body: 'open welcoming posture, slight forward lean',
+  lighting: 'Butterfly 2:1',
+  ratio: '2:1',
+  promptPhrase: 'warm genuine smile, bright friendly eyes, welcoming open expression, inviting energy'
+};
+
+/**
+ * Get emotion specs with CTA override
+ * CTA segments always get friendly/smile expression
+ */
+export function getEmotionSpecsWithOverride(emotion: string, segmentType: string): EmotionSpecs {
+  // CTA segments ALWAYS use friendly expression
+  if (segmentType.toUpperCase() === 'CTA' || segmentType.toUpperCase() === 'ENDING_CTA') {
+    return CTA_EMOTION_OVERRIDE;
+  }
+  
+  // Other segments use specified emotion
+  return getEmotionSpecs(emotion);
+}

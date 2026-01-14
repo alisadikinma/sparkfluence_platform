@@ -20,7 +20,9 @@
       "Bash(node:*)",
       "Bash(npm run test:*)",
       "Bash(npm run build:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: add contextual outfit, CTA smile, and B-ROLL ethnicity\n\n1. Outfit - LLM + constrained categories + cache:\n   - Add COSTUME_CATEGORIES \\(50+ categories\\) for consistent outfit selection\n   - Add getContextualOutfitAsync\\(\\) with LLM classification + DB cache\n   - Create topic_outfit_cache table for caching outfit decisions\n\n2. CTA expression - always friendly/smile:\n   - Add CTA_EMOTION_OVERRIDE constant\n   - Add getEmotionSpecsWithOverride\\(\\) function\n   - CTA/ENDING_CTA segments now always use warm smile expression\n\n3. B-ROLL ethnicity - language-based:\n   - Add LANGUAGE_ETHNICITY_MAP \\(id/hi/en -> ethnicity\\)\n   - Add getEthnicityForLanguage\\(\\) with full name support \\(indonesian, hindi, etc\\)\n   - Add buildEthnicityPrompt\\(\\) for injection\n   - Frontend passes language to all generate-images API calls\n   - handleProcessSingle injects/replaces ethnicity in B-ROLL prompts\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }

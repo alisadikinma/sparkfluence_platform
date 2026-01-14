@@ -1254,7 +1254,9 @@ export const ImageGeneration = (): JSX.Element => {
           body: {
             mode: 'process_single',
             session_id: sid,
-            user_id: user.id
+            user_id: user.id,
+            // Content language for B-ROLL ethnicity (id/hi/en)
+            language: videoSettings?.language || 'id'
           }
         });
         
@@ -1431,7 +1433,9 @@ export const ImageGeneration = (): JSX.Element => {
           character_description: characterDescription,
           character_ref_png: referenceImage,
           // Model selection for B-ROLL segments (CREATOR always uses nano-banana-edit)
-          broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
+          broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey,
+          // Content language for B-ROLL ethnicity (id/hi/en)
+          language: videoSettings?.language || 'id'
         }
       });
 
@@ -1535,7 +1539,9 @@ export const ImageGeneration = (): JSX.Element => {
           character_description: characterDescription,
           character_ref_png: referenceImage,
           // Model selection for B-ROLL segments (CREATOR always uses nano-banana-edit)
-          broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
+          broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey,
+          // Content language for B-ROLL ethnicity (id/hi/en)
+          language: videoSettings?.language || 'id'
         }
       });
 
@@ -1607,9 +1613,11 @@ export const ImageGeneration = (): JSX.Element => {
         provider: 'auto',
         character_ref_png: referenceImage,
         // Model selection for B-ROLL segments (CREATOR always uses nano-banana-edit)
-        broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
+        broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey,
+        // Content language for B-ROLL ethnicity (id/hi/en)
+        language: videoSettings?.language || 'id'
       };
-      
+
       const { data, error } = await supabase.functions.invoke('generate-images', {
         body: requestBody
       });
@@ -1844,6 +1852,8 @@ export const ImageGeneration = (): JSX.Element => {
         shot_type: segment.shotType,
         emotion: segment.emotion,
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
+        // Content language for B-ROLL ethnicity (id/hi/en)
+        language: videoSettings?.language || 'id',
       };
 
       // Add CREATOR-specific fields
@@ -1978,7 +1988,9 @@ export const ImageGeneration = (): JSX.Element => {
           include_creator_face: options.includeCreatorFace,
           creator_ref_for_broll: options.includeCreatorFace ? creatorRef : null,
         }] : undefined,
-        broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey
+        broll_model: IMAGE_MODELS.bRoll[imageModels.bRoll].edgeKey,
+        // Content language for B-ROLL ethnicity (id/hi/en)
+        language: videoSettings?.language || 'id'
       };
 
       console.log('[BRollGenerate] Request:', {
