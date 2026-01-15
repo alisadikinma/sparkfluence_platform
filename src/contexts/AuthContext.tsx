@@ -12,6 +12,52 @@ interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
+// Clear all user-specific localStorage data
+// This is called on signOut and when user changes to prevent data leakage
+const clearUserLocalStorage = () => {
+  console.log('[Auth] Clearing user-specific localStorage data...');
+
+  // List of all user-specific localStorage keys to clear
+  const userSpecificKeys = [
+    // Onboarding data
+    'onboarding_data',
+
+    // Topic caches
+    'sparkfluence_cached_topics',
+    'sparkfluence_scriptlab_topics',
+    'sparkfluence_topic_refresh_rate',
+    'sparkfluence_scriptlab_refresh_rate',
+
+    // Script lab data
+    'script_lab_data',
+
+    // User preferences that should reset per user
+    'sparkfluence_user_country',
+    'sparkfluence_active_session',
+  ];
+
+  // Clear specific keys
+  userSpecificKeys.forEach(key => {
+    localStorage.removeItem(key);
+  });
+
+  // Clear all video progress keys (dynamic keys with session IDs)
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && (
+      key.startsWith('sparkfluence_video_progress_') ||
+      key.startsWith('sparkfluence_image_cache_') ||
+      key.startsWith('sparkfluence_broll_cache_')
+    )) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(key => localStorage.removeItem(key));
+
+  console.log('[Auth] Cleared', userSpecificKeys.length + keysToRemove.length, 'localStorage items');
+};
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = () => {
@@ -28,6 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const isInitialized = useRef(false);
   const isSigningOut = useRef(false);
+  const previousUserId = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -36,13 +83,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         console.log('[Auth] Initializing...');
         const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-        
+
         if (error) {
           console.error('[Auth] Init error:', error);
         }
-        
+
         if (mounted) {
           console.log('[Auth] Init session:', currentSession ? 'Found' : 'None');
+
+          // Store initial user ID for change detection
+          if (currentSession?.user) {
+            previousUserId.current = currentSession.user.id;
+          }
+
           setSession(currentSession);
           setUser(currentSession?.user ?? null);
           setLoading(false);
@@ -61,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, newSession) => {
       console.log('[Auth] State change:', event, newSession ? 'Has session' : 'No session');
-      
+
       if (!mounted) {
         console.log('[Auth] Ignoring - component unmounted');
         return;
@@ -85,6 +138,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         return;
       }
+
+      // SECURITY: Clear localStorage when user changes (different user login)
+      // This prevents data leakage between users on same browser
+      const newUserId = newSession?.user?.id ?? null;
+      if (event === 'SIGNED_IN' && newUserId && previousUserId.current && newUserId !== previousUserId.current) {
+        console.log('[Auth] User changed detected! Previous:', previousUserId.current, 'New:', newUserId);
+        clearUserLocalStorage();
+      }
+
+      // Update previous user ID tracking
+      previousUserId.current = newUserId;
 
       setSession(newSession);
       setUser(newSession?.user ?? null);
@@ -141,6 +205,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOut = useCallback(async () => {
     console.log('[Auth] SignOut initiated');
     isSigningOut.current = true;
+
+    // Clear user-specific localStorage data before signing out
+    clearUserLocalStorage();
+
     await supabase.auth.signOut();
   }, []);
 
