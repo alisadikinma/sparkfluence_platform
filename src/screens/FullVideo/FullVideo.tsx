@@ -6,18 +6,22 @@ import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
 import { apiEndpoints, API_KEY, API_URL } from "../../lib/api";
-import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play, Link2, ExternalLink } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play, Link2, ExternalLink, Music, Volume2 } from "lucide-react";
 
 // Backend URL from centralized config
 const BACKEND_URL = API_URL;
 
-// V2 Options defaults
+// V2 Options defaults (now supports subtitle + BGM at combine time)
 const DEFAULT_COMBINE_OPTIONS = {
   enable_transitions: true,
   transition_duration: 0.5,
   enable_subtitles: false,
   subtitle_style: 'tiktok',
   word_by_word: true,
+  enable_bgm: false,
+  music_url: null as string | null,
+  bgm_volume: 0.20,
+  duck_during_speech: true,
   normalize_audio: true
 };
 
@@ -30,6 +34,29 @@ const PLATFORM_CONFIG = {
   instagram: { name: "Instagram", implemented: false },
   tiktok: { name: "TikTok", implemented: false },
 };
+
+// Subtitle Styles configuration (matches backend presets)
+const SUBTITLE_STYLES = [
+  { id: 'tiktok', label: 'TikTok', description: 'Bold, large text with cyan highlight' },
+  { id: 'viral', label: 'Viral', description: 'Orange-yellow highlight, viral style' },
+  { id: 'reels', label: 'Reels', description: 'Green highlight, Instagram style' },
+  { id: 'shorts', label: 'Shorts', description: 'Magenta highlight, YouTube style' },
+  { id: 'dramatic', label: 'Dramatic', description: 'Red highlight, extra large' },
+  { id: 'minimal', label: 'Minimal', description: 'Clean, simple white text' },
+];
+
+// BGM Styles configuration
+const BGM_STYLES = [
+  { id: 'upbeat', label: 'Upbeat', prompt: 'Upbeat pop, energetic, positive vibes, catchy melody', lyrics: '[Intro] Instrumental energy [Verse] Na na na [Chorus] Yeah yeah' },
+  { id: 'chill', label: 'Chill', prompt: 'Lo-fi chill, relaxed, mellow beats, cafe atmosphere', lyrics: '[Intro] Soft piano [Verse] Hmm hmm [Outro] Fade out' },
+  { id: 'cinematic', label: 'Cinematic', prompt: 'Cinematic orchestral, epic, inspiring, emotional build', lyrics: '[Intro] Orchestra swell [Verse] Ahh ahh [Chorus] Soaring melody' },
+  { id: 'energetic', label: 'Energetic', prompt: 'Electronic dance, high energy, pumping beats, club vibes', lyrics: '[Intro] Bass drop [Verse] Wooh [Chorus] Lets go' },
+  { id: 'ambient', label: 'Ambient', prompt: 'Ambient atmospheric, peaceful, floating textures, dreamy', lyrics: '[Intro] Ethereal pads [Verse] Ooh [Outro] Silence' },
+];
+
+// Supabase Edge Function URL for music generation
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const GENERATE_MUSIC_URL = `${SUPABASE_URL}/functions/v1/generate-music`;
 
 export const FullVideo: React.FC = () => {
   const navigate = useNavigate();
@@ -74,6 +101,30 @@ export const FullVideo: React.FC = () => {
   const [hasSubtitles, setHasSubtitles] = useState(false);
   const subtitlePollRef = useRef<NodeJS.Timeout | null>(null);
 
+  // BGM states
+  const [showBGMModal, setShowBGMModal] = useState(false);
+  const [showPostProcessModal, setShowPostProcessModal] = useState(false);
+  const [isGeneratingBGM, setIsGeneratingBGM] = useState(false);
+  const [isAddingBGM, setIsAddingBGM] = useState(false);
+  const [bgmProgress, setBgmProgress] = useState<string>("Initializing...");
+  const [bgmPercent, setBgmPercent] = useState(0);
+  const [selectedBGMStyle, setSelectedBGMStyle] = useState<string>('chill');
+  const [bgmVolume, setBgmVolume] = useState(0.2);
+  const [hasBGM, setHasBGM] = useState(false);
+  const [bgmJobId, setBgmJobId] = useState<string | null>(null);
+  const bgmPollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Enhance Modal states (combined subtitle + BGM)
+  const [showEnhanceModal, setShowEnhanceModal] = useState(false);
+  const [enhanceSubtitles, setEnhanceSubtitles] = useState(true);
+  const [enhanceBGM, setEnhanceBGM] = useState(true);
+  const [selectedSubtitleStyle, setSelectedSubtitleStyle] = useState<string>('tiktok');
+  const [isEnhancing, setIsEnhancing] = useState(false);
+  const [enhanceProgress, setEnhanceProgress] = useState<string>("Initializing...");
+  const [enhancePercent, setEnhancePercent] = useState(0);
+  const [enhanceJobId, setEnhanceJobId] = useState<string | null>(null);
+  const enhancePollRef = useRef<NodeJS.Timeout | null>(null);
+
   // Fetch linked accounts
   useEffect(() => {
     const fetchLinkedAccounts = async () => {
@@ -108,6 +159,9 @@ export const FullVideo: React.FC = () => {
       }
       if (subtitlePollRef.current) {
         clearInterval(subtitlePollRef.current);
+      }
+      if (bgmPollRef.current) {
+        clearInterval(bgmPollRef.current);
       }
     };
   }, []);
@@ -217,25 +271,112 @@ export const FullVideo: React.FC = () => {
     }
   };
 
-  // Start combine video process
+  // State for pre-combine enhance options
+  const [showPreCombineOptions, setShowPreCombineOptions] = useState(false);
+  const [preCombineSubtitles, setPreCombineSubtitles] = useState(true);
+  const [preCombineBGM, setPreCombineBGM] = useState(true);
+  const [preCombineSubtitleStyle, setPreCombineSubtitleStyle] = useState('tiktok');
+  const [preCombineBGMStyle, setPreCombineBGMStyle] = useState('chill');
+  const [isGeneratingMusicForCombine, setIsGeneratingMusicForCombine] = useState(false);
+
+  // Start combine video process - now shows enhance options first
   const handleStartCombine = () => {
     setShowCombinePrompt(false);
+    setShowPreCombineOptions(true);
+  };
+
+  // Actually start combining with selected options
+  const handleConfirmCombineWithOptions = async () => {
+    setShowPreCombineOptions(false);
+    const segments = videoData?.segments || videoData?.selectedSegments || [];
+    if (segments.length === 0) return;
+
+    // Build options
+    const options = {
+      ...DEFAULT_COMBINE_OPTIONS,
+      enable_subtitles: preCombineSubtitles,
+      subtitle_style: preCombineSubtitleStyle,
+      enable_bgm: preCombineBGM,
+      music_url: null as string | null,
+      bgm_volume: bgmVolume,
+    };
+
+    // If BGM is selected, generate music first
+    if (preCombineBGM) {
+      setIsCombining(true);
+      setCombineProgress("Generating background music...");
+      setProgressPercent(5);
+      setIsGeneratingMusicForCombine(true);
+
+      try {
+        const selectedStyle = BGM_STYLES.find(s => s.id === preCombineBGMStyle);
+        if (!selectedStyle) throw new Error("Invalid music style");
+
+        console.log('[FullVideo] Pre-generating music for combine...');
+        const musicResponse = await fetch(GENERATE_MUSIC_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            prompt: selectedStyle.prompt,
+            lyrics_prompt: selectedStyle.lyrics,
+            duration_seconds: 60
+          })
+        });
+
+        if (!musicResponse.ok) {
+          const errorText = await musicResponse.text();
+          console.error('[FullVideo] Music generation failed:', errorText);
+          // Continue without BGM - partial success approach
+          options.enable_bgm = false;
+          console.log('[FullVideo] Continuing without BGM due to music generation error');
+        } else {
+          const musicData = await musicResponse.json();
+          console.log('[FullVideo] Music generated:', musicData);
+
+          if (musicData.success && musicData.data?.music_url) {
+            options.music_url = musicData.data.music_url;
+          } else {
+            // Continue without BGM
+            options.enable_bgm = false;
+            console.log('[FullVideo] Continuing without BGM - no music URL returned');
+          }
+        }
+      } catch (err: any) {
+        console.error('[FullVideo] Music generation error:', err);
+        // Continue without BGM - partial success approach
+        options.enable_bgm = false;
+      }
+
+      setIsGeneratingMusicForCombine(false);
+    }
+
+    // Now trigger combine with all options
+    triggerCombineVideoWithOptions(segments, videoData, options);
+  };
+
+  // Skip enhance options and combine directly
+  const handleSkipEnhanceAndCombine = () => {
+    setShowPreCombineOptions(false);
     const segments = videoData?.segments || videoData?.selectedSegments || [];
     if (segments.length > 0) {
-      triggerCombineVideo(segments, videoData);
+      triggerCombineVideoWithOptions(segments, videoData, DEFAULT_COMBINE_OPTIONS);
     }
   };
 
-  // Trigger combine video API (V2 with transitions + subtitles)
-  const triggerCombineVideo = async (segments: any[], state: any) => {
+  // Trigger combine video API (V2 with transitions + subtitles + BGM)
+  const triggerCombineVideoWithOptions = async (segments: any[], state: any, options: typeof DEFAULT_COMBINE_OPTIONS) => {
     console.log('[FullVideo] ========== TRIGGER COMBINE V2 ==========');
     console.log('[FullVideo] Backend URL:', BACKEND_URL);
     console.log('[FullVideo] Segments to combine:', segments.length);
-    
+    console.log('[FullVideo] Options:', options);
+
     setIsCombining(true);
     setCombineError(null);
     setCombineProgress("Preparing video segments...");
-    setProgressPercent(5);
+    setProgressPercent(10);
 
     try {
       // Prepare segments data for V2 backend
@@ -250,7 +391,7 @@ export const FullVideo: React.FC = () => {
       }));
 
       console.log('[FullVideo] Prepared videoSegments (V2):', JSON.stringify(videoSegments, null, 2));
-      
+
       // Check if all segments have video URLs
       const missingVideos = videoSegments.filter((s) => !s.video_url);
       if (missingVideos.length > 0) {
@@ -261,17 +402,17 @@ export const FullVideo: React.FC = () => {
       console.log('[FullVideo] All segments have video URLs');
       console.log('[FullVideo] Sending request to backend V2...');
       setCombineProgress("Connecting to video processor...");
-      setProgressPercent(10);
-      
+      setProgressPercent(15);
+
       const requestBody = {
         project_id: state.projectId || state.sessionId || "project_" + Date.now(),
         session_id: state.sessionId || "session_" + Date.now(),
         segments: videoSegments,
-        options: DEFAULT_COMBINE_OPTIONS
+        options: options
       };
       console.log('[FullVideo] Request body (V2):', JSON.stringify(requestBody, null, 2));
-      
-      // V2 endpoint with transitions + subtitles
+
+      // V2 endpoint with transitions + subtitles + BGM
       const response = await fetch(apiEndpoints.combineVideo, {
         method: 'POST',
         headers: {
@@ -282,7 +423,7 @@ export const FullVideo: React.FC = () => {
       });
 
       console.log('[FullVideo] Response status:', response.status);
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         console.log('[FullVideo] ERROR response:', errorText);
@@ -301,10 +442,14 @@ export const FullVideo: React.FC = () => {
         console.log('[FullVideo] V2 Features enabled:', data.data.features);
       }
 
+      // Track what enhancements were requested
+      if (options.enable_subtitles) setHasSubtitles(true);
+      if (options.enable_bgm && options.music_url) setHasBGM(true);
+
       setJobId(data.data.job_id);
-      setCombineProgress("Downloading video segments...");
-      setProgressPercent(15);
-      startPollingJobStatusDirect(data.data.job_id);
+      setCombineProgress(options.enable_subtitles || options.enable_bgm ? "Combining with enhancements..." : "Downloading video segments...");
+      setProgressPercent(20);
+      startPollingJobStatusDirect(data.data.job_id, options);
 
     } catch (err: any) {
       console.error('[FullVideo] Combine error:', err);
@@ -313,18 +458,23 @@ export const FullVideo: React.FC = () => {
     }
   };
 
+  // Legacy function for backward compatibility
+  const triggerCombineVideo = async (segments: any[], state: any) => {
+    triggerCombineVideoWithOptions(segments, state, DEFAULT_COMBINE_OPTIONS);
+  };
+
   // Poll job status directly from backend
-  const startPollingJobStatusDirect = (jid: string) => {
+  const startPollingJobStatusDirect = (jid: string, options?: typeof DEFAULT_COMBINE_OPTIONS) => {
     let attempts = 0;
-    const maxAttempts = 120; // 10 minutes max (120 * 5s)
-    
+    const maxAttempts = 150; // 12.5 minutes max (150 * 5s) - longer for subtitle + BGM
+
     pollIntervalRef.current = setInterval(async () => {
       attempts++;
-      
-      // Update progress based on attempts (15% -> 90%)
-      const progressFromAttempts = Math.min(15 + (attempts * 1.5), 90);
+
+      // Update progress based on attempts (20% -> 90%)
+      const progressFromAttempts = Math.min(20 + (attempts * 1.2), 90);
       setProgressPercent(Math.round(progressFromAttempts));
-      
+
       if (attempts > maxAttempts) {
         clearInterval(pollIntervalRef.current!);
         setCombineError("Video processing timeout. Please try again.");
@@ -332,16 +482,16 @@ export const FullVideo: React.FC = () => {
         return;
       }
 
-      await pollJobStatusDirect(jid, attempts);
+      await pollJobStatusDirect(jid, attempts, options);
     }, 5000);
   };
 
-  const pollJobStatusDirect = async (jid: string, attempts = 0) => {
+  const pollJobStatusDirect = async (jid: string, attempts = 0, options?: typeof DEFAULT_COMBINE_OPTIONS) => {
     try {
       const response = await fetch(apiEndpoints.jobStatus(jid), {
         headers: { 'x-api-key': API_KEY }
       });
-      
+
       if (!response.ok) {
         console.log('[FullVideo] Poll response not OK:', response.status);
         return; // Continue polling
@@ -359,7 +509,8 @@ export const FullVideo: React.FC = () => {
         setCombineProgress(jobData.current_step);
       }
 
-      if (jobData?.status === 'completed' && jobData?.final_video_url) {
+      // Handle completed or partial success
+      if ((jobData?.status === 'completed' || jobData?.status === 'partial') && jobData?.final_video_url) {
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
         }
@@ -367,16 +518,53 @@ export const FullVideo: React.FC = () => {
         setFinalVideoUrl(jobData.final_video_url);
         setVideoWithoutSubtitle(jobData.final_video_url);
         setIsCombining(false);
-        setCombineProgress("Complete!");
-        
+
+        // Check partial success results
+        const results = jobData?.metadata?.results;
+        if (results) {
+          // Update state based on actual results
+          if (results.subtitle?.success) {
+            setHasSubtitles(true);
+          } else if (options?.enable_subtitles && !results.subtitle?.skipped) {
+            console.warn('[FullVideo] Subtitle failed:', results.subtitle?.error);
+          }
+
+          if (results.bgm?.success) {
+            setHasBGM(true);
+          } else if (options?.enable_bgm && !results.bgm?.skipped) {
+            console.warn('[FullVideo] BGM failed:', results.bgm?.error);
+          }
+        }
+
+        if (jobData?.status === 'partial') {
+          setCombineProgress("Completed with warnings");
+          // Show what failed
+          const failedItems = [];
+          if (results?.subtitle && !results.subtitle.success && !results.subtitle.skipped) {
+            failedItems.push('subtitles');
+          }
+          if (results?.bgm && !results.bgm.success && !results.bgm.skipped) {
+            failedItems.push('BGM');
+          }
+          if (failedItems.length > 0) {
+            console.log('[FullVideo] Partial success - failed items:', failedItems);
+          }
+        } else {
+          setCombineProgress("Complete!");
+        }
+
         // Save to cache
-        saveToCache(jobData.final_video_url, false, jobData.final_video_url);
-        
-        // Show subtitle modal
-        setShowSubtitleModal(true);
-        
+        const hadSubtitles = results?.subtitle?.success || false;
+        const hadBGM = results?.bgm?.success || false;
+        saveToCache(jobData.final_video_url, hadSubtitles, jobData.final_video_url);
+
+        // Don't show post-process modal if we already processed with options
+        if (!options?.enable_subtitles && !options?.enable_bgm) {
+          setShowPostProcessModal(true);
+        }
+
         if (videoData?.sessionId) {
-          await updatePlannedContentWithVideo(jobData.final_video_url);
+          await updatePlannedContentWithVideo(jobData.final_video_url, hadSubtitles);
         }
       } else if (jobData?.status === 'failed') {
         if (pollIntervalRef.current) {
@@ -386,7 +574,7 @@ export const FullVideo: React.FC = () => {
         setIsCombining(false);
       } else {
         // Update progress text based on V2 steps
-        setCombineProgress(getProgressText(attempts));
+        setCombineProgress(getProgressText(attempts, options));
       }
     } catch (err) {
       console.error('[FullVideo] Direct poll error:', err);
@@ -394,10 +582,22 @@ export const FullVideo: React.FC = () => {
   };
 
   // Get progress text based on attempts (V2 steps)
-  const getProgressText = (attempts: number) => {
+  const getProgressText = (attempts: number, options?: typeof DEFAULT_COMBINE_OPTIONS) => {
+    const hasEnhancements = options?.enable_subtitles || options?.enable_bgm;
+
     if (attempts < 3) return "Downloading video segments...";
     if (attempts < 8) return "Normalizing video formats...";
     if (attempts < 15) return "Applying transitions...";
+
+    if (hasEnhancements) {
+      if (attempts < 22) return "Processing audio...";
+      if (attempts < 30) return options?.enable_subtitles ? "Transcribing audio..." : "Preparing enhancements...";
+      if (attempts < 38) return options?.enable_subtitles ? "Generating subtitles..." : "Processing...";
+      if (attempts < 45) return options?.enable_bgm ? "Mixing background music..." : "Burning subtitles...";
+      if (attempts < 55) return "Finalizing video...";
+      return "Almost done... (this may take a while)";
+    }
+
     if (attempts < 22) return "Processing audio...";
     if (attempts < 30) return "Finalizing video...";
     return "Almost done... (this may take a while)";
@@ -558,6 +758,353 @@ export const FullVideo: React.FC = () => {
     console.log('[FullVideo] User skipped subtitles');
   };
 
+  // ==================== BGM Functions ====================
+
+  // Handle post-process modal subtitle selection
+  const handlePostProcessSubtitle = () => {
+    setShowPostProcessModal(false);
+    setShowSubtitleModal(true);
+  };
+
+  // Handle post-process modal BGM selection
+  const handlePostProcessBGM = () => {
+    setShowPostProcessModal(false);
+    setShowBGMModal(true);
+  };
+
+  // Skip all post-processing
+  const handleSkipPostProcess = () => {
+    setShowPostProcessModal(false);
+    console.log('[FullVideo] User skipped post-processing');
+  };
+
+  // Add BGM to video
+  const handleAddBGM = async () => {
+    if (!finalVideoUrl) return;
+
+    const selectedStyle = BGM_STYLES.find(s => s.id === selectedBGMStyle);
+    if (!selectedStyle) return;
+
+    console.log('[FullVideo] Adding BGM with style:', selectedBGMStyle);
+    setShowBGMModal(false);
+    setIsGeneratingBGM(true);
+    setBgmProgress("Generating music...");
+    setBgmPercent(10);
+
+    try {
+      // Step 1: Generate music via edge function
+      console.log('[FullVideo] Calling generate-music edge function...');
+      const musicResponse = await fetch(GENERATE_MUSIC_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify({
+          prompt: selectedStyle.prompt,
+          lyrics_prompt: selectedStyle.lyrics,
+          duration_seconds: 30
+        })
+      });
+
+      if (!musicResponse.ok) {
+        const errorText = await musicResponse.text();
+        throw new Error("Music generation failed: " + errorText);
+      }
+
+      const musicData = await musicResponse.json();
+      console.log('[FullVideo] Music generated:', musicData);
+
+      if (!musicData.success || !musicData.data?.music_url) {
+        throw new Error("Failed to generate music");
+      }
+
+      setBgmProgress("Adding music to video...");
+      setBgmPercent(40);
+      setIsGeneratingBGM(false);
+      setIsAddingBGM(true);
+
+      // Step 2: Add BGM to video via backend
+      console.log('[FullVideo] Adding BGM to video...');
+      const bgmResponse = await fetch(apiEndpoints.addBGM, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY
+        },
+        body: JSON.stringify({
+          video_url: finalVideoUrl,
+          music_url: musicData.data.music_url,
+          volume: bgmVolume,
+          duck_during_speech: true,
+          project_id: videoData?.projectId || videoData?.sessionId || "bgm"
+        })
+      });
+
+      if (!bgmResponse.ok) {
+        const errorText = await bgmResponse.text();
+        throw new Error("BGM API error: " + errorText);
+      }
+
+      const bgmJobData = await bgmResponse.json();
+      console.log('[FullVideo] BGM job created:', bgmJobData);
+
+      if (!bgmJobData.success || !bgmJobData.data?.job_id) {
+        throw new Error("Failed to create BGM job");
+      }
+
+      setBgmJobId(bgmJobData.data.job_id);
+      startPollingBGMJob(bgmJobData.data.job_id);
+
+    } catch (err: any) {
+      console.error('[FullVideo] BGM error:', err);
+      alert("Failed to add BGM: " + err.message);
+      setIsGeneratingBGM(false);
+      setIsAddingBGM(false);
+      setShowBGMModal(true);
+    }
+  };
+
+  // Poll BGM job status
+  const startPollingBGMJob = (jid: string) => {
+    let attempts = 0;
+    const maxAttempts = 60; // 5 minutes max
+
+    bgmPollRef.current = setInterval(async () => {
+      attempts++;
+
+      if (attempts > maxAttempts) {
+        clearInterval(bgmPollRef.current!);
+        alert("BGM processing timeout. Video is available without BGM.");
+        setIsAddingBGM(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(apiEndpoints.jobStatus(jid), {
+          headers: { 'x-api-key': API_KEY }
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const jobData = data?.data;
+
+        console.log('[FullVideo] BGM job status:', jobData?.status, jobData?.progress_percentage);
+
+        if (jobData?.progress_percentage) {
+          setBgmPercent(40 + (jobData.progress_percentage * 0.6)); // 40-100%
+        }
+        if (jobData?.current_step) {
+          setBgmProgress(jobData.current_step);
+        }
+
+        if (jobData?.status === 'completed' && jobData?.final_video_url) {
+          clearInterval(bgmPollRef.current!);
+          setBgmPercent(100);
+          setBgmProgress("Complete!");
+          setFinalVideoUrl(jobData.final_video_url);
+          setHasBGM(true);
+          setIsAddingBGM(false);
+
+          // Save to cache with BGM info
+          saveToCache(jobData.final_video_url, hasSubtitles, videoWithoutSubtitle);
+
+          // Update in database
+          if (videoData?.sessionId) {
+            await updatePlannedContentWithVideo(jobData.final_video_url);
+          }
+        } else if (jobData?.status === 'failed') {
+          clearInterval(bgmPollRef.current!);
+          alert("BGM processing failed: " + (jobData?.error_message || "Unknown error"));
+          setIsAddingBGM(false);
+        }
+      } catch (err) {
+        console.error('[FullVideo] BGM poll error:', err);
+      }
+    }, 5000);
+  };
+
+  // Skip BGM
+  const handleSkipBGM = () => {
+    setShowBGMModal(false);
+    console.log('[FullVideo] User skipped BGM');
+  };
+
+  // Open Enhance Modal with smart defaults based on current state
+  const openEnhanceModal = () => {
+    // Auto-untick if already has that feature
+    setEnhanceSubtitles(!hasSubtitles);
+    setEnhanceBGM(!hasBGM);
+    setShowEnhanceModal(true);
+  };
+
+  // Handle Enhance (combined subtitle + BGM)
+  const handleEnhance = async () => {
+    if (!finalVideoUrl) return;
+
+    // Validate at least one option selected
+    if (!enhanceSubtitles && !enhanceBGM) {
+      alert("Please select at least one option");
+      return;
+    }
+
+    console.log('[FullVideo] Enhancing video with subtitles:', enhanceSubtitles, 'BGM:', enhanceBGM);
+    setShowEnhanceModal(false);
+    setIsEnhancing(true);
+    setEnhanceProgress("Initializing...");
+    setEnhancePercent(0);
+
+    try {
+      let musicUrl: string | null = null;
+
+      // Step 1: Generate music if needed
+      if (enhanceBGM) {
+        setEnhanceProgress("Generating music...");
+        setEnhancePercent(5);
+
+        const selectedStyle = BGM_STYLES.find(s => s.id === selectedBGMStyle);
+        if (!selectedStyle) throw new Error("Invalid music style");
+
+        console.log('[FullVideo] Calling generate-music edge function...');
+        const musicResponse = await fetch(GENERATE_MUSIC_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            prompt: selectedStyle.prompt,
+            lyrics_prompt: selectedStyle.lyrics,
+            duration_seconds: 30
+          })
+        });
+
+        if (!musicResponse.ok) {
+          const errorText = await musicResponse.text();
+          throw new Error("Music generation failed: " + errorText);
+        }
+
+        const musicData = await musicResponse.json();
+        console.log('[FullVideo] Music generated:', musicData);
+
+        if (!musicData.success || !musicData.data?.music_url) {
+          throw new Error("Failed to generate music");
+        }
+
+        musicUrl = musicData.data.music_url;
+        setEnhancePercent(20);
+      }
+
+      // Step 2: Call post-process endpoint
+      setEnhanceProgress(enhanceSubtitles && enhanceBGM ? "Processing subtitle & BGM..." : enhanceSubtitles ? "Processing subtitles..." : "Processing BGM...");
+      setEnhancePercent(25);
+
+      const postProcessResponse = await fetch(`${BACKEND_URL}/api/post-process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY
+        },
+        body: JSON.stringify({
+          video_url: finalVideoUrl,
+          add_subtitles: enhanceSubtitles,
+          add_bgm: enhanceBGM,
+          subtitle_style: selectedSubtitleStyle,
+          music_url: musicUrl,
+          bgm_volume: bgmVolume,
+          duck_during_speech: true,
+          project_id: videoData?.projectId || videoData?.sessionId || "enhance"
+        })
+      });
+
+      if (!postProcessResponse.ok) {
+        const errorText = await postProcessResponse.text();
+        throw new Error("Post-process API error: " + errorText);
+      }
+
+      const jobData = await postProcessResponse.json();
+      console.log('[FullVideo] Enhance job created:', jobData);
+
+      if (!jobData.success || !jobData.data?.job_id) {
+        throw new Error("Failed to create enhance job");
+      }
+
+      setEnhanceJobId(jobData.data.job_id);
+      startPollingEnhanceJob(jobData.data.job_id);
+
+    } catch (err: any) {
+      console.error('[FullVideo] Enhance error:', err);
+      alert("Failed to enhance video: " + err.message);
+      setIsEnhancing(false);
+      setShowEnhanceModal(true);
+    }
+  };
+
+  // Poll Enhance job status
+  const startPollingEnhanceJob = (jid: string) => {
+    let attempts = 0;
+    const maxAttempts = 120; // 10 minutes max
+
+    enhancePollRef.current = setInterval(async () => {
+      attempts++;
+
+      if (attempts > maxAttempts) {
+        clearInterval(enhancePollRef.current!);
+        alert("Enhancement timeout. Please try again.");
+        setIsEnhancing(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(apiEndpoints.jobStatus(jid), {
+          headers: { 'x-api-key': API_KEY }
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const jobData = data?.data;
+
+        console.log('[FullVideo] Enhance job status:', jobData?.status, jobData?.progress_percentage);
+
+        if (jobData?.progress_percentage) {
+          setEnhancePercent(25 + (jobData.progress_percentage * 0.75)); // 25-100%
+        }
+        if (jobData?.current_step) {
+          setEnhanceProgress(jobData.current_step);
+        }
+
+        if (jobData?.status === 'completed' && jobData?.final_video_url) {
+          clearInterval(enhancePollRef.current!);
+          setEnhancePercent(100);
+          setEnhanceProgress("Complete!");
+          setFinalVideoUrl(jobData.final_video_url);
+
+          // Update state based on what was processed
+          if (enhanceSubtitles) setHasSubtitles(true);
+          if (enhanceBGM) setHasBGM(true);
+
+          setIsEnhancing(false);
+
+          // Save to cache
+          saveToCache(jobData.final_video_url, enhanceSubtitles || hasSubtitles, videoWithoutSubtitle);
+
+          // Update in database
+          if (videoData?.sessionId) {
+            await updatePlannedContentWithVideo(jobData.final_video_url, enhanceSubtitles || hasSubtitles);
+          }
+        } else if (jobData?.status === 'failed') {
+          clearInterval(enhancePollRef.current!);
+          alert("Enhancement failed: " + (jobData?.error_message || "Unknown error"));
+          setIsEnhancing(false);
+        }
+      } catch (err) {
+        console.error('[FullVideo] Enhance poll error:', err);
+      }
+    }, 3000);
+  };
+
   // Recombine video (clear cache and restart)
   const handleRecombine = () => {
     const sessionId = videoData?.sessionId || videoData?.projectId;
@@ -565,13 +1112,16 @@ export const FullVideo: React.FC = () => {
       const cacheKey = getCacheKey(sessionId);
       sessionStorage.removeItem(cacheKey);
     }
-    
+
     setFinalVideoUrl(null);
     setVideoWithoutSubtitle(null);
     setHasSubtitles(false);
+    setHasBGM(false);
     setCombineError(null);
     setShowSubtitleModal(false);
-    
+    setShowBGMModal(false);
+    setShowPostProcessModal(false);
+
     const segments = videoData?.segments || videoData?.selectedSegments || [];
     if (segments.length > 0) {
       triggerCombineVideo(segments, videoData);
@@ -794,6 +1344,158 @@ export const FullVideo: React.FC = () => {
         </div>
       )}
 
+      {/* Pre-Combine Options Modal - Enhance before combining */}
+      {showPreCombineOptions && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#7c3aed]/50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-2xl shadow-[#7c3aed]/20">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#7c3aed]/20 rounded-full flex items-center justify-center">
+                  <Play className="w-5 h-5 text-[#7c3aed]" />
+                </div>
+                <h3 className="text-white font-semibold text-lg">Combine Options</h3>
+              </div>
+              <button
+                onClick={() => setShowPreCombineOptions(false)}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-white/70 text-sm mb-5">
+              Pilih enhancement yang mau ditambahkan saat video digabungkan. Ini lebih efisien daripada menambahkan setelahnya.
+            </p>
+
+            {/* Subtitle Option */}
+            <div className="space-y-3 mb-5">
+              <div
+                onClick={() => setPreCombineSubtitles(!preCombineSubtitles)}
+                className={"p-4 rounded-xl border cursor-pointer transition-all " + (preCombineSubtitles
+                  ? "bg-[#7c3aed]/10 border-[#7c3aed]/50"
+                  : "bg-[#2b2b38] border-white/10 hover:border-white/30")}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={"w-10 h-10 rounded-full flex items-center justify-center " + (preCombineSubtitles ? "bg-[#7c3aed]/30" : "bg-white/10")}>
+                      <Captions className={"w-5 h-5 " + (preCombineSubtitles ? "text-[#7c3aed]" : "text-white/50")} />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">Add Subtitles</p>
+                      <p className="text-white/50 text-xs">Word-by-word animated captions</p>
+                    </div>
+                  </div>
+                  <div className={"w-6 h-6 rounded-full border-2 flex items-center justify-center " + (preCombineSubtitles ? "border-[#7c3aed] bg-[#7c3aed]" : "border-white/30")}>
+                    {preCombineSubtitles && <CheckCircle className="w-4 h-4 text-white" />}
+                  </div>
+                </div>
+
+                {/* Subtitle Style Selector - only show when checked */}
+                {preCombineSubtitles && (
+                  <div className="mt-4 pt-4 border-t border-white/10">
+                    <p className="text-white/60 text-xs mb-2">Subtitle Style:</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {SUBTITLE_STYLES.slice(0, 6).map((style) => (
+                        <button
+                          key={style.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreCombineSubtitleStyle(style.id);
+                          }}
+                          className={"px-3 py-2 rounded-lg text-xs font-medium transition-all " + (preCombineSubtitleStyle === style.id
+                            ? "bg-[#7c3aed] text-white"
+                            : "bg-white/10 text-white/70 hover:bg-white/20")}
+                        >
+                          {style.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* BGM Option */}
+              <div
+                onClick={() => setPreCombineBGM(!preCombineBGM)}
+                className={"p-4 rounded-xl border cursor-pointer transition-all " + (preCombineBGM
+                  ? "bg-[#ec4899]/10 border-[#ec4899]/50"
+                  : "bg-[#2b2b38] border-white/10 hover:border-white/30")}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={"w-10 h-10 rounded-full flex items-center justify-center " + (preCombineBGM ? "bg-[#ec4899]/30" : "bg-white/10")}>
+                      <Music className={"w-5 h-5 " + (preCombineBGM ? "text-[#ec4899]" : "text-white/50")} />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">Add Background Music</p>
+                      <p className="text-white/50 text-xs">AI-generated music with auto-ducking</p>
+                    </div>
+                  </div>
+                  <div className={"w-6 h-6 rounded-full border-2 flex items-center justify-center " + (preCombineBGM ? "border-[#ec4899] bg-[#ec4899]" : "border-white/30")}>
+                    {preCombineBGM && <CheckCircle className="w-4 h-4 text-white" />}
+                  </div>
+                </div>
+
+                {/* BGM Style Selector - only show when checked */}
+                {preCombineBGM && (
+                  <div className="mt-4 pt-4 border-t border-white/10">
+                    <p className="text-white/60 text-xs mb-2">Music Style:</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {BGM_STYLES.map((style) => (
+                        <button
+                          key={style.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreCombineBGMStyle(style.id);
+                          }}
+                          className={"px-3 py-2 rounded-lg text-xs font-medium transition-all " + (preCombineBGMStyle === style.id
+                            ? "bg-[#ec4899] text-white"
+                            : "bg-white/10 text-white/70 hover:bg-white/20")}
+                        >
+                          {style.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Info about efficiency */}
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-5">
+              <p className="text-amber-400 text-xs">
+                {preCombineSubtitles && preCombineBGM
+                  ? "Subtitle + BGM akan diproses bersamaan dalam 1x FFmpeg - lebih hemat waktu!"
+                  : preCombineSubtitles
+                    ? "Subtitle akan langsung di-burn saat combine"
+                    : preCombineBGM
+                      ? "BGM akan langsung di-mix saat combine"
+                      : "Kamu bisa tambahkan enhancement nanti setelah video jadi"}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={handleConfirmCombineWithOptions}
+                className="flex-1 bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:from-[#6d28d9] hover:to-[#db2777] text-white h-11"
+              >
+                <Play className="w-4 h-4 mr-2" />
+                {preCombineSubtitles || preCombineBGM ? "Combine with Enhancements" : "Combine Video"}
+              </Button>
+              {(preCombineSubtitles || preCombineBGM) && (
+                <Button
+                  onClick={handleSkipEnhanceAndCombine}
+                  variant="secondary"
+                  className="bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11 px-4"
+                >
+                  Skip
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Subtitle Modal - Centered Overlay */}
       {showSubtitleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -864,6 +1566,371 @@ export const FullVideo: React.FC = () => {
               <div className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
                 style={{ width: subtitlePercent + "%" }} />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Post-Process Modal - Choose Subtitle or BGM */}
+      {showPostProcessModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#7c3aed]/50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl shadow-[#7c3aed]/20">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
+                  <CheckCircle className="w-5 h-5 text-green-500" />
+                </div>
+                <h3 className="text-white font-semibold text-lg">Video Ready!</h3>
+              </div>
+              <button
+                onClick={handleSkipPostProcess}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-white/70 text-sm mb-5">
+              Video berhasil digabungkan. Mau tambahkan subtitle atau background music?
+            </p>
+
+            <div className="space-y-3 mb-5">
+              <button
+                onClick={handlePostProcessSubtitle}
+                className="w-full flex items-center gap-4 p-4 bg-[#2b2b38] hover:bg-[#3b3b48] rounded-xl border border-white/10 hover:border-[#7c3aed]/50 transition-all"
+              >
+                <div className="w-12 h-12 bg-[#7c3aed]/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Captions className="w-6 h-6 text-[#7c3aed]" />
+                </div>
+                <div className="text-left">
+                  <p className="text-white font-medium">Add Subtitles</p>
+                  <p className="text-white/50 text-xs">AI transcribe dengan animasi word-by-word</p>
+                </div>
+              </button>
+
+              <button
+                onClick={handlePostProcessBGM}
+                className="w-full flex items-center gap-4 p-4 bg-[#2b2b38] hover:bg-[#3b3b48] rounded-xl border border-white/10 hover:border-[#ec4899]/50 transition-all"
+              >
+                <div className="w-12 h-12 bg-[#ec4899]/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Music className="w-6 h-6 text-[#ec4899]" />
+                </div>
+                <div className="text-left">
+                  <p className="text-white font-medium">Add Background Music</p>
+                  <p className="text-white/50 text-xs">AI generate musik sesuai mood video</p>
+                </div>
+              </button>
+            </div>
+
+            <Button
+              onClick={handleSkipPostProcess}
+              variant="secondary"
+              className="w-full bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11"
+            >
+              Skip for now
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* BGM Style Selection Modal */}
+      {showBGMModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#ec4899]/50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl shadow-[#ec4899]/20">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#ec4899]/20 rounded-full flex items-center justify-center">
+                  <Music className="w-5 h-5 text-[#ec4899]" />
+                </div>
+                <h3 className="text-white font-semibold text-lg">Choose Music Style</h3>
+              </div>
+              <button
+                onClick={handleSkipBGM}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-white/70 text-sm mb-4">
+              Pilih style musik yang sesuai dengan mood video kamu.
+            </p>
+
+            {/* Style Selection */}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {BGM_STYLES.map((style) => (
+                <button
+                  key={style.id}
+                  onClick={() => setSelectedBGMStyle(style.id)}
+                  className={"p-3 rounded-lg border-2 transition-all text-center " + (selectedBGMStyle === style.id
+                    ? "bg-[#ec4899]/20 border-[#ec4899] text-white"
+                    : "bg-[#2b2b38] border-transparent text-white/70 hover:border-[#ec4899]/30")}
+                >
+                  <span className="text-sm font-medium">{style.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Volume Slider */}
+            <div className="mb-5">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-white/60 text-sm flex items-center gap-2">
+                  <Volume2 className="w-4 h-4" />
+                  Volume
+                </label>
+                <span className="text-white text-sm font-medium">{Math.round(bgmVolume * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.1"
+                max="0.5"
+                step="0.05"
+                value={bgmVolume}
+                onChange={(e) => setBgmVolume(parseFloat(e.target.value))}
+                className="w-full h-2 bg-[#2b2b38] rounded-lg appearance-none cursor-pointer accent-[#ec4899]"
+              />
+              <div className="flex justify-between text-xs text-white/40 mt-1">
+                <span>Soft</span>
+                <span>Loud</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={handleAddBGM}
+                className="flex-1 bg-gradient-to-r from-[#ec4899] to-[#7c3aed] hover:from-[#db2777] hover:to-[#6d28d9] text-white h-11"
+              >
+                <Music className="w-4 h-4 mr-2" />
+                Add Music
+              </Button>
+              <Button
+                onClick={handleSkipBGM}
+                variant="secondary"
+                className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11"
+              >
+                Skip
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BGM Processing Overlay */}
+      {(isGeneratingBGM || isAddingBGM) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#ec4899]/50 rounded-2xl p-8 max-w-sm w-full mx-4 text-center">
+            <div className="w-20 h-20 mx-auto mb-6 relative">
+              <svg className="w-20 h-20 transform -rotate-90">
+                <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="6" fill="none" className="text-white/20" />
+                <circle cx="40" cy="40" r="36" stroke="url(#bgmGradient)" strokeWidth="6" fill="none" strokeLinecap="round"
+                  strokeDasharray={bgmPercent * 2.26 + " 226"} className="transition-all duration-500" />
+                <defs>
+                  <linearGradient id="bgmGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#ec4899" />
+                    <stop offset="100%" stopColor="#7c3aed" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-white font-bold text-lg">{Math.round(bgmPercent)}%</span>
+              </div>
+            </div>
+            <h3 className="text-white font-semibold text-lg mb-2">
+              {isGeneratingBGM ? "Generating Music" : "Adding BGM"}
+            </h3>
+            <p className="text-white/60 text-sm mb-4">{bgmProgress}</p>
+            <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-[#ec4899] to-[#7c3aed] rounded-full transition-all duration-500"
+                style={{ width: bgmPercent + "%" }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enhance Modal - Combined Subtitle + BGM */}
+      {showEnhanceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#7c3aed]/50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl shadow-[#7c3aed]/20">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-[#7c3aed]/30 to-[#ec4899]/30 rounded-full flex items-center justify-center">
+                  <Captions className="w-5 h-5 text-[#7c3aed]" />
+                </div>
+                <h3 className="text-white font-semibold text-lg">Enhance Video</h3>
+              </div>
+              <button
+                onClick={() => setShowEnhanceModal(false)}
+                className="text-white/50 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-white/70 text-sm mb-5">
+              Tambahkan subtitle dan background music ke video kamu.
+            </p>
+
+            {/* Checkbox Options */}
+            <div className="space-y-3 mb-5">
+              {/* Subtitle Checkbox */}
+              <label className={"flex items-center gap-4 p-4 rounded-xl border transition-all cursor-pointer " +
+                (enhanceSubtitles
+                  ? "bg-[#7c3aed]/10 border-[#7c3aed]/50"
+                  : "bg-[#2b2b38] border-white/10 hover:border-[#7c3aed]/30")}>
+                <input
+                  type="checkbox"
+                  checked={enhanceSubtitles}
+                  onChange={(e) => setEnhanceSubtitles(e.target.checked)}
+                  className="w-5 h-5 rounded border-white/30 bg-transparent text-[#7c3aed] focus:ring-[#7c3aed] focus:ring-offset-0"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Captions className="w-4 h-4 text-[#7c3aed]" />
+                    <span className="text-white font-medium">Add Subtitles</span>
+                    {hasSubtitles && <span className="text-yellow-400 text-xs">(Will replace existing)</span>}
+                  </div>
+                  <p className="text-white/50 text-xs mt-1">AI transcribe dengan word-by-word animation</p>
+                </div>
+              </label>
+
+              {/* BGM Checkbox */}
+              <label className={"flex items-center gap-4 p-4 rounded-xl border transition-all cursor-pointer " +
+                (enhanceBGM
+                  ? "bg-[#ec4899]/10 border-[#ec4899]/50"
+                  : "bg-[#2b2b38] border-white/10 hover:border-[#ec4899]/30")}>
+                <input
+                  type="checkbox"
+                  checked={enhanceBGM}
+                  onChange={(e) => setEnhanceBGM(e.target.checked)}
+                  className="w-5 h-5 rounded border-white/30 bg-transparent text-[#ec4899] focus:ring-[#ec4899] focus:ring-offset-0"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Music className="w-4 h-4 text-[#ec4899]" />
+                    <span className="text-white font-medium">Add Background Music</span>
+                    {hasBGM && <span className="text-yellow-400 text-xs">(Will replace existing)</span>}
+                  </div>
+                  <p className="text-white/50 text-xs mt-1">AI generate musik sesuai mood video</p>
+                </div>
+              </label>
+            </div>
+
+            {/* Subtitle Style Selection - Only show if Subtitle is selected */}
+            {enhanceSubtitles && (
+              <div className="mb-4">
+                <label className="text-white/60 text-sm mb-2 block">Subtitle Style</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {SUBTITLE_STYLES.slice(0, 3).map((style) => (
+                    <button
+                      key={style.id}
+                      onClick={() => setSelectedSubtitleStyle(style.id)}
+                      className={"p-2 rounded-lg border-2 transition-all text-center " + (selectedSubtitleStyle === style.id
+                        ? "bg-[#7c3aed]/20 border-[#7c3aed] text-white"
+                        : "bg-[#2b2b38] border-transparent text-white/70 hover:border-[#7c3aed]/30")}
+                    >
+                      <span className="text-xs font-medium">{style.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {SUBTITLE_STYLES.slice(3).map((style) => (
+                    <button
+                      key={style.id}
+                      onClick={() => setSelectedSubtitleStyle(style.id)}
+                      className={"p-2 rounded-lg border-2 transition-all text-center " + (selectedSubtitleStyle === style.id
+                        ? "bg-[#7c3aed]/20 border-[#7c3aed] text-white"
+                        : "bg-[#2b2b38] border-transparent text-white/70 hover:border-[#7c3aed]/30")}
+                    >
+                      <span className="text-xs font-medium">{style.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* BGM Style Selection - Only show if BGM is selected */}
+            {enhanceBGM && (
+              <div className="mb-5">
+                <label className="text-white/60 text-sm mb-2 block">Music Style</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {BGM_STYLES.slice(0, 3).map((style) => (
+                    <button
+                      key={style.id}
+                      onClick={() => setSelectedBGMStyle(style.id)}
+                      className={"p-2 rounded-lg border-2 transition-all text-center " + (selectedBGMStyle === style.id
+                        ? "bg-[#ec4899]/20 border-[#ec4899] text-white"
+                        : "bg-[#2b2b38] border-transparent text-white/70 hover:border-[#ec4899]/30")}
+                    >
+                      <span className="text-xs font-medium">{style.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {BGM_STYLES.slice(3).map((style) => (
+                    <button
+                      key={style.id}
+                      onClick={() => setSelectedBGMStyle(style.id)}
+                      className={"p-2 rounded-lg border-2 transition-all text-center " + (selectedBGMStyle === style.id
+                        ? "bg-[#ec4899]/20 border-[#ec4899] text-white"
+                        : "bg-[#2b2b38] border-transparent text-white/70 hover:border-[#ec4899]/30")}
+                    >
+                      <span className="text-xs font-medium">{style.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <Button
+                onClick={handleEnhance}
+                disabled={!enhanceSubtitles && !enhanceBGM}
+                className="flex-1 bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:from-[#6d28d9] hover:to-[#db2777] text-white h-11 disabled:opacity-50"
+              >
+                {enhanceSubtitles && enhanceBGM ? 'Add Both' : enhanceSubtitles ? 'Add Subtitles' : 'Add BGM'}
+              </Button>
+              <Button
+                onClick={() => setShowEnhanceModal(false)}
+                variant="secondary"
+                className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20 h-11"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enhance Processing Overlay */}
+      {isEnhancing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#1a1a24] border border-[#7c3aed]/50 rounded-2xl p-8 max-w-sm w-full mx-4 text-center">
+            <div className="w-20 h-20 mx-auto mb-6 relative">
+              <svg className="w-20 h-20 transform -rotate-90">
+                <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="6" fill="none" className="text-white/20" />
+                <circle cx="40" cy="40" r="36" stroke="url(#enhanceGradient)" strokeWidth="6" fill="none" strokeLinecap="round"
+                  strokeDasharray={enhancePercent * 2.26 + " 226"} className="transition-all duration-500" />
+                <defs>
+                  <linearGradient id="enhanceGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#7c3aed" />
+                    <stop offset="100%" stopColor="#ec4899" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-white font-bold text-lg">{Math.round(enhancePercent)}%</span>
+              </div>
+            </div>
+            <h3 className="text-white font-semibold text-lg mb-2">Enhancing Video</h3>
+            <p className="text-white/60 text-sm mb-4">{enhanceProgress}</p>
+            <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-[#7c3aed] to-[#ec4899] rounded-full transition-all duration-500"
+                style={{ width: enhancePercent + "%" }} />
+            </div>
+            <p className="text-white/40 text-xs mt-4">
+              {enhanceSubtitles && enhanceBGM ? 'Processing subtitles & background music...' :
+               enhanceSubtitles ? 'Processing subtitles...' : 'Processing background music...'}
+            </p>
           </div>
         </div>
       )}
@@ -999,30 +2066,33 @@ export const FullVideo: React.FC = () => {
                   Download Video
                 </a>
                 
-                {/* Subtitle & Recombine Buttons */}
-                <div className="flex gap-2">
+                {/* Enhance & Recombine Buttons */}
+                <div className="grid grid-cols-2 gap-2">
                   <Button
-                    onClick={() => setShowSubtitleModal(true)}
-                    className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                    onClick={openEnhanceModal}
+                    className="text-white text-xs px-2 bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:from-[#6d28d9] hover:to-[#db2777]"
                   >
-                    <Captions className="w-4 h-4 mr-2" />
-                    {hasSubtitles ? 'Change Subtitle' : 'Add Subtitle'}
+                    <Captions className="w-4 h-4 mr-1" />
+                    Enhance
                   </Button>
                   <Button
                     onClick={handleRecombine}
                     variant="secondary"
-                    className="flex-1 bg-white/10 text-white hover:bg-white/20 border border-white/20"
+                    className="bg-white/10 text-white hover:bg-white/20 border border-white/20 text-xs px-2"
                   >
-                    <RefreshCw className="w-4 h-4 mr-2" />
+                    <RefreshCw className="w-4 h-4 mr-1" />
                     Recombine
                   </Button>
                 </div>
-                
+
                 {/* Status Badge */}
                 <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
                   <div className="flex items-center gap-2 text-green-400 text-sm">
                     <CheckCircle className="w-4 h-4" />
-                    <span>Video ready{hasSubtitles ? ' with subtitles' : ''}!</span>
+                    <span>
+                      Video ready
+                      {hasSubtitles && hasBGM ? ' with subtitles & BGM' : hasSubtitles ? ' with subtitles' : hasBGM ? ' with BGM' : ''}!
+                    </span>
                   </div>
                 </div>
               </div>

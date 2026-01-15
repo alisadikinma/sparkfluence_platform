@@ -454,7 +454,7 @@ SUBTITLE_PRESETS = {
     
     'tiktok': SubtitleStyle(
         font_name="Montserrat",
-        font_size=140,  # Extra large for mobile readability
+        font_size=90,  # Large for mobile readability
         bold=True,
         outline=8,
         shadow=4,
@@ -520,7 +520,7 @@ SUBTITLE_PRESETS = {
     
     'viral': SubtitleStyle(
         font_name="Montserrat",
-        font_size=140,  # Same as tiktok for consistency
+        font_size=90,  # Same as tiktok for consistency
         bold=True,
         outline=8,
         shadow=4,

@@ -139,28 +139,48 @@ class SubtitleProcessor:
     
     async def burn_subtitles(self, video_path: Path, ass_path: Path, output_path: Path) -> Path:
         """Burn ASS subtitles into video using FFmpeg."""
-        # Escape path for FFmpeg filter
-        ass_escaped = str(ass_path).replace('\\', '/').replace(':', '\\:')
-        
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', str(video_path),
-            '-vf', f"ass={ass_escaped}",
-            '-c:a', 'copy',
-            str(output_path)
-        ]
-        
+        import platform
+
+        # Windows FFmpeg ass filter requires special path handling:
+        # - Forward slashes work better than backslashes
+        # - Colons in drive letters (C:) must be escaped or use relative path
+        work_dir = ass_path.parent
+
+        if platform.system() == 'Windows':
+            # On Windows: use subtitles filter with fontsdir, run from work_dir
+            # The subtitles filter handles paths better than ass filter on Windows
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f"subtitles={ass_path.name}",
+                '-c:a', 'copy',
+                str(output_path)
+            ]
+        else:
+            # On Linux/Mac: ass filter works fine
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f"ass={ass_path.name}",
+                '-c:a', 'copy',
+                str(output_path)
+            ]
+
+        logger.info(f"Running FFmpeg from: {work_dir}")
+        logger.info(f"Command: {' '.join(cmd)}")
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(work_dir)
         )
         stdout, stderr = await proc.communicate()
-        
+
         if proc.returncode != 0:
             logger.error(f"Subtitle burn failed: {stderr.decode()}")
             raise Exception("Subtitle burn failed")
-        
+
         logger.info(f"Burned subtitles: {output_path}")
         return output_path
     

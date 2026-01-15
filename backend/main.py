@@ -176,7 +176,7 @@ class VideoSegment(BaseModel):
 
 class CombineOptions(BaseModel):
     bgm_url: Optional[str] = None
-    bgm_volume: float = 0.15
+    bgm_volume: float = 0.20
     preserve_native_audio: bool = True  # Keep VEO 3.1 native audio
     audio_duck_during_speech: bool = True  # Lower BGM when speech detected
 
@@ -249,12 +249,18 @@ class CombineOptionsV2(BaseModel):
     # Transitions
     enable_transitions: bool = True
     transition_duration: float = 0.5
-    
-    # Subtitles (disabled by default - use /api/add-subtitles endpoint after combining)
+
+    # Subtitles (now supports at combine time)
     enable_subtitles: bool = False
-    subtitle_style: str = "tiktok"  # tiktok, reels, shorts, minimal, dramatic
+    subtitle_style: str = "tiktok"  # tiktok, reels, shorts, viral, dramatic
     word_by_word: bool = True
-    
+
+    # BGM (new - supports at combine time)
+    enable_bgm: bool = False
+    music_url: Optional[str] = None  # Required if enable_bgm=True
+    bgm_volume: float = 0.20
+    duck_during_speech: bool = True
+
     # Audio
     normalize_audio: bool = True
 
@@ -680,13 +686,29 @@ async def process_video_combination_v2(
 ):
     """
     Enhanced video combination using FFmpeg modules.
-    Supports transitions, subtitles, and audio normalization.
+    Supports transitions, subtitles, BGM with PARTIAL SUCCESS handling.
+
+    If subtitle or BGM fails, video combining still continues.
+    User can retry failed enhancements later.
     """
+    import platform
+    import traceback
+
+    work_dir = Path(tempfile.gettempdir()) / f"sparkfluence_v2_{job_id}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Track results for each step
+    results = {
+        "combine": {"success": False, "error": None},
+        "subtitle": {"success": False, "error": None, "skipped": not options.enable_subtitles},
+        "bgm": {"success": False, "error": None, "skipped": not options.enable_bgm}
+    }
+
     try:
         # Progress callback
         def progress_callback(progress: int, step: str):
             update_job_status(job_id, progress, step)
-        
+
         # Convert segments to VideoSegmentInput
         segment_inputs = [
             VideoSegmentInput(
@@ -699,42 +721,272 @@ async def process_video_combination_v2(
             )
             for seg in segments
         ]
-        
-        # Build config
+
+        # Build config (subtitles handled separately for partial success)
         config = CombineConfig(
             enable_transitions=options.enable_transitions,
             transition_duration=options.transition_duration,
             auto_select_transitions=True,
-            enable_subtitles=options.enable_subtitles,
+            enable_subtitles=False,  # We handle subtitles separately
             subtitle_style=options.subtitle_style,
             word_by_word=options.word_by_word
         )
-        
+
         # Create output path
         output_dir = Path(tempfile.gettempdir()) / "sparkfluence_outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{project_id}_{session_id}_{uuid.uuid4().hex[:8]}.mp4"
-        
-        # Run combiner
+        combined_path = output_dir / f"{project_id}_{session_id}_{uuid.uuid4().hex[:8]}.mp4"
+
+        # =================================================================
+        # Step 1: Combine video segments (REQUIRED - fails entire job)
+        # =================================================================
         combiner = VideoCombiner()
         result = await combiner.combine(
             segments=segment_inputs,
-            output_path=output_path,
+            output_path=combined_path,
             config=config,
             whisper_data=whisper_data,
             progress_callback=progress_callback
         )
-        
+
         if not result.success:
             raise Exception(result.error_message or "Combination failed")
-        
-        # Upload to storage
-        update_job_status(job_id, 95, "Uploading final video")
-        final_url = await upload_to_storage(result.output_path, project_id)
-        
+
+        results["combine"]["success"] = True
+        current_video = result.output_path
+        logger.info(f"[V2] Video segments combined: {current_video}")
+
+        # =================================================================
+        # Step 2: Parallel preparation - Transcription + BGM Download
+        # =================================================================
+        ass_file = None
+        music_file = None
+        word_count = 0
+
+        async def prepare_subtitles():
+            """Transcribe and generate ASS file."""
+            nonlocal ass_file, word_count
+
+            try:
+                update_job_status(job_id, 55, "Extracting audio for transcription")
+
+                # Extract audio
+                audio_file = work_dir / "audio.mp3"
+                cmd = [
+                    'ffmpeg', '-y', '-i', str(current_video),
+                    '-vn', '-acodec', 'libmp3lame', '-q:a', '2',
+                    str(audio_file)
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                await proc.communicate()
+
+                if proc.returncode != 0:
+                    raise Exception("Audio extraction failed")
+
+                update_job_status(job_id, 60, "Transcribing with Whisper")
+
+                # Transcribe with Groq Whisper
+                groq_key = os.getenv('GROQ_API_KEY')
+                if not groq_key:
+                    raise Exception("GROQ_API_KEY not configured")
+
+                async with httpx.AsyncClient(timeout=180.0) as client:
+                    with open(audio_file, 'rb') as f:
+                        files = {'file': ('audio.mp3', f, 'audio/mpeg')}
+                        data = {
+                            'model': 'whisper-large-v3-turbo',
+                            'response_format': 'verbose_json',
+                            'timestamp_granularities[]': 'word'
+                        }
+                        headers = {'Authorization': f'Bearer {groq_key}'}
+
+                        resp = await client.post(
+                            "https://api.groq.com/openai/v1/audio/transcriptions",
+                            headers=headers, files=files, data=data
+                        )
+                        resp.raise_for_status()
+                        whisper_result = resp.json()
+
+                update_job_status(job_id, 65, "Generating subtitle file")
+
+                # Generate ASS
+                from ffmpeg.subtitles import SubtitleGenerator, get_preset_style, SubtitleSegment, WordTimestamp
+
+                style = get_preset_style(options.subtitle_style)
+                generator = SubtitleGenerator(style)
+
+                sub_segments = []
+                root_words = whisper_result.get("words") or []
+
+                if root_words:
+                    for i in range(0, len(root_words), 3):
+                        group = root_words[i:i+3]
+                        words = [
+                            WordTimestamp(word=w.get("word", "").strip(), start=w.get("start", 0), end=w.get("end", 0))
+                            for w in group if w.get("word", "").strip()
+                        ]
+                        if words:
+                            sub_segments.append(SubtitleSegment(
+                                segment_id=str(len(sub_segments)),
+                                text=" ".join(x.word for x in words),
+                                start=words[0].start,
+                                end=words[-1].end,
+                                words=words
+                            ))
+                    word_count = len(root_words)
+                else:
+                    for seg in (whisper_result.get('segments') or []):
+                        words = [
+                            WordTimestamp(word=w.get('word', '').strip(), start=w.get('start', 0), end=w.get('end', 0))
+                            for w in (seg.get('words') or []) if w.get('word', '').strip()
+                        ]
+                        if words:
+                            sub_segments.append(SubtitleSegment(
+                                segment_id=str(seg.get('id', len(sub_segments))),
+                                text=seg.get('text', '').strip(),
+                                start=seg.get('start', 0),
+                                end=seg.get('end', 0),
+                                words=words
+                            ))
+                    word_count = sum(len(seg.get('words') or []) for seg in (whisper_result.get('segments') or []))
+
+                ass_file = work_dir / "subtitles.ass"
+                generator.save_ass(sub_segments, ass_file, word_by_word=True)
+                results["subtitle"]["success"] = True
+                logger.info(f"[V2] Subtitle prepared: {word_count} words")
+
+            except Exception as e:
+                results["subtitle"]["error"] = str(e)
+                logger.error(f"[V2] Subtitle preparation failed: {e}")
+
+        async def prepare_bgm():
+            """Download BGM file."""
+            nonlocal music_file
+
+            try:
+                if not options.music_url:
+                    raise Exception("music_url is required for BGM")
+
+                update_job_status(job_id, 55, "Downloading background music")
+                music_file = work_dir / "bgm.mp3"
+
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.get(options.music_url)
+                    response.raise_for_status()
+                    with open(music_file, 'wb') as f:
+                        f.write(response.content)
+
+                results["bgm"]["success"] = True
+                logger.info(f"[V2] BGM downloaded: {music_file.stat().st_size / 1024:.1f} KB")
+
+            except Exception as e:
+                results["bgm"]["error"] = str(e)
+                logger.error(f"[V2] BGM download failed: {e}")
+
+        # Run preparation tasks in parallel
+        tasks = []
+        if options.enable_subtitles:
+            tasks.append(prepare_subtitles())
+        if options.enable_bgm:
+            tasks.append(prepare_bgm())
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+        # =================================================================
+        # Step 3: Apply enhancements (only if preparation succeeded)
+        # =================================================================
+        final_video = current_video
+
+        # Apply subtitle if ready
+        if options.enable_subtitles and results["subtitle"]["success"] and ass_file:
+            try:
+                update_job_status(job_id, 70, "Burning subtitles")
+                subtitled_video = work_dir / "with_subtitles.mp4"
+
+                if platform.system() == 'Windows':
+                    vf = f"subtitles={ass_file.name}"
+                else:
+                    vf = f"ass={ass_file.name}"
+
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(final_video),
+                    '-vf', vf,
+                    '-c:a', 'copy',
+                    str(subtitled_video)
+                ]
+
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    cwd=str(work_dir)
+                )
+                stdout, stderr = await proc.communicate()
+
+                if proc.returncode != 0:
+                    raise Exception(f"FFmpeg subtitle burn failed: {stderr.decode()[:500]}")
+
+                final_video = subtitled_video
+                logger.info(f"[V2] Subtitles burned successfully")
+
+            except Exception as e:
+                results["subtitle"]["success"] = False
+                results["subtitle"]["error"] = str(e)
+                logger.error(f"[V2] Subtitle burn failed: {e}")
+
+        # Apply BGM if ready
+        if options.enable_bgm and results["bgm"]["success"] and music_file:
+            try:
+                update_job_status(job_id, 80, "Mixing background music")
+                with_bgm_video = work_dir / "with_bgm.mp4"
+
+                if options.duck_during_speech:
+                    filter_complex = (
+                        f"[1:a]volume={options.bgm_volume}[bgm];"
+                        f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=500[ducked_bgm];"
+                        f"[0:a][ducked_bgm]amix=inputs=2:duration=first:normalize=0"
+                    )
+                else:
+                    filter_complex = (
+                        f"[1:a]volume={options.bgm_volume}[bgm];"
+                        f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0"
+                    )
+
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(final_video),
+                    '-i', str(music_file),
+                    '-filter_complex', filter_complex,
+                    '-c:v', 'copy',
+                    '-c:a', 'aac', '-b:a', '192k',
+                    '-movflags', '+faststart',
+                    str(with_bgm_video)
+                ]
+
+                bgm_result = subprocess.run(cmd, capture_output=True, text=True)
+
+                if bgm_result.returncode != 0:
+                    raise Exception(f"FFmpeg BGM mixing failed: {bgm_result.stderr[:500]}")
+
+                final_video = with_bgm_video
+                logger.info(f"[V2] BGM mixed successfully")
+
+            except Exception as e:
+                results["bgm"]["success"] = False
+                results["bgm"]["error"] = str(e)
+                logger.error(f"[V2] BGM mixing failed: {e}")
+
+        # =================================================================
+        # Step 4: Upload to storage
+        # =================================================================
+        update_job_status(job_id, 90, "Uploading final video")
+        final_url = await upload_to_storage(final_video, project_id)
+
         # Update planned_content.final_video_url in database
         try:
-            update_job_status(job_id, 98, "Updating database")
+            update_job_status(job_id, 95, "Updating database")
             planned_records = await supabase.select_jsonb_contains(
                 'planned_content', 'video_data', 'sessionId', session_id
             )
@@ -750,38 +1002,51 @@ async def process_video_combination_v2(
             else:
                 logger.warning(f"No planned_content found for session_id: {session_id}")
         except Exception as db_err:
-            # Don't fail the job if DB update fails - video is still uploaded
             logger.error(f"Failed to update planned_content: {db_err}")
-        
-        # Mark as completed
+
+        # =================================================================
+        # Step 5: Return results with partial success info
+        # =================================================================
+        # Determine overall status
+        has_failures = (
+            (options.enable_subtitles and not results["subtitle"]["success"]) or
+            (options.enable_bgm and not results["bgm"]["success"])
+        )
+
         jobs[job_id].update({
-            "status": "completed",
+            "status": "completed" if not has_failures else "partial",
             "progress_percentage": 100,
-            "current_step": "Complete",
+            "current_step": "Complete" if not has_failures else "Completed with warnings",
             "final_video_url": final_url,
             "metadata": {
                 "duration_seconds": result.duration_seconds,
                 "file_size_mb": result.file_size_mb,
                 "resolution": result.resolution,
                 "segments_count": len(segments),
+                "results": results,  # Detailed success/failure for each step
+                "word_count": word_count if results["subtitle"]["success"] else 0,
                 **result.metadata
             }
         })
-        
+
         # Cleanup
         combiner.cleanup()
+        cleanup_directory(work_dir)
         if result.output_path and result.output_path.exists():
             result.output_path.unlink(missing_ok=True)
-        
-        logger.info(f"Job {job_id} completed successfully")
-    
+
+        logger.info(f"Job {job_id} completed (partial={has_failures})")
+
     except Exception as e:
         logger.error(f"Job {job_id} failed: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         jobs[job_id].update({
             "status": "failed",
             "current_step": jobs[job_id].get("current_step", "Processing"),
-            "error_message": str(e)
+            "error_message": str(e),
+            "metadata": {"results": results}
         })
+        cleanup_directory(work_dir)
 
 
 # ==================== Helper Functions ====================
@@ -1031,6 +1296,15 @@ class AddSubtitlesRequest(BaseModel):
     project_id: Optional[str] = None
 
 
+class AddBGMRequest(BaseModel):
+    """Request to add background music to existing video."""
+    video_url: str
+    music_url: str
+    volume: float = 0.20  # BGM volume (0.0-1.0)
+    duck_during_speech: bool = True  # Lower BGM when speech detected
+    project_id: Optional[str] = None
+
+
 @app.post("/api/add-subtitles")
 async def add_subtitles(
     request: AddSubtitlesRequest,
@@ -1120,13 +1394,589 @@ async def process_add_subtitles(
         })
         
         logger.info(f"Subtitle job {job_id} completed successfully")
-        
+
     except Exception as e:
         logger.error(f"Subtitle job {job_id} failed: {e}")
         jobs[job_id].update({
             "status": "failed",
             "error_message": str(e)
         })
+
+
+# ==================== Add BGM Endpoint ====================
+
+@app.post("/api/add-bgm")
+async def add_bgm(
+    request: AddBGMRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """
+    Add background music to existing video.
+
+    Pipeline:
+    1. Download video
+    2. Download music from music_url
+    3. Mix audio using FFmpeg (with optional ducking)
+    4. Upload to storage
+    """
+    verify_api_key(api_key)
+
+    # Validate volume
+    if not (0.0 <= request.volume <= 1.0):
+        raise HTTPException(status_code=400, detail="volume must be between 0.0 and 1.0")
+
+    job_id = f"bgm_{uuid.uuid4().hex[:12]}"
+
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "processing",
+        "progress_percentage": 0,
+        "current_step": "Initializing",
+        "final_video_url": None,
+        "error_message": None
+    }
+
+    background_tasks.add_task(
+        process_add_bgm,
+        job_id,
+        request.video_url,
+        request.music_url,
+        request.volume,
+        request.duck_during_speech,
+        request.project_id
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "status": "processing",
+            "estimated_time_seconds": 45,
+            "polling_endpoint": f"/api/job-status/{job_id}"
+        }
+    }
+
+
+async def process_add_bgm(
+    job_id: str,
+    video_url: str,
+    music_url: str,
+    volume: float,
+    duck_during_speech: bool,
+    project_id: Optional[str]
+):
+    """Background task: download video + music, mix audio, upload."""
+    work_dir = Path(tempfile.gettempdir()) / f"sparkfluence_bgm_{job_id}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Step 1: Download video
+        update_job_status(job_id, 10, "Downloading video")
+        video_file = work_dir / "input_video.mp4"
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(video_url)
+            response.raise_for_status()
+            with open(video_file, 'wb') as f:
+                f.write(response.content)
+
+        logger.info(f"Downloaded video: {len(response.content)} bytes")
+
+        # Step 2: Download music
+        update_job_status(job_id, 30, "Downloading music")
+        music_file = work_dir / "bgm.mp3"
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(music_url)
+            response.raise_for_status()
+            with open(music_file, 'wb') as f:
+                f.write(response.content)
+
+        logger.info(f"Downloaded music: {len(response.content)} bytes")
+
+        # Step 3: Mix audio using FFmpeg
+        update_job_status(job_id, 50, "Mixing background music")
+        output_file = work_dir / f"video_with_bgm_{uuid.uuid4().hex[:8]}.mp4"
+
+        if duck_during_speech:
+            # Audio ducking: BGM volume drops when native audio is loud (speech)
+            # sidechaincompress: threshold=0.02 (sensitive), ratio=4 (moderate ducking)
+            filter_complex = (
+                f"[1:a]volume={volume}[bgm];"
+                f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=500[ducked_bgm];"
+                f"[0:a][ducked_bgm]amix=inputs=2:duration=first:normalize=0"
+            )
+        else:
+            # Simple mixing without ducking
+            filter_complex = (
+                f"[1:a]volume={volume}[bgm];"
+                f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0"
+            )
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', str(video_file),
+            '-i', str(music_file),
+            '-filter_complex', filter_complex,
+            '-c:v', 'copy',
+            '-c:a', 'aac', '-b:a', '192k',
+            '-movflags', '+faststart',
+            str(output_file)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise Exception(f"FFmpeg BGM mixing failed: {result.stderr}")
+
+        logger.info(f"BGM mixing successful (ducking={'enabled' if duck_during_speech else 'disabled'})")
+
+        # Step 4: Upload to storage
+        update_job_status(job_id, 80, "Uploading final video")
+        final_url = await upload_to_storage(
+            output_file,
+            project_id or "bgm"
+        )
+
+        # Get metadata
+        metadata = get_video_metadata(output_file)
+        metadata["bgm_volume"] = volume
+        metadata["duck_during_speech"] = duck_during_speech
+
+        jobs[job_id].update({
+            "status": "completed",
+            "progress_percentage": 100,
+            "current_step": "Complete",
+            "final_video_url": final_url,
+            "metadata": metadata
+        })
+
+        logger.info(f"BGM job {job_id} completed successfully")
+
+        # Cleanup
+        cleanup_directory(work_dir)
+
+    except Exception as e:
+        logger.error(f"BGM job {job_id} failed: {e}")
+        jobs[job_id].update({
+            "status": "failed",
+            "error_message": str(e)
+        })
+        cleanup_directory(work_dir)
+
+
+# ==================== Post-Process Endpoint (Subtitle + BGM Combined) ====================
+
+class PostProcessRequest(BaseModel):
+    """Request for combined subtitle + BGM processing."""
+    video_url: str
+    add_subtitles: bool = True
+    add_bgm: bool = True
+    subtitle_style: str = "tiktok"
+    music_url: Optional[str] = None  # Required if add_bgm=True
+    bgm_volume: float = 0.20
+    duck_during_speech: bool = True
+    project_id: Optional[str] = None
+
+
+@app.post("/api/post-process")
+async def post_process(
+    request: PostProcessRequest,
+    background_tasks: BackgroundTasks,
+    api_key: str = Header(..., alias="x-api-key")
+):
+    """
+    Combined subtitle + BGM processing in one efficient pipeline.
+
+    Pipeline:
+    1. Download video once
+    2. If add_subtitles: Extract audio → Transcribe → Generate ASS
+    3. If add_bgm: Download music (parallel with transcription)
+    4. Single FFmpeg pass: burn subtitles + mix BGM
+    5. Upload to storage
+
+    This is more efficient than calling /add-subtitles then /add-bgm separately.
+    """
+    verify_api_key(api_key)
+
+    # Validate inputs
+    if not request.add_subtitles and not request.add_bgm:
+        raise HTTPException(status_code=400, detail="At least one of add_subtitles or add_bgm must be true")
+
+    if request.add_bgm and not request.music_url:
+        raise HTTPException(status_code=400, detail="music_url is required when add_bgm is true")
+
+    if request.add_subtitles and not os.getenv('GROQ_API_KEY'):
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured for subtitles")
+
+    if not (0.0 <= request.bgm_volume <= 1.0):
+        raise HTTPException(status_code=400, detail="bgm_volume must be between 0.0 and 1.0")
+
+    job_id = f"pp_{uuid.uuid4().hex[:12]}"
+
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "processing",
+        "progress_percentage": 0,
+        "current_step": "Initializing",
+        "final_video_url": None,
+        "error_message": None,
+        "options": {
+            "add_subtitles": request.add_subtitles,
+            "add_bgm": request.add_bgm
+        }
+    }
+
+    background_tasks.add_task(
+        process_post_process,
+        job_id,
+        request
+    )
+
+    # Estimate time based on options
+    estimated_time = 30  # base
+    if request.add_subtitles:
+        estimated_time += 45
+    if request.add_bgm:
+        estimated_time += 15
+
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "status": "processing",
+            "estimated_time_seconds": estimated_time,
+            "polling_endpoint": f"/api/job-status/{job_id}",
+            "options": {
+                "add_subtitles": request.add_subtitles,
+                "add_bgm": request.add_bgm
+            }
+        }
+    }
+
+
+async def process_post_process(job_id: str, request: PostProcessRequest):
+    """
+    Background task: Combined subtitle + BGM processing.
+
+    Optimized pipeline:
+    - Downloads video once
+    - Runs transcription and BGM download in parallel
+    - Single FFmpeg pass for both operations when possible
+    """
+    work_dir = Path(tempfile.gettempdir()) / f"sparkfluence_pp_{job_id}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # =====================================================================
+        # Step 1: Download video (10%)
+        # =====================================================================
+        update_job_status(job_id, 5, "Downloading video")
+        video_file = work_dir / "input.mp4"
+
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.get(request.video_url)
+            response.raise_for_status()
+            with open(video_file, 'wb') as f:
+                f.write(response.content)
+
+        logger.info(f"[PostProcess] Downloaded video: {video_file.stat().st_size / 1024 / 1024:.1f} MB")
+        update_job_status(job_id, 10, "Video downloaded")
+
+        # =====================================================================
+        # Step 2: Parallel processing - Transcription + BGM Download (10-50%)
+        # =====================================================================
+        ass_file = None
+        music_file = None
+        word_count = 0
+
+        async def do_transcription():
+            """Extract audio, transcribe, generate ASS."""
+            nonlocal ass_file, word_count
+
+            update_job_status(job_id, 15, "Extracting audio")
+            audio_file = work_dir / "audio.mp3"
+
+            # Extract audio
+            cmd = [
+                'ffmpeg', '-y', '-i', str(video_file),
+                '-vn', '-acodec', 'libmp3lame', '-q:a', '2',
+                str(audio_file)
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+
+            if proc.returncode != 0:
+                raise Exception("Audio extraction failed")
+
+            update_job_status(job_id, 25, "Transcribing audio")
+
+            # Transcribe with Groq Whisper
+            groq_key = os.getenv('GROQ_API_KEY')
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                with open(audio_file, 'rb') as f:
+                    files = {'file': ('audio.mp3', f, 'audio/mpeg')}
+                    data = {
+                        'model': 'whisper-large-v3-turbo',
+                        'response_format': 'verbose_json',
+                        'timestamp_granularities[]': 'word'
+                    }
+                    headers = {'Authorization': f'Bearer {groq_key}'}
+
+                    resp = await client.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers=headers, files=files, data=data
+                    )
+                    resp.raise_for_status()
+                    whisper_data = resp.json()
+
+            update_job_status(job_id, 40, "Generating subtitles")
+
+            # Generate ASS file
+            from ffmpeg.subtitles import SubtitleGenerator, get_preset_style, SubtitleSegment, WordTimestamp
+
+            style = get_preset_style(request.subtitle_style)
+            generator = SubtitleGenerator(style)
+
+            # Parse whisper response
+            segments = []
+            root_words = whisper_data.get("words") or []
+
+            if root_words:
+                for i in range(0, len(root_words), 3):
+                    group = root_words[i:i+3]
+                    words = [
+                        WordTimestamp(word=w.get("word", "").strip(), start=w.get("start", 0), end=w.get("end", 0))
+                        for w in group if w.get("word", "").strip()
+                    ]
+                    if words:
+                        segments.append(SubtitleSegment(
+                            segment_id=str(len(segments)),
+                            text=" ".join(x.word for x in words),
+                            start=words[0].start,
+                            end=words[-1].end,
+                            words=words
+                        ))
+                word_count = len(root_words)
+            else:
+                for seg in (whisper_data.get('segments') or []):
+                    words = [
+                        WordTimestamp(word=w.get('word', '').strip(), start=w.get('start', 0), end=w.get('end', 0))
+                        for w in (seg.get('words') or []) if w.get('word', '').strip()
+                    ]
+                    if words:
+                        segments.append(SubtitleSegment(
+                            segment_id=str(seg.get('id', len(segments))),
+                            text=seg.get('text', '').strip(),
+                            start=seg.get('start', 0),
+                            end=seg.get('end', 0),
+                            words=words
+                        ))
+                word_count = sum(len(seg.get('words') or []) for seg in (whisper_data.get('segments') or []))
+
+            ass_file = work_dir / "subtitles.ass"
+            generator.save_ass(segments, ass_file, word_by_word=True)
+            logger.info(f"[PostProcess] Generated ASS with {word_count} words")
+
+        async def do_download_bgm():
+            """Download BGM file."""
+            nonlocal music_file
+
+            update_job_status(job_id, 20, "Downloading music")
+            music_file = work_dir / "bgm.mp3"
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(request.music_url)
+                response.raise_for_status()
+                with open(music_file, 'wb') as f:
+                    f.write(response.content)
+
+            logger.info(f"[PostProcess] Downloaded BGM: {music_file.stat().st_size / 1024:.1f} KB")
+
+        # Run tasks in parallel based on options
+        tasks = []
+        if request.add_subtitles:
+            tasks.append(do_transcription())
+        if request.add_bgm:
+            tasks.append(do_download_bgm())
+
+        if tasks:
+            await asyncio.gather(*tasks)
+
+        update_job_status(job_id, 50, "Processing complete, preparing FFmpeg")
+
+        # =====================================================================
+        # Step 3: FFmpeg - Burn subtitles + Mix BGM (50-90%)
+        # =====================================================================
+        import platform
+
+        output_file = work_dir / f"final_{uuid.uuid4().hex[:8]}.mp4"
+        update_job_status(job_id, 55, "Combining video with effects")
+
+        if request.add_subtitles and request.add_bgm:
+            # Both subtitle + BGM: need 2-pass (subtitle first, then BGM)
+            # Because subtitle filter changes video stream, can't use -c:v copy with BGM
+
+            # Pass 1: Burn subtitles
+            temp_with_subs = work_dir / "temp_with_subs.mp4"
+
+            if platform.system() == 'Windows':
+                vf = f"subtitles={ass_file.name}"
+            else:
+                vf = f"ass={ass_file.name}"
+
+            cmd1 = [
+                'ffmpeg', '-y',
+                '-i', str(video_file),
+                '-vf', vf,
+                '-c:a', 'copy',
+                str(temp_with_subs)
+            ]
+
+            logger.info(f"[PostProcess] Pass 1: Burning subtitles")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd1, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                cwd=str(work_dir)
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                logger.error(f"Subtitle burn failed: {stderr.decode()}")
+                raise Exception("Subtitle burn failed")
+
+            update_job_status(job_id, 70, "Adding background music")
+
+            # Pass 2: Add BGM
+            if request.duck_during_speech:
+                filter_complex = (
+                    f"[1:a]volume={request.bgm_volume}[bgm];"
+                    f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=500[ducked_bgm];"
+                    f"[0:a][ducked_bgm]amix=inputs=2:duration=first:normalize=0"
+                )
+            else:
+                filter_complex = (
+                    f"[1:a]volume={request.bgm_volume}[bgm];"
+                    f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0"
+                )
+
+            cmd2 = [
+                'ffmpeg', '-y',
+                '-i', str(temp_with_subs),
+                '-i', str(music_file),
+                '-filter_complex', filter_complex,
+                '-c:v', 'copy',
+                '-c:a', 'aac', '-b:a', '192k',
+                '-movflags', '+faststart',
+                str(output_file)
+            ]
+
+            logger.info(f"[PostProcess] Pass 2: Mixing BGM")
+            result = subprocess.run(cmd2, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                raise Exception(f"BGM mixing failed: {result.stderr}")
+
+        elif request.add_subtitles:
+            # Subtitle only
+            if platform.system() == 'Windows':
+                vf = f"subtitles={ass_file.name}"
+            else:
+                vf = f"ass={ass_file.name}"
+
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_file),
+                '-vf', vf,
+                '-c:a', 'copy',
+                str(output_file)
+            ]
+
+            logger.info(f"[PostProcess] Burning subtitles only")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                cwd=str(work_dir)
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                logger.error(f"Subtitle burn failed: {stderr.decode()}")
+                raise Exception("Subtitle burn failed")
+
+        elif request.add_bgm:
+            # BGM only
+            if request.duck_during_speech:
+                filter_complex = (
+                    f"[1:a]volume={request.bgm_volume}[bgm];"
+                    f"[bgm][0:a]sidechaincompress=threshold=0.02:ratio=4:attack=50:release=500[ducked_bgm];"
+                    f"[0:a][ducked_bgm]amix=inputs=2:duration=first:normalize=0"
+                )
+            else:
+                filter_complex = (
+                    f"[1:a]volume={request.bgm_volume}[bgm];"
+                    f"[0:a][bgm]amix=inputs=2:duration=first:normalize=0"
+                )
+
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_file),
+                '-i', str(music_file),
+                '-filter_complex', filter_complex,
+                '-c:v', 'copy',
+                '-c:a', 'aac', '-b:a', '192k',
+                '-movflags', '+faststart',
+                str(output_file)
+            ]
+
+            logger.info(f"[PostProcess] Mixing BGM only")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                raise Exception(f"BGM mixing failed: {result.stderr}")
+
+        update_job_status(job_id, 85, "FFmpeg processing complete")
+
+        # =====================================================================
+        # Step 4: Upload to storage (90-100%)
+        # =====================================================================
+        update_job_status(job_id, 90, "Uploading final video")
+        final_url = await upload_to_storage(output_file, request.project_id or "postprocess")
+
+        # Get metadata
+        metadata = get_video_metadata(output_file)
+        metadata["add_subtitles"] = request.add_subtitles
+        metadata["add_bgm"] = request.add_bgm
+        if request.add_subtitles:
+            metadata["subtitle_style"] = request.subtitle_style
+            metadata["word_count"] = word_count
+        if request.add_bgm:
+            metadata["bgm_volume"] = request.bgm_volume
+            metadata["duck_during_speech"] = request.duck_during_speech
+
+        jobs[job_id].update({
+            "status": "completed",
+            "progress_percentage": 100,
+            "current_step": "Complete",
+            "final_video_url": final_url,
+            "metadata": metadata
+        })
+
+        logger.info(f"[PostProcess] Job {job_id} completed successfully")
+
+        # Cleanup
+        cleanup_directory(work_dir)
+
+    except Exception as e:
+        logger.error(f"[PostProcess] Job {job_id} failed: {e}")
+        import traceback
+        logger.error(f"[PostProcess] Traceback: {traceback.format_exc()}")
+        jobs[job_id].update({
+            "status": "failed",
+            "error_message": str(e)
+        })
+        cleanup_directory(work_dir)
 
 
 if __name__ == "__main__":
