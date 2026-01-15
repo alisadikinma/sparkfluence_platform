@@ -478,8 +478,8 @@ export const Dashboard = (): JSX.Element => {
     } else if (job.stage === 'video') {
       navigate(`/video-generation?session=${job.session_id}`);
     } else {
-      // Combining stage - go to final video preview
-      navigate(`/full-video?session=${job.session_id}`);
+      // Combining stage - go to video generation to trigger combine
+      navigate(`/video-generation?session=${job.session_id}`);
     }
   };
 

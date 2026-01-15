@@ -34,7 +34,8 @@ export const UserDropdown: React.FC = () => {
       }
 
       // 2. Fallback to OAuth avatar (Google)
-      const oauthAvatar = user.user_metadata?.avatar_url;
+      // Google OAuth uses 'picture' field, other providers may use 'avatar_url'
+      const oauthAvatar = user.user_metadata?.avatar_url || user.user_metadata?.picture;
       if (oauthAvatar && typeof oauthAvatar === 'string' && oauthAvatar.startsWith('http')) {
         console.log('UserDropdown - Fallback to OAuth avatar');
         setAvatarUrl(oauthAvatar);
