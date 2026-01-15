@@ -235,8 +235,8 @@ export const Register = (): JSX.Element => {
       if (signUpError) {
         // If user already exists, try to sign in instead
         if (signUpError.message.includes('already registered')) {
-          setError(language === 'id' 
-            ? 'Email sudah terdaftar. Silakan login.' 
+          setError(language === 'id'
+            ? 'Email sudah terdaftar. Silakan login.'
             : 'Email already registered. Please login.');
         } else {
           setError(signUpError.message);
@@ -253,34 +253,63 @@ export const Register = (): JSX.Element => {
       }
 
       console.log('[Register] SignUp successful, user:', user.id);
-      console.log('[Register] Session:', signUpData?.session ? 'Yes' : 'No');
+      console.log('[Register] Session from signUp:', signUpData?.session ? 'Yes' : 'No');
 
       // Auto-detect country from timezone
       const detectedCountry = detectCountryFromTimezone();
       console.log('[Register] Detected country:', detectedCountry);
 
-      // If no session from signUp (email confirmation enabled), try to sign in
-      if (!signUpData?.session) {
-        console.log('[Register] No session from signUp, trying auto sign-in...');
-        const { error: signInError } = await supabase.auth.signInWithPassword({
+      // CRITICAL: Ensure we have an active session before updating profile
+      // RLS policy requires auth.uid() = user_id, so session must be active
+      let hasActiveSession = !!signUpData?.session;
+
+      if (!hasActiveSession) {
+        console.log('[Register] No session from signUp, attempting sign-in...');
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
 
         if (signInError) {
-          console.error('[Register] Auto sign-in error:', signInError.message);
-          // If email confirmation required, still continue to update profile
-          // User will need to confirm email then login
-        } else {
-          console.log('[Register] Auto sign-in successful');
+          console.error('[Register] Sign-in failed:', signInError.message);
+          // Cannot update profile without session due to RLS
+          // User will need to verify email first, then login
+          setError(language === 'id'
+            ? 'Akun berhasil dibuat! Silakan cek email untuk konfirmasi, lalu login.'
+            : 'Account created! Please check your email to confirm, then login.');
+          setTimeout(() => navigate("/login"), 3000);
+          setLoading(false);
+          return;
         }
+
+        hasActiveSession = !!signInData?.session;
+        console.log('[Register] Sign-in successful, session:', hasActiveSession ? 'Yes' : 'No');
       }
 
-      // Wait a moment for the trigger to create the profile
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Double-check session is active
+      const { data: currentSession } = await supabase.auth.getSession();
+      const activeUserId = currentSession?.session?.user?.id;
 
-      // Update profile with phone verification data (trigger creates profile automatically)
-      const { error: updateError } = await supabase
+      console.log('[Register] Current session user:', activeUserId);
+      console.log('[Register] SignUp user:', user.id);
+      console.log('[Register] IDs match:', activeUserId === user.id);
+
+      if (!activeUserId || activeUserId !== user.id) {
+        console.error('[Register] Session mismatch or no session - cannot update profile due to RLS');
+        setError(language === 'id'
+          ? 'Akun berhasil dibuat! Silakan login untuk melanjutkan.'
+          : 'Account created! Please login to continue.');
+        setTimeout(() => navigate("/login"), 3000);
+        setLoading(false);
+        return;
+      }
+
+      // Wait for trigger to create profile (if exists)
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      // Now update profile - session is confirmed active, RLS should pass
+      console.log('[Register] Updating profile with phone verification data...');
+      const { data: updateData, error: updateError } = await supabase
         .from("user_profiles")
         .update({
           phone_number: verifiedPhone,
@@ -288,12 +317,15 @@ export const Register = (): JSX.Element => {
           phone_verified_at: new Date().toISOString(),
           country: detectedCountry,
         })
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .select();
 
       if (updateError) {
-        console.error("Profile update error:", updateError);
-        // If update fails, try upsert as fallback
-        const { error: upsertError } = await supabase
+        console.error("[Register] Profile update error:", updateError.message, updateError.details, updateError.hint);
+
+        // Fallback: try upsert in case profile doesn't exist yet
+        console.log('[Register] Trying upsert as fallback...');
+        const { data: upsertData, error: upsertError } = await supabase
           .from("user_profiles")
           .upsert({
             user_id: user.id,
@@ -302,29 +334,37 @@ export const Register = (): JSX.Element => {
             phone_verified_at: new Date().toISOString(),
             onboarding_completed: false,
             country: detectedCountry,
-          }, { onConflict: 'user_id' });
-          
+          }, { onConflict: 'user_id' })
+          .select();
+
         if (upsertError) {
-          console.error("Profile upsert error:", upsertError);
+          console.error("[Register] Profile upsert error:", upsertError.message, upsertError.details, upsertError.hint);
+        } else {
+          console.log('[Register] Profile upsert successful:', upsertData);
         }
+      } else {
+        console.log('[Register] Profile update successful:', updateData);
       }
 
-      // Check if we have a valid session now
-      const { data: sessionData } = await supabase.auth.getSession();
-      
-      if (sessionData?.session) {
-        console.log('[Register] Session valid, navigating to welcome');
-        navigate("/welcome");
-      } else {
-        // No session - email confirmation might be required
-        console.log('[Register] No session - email confirmation may be required');
-        setError(language === 'id' 
-          ? 'Akun berhasil dibuat! Silakan cek email untuk konfirmasi, lalu login.'
-          : 'Account created! Please check your email to confirm, then login.');
-        // Navigate to login after 3 seconds
-        setTimeout(() => navigate("/login"), 3000);
+      // Verify profile was updated correctly
+      const { data: verifyProfile } = await supabase
+        .from("user_profiles")
+        .select("phone_verified, phone_number")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      console.log('[Register] Profile verification:', verifyProfile);
+
+      if (!verifyProfile?.phone_verified) {
+        console.warn('[Register] WARNING: Profile phone_verified is still false after update!');
       }
+
+      // Navigate to welcome page
+      console.log('[Register] Registration complete, navigating to welcome');
+      navigate("/welcome");
+
     } catch (err: any) {
+      console.error('[Register] Unexpected error:', err);
       setError(err.message || t.errors.general);
     } finally {
       setLoading(false);
