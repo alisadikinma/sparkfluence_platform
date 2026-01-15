@@ -190,8 +190,16 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       } else if (cachedAvatarUrl) {
         setAnalyzingAvatar(true);
         try {
+          // Map UI language to script language for voice generation
+          const voiceLang = scriptLang === 'id' ? 'indonesian' : scriptLang === 'hi' ? 'hindi' : 'english';
+
           const { data, error } = await supabase.functions.invoke('analyze-avatar', {
-            body: { image_url: cachedAvatarUrl, user_id: user?.id, save_to_profile: true }
+            body: {
+              image_url: cachedAvatarUrl,
+              user_id: user?.id,
+              save_to_profile: true,
+              language: voiceLang  // Pass language for voice characteristics
+            }
           });
           if (error) throw error;
           if (data?.success && data?.data?.character_description) {
@@ -200,6 +208,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
             setProfileCharacterDesc(data.data.character_description);
             setUploadedAvatarPreview(cachedAvatarUrl);
             setSelectedSavedAvatar(null);
+            console.log('[ScriptForm] Profile avatar analyzed, voice prompt:', data?.data?.voice_prompt?.id);
           }
         } catch (err) {
           console.error('Error analyzing avatar:', err);
@@ -235,22 +244,22 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   // Save avatar to storage and database
   const handleSaveAvatar = async () => {
     if (!pendingUploadFile || !user?.id || !newAvatarName.trim()) return;
-    
+
     setSavingAvatar(true);
     setAnalyzingAvatar(true);
-    
+
     try {
       // 1. Upload to storage
       const fileExt = pendingUploadFile.name.split('.').pop();
       const fileName = `${user.id}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-      
+
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(fileName, pendingUploadFile, {
           cacheControl: '3600',
           upsert: false
         });
-      
+
       if (uploadError) {
         // Try creating bucket if it doesn't exist
         if (uploadError.message.includes('Bucket not found')) {
@@ -260,29 +269,15 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
         }
         throw uploadError;
       }
-      
+
       // 2. Get public URL
       const { data: urlData } = supabase.storage
         .from('avatars')
         .getPublicUrl(fileName);
-      
+
       const avatarUrl = urlData.publicUrl;
-      
-      // 3. Analyze avatar
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(pendingUploadFile);
-      });
-      const base64 = await base64Promise;
-      
-      const { data: analyzeData, error: analyzeError } = await supabase.functions.invoke('analyze-avatar', {
-        body: { image_base64: base64, user_id: user.id, save_to_profile: false }
-      });
-      
-      const charDescription = analyzeData?.data?.character_description || null;
-      
-      // 4. Save to database
+
+      // 3. Save to database FIRST to get avatar_id
       const { data: savedData, error: dbError } = await supabase
         .from('user_avatars')
         .insert({
@@ -290,29 +285,53 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
           name: newAvatarName.trim(),
           storage_path: fileName,
           avatar_url: avatarUrl,
-          character_description: charDescription,
+          character_description: null, // Will be updated after analyze
           is_default: savedAvatars.length === 0 // First avatar is default
         })
         .select()
         .single();
-      
+
       if (dbError) throw dbError;
-      
+
+      // 4. Analyze avatar WITH avatar_id (to create voice_prompt)
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(pendingUploadFile);
+      });
+      const base64 = await base64Promise;
+
+      // Map UI language to script language for voice generation
+      const voiceLang = scriptLang === 'id' ? 'indonesian' : scriptLang === 'hi' ? 'hindi' : 'english';
+
+      const { data: analyzeData, error: analyzeError } = await supabase.functions.invoke('analyze-avatar', {
+        body: {
+          image_base64: base64,
+          user_id: user.id,
+          save_to_profile: false,
+          avatar_id: savedData.id,  // Pass avatar_id for voice_prompt creation
+          language: voiceLang       // Pass language for voice characteristics
+        }
+      });
+
+      const charDescription = analyzeData?.data?.character_description || null;
+      console.log('[ScriptForm] Avatar analyzed, voice prompt created:', analyzeData?.data?.voice_prompt?.id);
+
       // 5. Update local state
       const newAvatar: SavedAvatar = {
         id: savedData.id,
         name: savedData.name,
         avatar_url: savedData.avatar_url,
-        character_description: savedData.character_description,
+        character_description: charDescription,
         is_default: savedData.is_default
       };
-      
+
       setSavedAvatars(prev => [newAvatar, ...prev]);
       setAvatarOption("saved");
       setSelectedSavedAvatar(newAvatar);
       setCharacterDescription(charDescription);
       setUploadedAvatarPreview(avatarUrl);
-      
+
       // Close modal
       setShowNameModal(false);
       setPendingUploadFile(null);
@@ -406,6 +425,10 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       useDnaTone: hasDnaTone && useDnaTone,
       creativeDna: hasDnaTone && useDnaTone ? onboardingData?.creative_dna || null : null,
       characterDescription,
+      // Avatar info for voice prompt retrieval
+      avatarOption,
+      avatarId: avatarOption === 'saved' && selectedSavedAvatar ? selectedSavedAvatar.id : null,
+      avatarUrl: uploadedAvatarPreview,
     });
   };
 

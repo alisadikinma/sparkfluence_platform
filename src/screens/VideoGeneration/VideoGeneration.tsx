@@ -5,8 +5,9 @@ import { Logo } from "../../components/ui/logo";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
-import { 
-  Play, RefreshCw, Check, X, Loader2, Video, 
+import { calculateSegmentDuration } from "../../lib/segmentDuration";
+import {
+  Play, RefreshCw, Check, X, Loader2, Video,
   ChevronRight, AlertCircle, Cloud, CheckCircle2, Maximize2,
   Mic, Camera, Volume2, Download
 } from "lucide-react";
@@ -290,6 +291,11 @@ export const VideoGeneration = (): JSX.Element => {
   const [rateLimitWarning, setRateLimitWarning] = useState<string | null>(null);
   // Per-segment video model override (key: segment.id, value: 'veo-3.1-hd' | 'veo-3.1-fast')
   const [segmentModelOverrides, setSegmentModelOverrides] = useState<Record<string, 'veo-3.1-hd' | 'veo-3.1-fast'>>({});
+
+  // Avatar info for voice prompt retrieval
+  const [avatarOption, setAvatarOption] = useState<'none' | 'profile' | 'saved' | 'upload'>('none');
+  const [avatarId, setAvatarId] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   
   const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const checkStatusIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -478,6 +484,70 @@ export const VideoGeneration = (): JSX.Element => {
       if (checkStatusIntervalRef.current) clearInterval(checkStatusIntervalRef.current);
     };
   }, []);
+
+  // ============================================================================
+  // REALTIME SUBSCRIPTION - Listen for webhook updates from Geminigen.ai
+  // ============================================================================
+  useEffect(() => {
+    if (!sessionId || !user) return;
+
+    console.log('[REALTIME] Setting up subscription for session:', sessionId);
+
+    const channel = supabase
+      .channel(`video_jobs_${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'video_generation_jobs',
+          filter: `session_id=eq.${sessionId}`
+        },
+        (payload) => {
+          console.log('[REALTIME] Job updated:', payload.new);
+
+          const job = payload.new as {
+            id: string;
+            segment_id: string;
+            segment_number: number;
+            veo_uuid: string;
+            video_url: string | null;
+            status: number;
+            error_message: string | null;
+          };
+
+          // Update segment state based on webhook update
+          setSegments(prev => prev.map((seg, index) => {
+            const segmentNumber = index + 1;
+            if (segmentNumber === job.segment_number || seg.id === job.segment_id) {
+              console.log(`[REALTIME] Updating segment ${segmentNumber}:`, {
+                status: job.status,
+                hasVideo: !!job.video_url
+              });
+
+              return {
+                ...seg,
+                jobId: job.id,
+                veoUuid: job.veo_uuid,
+                videoUrl: job.video_url || seg.videoUrl,
+                videoError: job.status === 3 ? (job.error_message || 'Generation failed') : null,
+                isGeneratingVideo: job.status === 1
+              };
+            }
+            return seg;
+          }));
+        }
+      )
+      .subscribe((status) => {
+        console.log('[REALTIME] Subscription status:', status);
+      });
+
+    // Cleanup subscription on unmount
+    return () => {
+      console.log('[REALTIME] Removing subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [sessionId, user]);
 
   // MANUAL FORCE SYNC - Called when user wants to refresh from DB
   const forceRefreshFromDatabase = async () => {
@@ -701,6 +771,11 @@ export const VideoGeneration = (): JSX.Element => {
         setCurrentTopic(stateData.topic || "Your Video");
         setVideoSettings(stateData.videoSettings || null);
 
+        // Set avatar info from ImageGeneration
+        if (stateData.avatarOption) setAvatarOption(stateData.avatarOption);
+        if (stateData.avatarId) setAvatarId(stateData.avatarId);
+        if (stateData.avatarUrl) setAvatarUrl(stateData.avatarUrl);
+
         // Format segments
         let initialSegments: Segment[] = stateData.segments.map((seg: any) => ({
           ...seg,
@@ -816,7 +891,7 @@ export const VideoGeneration = (): JSX.Element => {
               id: job.segment_id,
               type: mappedType,
               timing: '',
-              durationSeconds: job.duration_seconds || 8,
+              durationSeconds: job.duration_seconds || calculateSegmentDuration(mappedType, '60s'),
               script: job.script_text || '',
               visualDirection: '',
               emotion: job.emotion || '',
@@ -1003,48 +1078,50 @@ export const VideoGeneration = (): JSX.Element => {
           return null;
         };
         
-        // Helper: Poll all active jobs once and return if any completed
+        // Helper: Check active jobs from database (webhook updates DB, realtime updates UI)
+        // This is now just a backup check, main updates come from realtime subscription
         const pollActiveJobs = async (): Promise<boolean> => {
           if (activePollingJobs.size === 0) return false;
-          
+
           const uuidsToCheck = Array.from(activePollingJobs.keys());
-          console.log(`[VideoGen] 🔄 Polling ${uuidsToCheck.length} active jobs...`);
-          
+          console.log(`[VideoGen] 🔄 Checking ${uuidsToCheck.length} active jobs from DB...`);
+
           try {
-            const { data: statusData, error: statusError } = await invokeWithRetry('check-video-status', {
-              video_uuids: uuidsToCheck,
-              update_db: true
-            });
-            
-            if (statusError) {
-              console.error('[VideoGen] Status check error:', statusError);
+            // Query database directly instead of calling check-video-status
+            const { data: jobsData, error: dbError } = await supabase
+              .from('video_generation_jobs')
+              .select('*')
+              .in('veo_uuid', uuidsToCheck);
+
+            if (dbError) {
+              console.error('[VideoGen] DB check error:', dbError);
               return false;
             }
-            
+
             let anyCompleted = false;
-            
-            if (statusData?.data?.videos) {
-              for (const videoInfo of statusData.data.videos) {
-                const uuid = videoInfo.uuid;
+
+            if (jobsData) {
+              for (const videoInfo of jobsData) {
+                const uuid = videoInfo.veo_uuid;
                 const jobInfo = activePollingJobs.get(uuid);
                 if (!jobInfo) continue;
-                
+
                 // Status 2 = completed
                 if (videoInfo.status === 2 && videoInfo.video_url) {
                   console.log(`[VideoGen] ✅ COMPLETE: Segment ${jobInfo.segmentNumber} → ${videoInfo.video_url.substring(0, 50)}...`);
-                  
-                  setSegments(prev => prev.map(seg => 
+
+                  setSegments(prev => prev.map(seg =>
                     seg.veoUuid === uuid || seg.id === jobInfo.segmentId
                       ? { ...seg, videoUrl: videoInfo.video_url, isGeneratingVideo: false, videoError: null, videoProgress: 100 }
                       : seg
                   ));
-                  
+
                   setGenerationProgress(prev => ({
                     ...prev,
                     current: prev.completed + 1 + prev.failed,
                     completed: prev.completed + 1
                   }));
-                  
+
                   completedUuids.add(uuid);
                   activePollingJobs.delete(uuid);
                   anyCompleted = true;
@@ -1052,23 +1129,23 @@ export const VideoGeneration = (): JSX.Element => {
                 // Status 3 = failed
                 else if (videoInfo.status === 3) {
                   console.log(`[VideoGen] ❌ FAILED: Segment ${jobInfo.segmentNumber} - ${videoInfo.error_message}`);
-                  
-                  setSegments(prev => prev.map(seg => 
+
+                  setSegments(prev => prev.map(seg =>
                     seg.veoUuid === uuid || seg.id === jobInfo.segmentId
                       ? { ...seg, isGeneratingVideo: false, videoError: videoInfo.error_message || 'Generation failed', videoProgress: 0 }
                       : seg
                   ));
-                  
+
                   setGenerationProgress(prev => ({
                     ...prev,
                     current: prev.completed + prev.failed + 1,
                     failed: prev.failed + 1
                   }));
-                  
+
                   if (videoInfo.error_message?.includes('RATE_LIMIT') || videoInfo.error_message?.includes('high traffic')) {
                     setRateLimitWarning(new Date().toISOString());
                   }
-                  
+
                   failedUuids.add(uuid);
                   activePollingJobs.delete(uuid);
                   anyCompleted = true; // Treat as "slot freed"
@@ -1347,7 +1424,11 @@ export const VideoGeneration = (): JSX.Element => {
         language: contentLanguage,
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
         resolution: videoSettings?.resolution || '1080p',
-        preferred_platform: videoSettings?.model || 'auto' // 'auto' | 'sora2' | 'veo31'
+        preferred_platform: videoSettings?.model || 'auto', // 'auto' | 'sora2' | 'veo31'
+        // Avatar info for voice prompt retrieval
+        avatar_selection: avatarOption === 'saved' ? 'saved' : avatarOption === 'profile' ? 'use_profile' : 'no_avatar',
+        avatar_id: avatarId,
+        profile_image_url: avatarUrl
       });
 
       if (error) throw error;
@@ -1424,22 +1505,16 @@ export const VideoGeneration = (): JSX.Element => {
 
       if (!veoUuid) throw new Error('No UUID returned from VEO');
 
+      // Update segment with UUID - realtime subscription will handle the rest
+      // when webhook updates the database, UI will auto-update
       setSegments(prev =>
         prev.map(seg =>
-          seg.id === segmentId ? { ...seg, veoUuid } : seg
+          seg.id === segmentId ? { ...seg, veoUuid, isGeneratingVideo: true } : seg
         )
       );
 
-      // Poll for completion
-      const videoUrl = await pollVideoStatus(veoUuid);
-      
-      setSegments(prev =>
-        prev.map(seg =>
-          seg.id === segmentId
-            ? { ...seg, veoUuid, videoUrl, isGeneratingVideo: false }
-            : seg
-        )
-      );
+      console.log(`[VideoGen] Video job submitted, UUID: ${veoUuid}. Waiting for webhook...`);
+      // No polling needed - realtime subscription will update UI when webhook fires
 
     } catch (err: any) {
       console.error('Error generating video:', err);
@@ -1451,39 +1526,6 @@ export const VideoGeneration = (): JSX.Element => {
         )
       );
     }
-  };
-
-  const pollVideoStatus = async (uuid: string): Promise<string> => {
-    const maxAttempts = 40; // 40 * 15s = 10 minutes max
-    let attempts = 0;
-
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 15000)); // 15 seconds
-      
-      try {
-        const { data, error } = await supabase.functions.invoke('check-video-status', {
-          body: { video_uuids: [uuid], update_db: true }
-        });
-
-        if (error) throw error;
-
-        const videoInfo = data?.data?.videos?.[0];
-        
-        if (videoInfo?.status === 2 && videoInfo?.video_url) {
-          return videoInfo.video_url;
-        } else if (videoInfo?.status === 3) {
-          throw new Error(videoInfo.error_message || 'Video generation failed');
-        }
-      } catch (err: any) {
-        if (err.message && !err.message.includes('fetch')) {
-          throw err;
-        }
-      }
-      
-      attempts++;
-    }
-
-    throw new Error('Video generation timeout - please try again');
   };
 
   // Retry failed jobs (reset status to pending)
@@ -1713,8 +1755,8 @@ export const VideoGeneration = (): JSX.Element => {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a12] p-4 sm:p-6">
-      <div className="max-w-5xl mx-auto">
+    <div className="min-h-screen bg-[#0a0a12] p-4 sm:p-6 lg:p-8">
+      <div className="max-w-[1600px] mx-auto">
         {/* Rate Limit Warning Toast */}
         {rateLimitWarning && (
           <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4">
@@ -1839,13 +1881,39 @@ export const VideoGeneration = (): JSX.Element => {
           </div>
         </div>
 
-        {/* Generate All Button */}
+        {/* Global Model Selector + Generate All Button */}
         {!allHaveVideos && (
-          <div className="mb-6">
+          <div className="mb-6 flex flex-col sm:flex-row gap-3">
+            {/* Global Model Selector */}
+            <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2b2b38] rounded-xl px-4 py-3">
+              <Video className="w-4 h-4 text-purple-400" />
+              <label className="text-sm text-gray-400 whitespace-nowrap">
+                {language === 'id' ? 'Model:' : 'Model:'}
+              </label>
+              <select
+                value={videoSettings?.model || 'auto'}
+                onChange={(e) => {
+                  const newModel = e.target.value as 'auto' | 'veo-3.1-hd' | 'veo-3.1-fast';
+                  setVideoSettings(prev => prev
+                    ? { ...prev, model: newModel }
+                    : { duration: '60s', aspectRatio: '9:16', resolution: '1080p', model: newModel }
+                  );
+                  // Reset all per-segment overrides when global model changes
+                  setSegmentModelOverrides({});
+                }}
+                className="bg-[#0a0a12] border border-[#3b3b4f] rounded-lg px-3 py-1.5 text-white text-sm cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
+              >
+                <option value="auto">Auto (VEO 3.1 HD)</option>
+                <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
+                <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
+              </select>
+            </div>
+
+            {/* Generate All Button */}
             <Button
               onClick={handleGenerateAllBackground}
               disabled={isGeneratingAll || isBackgroundMode}
-              className={`w-full h-14 font-medium ${
+              className={`flex-1 h-14 font-medium ${
                 isBackgroundMode
                   ? "bg-blue-600 hover:bg-blue-700"
                   : "bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:opacity-90"
@@ -1867,7 +1935,7 @@ export const VideoGeneration = (): JSX.Element => {
         )}
 
         {/* Segments Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {segments.map((segment, index) => (
             <div 
               key={segment.id} 
@@ -1888,7 +1956,7 @@ export const VideoGeneration = (): JSX.Element => {
                     {index + 1}
                   </div>
                   <span className="text-white font-medium text-sm">{segment.type || segment.element}</span>
-                  <span className="text-white/40 text-xs">{segment.timing || segment.duration}</span>
+                  <span className="text-white/40 text-xs">{segment.durationSeconds}s</span>
                 </div>
                 {segment.isDismissed ? (
                   <div className="flex items-center gap-1 text-gray-400 text-xs">
@@ -1999,14 +2067,6 @@ export const VideoGeneration = (): JSX.Element => {
                         <Volume2 className="w-3 h-3" />
                         <span>{segment.script ? 'AI Voice' : 'Ambient'}</span>
                       </div>
-
-                      {/* Platform Badge - showing preview from prompt */}
-                      {videoPrompts[segment.id] && !segment.videoUrl && (
-                        <div className="flex items-center gap-1.5 bg-purple-500/10 text-purple-400 text-[10px] px-2 py-1 rounded">
-                          <Video className="w-3 h-3" />
-                          <span>{videoPrompts[segment.id].platform_name || videoPrompts[segment.id].platform}</span>
-                        </div>
-                      )}
 
                       {/* Video Model Selector - only show before video is generated */}
                       {!segment.videoUrl && !segment.isGeneratingVideo && (

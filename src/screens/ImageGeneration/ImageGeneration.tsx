@@ -894,6 +894,11 @@ export const ImageGeneration = (): JSX.Element => {
   const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
   const [bRollModal, setBRollModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
 
+  // Avatar info for voice prompt retrieval in VideoGeneration
+  const [avatarOption, setAvatarOption] = useState<'none' | 'profile' | 'saved' | 'upload'>('none');
+  const [avatarId, setAvatarId] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
   const fromScriptLab = location.state?.fromScriptLab === true;
 
   const uiText = {
@@ -1131,6 +1136,11 @@ export const ImageGeneration = (): JSX.Element => {
 
           setCurrentTopic(stateData.topic?.split('\n')[0].trim() || 'Your Video');
           setVideoSettings(stateData.videoSettings || null);
+
+          // Set avatar info from ScriptLab
+          if (stateData.avatarOption) setAvatarOption(stateData.avatarOption);
+          if (stateData.avatarId) setAvatarId(stateData.avatarId);
+          if (stateData.avatarUrl) setAvatarUrl(stateData.avatarUrl);
         }
         
         if (existingJobs && existingJobs.length > 0) {
@@ -2052,7 +2062,11 @@ export const ImageGeneration = (): JSX.Element => {
         sessionId,
         segments,
         topic: currentTopic,
-        videoSettings
+        videoSettings,
+        // Avatar info for voice prompt retrieval
+        avatarOption,
+        avatarId,
+        avatarUrl
       }
     });
   };

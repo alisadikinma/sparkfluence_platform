@@ -41,6 +41,10 @@ export const ScriptLab = (): JSX.Element => {
     useDnaTone: boolean;
     creativeDna: string[] | null;
     characterDescription: string | null;
+    // Avatar info for voice prompt retrieval
+    avatarOption?: 'none' | 'profile' | 'saved' | 'upload';
+    avatarId?: string | null;
+    avatarUrl?: string | null;
   }) => {
     if (!formData.prompt.trim()) return;
 
@@ -153,6 +157,10 @@ export const ScriptLab = (): JSX.Element => {
             model: formData.model
           },
           characterDescription: formData.characterDescription,
+          // Avatar info for voice prompt retrieval in VideoGeneration
+          avatarOption: formData.avatarOption || 'none',
+          avatarId: formData.avatarId || null,
+          avatarUrl: formData.avatarUrl || null,
           fromScriptLab: true,
         },
       });

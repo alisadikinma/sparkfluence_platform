@@ -492,10 +492,10 @@ async function handlePreviewPrompts(requestBody: any) {
 }
 
 async function handleCreateJobs(supabase: any, requestBody: any) {
-  const { 
-    user_id, 
-    session_id, 
-    segments, 
+  const {
+    user_id,
+    session_id,
+    segments,
     topic = '',
     language = 'indonesian',
     aspect_ratio = '9:16',
@@ -504,10 +504,11 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     preferred_platform = 'auto', // 'auto' | 'sora2' | 'veo31'
     creator_appearance = '', // Optional: creator appearance for voice gender detection
     // ========================================================================
-    // NEW: Avatar/Face selection from UI (2026)
+    // Avatar/Face selection from UI (2026)
     // ========================================================================
-    avatar_selection = 'no_avatar', // 'no_avatar' | 'use_profile' | 'upload_new'
-    profile_image_url = null,       // URL to profile image (if use_profile or upload_new)
+    avatar_selection = 'no_avatar', // 'no_avatar' | 'use_profile' | 'saved'
+    avatar_id = null,               // NEW: ID of saved avatar (from user_avatars)
+    profile_image_url = null,       // URL to profile image (if use_profile or saved)
     creator_gender = 'male',        // 'male' | 'female' - from user profile
     character_description = '',     // Text description of creator (fallback if no image)
   } = requestBody
@@ -533,11 +534,11 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast'
 
   // ========================================================================
-  // VOICE CHARACTER CONSISTENCY FIX:
-  // Generate voice character ONCE for entire session, store in all job records
-  // This ensures the same voice is used across HOOK, BODY, CTA segments
+  // VOICE PROMPT RETRIEVAL (2026 - Avatar-linked)
+  // Voice prompts are created once per avatar via analyze-avatar
+  // Here we only RETRIEVE, never create
   // ========================================================================
-  
+
   // Try to detect language from first segment with script text
   let detectedLanguage = language.toLowerCase()
   const firstScriptSegment = segments.find((s: any) => s.script_text || s.script)
@@ -545,23 +546,65 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     const scriptText = firstScriptSegment.script_text || firstScriptSegment.script || ''
     detectedLanguage = detectScriptLanguage(scriptText)
   }
-  
-  // Try to get creator appearance from segments or request body
-  const creatorAppearanceStr = creator_appearance || 
-    segments.find((s: any) => s.creator_appearance || s.character_description)?.creator_appearance ||
-    segments.find((s: any) => s.creator_appearance || s.character_description)?.character_description ||
-    ''
-  
-  // Generate ONE voice character for entire session
-  const sessionVoiceCharacter = generateVoiceCharacter(detectedLanguage, creatorAppearanceStr)
-  const voiceCharacterJson = JSON.stringify(sessionVoiceCharacter)
-  
-  console.log(`[CREATE_JOBS] 🎤 Session voice character: ${sessionVoiceCharacter.gender}, ${sessionVoiceCharacter.age}, ${detectedLanguage}`)
-  console.log(`[CREATE_JOBS] 👤 Avatar selection: ${avatar_selection}, hasProfileImage: ${avatar_selection !== 'no_avatar'}`)
+
+  // Retrieve voice prompt based on avatar selection
+  let voicePrompt: VoicePromptRecord | null = null
+  let voiceCharacterJson = ''
+  let voicePromptId: string | null = null
+
+  if (avatar_selection === 'saved' && avatar_id) {
+    // Retrieve voice prompt for saved avatar
+    const { data: savedVoice } = await supabase
+      .from('voice_prompts')
+      .select('*')
+      .eq('avatar_id', avatar_id)
+      .single()
+
+    if (savedVoice) {
+      voicePrompt = savedVoice
+      console.log(`[CREATE_JOBS] 🎤 Retrieved voice prompt for saved avatar: ${avatar_id}`)
+    }
+  } else if (avatar_selection === 'use_profile' || avatar_selection === 'profile') {
+    // Retrieve voice prompt for profile avatar
+    const { data: profileVoice } = await supabase
+      .from('voice_prompts')
+      .select('*')
+      .eq('user_id', user_id)
+      .eq('is_profile_avatar', true)
+      .is('avatar_id', null)
+      .single()
+
+    if (profileVoice) {
+      voicePrompt = profileVoice
+      console.log(`[CREATE_JOBS] 🎤 Retrieved voice prompt for profile avatar`)
+    }
+  }
+
+  // If voice prompt found, use it
+  if (voicePrompt) {
+    voiceCharacterJson = voicePrompt.voice_prompt_block
+    voicePromptId = voicePrompt.id
+    console.log(`[CREATE_JOBS] 🎤 Using voice: ${voicePrompt.gender}, ${voicePrompt.voice_age}, ${voicePrompt.language} (ID: ${voicePromptId})`)
+  } else {
+    // Fallback: generate on-the-fly (for backward compatibility)
+    console.log(`[CREATE_JOBS] ⚠️ No voice prompt found for avatar, generating fallback...`)
+    const fallbackVoice = await getOrCreateVoicePrompt(supabase, {
+      user_id,
+      session_id,
+      language: detectedLanguage,
+      gender: creator_gender as 'male' | 'female',
+      creator_appearance: creator_appearance || character_description
+    })
+    voiceCharacterJson = fallbackVoice.voice_prompt_block
+    voicePromptId = fallbackVoice.id !== 'fallback' ? fallbackVoice.id : null
+    console.log(`[CREATE_JOBS] 🎤 Fallback voice: ${fallbackVoice.gender}, ${fallbackVoice.voice_age}`)
+  }
+
+  console.log(`[CREATE_JOBS] 👤 Avatar selection: ${avatar_selection}, avatar_id: ${avatar_id || 'none'}`)
 
   // Determine if profile image is available
   const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
-  const actualCharacterDescription = character_description || creatorAppearanceStr
+  const actualCharacterDescription = character_description || creator_appearance
 
   // Create job records with SAME voice character for all
   const jobRecords = segments.map((segment: any, index: number) => {
@@ -594,7 +637,8 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       environment,
       topic,
       preferred_platform: selectedPlatformForAll, // Store resolved platform (always VEO for auto)
-      voice_character: voiceCharacterJson, // SAME voice for ALL segments
+      // voice_character column removed - now using voice_prompt_id reference
+      voice_prompt_id: voicePromptId, // Reference to voice_prompts table for VEO 3.1 voice
       // ========================================================================
       // NEW: Avatar/Face anchor data (2026)
       // ========================================================================
@@ -648,13 +692,9 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 async function handleProcessSingle(supabase: any, requestBody: any) {
   const { job_id, session_id, user_id, is_retry, force_retry } = requestBody
 
+  // Get API keys (check later based on provider)
   const falApiKey = Deno.env.get('FAL_AI_API_KEY')
-  if (!falApiKey) {
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'CONFIG_ERROR', message: 'FAL_AI_API_KEY not configured' } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-  }
+  const veoApiKey = Deno.env.get('VEO_API_KEY')
 
   // ============================================================================
   // STAGGERED PARALLEL MODE (2026): Allow parallel processing when job_id specified
@@ -865,7 +905,7 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
-    // Build prompt - USE STORED VOICE CHARACTER for consistency across all segments
+    // Build prompt - voice character generated dynamically in buildCinematicVideoPrompt
     // Also pass Face Anchor params from job record (2026)
     const videoPrompt = buildCinematicVideoPrompt({
       segment: {
@@ -881,7 +921,6 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       platform: selectedPlatform,
       duration: Math.min(duration, modelSpecs.maxDuration),
       topic: job.topic || '',
-      voiceCharacter: job.voice_character, // Use stored voice character from session
       // ========================================================================
       // NEW: Face Anchor params from job record (2026)
       // ========================================================================
@@ -953,6 +992,81 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
+
+    // ========================================================================
+    // GEMINIGEN PATH: VEO 3.1 API (webhook-based)
+    // ========================================================================
+    if (modelSpecs.provider === 'geminigen') {
+      if (!veoApiKey) {
+        throw new Error('VEO_API_KEY not configured')
+      }
+
+      console.log(`[PROCESS_SINGLE] Using GeminiGen: ${modelSpecs.key}`)
+
+      // Build form data for GeminiGen API
+      const formData = buildVideoFormData(modelSpecs, {
+        prompt: videoPrompt,
+        aspectRatio: aspectRatioInternal,
+        duration: actualDuration,
+        referenceImageUrl: job.image_url
+      })
+
+      // Submit to GeminiGen API
+      const apiResponse = await fetch(modelSpecs.endpoint, {
+        method: 'POST',
+        headers: { 'x-api-key': veoApiKey },
+        body: formData
+      })
+
+      const responseText = await apiResponse.text()
+      if (!apiResponse.ok) {
+        throw new Error(`GeminiGen API error: ${apiResponse.status} - ${responseText}`)
+      }
+
+      const responseData = JSON.parse(responseText)
+      const veoUuid = responseData.uuid
+
+      if (!veoUuid) {
+        throw new Error('GeminiGen did not return uuid')
+      }
+
+      // Update job with veo_uuid
+      await supabase
+        .from('video_generation_jobs')
+        .update({
+          veo_uuid: veoUuid,
+          platform: selectedPlatform,
+          prompt: videoPrompt.substring(0, 1000),
+          provider: 'geminigen',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', job.id)
+
+      console.log(`[PROCESS_SINGLE] ✅ Job ${job.id} submitted to GeminiGen: uuid=${veoUuid}`)
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            job: {
+              id: job.id,
+              segment_number: job.segment_number,
+              segment_type: job.segment_type,
+              segment_id: job.segment_id,
+              veo_uuid: veoUuid,
+              platform: selectedPlatform,
+              status: JOB_STATUS.PROCESSING,
+              provider: 'geminigen'
+            },
+            message: 'Job submitted to GeminiGen. Webhook will update status when complete.'
+          }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // If we get here, no provider matched
+    throw new Error(`Unknown provider for model: ${modelSpecs.key}`)
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
@@ -1168,6 +1282,7 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
     )
   }
 
+  // GeminiGen.ai API key (used for both VEO 3.1 HD and Fast)
   const veoApiKey = Deno.env.get('VEO_API_KEY')
   if (!veoApiKey) {
     return new Response(
@@ -1206,8 +1321,8 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
       continue
     }
 
-    // Always use VEO 3.1 for best lip-sync quality (unless explicitly overridden)
-    const selectedPlatform: VideoModelKey = prefer_platform || 'veo-3.1-fast'
+    // Use prefer_platform from frontend, default to VEO 3.1 HD for best quality
+    const selectedPlatform: VideoModelKey = prefer_platform || 'veo-3.1-hd'
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
@@ -1253,24 +1368,121 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
       totalCost += modelSpecs.costPerVideo
 
       if (user_id && session_id) {
-        await supabase
+        // Extract additional segment data
+        const shotType = segment.shot_type || segment.shotType || 'B-ROLL'
+        const visualDirection = segment.visual_direction || segment.visualDirection || ''
+
+        // Avatar/creator info from segment or request
+        const avatarSelection = segment.avatar_selection || 'no_avatar'
+        const profileImageUrl = segment.profile_image_url || segment.avatarUrl || null
+        const characterDescription = segment.character_description || null
+        const creatorGender = segment.creator_gender || segment.gender || null
+
+        console.log('[LEGACY] Inserting job to DB:', {
+          user_id,
+          session_id,
+          segment_id: segmentId,
+          veo_uuid: responseData.uuid
+        })
+
+        // Check if job already exists for this session+segment
+        const { data: existingJob, error: findError } = await supabase
           .from('video_generation_jobs')
-          .upsert({
-            user_id,
-            session_id,
-            segment_id: segmentId,
-            segment_type: segmentType,
-            veo_uuid: responseData.uuid,
-            platform: selectedPlatform,
-            status: 1,
-            prompt: videoPrompt.substring(0, 1000),
-            image_url: imageUrl,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'session_id,segment_id',
-            ignoreDuplicates: false
-          })
+          .select('id')
+          .eq('session_id', session_id)
+          .eq('segment_id', segmentId)
+          .single()
+
+        console.log('[LEGACY] Find existing job:', { existingJob, findError: findError?.message })
+
+        if (existingJob) {
+          // UPDATE existing job with veo_uuid
+          const { data: updatedJob, error: updateError } = await supabase
+            .from('video_generation_jobs')
+            .update({
+              veo_uuid: responseData.uuid,
+              platform: selectedPlatform,
+              model_selected: modelSpecs.apiModelName,
+              provider: 'geminigen',
+              status: 1,
+              prompt: videoPrompt.substring(0, 1000),
+              final_prompt: videoPrompt,
+              started_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingJob.id)
+            .select('id, veo_uuid')
+            .single()
+
+          if (updateError) {
+            console.error('[LEGACY] DB update error:', updateError)
+          } else {
+            console.log('[LEGACY] Job updated:', updatedJob?.id, 'veo_uuid:', updatedJob?.veo_uuid)
+          }
+        } else {
+          // INSERT new job
+          const { data: insertedJob, error: insertError } = await supabase
+            .from('video_generation_jobs')
+            .insert({
+              // Core identifiers
+              user_id,
+              session_id,
+              segment_id: segmentId,
+              segment_number: segment.segment_number || i + 1,
+              segment_type: segmentType,
+
+              // Video generation
+              veo_uuid: responseData.uuid,
+              platform: selectedPlatform,
+              model_selected: modelSpecs.apiModelName,
+              provider: 'geminigen',
+              status: 1,
+
+              // Prompt & content
+              prompt: videoPrompt.substring(0, 1000),
+              final_prompt: videoPrompt,
+              script_text: scriptText,
+
+              // Visual settings
+              image_url: imageUrl,
+              shot_type: shotType,
+              visual_direction: visualDirection,
+              emotion: emotion,
+
+              // Technical specs
+              duration_seconds: actualDuration,
+              aspect_ratio: aspect_ratio,
+              resolution: resolution,
+
+              // Avatar/Creator info
+              avatar_selection: avatarSelection,
+              profile_image_url: profileImageUrl,
+              character_description: characterDescription,
+              creator_gender: creatorGender,
+              has_profile_image: !!profileImageUrl,
+
+              // Context
+              topic: topic,
+              language: language,
+              environment: environment,
+
+              // Cost tracking
+              estimated_cost: modelSpecs.costPerVideo,
+
+              // Timestamps
+              started_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .select()
+            .single()
+
+          if (insertError) {
+            console.error('[LEGACY] DB insert error:', insertError)
+          } else {
+            console.log('[LEGACY] Job inserted:', insertedJob?.id, 'veo_uuid:', responseData.uuid)
+          }
+        }
       }
 
       videos.push({
@@ -1563,11 +1775,131 @@ function buildVoiceCharacterAnchor(voiceChar: VoiceCharacter, isSora: boolean = 
   if (isSora) {
     return `VOICE: ${voiceChar.gender}, ${voiceChar.accent}, ${voiceChar.tone}, ${voiceChar.pace}`
   }
-  
+
   return `VOICE CHARACTER:
 ${voiceChar.description}
 Accent: ${voiceChar.accent} | Tone: ${voiceChar.tone} | Pace: ${voiceChar.pace}
 Maintain consistent voice across all segments.`
+}
+
+// ============================================================================
+// VEO 3.1 VOICE PROMPT - Enhanced format for better voice consistency
+// ============================================================================
+
+interface VoicePromptRecord {
+  id: string
+  user_id: string
+  session_id: string
+  language: string
+  gender: string
+  voice_description: string
+  voice_age: string
+  voice_accent: string
+  voice_tone: string
+  voice_pace: string
+  voice_prompt_block: string
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Build VEO 3.1 compliant voice anchor block
+ * This format follows Google's best practices for voice consistency
+ */
+function buildVEO31VoiceAnchor(voiceChar: VoiceCharacter, language: string): string {
+  return `═══════════════════════════════════════════════════════════════
+VOICE ANCHOR (CRITICAL - Identical across ALL segments)
+═══════════════════════════════════════════════════════════════
+Voice: ${voiceChar.description}
+Gender: ${voiceChar.gender}
+Age: ${voiceChar.age}
+Accent: ${voiceChar.accent}
+Tone: ${voiceChar.tone}
+Pace: ${voiceChar.pace}
+Language: ${language}
+Quality: Dry voice, close-mic, professional broadcast quality
+
+CRITICAL INSTRUCTION:
+This EXACT voice character must be maintained identically across
+all video segments (HOOK, BODY, CTA). Do NOT change voice
+characteristics between segments. Consistency is paramount.
+═══════════════════════════════════════════════════════════════`
+}
+
+/**
+ * Get or create voice prompt for a session
+ * Ensures voice consistency by storing in database
+ */
+async function getOrCreateVoicePrompt(
+  supabase: any,
+  params: {
+    user_id: string
+    session_id: string
+    language: string
+    gender: 'male' | 'female'
+    creator_appearance?: string
+  }
+): Promise<VoicePromptRecord> {
+  const { user_id, session_id, language, gender, creator_appearance } = params
+
+  // Check if voice prompt exists for this session
+  const { data: existing, error: selectError } = await supabase
+    .from('voice_prompts')
+    .select('*')
+    .eq('session_id', session_id)
+    .single()
+
+  if (existing && !selectError) {
+    console.log(`[VOICE] Using existing voice prompt for session: ${session_id}`)
+    return existing
+  }
+
+  // Generate new voice character using existing function
+  const voiceChar = generateVoiceCharacter(language, creator_appearance)
+
+  // Build VEO 3.1 compliant voice prompt block
+  const voicePromptBlock = buildVEO31VoiceAnchor(voiceChar, language)
+
+  // Insert to database
+  const { data: created, error: insertError } = await supabase
+    .from('voice_prompts')
+    .insert({
+      user_id,
+      session_id,
+      language,
+      gender: voiceChar.gender,
+      voice_description: voiceChar.description,
+      voice_age: voiceChar.age,
+      voice_accent: voiceChar.accent,
+      voice_tone: voiceChar.tone,
+      voice_pace: voiceChar.pace,
+      voice_prompt_block: voicePromptBlock
+    })
+    .select()
+    .single()
+
+  if (insertError) {
+    console.error(`[VOICE] Failed to create voice prompt: ${insertError.message}`)
+    // Return a fallback object if insert fails (e.g., table doesn't exist yet)
+    return {
+      id: 'fallback',
+      user_id,
+      session_id,
+      language,
+      gender: voiceChar.gender,
+      voice_description: voiceChar.description,
+      voice_age: voiceChar.age,
+      voice_accent: voiceChar.accent,
+      voice_tone: voiceChar.tone,
+      voice_pace: voiceChar.pace,
+      voice_prompt_block: voicePromptBlock,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+  }
+
+  console.log(`[VOICE] Created new voice prompt for session: ${session_id}`)
+  return created
 }
 
 // ============================================================================
@@ -1945,16 +2277,9 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   console.log(`[VIDEO-PROMPT] Platform: ${platform}, Input duration: ${duration}, Safe duration: ${safeDuration}s`)
   
   // ========================================================================
-  // VOICEOVER DURATION FIX (2026): Truncate script to fit duration
-  // This prevents voiceover from exceeding video length
+  // SCRIPT TEXT - No truncation here, handled by frontend
   // ========================================================================
-  const maxWords = calculateMaxWords(safeDuration, language)
-  const truncationResult = truncateScript(rawScriptText || '', maxWords)
-  const scriptText = truncationResult.truncated
-  
-  if (truncationResult.wasModified) {
-    console.log(`[VIDEO-PROMPT] ⚠️ Script truncated: ${truncationResult.originalWords} → ${scriptText.split(/\s+/).length} words (max: ${maxWords} for ${safeDuration}s ${language})`)
-  }
+  const scriptText = rawScriptText || ''
 
   // Extract segment data
   // Truncate visual_direction to first 300 chars for STARTING FRAME (full image prompts are too long)

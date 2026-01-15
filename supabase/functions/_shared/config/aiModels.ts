@@ -142,6 +142,70 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     enabled: true,
     notes: 'BACKUP model only. NO audio support - audio will need FFmpeg merge in post-processing.',
   },
+
+  // ==========================================================================
+  // VEO 3.1 HD (GeminiGen.AI) - Best lip-sync, highest quality
+  // PRIMARY for talking head / CREATOR segments
+  // Docs: https://docs.geminigen.ai - Duration 8s fixed, 9:16 only 720p
+  // ==========================================================================
+  'veo-3.1-hd': {
+    key: 'veo-3.1-hd',
+    displayName: 'VEO 3.1 HD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.50,
+    strengths: ['Best lip-sync quality', 'Native audio generation', 'Voice consistency', 'HD 1080p output'],
+    weaknesses: ['More expensive ($0.50)', '8s fixed duration', '9:16 only 720p'],
+    bestFor: ['CREATOR segments (HOOK, CTA)', 'Talking head videos', 'Premium quality production'],
+    enabled: true,
+    notes: 'PRIMARY for lip-sync quality. Uses webhook for status updates via GeminiGen.AI.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 FAST (GeminiGen.AI) - Fast generation, good lip-sync
+  // DEFAULT model for cost-effective production
+  // Docs: https://docs.geminigen.ai - Duration 8s fixed
+  // ==========================================================================
+  'veo-3.1-fast': {
+    key: 'veo-3.1-fast',
+    displayName: 'VEO 3.1 Fast',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1-fast',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.19,
+    strengths: ['Fast generation', 'Good lip-sync', 'Cost effective ($0.19)', 'Native audio'],
+    weaknesses: ['Max 720p for 9:16', '8s fixed duration'],
+    bestFor: ['High volume production', 'B-ROLL with voiceover', 'Quick turnaround', 'Budget-conscious projects'],
+    enabled: true,
+    notes: 'DEFAULT model for cost-effective production. Good lip-sync at lower cost.',
+  },
 };
 
 // ============================================================================

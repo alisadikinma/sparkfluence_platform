@@ -6,13 +6,96 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// ============================================================================
+// VOICE CHARACTER GENERATION
+// Based on physical description, generate appropriate voice characteristics
+// ============================================================================
+interface VoiceCharacter {
+  gender: 'male' | 'female'
+  description: string
+  age: string
+  accent: string
+  tone: string
+  pace: string
+}
+
+function generateVoiceFromDescription(characterDescription: string, language: string): VoiceCharacter {
+  // Detect gender from description
+  const descLower = characterDescription.toLowerCase()
+  const isFemale = descLower.includes('female') || descLower.includes('woman') || descLower.includes('girl') ||
+                   descLower.includes('perempuan') || descLower.includes('wanita')
+  const gender: 'male' | 'female' = isFemale ? 'female' : 'male'
+
+  // Extract age from description (e.g., "early 30s", "mid 40s", "late 20s")
+  let ageRange = '25-35 years old'
+  const ageMatch = descLower.match(/(early|mid|late)\s*(20s|30s|40s|50s|60s)/)
+  if (ageMatch) {
+    const prefix = ageMatch[1]
+    const decade = ageMatch[2]
+    const decadeNum = parseInt(decade)
+    if (prefix === 'early') {
+      ageRange = `${decadeNum}-${decadeNum + 3} years old`
+    } else if (prefix === 'mid') {
+      ageRange = `${decadeNum + 3}-${decadeNum + 7} years old`
+    } else {
+      ageRange = `${decadeNum + 7}-${decadeNum + 10} years old`
+    }
+  }
+
+  // Detect ethnicity for accent
+  let accent = 'neutral accent'
+  if (descLower.includes('southeast asian') || descLower.includes('indonesian') || descLower.includes('malay')) {
+    accent = language === 'indonesian' ? 'Indonesian native speaker with slight Jakarta urban accent' : 'Southeast Asian accent with clear pronunciation'
+  } else if (descLower.includes('south asian') || descLower.includes('indian')) {
+    accent = language === 'hindi' ? 'Hindi native speaker with modern urban accent' : 'South Asian accent with clear pronunciation'
+  } else if (descLower.includes('east asian') || descLower.includes('chinese') || descLower.includes('korean') || descLower.includes('japanese')) {
+    accent = 'East Asian accent with clear pronunciation'
+  } else if (descLower.includes('caucasian') || descLower.includes('european') || descLower.includes('western')) {
+    accent = 'neutral Western accent with clear pronunciation'
+  }
+
+  // Voice tone based on gender and age
+  const youngAge = parseInt(ageRange) < 30
+  let tone = gender === 'female'
+    ? (youngAge ? 'bright, energetic, friendly, youthful' : 'warm, confident, professional, engaging')
+    : (youngAge ? 'energetic, friendly, casual Gen-Z energy' : 'warm, confident, authoritative, engaging')
+
+  // Pace based on language
+  let pace = 'medium pace, natural conversational rhythm'
+  if (language === 'indonesian') {
+    pace = 'medium-fast pace, natural conversational rhythm with appropriate pauses'
+  } else if (language === 'hindi') {
+    pace = 'medium pace, expressive rhythm with natural Hindi intonation'
+  }
+
+  // Full description
+  const description = `${language === 'indonesian' ? 'Indonesian' : language === 'hindi' ? 'Hindi' : 'English'} ${gender} voice, ${ageRange}, ${tone}`
+
+  return { gender, description, age: ageRange, accent, tone, pace }
+}
+
+function buildVoicePromptBlock(voice: VoiceCharacter, language: string): string {
+  const langLabel = language === 'indonesian' ? 'Indonesian' : language === 'hindi' ? 'Hindi' : 'English'
+
+  return `${langLabel} ${voice.gender} voice, ${voice.age}, ${voice.tone}
+Accent: ${voice.accent} | Tone: ${voice.tone} | Pace: ${voice.pace}
+Maintain consistent voice across all segments.`
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const { image_url, image_base64, user_id, save_to_profile } = await req.json()
+    const {
+      image_url,
+      image_base64,
+      user_id,
+      save_to_profile,
+      avatar_id,           // NEW: if saving for a specific saved avatar
+      language = 'indonesian'  // NEW: for voice generation
+    } = await req.json()
 
     if (!image_url && !image_base64) {
       return new Response(
@@ -155,12 +238,21 @@ OUTPUT FORMAT: Single paragraph, 50-80 words, starting with ancestry/gender. Exa
     console.log('[analyze-avatar] Generated description:', characterDescription)
     console.log('[analyze-avatar] Tokens used:', openaiData.usage?.total_tokens || 'unknown')
 
+    // ========================================================================
+    // GENERATE VOICE CHARACTER FROM PHYSICAL DESCRIPTION
+    // ========================================================================
+    const voiceChar = generateVoiceFromDescription(characterDescription, language)
+    const voicePromptBlock = buildVoicePromptBlock(voiceChar, language)
+    console.log('[analyze-avatar] Generated voice:', voiceChar.gender, voiceChar.age, voiceChar.tone)
+
+    let voicePromptId: string | null = null
+
     // Optionally save to user profile
     if (save_to_profile && user_id) {
       console.log('[analyze-avatar] Saving to user profile...')
       const { error: updateError } = await supabase
         .from('user_profiles')
-        .update({ 
+        .update({
           character_description: characterDescription,
           updated_at: new Date().toISOString()
         })
@@ -168,20 +260,154 @@ OUTPUT FORMAT: Single paragraph, 50-80 words, starting with ancestry/gender. Exa
 
       if (updateError) {
         console.error('[analyze-avatar] Failed to save to profile:', updateError)
-        // Don't fail the request, just log the error
       } else {
         console.log('[analyze-avatar] Saved to profile successfully')
+      }
+
+      // ======================================================================
+      // INSERT/UPDATE VOICE PROMPT FOR PROFILE AVATAR
+      // ======================================================================
+      const { data: existingVoice } = await supabase
+        .from('voice_prompts')
+        .select('id')
+        .eq('user_id', user_id)
+        .eq('is_profile_avatar', true)
+        .is('avatar_id', null)
+        .single()
+
+      if (existingVoice) {
+        // Update existing
+        const { error: voiceUpdateError } = await supabase
+          .from('voice_prompts')
+          .update({
+            language,
+            gender: voiceChar.gender,
+            voice_description: voiceChar.description,
+            voice_age: voiceChar.age,
+            voice_accent: voiceChar.accent,
+            voice_tone: voiceChar.tone,
+            voice_pace: voiceChar.pace,
+            voice_prompt_block: voicePromptBlock,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingVoice.id)
+
+        if (!voiceUpdateError) {
+          voicePromptId = existingVoice.id
+          console.log('[analyze-avatar] Updated profile voice prompt:', voicePromptId)
+        }
+      } else {
+        // Insert new
+        const { data: newVoice, error: voiceInsertError } = await supabase
+          .from('voice_prompts')
+          .insert({
+            user_id,
+            is_profile_avatar: true,
+            avatar_id: null,
+            session_id: null,
+            language,
+            gender: voiceChar.gender,
+            voice_description: voiceChar.description,
+            voice_age: voiceChar.age,
+            voice_accent: voiceChar.accent,
+            voice_tone: voiceChar.tone,
+            voice_pace: voiceChar.pace,
+            voice_prompt_block: voicePromptBlock
+          })
+          .select('id')
+          .single()
+
+        if (!voiceInsertError && newVoice) {
+          voicePromptId = newVoice.id
+          console.log('[analyze-avatar] Created profile voice prompt:', voicePromptId)
+        }
+      }
+    }
+
+    // ========================================================================
+    // INSERT/UPDATE VOICE PROMPT FOR SAVED AVATAR
+    // ========================================================================
+    if (avatar_id && user_id) {
+      console.log('[analyze-avatar] Saving voice prompt for saved avatar:', avatar_id)
+
+      // Also update character_description in user_avatars
+      await supabase
+        .from('user_avatars')
+        .update({ character_description: characterDescription })
+        .eq('id', avatar_id)
+
+      const { data: existingVoice } = await supabase
+        .from('voice_prompts')
+        .select('id')
+        .eq('avatar_id', avatar_id)
+        .single()
+
+      if (existingVoice) {
+        // Update existing
+        const { error: voiceUpdateError } = await supabase
+          .from('voice_prompts')
+          .update({
+            language,
+            gender: voiceChar.gender,
+            voice_description: voiceChar.description,
+            voice_age: voiceChar.age,
+            voice_accent: voiceChar.accent,
+            voice_tone: voiceChar.tone,
+            voice_pace: voiceChar.pace,
+            voice_prompt_block: voicePromptBlock,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingVoice.id)
+
+        if (!voiceUpdateError) {
+          voicePromptId = existingVoice.id
+          console.log('[analyze-avatar] Updated avatar voice prompt:', voicePromptId)
+        }
+      } else {
+        // Insert new
+        const { data: newVoice, error: voiceInsertError } = await supabase
+          .from('voice_prompts')
+          .insert({
+            user_id,
+            avatar_id,
+            is_profile_avatar: false,
+            session_id: null,
+            language,
+            gender: voiceChar.gender,
+            voice_description: voiceChar.description,
+            voice_age: voiceChar.age,
+            voice_accent: voiceChar.accent,
+            voice_tone: voiceChar.tone,
+            voice_pace: voiceChar.pace,
+            voice_prompt_block: voicePromptBlock
+          })
+          .select('id')
+          .single()
+
+        if (!voiceInsertError && newVoice) {
+          voicePromptId = newVoice.id
+          console.log('[analyze-avatar] Created avatar voice prompt:', voicePromptId)
+        }
       }
     }
 
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        data: { 
+      JSON.stringify({
+        success: true,
+        data: {
           character_description: characterDescription,
+          voice_prompt: {
+            id: voicePromptId,
+            gender: voiceChar.gender,
+            age: voiceChar.age,
+            accent: voiceChar.accent,
+            tone: voiceChar.tone,
+            pace: voiceChar.pace,
+            prompt_block: voicePromptBlock
+          },
           provider: 'openai-gpt4o-mini',
           tokens_used: openaiData.usage?.total_tokens || 0
-        } 
+        }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

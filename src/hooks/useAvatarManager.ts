@@ -288,49 +288,51 @@ export function useAvatarManager({ userId, language }: UseAvatarManagerProps): U
   }, [pendingUploadFile, userId, newAvatarName, savedAvatars.length, language]);
 
   // NEW: Analyze avatar on-demand (for providers that don't support image reference)
-  const analyzeAvatarOnDemand = useCallback(async (): Promise<string | null> => {
+  // Also generates and stores voice_prompt for VEO 3.1 video generation
+  const analyzeAvatarOnDemand = useCallback(async (lang: string = 'indonesian'): Promise<string | null> => {
     // If we already have a description, return it
     if (characterDescription) return characterDescription;
-    
+
     // If no avatar URL selected, return null
     if (!selectedAvatarUrl) return null;
-    
+
     setAnalyzingAvatar(true);
-    
+
     try {
       const { data, error } = await supabase.functions.invoke('analyze-avatar', {
-        body: { 
-          image_url: selectedAvatarUrl, 
-          user_id: userId, 
-          save_to_profile: avatarOption === 'profile'
+        body: {
+          image_url: selectedAvatarUrl,
+          user_id: userId,
+          save_to_profile: avatarOption === 'profile',
+          avatar_id: avatarOption === 'saved' && selectedSavedAvatar ? selectedSavedAvatar.id : null,
+          language: lang  // Pass language for voice prompt generation
         }
       });
-      
+
       if (error) throw error;
-      
+
       const desc = data?.data?.character_description || null;
-      
+      const voicePrompt = data?.data?.voice_prompt || null;
+
       if (desc) {
         setCharacterDescription(desc);
-        
+
         // Update profile or saved avatar with the description
         if (avatarOption === 'profile') {
           setProfileCharacterDesc(desc);
         } else if (avatarOption === 'saved' && selectedSavedAvatar) {
-          // Update in database
-          await supabase
-            .from('user_avatars')
-            .update({ character_description: desc })
-            .eq('id', selectedSavedAvatar.id);
-          
-          // Update local state
-          setSavedAvatars(prev => prev.map(a => 
+          // Update local state (database already updated by edge function)
+          setSavedAvatars(prev => prev.map(a =>
             a.id === selectedSavedAvatar.id ? { ...a, character_description: desc } : a
           ));
           setSelectedSavedAvatar(prev => prev ? { ...prev, character_description: desc } : null);
         }
       }
-      
+
+      if (voicePrompt) {
+        console.log('[useAvatarManager] Voice prompt created:', voicePrompt.id, voicePrompt.gender, voicePrompt.age);
+      }
+
       return desc;
     } catch (err) {
       console.error('Error analyzing avatar on-demand:', err);
