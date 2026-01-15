@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { callGeminiHybrid, callOpenRouterHybrid } from '../_shared/apiKeyRotation.ts'
+import { callGeminiHybrid, callOpenRouterHybrid, getApiKeyFromPool, incrementUsage } from '../_shared/apiKeyRotation.ts'
 import { 
   PROJECT_INSTRUCTION, 
   CORE_FRAMEWORKS, 
@@ -152,42 +152,89 @@ Original script:
 Shortened script (max ${target_words} words):`;
 
       try {
-        const geminiResult = await callGeminiHybrid(
-          supabase,
-          [{ role: 'user', content: shortenPrompt }],
-          { model: 'gemini-2.0-flash', temperature: 0.7, maxTokens: 500 }
-        )
+        // Get API key from pool only (no secrets fallback)
+        const geminiKey = await getApiKeyFromPool(supabase, 'gemini')
 
-        if (geminiResult.success && geminiResult.content) {
-          const shortenedScript = geminiResult.content.trim().replace(/^["']|["']$/g, '')
-          return new Response(
-            JSON.stringify({ success: true, shortened_script: shortenedScript }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        if (geminiKey) {
+          console.log(`[Shorten] Using Gemini from pool: ${geminiKey.keyName}`)
+
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: shortenPrompt }] }],
+                generationConfig: { temperature: 0.7, maxOutputTokens: 500 }
+              })
+            }
           )
+
+          if (response.ok) {
+            const data = await response.json()
+            const content = data?.candidates?.[0]?.content?.parts?.[0]?.text
+
+            if (content) {
+              // Increment usage
+              await incrementUsage(supabase, geminiKey.keyId, 1)
+
+              const shortenedScript = content.trim().replace(/^["']|["']$/g, '')
+              return new Response(
+                JSON.stringify({ success: true, shortened_script: shortenedScript }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              )
+            }
+          } else {
+            console.log(`[Shorten] Gemini returned ${response.status}`)
+          }
         }
 
-        console.log('[Shorten] Gemini failed:', geminiResult.error, '- trying OpenRouter fallback...')
+        console.log('[Shorten] Gemini failed/unavailable, trying OpenRouter from pool...')
 
-        // Fallback to OpenRouter if Gemini fails
-        const openRouterResult = await callOpenRouterHybrid(
-          supabase,
-          [{ role: 'user', content: shortenPrompt }],
-          { model: 'meta-llama/llama-3.3-70b-instruct', temperature: 0.7, maxTokens: 500 }
-        )
+        // Fallback to OpenRouter from pool
+        const openRouterKey = await getApiKeyFromPool(supabase, 'openrouter')
 
-        // OpenRouter returns data.choices[0].message.content
-        const orContent = openRouterResult.data?.choices?.[0]?.message?.content
-        if (!openRouterResult.error && orContent) {
-          const shortenedScript = orContent.trim().replace(/^["']|["']$/g, '')
-          return new Response(
-            JSON.stringify({ success: true, shortened_script: shortenedScript }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          )
+        if (openRouterKey) {
+          console.log(`[Shorten] Using OpenRouter from pool: ${openRouterKey.keyName}`)
+
+          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${openRouterKey.apiKey}`,
+              'HTTP-Referer': 'https://sparkfluence.com',
+              'X-Title': 'Sparkfluence'
+            },
+            body: JSON.stringify({
+              model: 'meta-llama/llama-3.3-70b-instruct',
+              messages: [{ role: 'user', content: shortenPrompt }],
+              temperature: 0.7,
+              max_tokens: 500
+            })
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            const orContent = data?.choices?.[0]?.message?.content
+
+            if (orContent) {
+              // Increment usage
+              await incrementUsage(supabase, openRouterKey.keyId, 1)
+
+              const shortenedScript = orContent.trim().replace(/^["']|["']$/g, '')
+              return new Response(
+                JSON.stringify({ success: true, shortened_script: shortenedScript }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              )
+            }
+          } else {
+            console.log(`[Shorten] OpenRouter returned ${response.status}`)
+          }
         }
 
-        console.error('[Shorten] Both Gemini and OpenRouter failed')
+        console.error('[Shorten] No API keys available in pool')
         return new Response(
-          JSON.stringify({ success: false, error: 'Failed to shorten script' }),
+          JSON.stringify({ success: false, error: 'No API keys available. Please add keys to api_keys_pool.' }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       } catch (err) {
