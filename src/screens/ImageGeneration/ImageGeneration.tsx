@@ -899,6 +899,9 @@ export const ImageGeneration = (): JSX.Element => {
   const [avatarId, setAvatarId] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
+  // AI Script Shortener state
+  const [shorteningSegmentId, setShorteningSegmentId] = useState<string | null>(null);
+
   const fromScriptLab = location.state?.fromScriptLab === true;
 
   const uiText = {
@@ -1581,6 +1584,38 @@ export const ImageGeneration = (): JSX.Element => {
       setShowBackgroundToast(false);
     }
   };
+
+  // AI Script Shortener - uses Gemini to shorten script while keeping context
+  const handleShortenScript = useCallback(async (segmentId: string, currentScript: string, targetWords: number) => {
+    setShorteningSegmentId(segmentId);
+
+    try {
+      const scriptLang = videoSettings?.language || language || 'id';
+
+      const { data, error } = await supabase.functions.invoke('generate-script', {
+        body: {
+          mode: 'shorten',
+          script: currentScript,
+          target_words: targetWords,
+          language: scriptLang,
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.shortened_script) {
+        setSegments(prev => prev.map(seg =>
+          seg.id === segmentId ? { ...seg, script: data.shortened_script } : seg
+        ));
+      } else if (data?.error) {
+        console.error('[Shorten] API error:', data.error);
+      }
+    } catch (err) {
+      console.error('[Shorten] Error:', err);
+    } finally {
+      setShorteningSegmentId(null);
+    }
+  }, [videoSettings?.language, language]);
 
   const handleGenerateImage = useCallback(async (segmentId: string): Promise<boolean> => {
     const segment = segments.find(s => s.id === segmentId);
@@ -2403,24 +2438,43 @@ export const ImageGeneration = (): JSX.Element => {
                           <div>
                             {(() => {
                               const wordStatus = getWordLimitStatus(
-                                segment.script, 
-                                segment.durationSeconds, 
+                                segment.script,
+                                segment.durationSeconds,
                                 (videoSettings?.language || language || 'id') as LanguageCode
                               );
+                              const isShortening = shorteningSegmentId === segment.id;
                               return (
                                 <>
                                   <div className="flex items-center justify-between mb-1.5">
                                     <label className="text-text-secondary text-xs">{uiText.script}</label>
-                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                                      wordStatus.status === 'error' 
-                                        ? 'bg-red-500/20 text-red-500' 
-                                        : wordStatus.status === 'warning'
-                                        ? 'bg-amber-500/20 text-amber-500'
-                                        : 'bg-green-500/20 text-green-500'
-                                    }`}>
-                                      {wordStatus.count}/{wordStatus.max} {language === 'id' ? 'kata' : 'words'}
-                                      {wordStatus.status === 'error' && ` (+${wordStatus.overBy})`}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                        wordStatus.status === 'error'
+                                          ? 'bg-red-500/20 text-red-500'
+                                          : wordStatus.status === 'warning'
+                                          ? 'bg-amber-500/20 text-amber-500'
+                                          : 'bg-green-500/20 text-green-500'
+                                      }`}>
+                                        {wordStatus.count}/{wordStatus.max} {language === 'id' ? 'kata' : 'words'}
+                                        {wordStatus.status === 'error' && ` (+${wordStatus.overBy})`}
+                                      </span>
+                                      {/* AI Shorten Button - only show when script is too long */}
+                                      {wordStatus.status === 'error' && (
+                                        <button
+                                          onClick={() => handleShortenScript(segment.id, segment.script, wordStatus.max)}
+                                          disabled={isShortening}
+                                          className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/20 hover:bg-primary/30 text-primary text-[10px] font-medium transition-colors disabled:opacity-50"
+                                          title={language === 'id' ? 'Perpendek dengan AI' : 'Shorten with AI'}
+                                        >
+                                          {isShortening ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <Sparkles className="w-3 h-3" />
+                                          )}
+                                          <span className="hidden sm:inline">AI</span>
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                   <textarea
                                     value={segment.script}
@@ -2431,8 +2485,8 @@ export const ImageGeneration = (): JSX.Element => {
                                       ));
                                     }}
                                     className={`w-full bg-surface border rounded-lg p-3 text-text-primary text-sm min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 ${
-                                      wordStatus.status === 'error' 
-                                        ? 'border-red-500/50' 
+                                      wordStatus.status === 'error'
+                                        ? 'border-red-500/50'
                                         : wordStatus.status === 'warning'
                                         ? 'border-amber-500/50'
                                         : 'border-border-default'
@@ -2440,11 +2494,13 @@ export const ImageGeneration = (): JSX.Element => {
                                     placeholder={language === 'id' ? 'Tulis script...' : 'Write script...'}
                                   />
                                   {wordStatus.status === 'error' && (
-                                    <p className="text-[10px] text-red-500 mt-1">
-                                      {language === 'id' 
-                                        ? `⚠️ Script terlalu panjang! Kurangi ${wordStatus.overBy} kata agar sesuai durasi ${segment.durationSeconds}s`
-                                        : `⚠️ Script too long! Remove ${wordStatus.overBy} words to fit ${segment.durationSeconds}s duration`
-                                      }
+                                    <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
+                                      <span>
+                                        {language === 'id'
+                                          ? `⚠️ Script terlalu panjang! Kurangi ${wordStatus.overBy} kata agar sesuai durasi ${segment.durationSeconds}s`
+                                          : `⚠️ Script too long! Remove ${wordStatus.overBy} words to fit ${segment.durationSeconds}s duration`
+                                        }
+                                      </span>
                                     </p>
                                   )}
                                 </>

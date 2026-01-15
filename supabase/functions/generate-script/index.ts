@@ -106,24 +106,97 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    const { 
-      input_type, 
-      content, 
-      duration, 
+    const requestBody = await req.json()
+    const {
+      input_type,
+      content,
+      duration,
       aspect_ratio,
       resolution,
-      platform, 
-      language, 
+      platform,
+      language,
       user_id,
       segment_type,
       // DNA Tone parameters (from TopicSelection)
       use_dna_tone,
       creative_dna,
       // Video model for segment duration constraints
-      video_model
+      video_model,
+      // Shorten mode parameters
+      mode,
+      script,
+      target_words
       // NOTE: character_description is handled by VideoEditor -> generate-images
       // No need to pass avatar URL here anymore
-    } = await req.json()
+    } = requestBody
+
+    // ============================================================
+    // SHORTEN MODE - Quick script shortening with AI
+    // ============================================================
+    if (mode === 'shorten' && script && target_words) {
+      console.log(`[Script] Shorten mode - target: ${target_words} words`)
+
+      const shortenLang = sanitizeLanguage(language)
+      const shortenPrompt = shortenLang === 'indonesian'
+        ? `Perpendek script berikut menjadi MAKSIMAL ${target_words} kata sambil mempertahankan pesan dan konteks utama. Jaga gaya bahasa casual Gen-Z Indonesia (gue/lo, bukan saya/kamu). Output HANYA script yang sudah diperpendek, tanpa penjelasan.
+
+Script asli:
+"${script}"
+
+Script pendek (maks ${target_words} kata):`
+        : `Shorten the following script to MAXIMUM ${target_words} words while keeping the main message and context. Keep it conversational and engaging. Output ONLY the shortened script, no explanations.
+
+Original script:
+"${script}"
+
+Shortened script (max ${target_words} words):`;
+
+      try {
+        const geminiResult = await callGeminiHybrid(
+          supabase,
+          [{ role: 'user', content: shortenPrompt }],
+          'gemini-2.0-flash',
+          0.7,
+          500
+        )
+
+        if (geminiResult.success && geminiResult.text) {
+          const shortenedScript = geminiResult.text.trim().replace(/^["']|["']$/g, '')
+          return new Response(
+            JSON.stringify({ success: true, shortened_script: shortenedScript }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          )
+        }
+
+        // Fallback to OpenRouter if Gemini fails
+        const openRouterResult = await callOpenRouterHybrid(
+          supabase,
+          [{ role: 'user', content: shortenPrompt }],
+          'meta-llama/llama-3.3-70b-instruct',
+          0.7,
+          500
+        )
+
+        if (openRouterResult.success && openRouterResult.text) {
+          const shortenedScript = openRouterResult.text.trim().replace(/^["']|["']$/g, '')
+          return new Response(
+            JSON.stringify({ success: true, shortened_script: shortenedScript }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          )
+        }
+
+        return new Response(
+          JSON.stringify({ success: false, error: 'Failed to shorten script' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      } catch (err) {
+        console.error('[Shorten] Error:', err)
+        return new Response(
+          JSON.stringify({ success: false, error: 'Shorten failed' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
 
     if (!content || !input_type) {
       return new Response(
