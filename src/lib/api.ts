@@ -24,8 +24,9 @@ export const apiEndpoints = {
   // Video processing
   combineVideo: `${API_URL}/api/combine-final-video-v2`,
   addSubtitles: `${API_URL}/api/add-subtitles`,
+  addBGM: `${API_URL}/api/add-bgm`,
   jobStatus: (jobId: string) => `${API_URL}/api/job-status/${jobId}`,
-  
+
   // Health check
   health: `${API_URL}/api/health`,
 } as const;

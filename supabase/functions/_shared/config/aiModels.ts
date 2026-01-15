@@ -776,8 +776,107 @@ export const TTS_MODELS: Record<string, TTSModelConfig> = {
 };
 
 // ============================================================================
+// MUSIC MODEL CONFIGURATION
+// ============================================================================
+
+export interface MusicModelConfig {
+  /** Unique key for this model */
+  key: string;
+  /** Display name for UI */
+  displayName: string;
+  /** Provider */
+  provider: Provider;
+  /** API endpoint URL */
+  endpoint: string;
+  /** Model name to send to API */
+  apiModelName: string;
+  /** Supports structure tags like [Intro], [Verse], [Chorus] */
+  supportsStructureTags: boolean;
+  /** Available structure tags */
+  structureTags?: string[];
+  /** Supports lyrics input */
+  supportsLyrics: boolean;
+  /** Output audio format */
+  outputFormat: 'mp3' | 'wav';
+  /** Prompt length limits */
+  promptLimits: { min: number; max: number };
+  /** Lyrics length limits */
+  lyricsLimits: { min: number; max: number };
+  /** Estimated cost per request */
+  costPerRequest: number;
+  /** Generation speed multiplier (e.g., 2 = generates 2x faster than real-time) */
+  generationSpeed: number;
+  /** Model strengths */
+  strengths: string[];
+  /** Model weaknesses */
+  weaknesses: string[];
+  /** Best use cases */
+  bestFor: string[];
+  /** Is this model active/enabled */
+  enabled: boolean;
+  /** Notes/comments */
+  notes?: string;
+}
+
+export const MUSIC_MODELS: Record<string, MusicModelConfig> = {
+  // ==========================================================================
+  // MINIMAX MUSIC V2 (fal.ai) - AI Music Generation with Lyrics Support
+  // Docs: https://fal.ai/models/fal-ai/minimax-music/v2/api
+  // ==========================================================================
+  'minimax-music-v2': {
+    key: 'minimax-music-v2',
+    displayName: 'Minimax Music v2 (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/minimax-music/v2',
+    apiModelName: 'fal-ai/minimax-music/v2',
+    supportsStructureTags: true,
+    structureTags: ['[Intro]', '[Verse]', '[Chorus]', '[Bridge]', '[Outro]'],
+    supportsLyrics: true,
+    outputFormat: 'mp3',
+    promptLimits: { min: 10, max: 300 },
+    lyricsLimits: { min: 10, max: 3000 },
+    costPerRequest: 0.10,
+    generationSpeed: 2, // ~2x real-time
+    strengths: [
+      'High-quality AI music generation',
+      'Structure tags for song arrangement',
+      'Lyrics support for vocal tracks',
+      'Multiple genre support',
+      'Good for background music'
+    ],
+    weaknesses: [
+      'Fixed output duration (~30s-60s)',
+      'English lyrics preferred',
+      'May take longer than TTS'
+    ],
+    bestFor: [
+      'Background music for videos',
+      'BGM for short-form content',
+      'Intro/outro music',
+      'Mood-setting ambient tracks'
+    ],
+    enabled: true,
+    notes: 'PRIMARY music model for Sparkfluence BGM feature. Uses fal.ai synchronous endpoint.',
+  },
+};
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * Get music model config by key
+ */
+export function getMusicModel(key: string): MusicModelConfig | undefined {
+  return MUSIC_MODELS[key];
+}
+
+/**
+ * Get all enabled music models
+ */
+export function getEnabledMusicModels(): MusicModelConfig[] {
+  return Object.values(MUSIC_MODELS).filter(m => m.enabled);
+}
 
 /**
  * Get video model config by key
