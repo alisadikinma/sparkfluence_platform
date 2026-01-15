@@ -259,6 +259,7 @@ async def handle_failure(supabase, job: dict, data: dict):
 async def trigger_video_resubmission(job_id: str):
     """
     Call Supabase Edge Function to resubmit the job.
+    Uses mode: process_single to trigger video generation for a specific job.
     """
     supabase_url = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL')
     service_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_SERVICE_KEY')
@@ -267,14 +268,15 @@ async def trigger_video_resubmission(job_id: str):
         logger.error(f"[RETRY] Cannot resubmit job {job_id}: Supabase not configured")
         return False
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             response = await client.post(
                 f"{supabase_url}/functions/v1/generate-videos",
                 json={
-                    "action": "process_single",
+                    "mode": "process_single",  # Fixed: was "action", should be "mode"
                     "job_id": job_id,
-                    "is_retry": True
+                    "is_retry": True,
+                    "force_retry": True  # Force retry even if status is not pending
                 },
                 headers={
                     "Authorization": f"Bearer {service_key}",
@@ -372,32 +374,70 @@ async def check_and_notify_completion(supabase, job: dict):
 async def process_pending_retries():
     """
     Process jobs that are ready for retry.
-    Called by external cron job every minute.
+    Called by external cron job every 2 minutes.
 
-    This replaces asyncio.create_task which was lost on server restart.
+    Handles:
+    1. FAILED jobs (status=3) with retry_count < MAX_RETRIES
+    2. PENDING jobs (status=0) with next_retry_at in the past
     """
     try:
         supabase = get_supabase_client()
-
-        # Find jobs ready for retry (status=0 with next_retry_at in the past)
         now = datetime.utcnow().isoformat()
+        processed = 0
+        found_total = 0
 
-        jobs_result = supabase.table("video_generation_jobs") \
-            .select("id, retry_count") \
-            .eq("status", 0) \
-            .not_.is_("next_retry_at", "null") \
-            .lte("next_retry_at", now) \
-            .limit(10) \
+        # 1. Find FAILED jobs that can be retried (retry_count < MAX_RETRIES)
+        failed_jobs = supabase.table("video_generation_jobs") \
+            .select("id, retry_count, segment_type") \
+            .eq("status", 3) \
+            .lt("retry_count", MAX_RETRIES) \
+            .limit(5) \
             .execute()
 
-        processed = 0
-        for job in jobs_result.data or []:
-            logger.info(f"[RETRY_SCHEDULER] Processing retry for job {job['id']} (attempt {job['retry_count']})")
+        for job in failed_jobs.data or []:
+            retry_count = job.get("retry_count", 0) or 0
+            logger.info(f"[RETRY] Retrying FAILED job {job['id']} ({job.get('segment_type')}) - attempt {retry_count + 1}")
+
+            # Reset to pending and increment retry count
+            supabase.table("video_generation_jobs").update({
+                "status": 0,  # PENDING
+                "retry_count": retry_count + 1,
+                "error_message": None,
+                "veo_uuid": None,
+                "updated_at": now
+            }).eq("id", job["id"]).execute()
+
+            # Trigger resubmission
             success = await trigger_video_resubmission(job["id"])
             if success:
                 processed += 1
 
-        return {"status": "ok", "processed": processed, "found": len(jobs_result.data or [])}
+        found_total += len(failed_jobs.data or [])
+
+        # 2. Find PENDING jobs with scheduled retry time
+        pending_jobs = supabase.table("video_generation_jobs") \
+            .select("id, retry_count, segment_type") \
+            .eq("status", 0) \
+            .not_.is_("next_retry_at", "null") \
+            .lte("next_retry_at", now) \
+            .limit(5) \
+            .execute()
+
+        for job in pending_jobs.data or []:
+            logger.info(f"[RETRY] Processing scheduled retry for job {job['id']} ({job.get('segment_type')})")
+            success = await trigger_video_resubmission(job["id"])
+            if success:
+                processed += 1
+
+        found_total += len(pending_jobs.data or [])
+
+        return {
+            "status": "ok",
+            "processed": processed,
+            "found": found_total,
+            "failed_jobs": len(failed_jobs.data or []),
+            "pending_jobs": len(pending_jobs.data or [])
+        }
 
     except Exception as e:
         logger.error(f"[RETRY_SCHEDULER] Error: {e}")

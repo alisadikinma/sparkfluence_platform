@@ -28,7 +28,9 @@
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" status)",
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" diff --stat)",
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" log --oneline -5)",
-      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" add -A)"
+      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" add -A)",
+      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" commit -m \"$\\(cat <<''EOF''\nfeat: add GeminiGen VEO 3.1 webhook support and fix video generation\n\n- Add geminigen-webhook edge function to receive video completion callbacks\n- Add GeminiGen handler to handleProcessSingle in generate-videos\n- Fix voice_character column error \\(column was removed, use voice_prompt_id\\)\n- Add VEO 3.1 models to aiModels.ts configuration\n- Add voice_prompts table and migrations for voice management\n- Enhance VideoGeneration UI with better job status tracking\n- Update analyze-avatar for better face detection\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" push origin main)"
     ]
   }
 }

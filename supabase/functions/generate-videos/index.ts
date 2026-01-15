@@ -656,34 +656,56 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     }
   })
 
-  // Upsert all jobs (update if exists)
-  const { data: jobs, error: insertError } = await supabase
+  // Check if jobs already exist for this session
+  const { data: existingJobs } = await supabase
     .from('video_generation_jobs')
-    .upsert(jobRecords, {
-      onConflict: 'session_id,segment_id',
-      ignoreDuplicates: false
-    })
-    .select()
+    .select('*')
+    .eq('session_id', session_id)
+    .eq('user_id', user_id)
+    .order('segment_number', { ascending: true })
 
-  if (insertError) {
-    console.error('[CREATE_JOBS] Insert error:', insertError)
-    return new Response(
-      JSON.stringify({ success: false, error: { code: 'DB_ERROR', message: insertError.message } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+  // Find which segments are missing (not in existing jobs)
+  const existingSegmentIds = new Set(existingJobs?.map(j => j.segment_id) || [])
+  const missingRecords = jobRecords.filter(r => !existingSegmentIds.has(r.segment_id))
+
+  console.log(`[CREATE_JOBS] Existing jobs: ${existingJobs?.length || 0}, Missing segments: ${missingRecords.length}`)
+
+  // Insert missing job records (if any)
+  let newJobs: any[] = []
+  if (missingRecords.length > 0) {
+    const { data: insertedJobs, error: insertError } = await supabase
+      .from('video_generation_jobs')
+      .insert(missingRecords)
+      .select()
+
+    if (insertError) {
+      console.error('[CREATE_JOBS] Insert error:', insertError)
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'DB_ERROR', message: insertError.message } }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    newJobs = insertedJobs || []
+    console.log(`[CREATE_JOBS] ✅ Created ${newJobs.length} new jobs for missing segments`)
   }
 
-  console.log(`[CREATE_JOBS] ✅ Created/updated ${jobs?.length || segments.length} jobs`)
+  // Combine existing and new jobs
+  const allJobs = [...(existingJobs || []), ...newJobs].sort((a, b) => a.segment_number - b.segment_number)
+  console.log(`[CREATE_JOBS] ✅ Total jobs: ${allJobs.length} (${existingJobs?.length || 0} existing + ${newJobs.length} new)`)
 
   return new Response(
-    JSON.stringify({ 
-      success: true, 
-      data: { 
-        jobs: jobs || jobRecords,
+    JSON.stringify({
+      success: true,
+      data: {
+        jobs: allJobs,
         session_id,
-        total_jobs: segments.length,
-        message: 'Jobs created successfully. Start processing with process_single mode.'
-      } 
+        total_jobs: allJobs.length,
+        new_jobs: newJobs.length,
+        existing_jobs: existingJobs?.length || 0,
+        message: newJobs.length > 0
+          ? `Created ${newJobs.length} new jobs, ${existingJobs?.length || 0} already existed.`
+          : 'All jobs already exist for this session.'
+      }
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   )

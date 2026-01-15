@@ -1448,6 +1448,13 @@ export const VideoGeneration = (): JSX.Element => {
         });
       }
 
+      // Reset processing flag before starting (in case it's stuck from previous run)
+      isSequentialProcessingRef.current = false;
+
+      // Check how many pending jobs exist
+      const pendingCount = data?.data?.jobs?.filter((j: any) => j.status === 0).length || 0;
+      console.log(`[VideoGen] Jobs ready, ${pendingCount} pending. Starting processing...`);
+
       // Start processing loop
       startBackgroundProcessing(sessionId);
 
