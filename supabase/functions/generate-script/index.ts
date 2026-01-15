@@ -155,36 +155,37 @@ Shortened script (max ${target_words} words):`;
         const geminiResult = await callGeminiHybrid(
           supabase,
           [{ role: 'user', content: shortenPrompt }],
-          'gemini-2.0-flash',
-          0.7,
-          500
+          { model: 'gemini-2.0-flash', temperature: 0.7, maxTokens: 500 }
         )
 
-        if (geminiResult.success && geminiResult.text) {
-          const shortenedScript = geminiResult.text.trim().replace(/^["']|["']$/g, '')
+        if (geminiResult.success && geminiResult.content) {
+          const shortenedScript = geminiResult.content.trim().replace(/^["']|["']$/g, '')
           return new Response(
             JSON.stringify({ success: true, shortened_script: shortenedScript }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           )
         }
+
+        console.log('[Shorten] Gemini failed:', geminiResult.error, '- trying OpenRouter fallback...')
 
         // Fallback to OpenRouter if Gemini fails
         const openRouterResult = await callOpenRouterHybrid(
           supabase,
           [{ role: 'user', content: shortenPrompt }],
-          'meta-llama/llama-3.3-70b-instruct',
-          0.7,
-          500
+          { model: 'meta-llama/llama-3.3-70b-instruct', temperature: 0.7, maxTokens: 500 }
         )
 
-        if (openRouterResult.success && openRouterResult.text) {
-          const shortenedScript = openRouterResult.text.trim().replace(/^["']|["']$/g, '')
+        // OpenRouter returns data.choices[0].message.content
+        const orContent = openRouterResult.data?.choices?.[0]?.message?.content
+        if (!openRouterResult.error && orContent) {
+          const shortenedScript = orContent.trim().replace(/^["']|["']$/g, '')
           return new Response(
             JSON.stringify({ success: true, shortened_script: shortenedScript }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           )
         }
 
+        console.error('[Shorten] Both Gemini and OpenRouter failed')
         return new Response(
           JSON.stringify({ success: false, error: 'Failed to shorten script' }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -192,7 +193,7 @@ Shortened script (max ${target_words} words):`;
       } catch (err) {
         console.error('[Shorten] Error:', err)
         return new Response(
-          JSON.stringify({ success: false, error: 'Shorten failed' }),
+          JSON.stringify({ success: false, error: 'Shorten failed: ' + (err instanceof Error ? err.message : 'Unknown') }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
