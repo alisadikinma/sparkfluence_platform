@@ -76,26 +76,30 @@ export interface VideoModelConfig {
   bestFor: string[];
   /** Is this model active/enabled */
   enabled: boolean;
+  /** Supports audio_url parameter for TTS integration */
+  supportsAudio?: boolean;
   /** Notes/comments */
   notes?: string;
 }
 
 export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
   // ==========================================================================
-  // WAN VIDEO 2.5 (FAL.AI) - 5s/10s, 1080p, image-to-video WITH AUDIO SUPPORT
-  // PRIMARY for ALL segments (CREATOR + B-ROLL) - Both 5s and 10s
+  // WAN VIDEO 2.5 PREVIEW (FAL.AI) - 5s/10s, 1080p, image-to-video WITH AUDIO SUPPORT
+  // Supports audio_url for TTS voice cloning integration
+  // Docs: https://fal.ai/models/fal-ai/wan-25-preview/image-to-video/api
   // ==========================================================================
   'wan-2.5': {
     key: 'wan-2.5',
-    displayName: 'Wan Video 2.5 (fal.ai)',
+    displayName: 'Wan Video 2.5 + Voice (fal.ai)',
     provider: 'fal',
-    endpoint: 'https://queue.fal.run/fal-ai/wan/video',
-    apiModelName: 'fal-ai/wan/video',
-    supportedDurations: [5, 10],  // Updated: Supports both 5s and 10s
+    endpoint: 'https://queue.fal.run/fal-ai/wan-25-preview/image-to-video',
+    apiModelName: 'fal-ai/wan-25-preview/image-to-video',
+    supportedDurations: [5, 10],
     defaultDuration: 5,
     resolutions: {
       '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
       '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+      '480p': { apiValue: '480p', dimensions: { width: 854, height: 480 } },
     },
     aspectRatios: {
       '9:16': { apiValue: '9:16', maxResolution: '1080p' },
@@ -104,12 +108,13 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     },
     refImageParam: 'image_url',
     dialogueLimits: { 5: 9, 10: 17 },
-    costPerVideo: 0.10,
-    strengths: ['1080p resolution', 'fast generation', '5s/10s duration', 'AUDIO SUPPORT', 'cinematic', 'TTS integration'],
-    weaknesses: ['requires reference image', 'audio truncated if >10s'],
-    bestFor: ['ALL segments (CREATOR + B-ROLL)', '5s and 10s clips', 'segments with TTS audio'],
+    costPerVideo: 0.10, // Base cost, actual: $0.05/sec (480p), $0.10/sec (720p), $0.15/sec (1080p)
+    strengths: ['1080p resolution', 'fast generation', '5s/10s duration', 'AUDIO SUPPORT', 'voice cloning via TTS', 'prompt expansion'],
+    weaknesses: ['requires reference image', 'audio max 30s'],
+    bestFor: ['ALL segments with voice', 'TTS voice cloning', 'cinematic motion'],
     enabled: true,
-    notes: 'PRIMARY model - supports audio_url for TTS integration on BOTH 5s and 10s. Use for all segments.',
+    supportsAudio: true, // NEW: Flag for audio_url support
+    notes: 'Supports audio_url (WAV/MP3 3-30s) for TTS voice cloning. Use with Chatterbox Turbo for voice integration.',
   },
 
   // ==========================================================================

@@ -40,8 +40,11 @@ interface VideoSettings {
   aspectRatio: '9:16' | '16:9';
   resolution: '720p' | '1080p';
   language?: string;
-  model?: 'auto' | 'veo-3.1-hd' | 'veo-3.1-fast'; // auto = VEO 3.1 HD (default)
+  model?: 'auto' | 'veo-3.1-hd' | 'veo-3.1-fast' | 'wan-25'; // auto = VEO 3.1 HD (default)
 }
+
+// Video model type for segment overrides
+type VideoModelType = 'veo-3.1-hd' | 'veo-3.1-fast' | 'wan-25';
 
 // Job status constants
 const JOB_STATUS = {
@@ -289,8 +292,20 @@ export const VideoGeneration = (): JSX.Element => {
   const [isLoadingPrompts, setIsLoadingPrompts] = useState(false);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
   const [rateLimitWarning, setRateLimitWarning] = useState<string | null>(null);
-  // Per-segment video model override (key: segment.id, value: 'veo-3.1-hd' | 'veo-3.1-fast')
-  const [segmentModelOverrides, setSegmentModelOverrides] = useState<Record<string, 'veo-3.1-hd' | 'veo-3.1-fast'>>({});
+  // Per-segment video model override (key: segment.id, value: VideoModelType)
+  const [segmentModelOverrides, setSegmentModelOverrides] = useState<Record<string, VideoModelType>>({});
+
+  // Voice reference for WAN 2.5 (Chatterbox TTS)
+  const [voiceReferenceUrl, setVoiceReferenceUrl] = useState<string | null>(null);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+
+  // WAN 2.5 specific settings
+  const [wan25Settings, setWan25Settings] = useState({
+    resolution: '720p' as '480p' | '720p' | '1080p',
+    seed: null as number | null, // null = random each time
+    negativePrompt: 'blur, distortion, low quality, deformed',
+    duration: '5' as '5' | '10' // Default 5s for WAN 2.5
+  });
 
   // Avatar info for voice prompt retrieval
   const [avatarOption, setAvatarOption] = useState<'none' | 'profile' | 'saved' | 'upload'>('none');
@@ -484,6 +499,32 @@ export const VideoGeneration = (): JSX.Element => {
       if (checkStatusIntervalRef.current) clearInterval(checkStatusIntervalRef.current);
     };
   }, []);
+
+  // ============================================================================
+  // FETCH VOICE REFERENCE - For WAN 2.5 TTS
+  // ============================================================================
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchVoiceReference = async () => {
+      try {
+        const { data: profile, error } = await supabase
+          .from('user_profiles')
+          .select('voice_reference_url')
+          .eq('user_id', user.id)
+          .single();
+
+        if (!error && profile?.voice_reference_url) {
+          setVoiceReferenceUrl(profile.voice_reference_url);
+          console.log('[VideoGen] Voice reference loaded:', profile.voice_reference_url);
+        }
+      } catch (err) {
+        console.error('[VideoGen] Error fetching voice reference:', err);
+      }
+    };
+
+    fetchVoiceReference();
+  }, [user]);
 
   // ============================================================================
   // REALTIME SUBSCRIPTION - Listen for webhook updates from Geminigen.ai
@@ -1041,12 +1082,22 @@ export const VideoGeneration = (): JSX.Element => {
         // Helper: Submit a single job
         const submitJob = async (job: any): Promise<{ uuid: string; jobId: string; segmentId: string; segmentNumber: number } | null> => {
           console.log(`[VideoGen] 📤 Submitting: ${job.segment_type} (segment #${job.segment_number})`);
-          
+
+          // Prepare WAN 2.5 options if WAN 2.5 model is selected
+          const isWan25 = videoSettings?.model === 'wan-25';
+          const wan25Opts = isWan25 ? {
+            resolution: wan25Settings.resolution,
+            seed: wan25Settings.seed,
+            negativePrompt: wan25Settings.negativePrompt,
+            duration: wan25Settings.duration
+          } : undefined;
+
           const { data, error } = await invokeWithRetry('generate-videos', {
             mode: 'process_single',
             job_id: job.id,
             session_id: sid,
-            user_id: user.id
+            user_id: user.id,
+            wan25Options: wan25Opts
           });
           
           if (error) {
@@ -1676,20 +1727,26 @@ export const VideoGeneration = (): JSX.Element => {
   };
 
   // Helper: Get effective video model for a segment
-  const getEffectiveModel = (segmentId: string): 'veo-3.1-hd' | 'veo-3.1-fast' => {
+  const getEffectiveModel = (segmentId: string): VideoModelType => {
     // Per-segment override takes priority
     if (segmentModelOverrides[segmentId]) {
       return segmentModelOverrides[segmentId];
     }
     // Then use video settings from earlier selection
     if (videoSettings?.model === 'veo-3.1-fast') return 'veo-3.1-fast';
+    if (videoSettings?.model === 'wan-25') return 'wan-25';
     // Default to VEO 3.1 HD
     return 'veo-3.1-hd';
   };
 
   // Helper: Get model display name
-  const getModelDisplayName = (model: 'veo-3.1-hd' | 'veo-3.1-fast'): string => {
-    return model === 'veo-3.1-fast' ? 'VEO 3.1 Fast' : 'VEO 3.1 HD';
+  const getModelDisplayName = (model: VideoModelType): string => {
+    const names: Record<VideoModelType, string> = {
+      'veo-3.1-hd': 'VEO 3.1 HD',
+      'veo-3.1-fast': 'VEO 3.1 Fast',
+      'wan-25': 'WAN 2.5 + Voice'
+    };
+    return names[model];
   };
 
   // Helper: Get audio/ambient hint based on segment type
@@ -1866,61 +1923,165 @@ export const VideoGeneration = (): JSX.Element => {
           </div>
         </div>
 
-        {/* Title */}
+        {/* Title + Model Selector Header */}
         <div className="mb-6">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div className="flex-1">
               <h1 className="text-xl sm:text-2xl font-bold text-white mb-1">{currentTopic}</h1>
               <p className="text-white/60 text-sm">{uiText.subtitle}</p>
             </div>
-            <div className="text-right text-sm">
-              <div className="text-white/60">{uiText.total}: {totalDuration}s</div>
-              <div className="text-[#7c3aed] text-xs mt-1">
-                {videosGenerated}/{activeSegments.length} {uiText.videosReady}
-                {segments.length !== activeSegments.length && (
-                  <span className="text-gray-400 ml-1">
-                    ({segments.length - activeSegments.length} {language === 'id' ? 'dilewati' : 'skipped'})
-                  </span>
-                )}
+
+            {/* Model Selector - Always visible in header */}
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2b2b38] rounded-lg px-3 py-2">
+                <Video className="w-4 h-4 text-purple-400" />
+                <select
+                  value={videoSettings?.model || 'auto'}
+                  onChange={(e) => {
+                    const newModel = e.target.value as 'auto' | 'veo-3.1-hd' | 'veo-3.1-fast' | 'wan-25';
+
+                    // Check voice reference when selecting WAN 2.5
+                    if (newModel === 'wan-25' && !voiceReferenceUrl) {
+                      setShowVoiceModal(true);
+                      return; // Don't change model yet
+                    }
+
+                    setVideoSettings(prev => prev
+                      ? { ...prev, model: newModel }
+                      : { duration: '60s', aspectRatio: '9:16', resolution: '1080p', model: newModel }
+                    );
+                    // Reset all per-segment overrides when global model changes
+                    setSegmentModelOverrides({});
+                  }}
+                  className="bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1 text-white text-xs cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
+                >
+                  <option value="auto">Auto (VEO 3.1 HD)</option>
+                  <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
+                  <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
+                  <option value="wan-25">WAN 2.5 + Voice ($0.15)</option>
+                </select>
               </div>
 
+              {/* Stats */}
+              <div className="text-right text-sm">
+                <div className="text-white/60">{uiText.total}: {totalDuration}s</div>
+                <div className="text-[#7c3aed] text-xs">
+                  {videosGenerated}/{activeSegments.length} {uiText.videosReady}
+                  {segments.length !== activeSegments.length && (
+                    <span className="text-gray-400 ml-1">
+                      ({segments.length - activeSegments.length} {language === 'id' ? 'dilewati' : 'skipped'})
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Global Model Selector + Generate All Button */}
-        {!allHaveVideos && (
-          <div className="mb-6 flex flex-col sm:flex-row gap-3">
-            {/* Global Model Selector */}
-            <div className="flex items-center gap-2 bg-[#1a1a24] border border-[#2b2b38] rounded-xl px-4 py-3">
-              <Video className="w-4 h-4 text-purple-400" />
-              <label className="text-sm text-gray-400 whitespace-nowrap">
-                {language === 'id' ? 'Model:' : 'Model:'}
-              </label>
-              <select
-                value={videoSettings?.model || 'auto'}
-                onChange={(e) => {
-                  const newModel = e.target.value as 'auto' | 'veo-3.1-hd' | 'veo-3.1-fast';
-                  setVideoSettings(prev => prev
-                    ? { ...prev, model: newModel }
-                    : { duration: '60s', aspectRatio: '9:16', resolution: '1080p', model: newModel }
-                  );
-                  // Reset all per-segment overrides when global model changes
-                  setSegmentModelOverrides({});
-                }}
-                className="bg-[#0a0a12] border border-[#3b3b4f] rounded-lg px-3 py-1.5 text-white text-sm cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
-              >
-                <option value="auto">Auto (VEO 3.1 HD)</option>
-                <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
-                <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
-              </select>
+        {/* WAN 2.5 Settings Panel - Only show when WAN 2.5 is selected */}
+        {videoSettings?.model === 'wan-25' && (
+          <div className="mb-6 bg-[#1a1a24] border border-[#2b2b38] rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Volume2 className="w-4 h-4 text-purple-400" />
+              <h3 className="text-white font-medium text-sm">
+                {language === 'id' ? 'Pengaturan WAN 2.5' : 'WAN 2.5 Settings'}
+              </h3>
+              {voiceReferenceUrl && (
+                <span className="ml-auto flex items-center gap-1 text-green-400 text-xs">
+                  <Check className="w-3 h-3" />
+                  {language === 'id' ? 'Voice Ready' : 'Voice Ready'}
+                </span>
+              )}
             </div>
 
-            {/* Generate All Button */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Resolution */}
+              <div>
+                <label className="text-white/60 text-xs mb-1 block">Resolution</label>
+                <select
+                  value={wan25Settings.resolution}
+                  onChange={(e) => setWan25Settings(prev => ({
+                    ...prev,
+                    resolution: e.target.value as '480p' | '720p' | '1080p'
+                  }))}
+                  className="w-full bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1.5 text-white text-xs"
+                >
+                  <option value="480p">480p (Fast)</option>
+                  <option value="720p">720p (Default)</option>
+                  <option value="1080p">1080p (High)</option>
+                </select>
+              </div>
+
+              {/* Duration */}
+              <div>
+                <label className="text-white/60 text-xs mb-1 block">Duration</label>
+                <select
+                  value={wan25Settings.duration}
+                  onChange={(e) => setWan25Settings(prev => ({
+                    ...prev,
+                    duration: e.target.value as '5' | '10'
+                  }))}
+                  className="w-full bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1.5 text-white text-xs"
+                >
+                  <option value="5">5 seconds</option>
+                  <option value="10">10 seconds</option>
+                </select>
+              </div>
+
+              {/* Seed */}
+              <div>
+                <label className="text-white/60 text-xs mb-1 block">
+                  Seed {wan25Settings.seed !== null && <span className="text-purple-400">({wan25Settings.seed})</span>}
+                </label>
+                <div className="flex gap-1">
+                  <input
+                    type="number"
+                    value={wan25Settings.seed ?? ''}
+                    onChange={(e) => setWan25Settings(prev => ({
+                      ...prev,
+                      seed: e.target.value ? parseInt(e.target.value) : null
+                    }))}
+                    placeholder="Random"
+                    className="flex-1 bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1.5 text-white text-xs min-w-0"
+                  />
+                  <button
+                    onClick={() => setWan25Settings(prev => ({
+                      ...prev,
+                      seed: Math.floor(Math.random() * 999999)
+                    }))}
+                    className="px-2 bg-[#3b3b4f] hover:bg-[#4b4b5f] rounded text-white text-xs"
+                    title="Generate random seed"
+                  >
+                    🎲
+                  </button>
+                </div>
+              </div>
+
+              {/* Negative Prompt */}
+              <div>
+                <label className="text-white/60 text-xs mb-1 block">Negative Prompt</label>
+                <input
+                  type="text"
+                  value={wan25Settings.negativePrompt}
+                  onChange={(e) => setWan25Settings(prev => ({
+                    ...prev,
+                    negativePrompt: e.target.value
+                  }))}
+                  placeholder="blur, distortion..."
+                  className="w-full bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1.5 text-white text-xs"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Generate All Button - Only show if not all videos generated */}
+        {!allHaveVideos && (
+          <div className="mb-6">
             <Button
               onClick={handleGenerateAllBackground}
               disabled={isGeneratingAll || isBackgroundMode}
-              className={`flex-1 h-14 font-medium ${
+              className={`w-full h-14 font-medium ${
                 isBackgroundMode
                   ? "bg-blue-600 hover:bg-blue-700"
                   : "bg-gradient-to-r from-[#7c3aed] to-[#ec4899] hover:opacity-90"
@@ -2081,7 +2242,7 @@ export const VideoGeneration = (): JSX.Element => {
                           <select
                             value={getEffectiveModel(segment.id)}
                             onChange={(e) => {
-                              const newModel = e.target.value as 'veo-3.1-hd' | 'veo-3.1-fast';
+                              const newModel = e.target.value as VideoModelType;
                               setSegmentModelOverrides(prev => ({
                                 ...prev,
                                 [segment.id]: newModel
@@ -2091,6 +2252,7 @@ export const VideoGeneration = (): JSX.Element => {
                           >
                             <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
                             <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
+                            <option value="wan-25">WAN 2.5 + Voice ($0.15)</option>
                           </select>
                         </div>
                       )}
@@ -2343,7 +2505,7 @@ export const VideoGeneration = (): JSX.Element => {
 
       {/* Image Preview Modal */}
       {previewImage && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 sm:p-8"
           onClick={() => setPreviewImage(null)}
         >
@@ -2371,6 +2533,59 @@ export const VideoGeneration = (): JSX.Element => {
             className="max-w-full max-h-full object-contain rounded-lg"
             onClick={(e) => e.stopPropagation()}
           />
+        </div>
+      )}
+
+      {/* Voice Required Modal for WAN 2.5 */}
+      {showVoiceModal && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowVoiceModal(false)}
+        >
+          <div
+            className="bg-[#1a1a24] border border-[#2b2b38] rounded-2xl p-6 max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center">
+                <Mic className="w-6 h-6 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-lg">
+                  {language === 'id' ? 'Voice Reference Diperlukan' : 'Voice Reference Required'}
+                </h3>
+                <p className="text-white/60 text-sm">
+                  {language === 'id' ? 'Untuk WAN 2.5 + Voice' : 'For WAN 2.5 + Voice'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-white/80 mb-6">
+              {language === 'id'
+                ? 'Model WAN 2.5 memerlukan voice reference untuk menghasilkan video dengan suara AI. Silakan rekam atau upload suara di halaman Profile terlebih dahulu.'
+                : 'WAN 2.5 model requires a voice reference to generate videos with AI voice. Please record or upload your voice in the Profile page first.'}
+            </p>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={() => setShowVoiceModal(false)}
+                variant="outline"
+                className="flex-1 border-[#3b3b4f] text-white hover:bg-[#2a2a38]"
+              >
+                {language === 'id' ? 'Batal' : 'Cancel'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowVoiceModal(false);
+                  navigate('/settings/profile');
+                }}
+                className="flex-1 bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+              >
+                <Mic className="w-4 h-4 mr-2" />
+                {language === 'id' ? 'Ke Profile' : 'Go to Profile'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -884,6 +884,7 @@ export const ImageGeneration = (): JSX.Element => {
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0, completed: 0, failed: 0 });
   const [showBackgroundToast, setShowBackgroundToast] = useState(false);
   const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hasInitialSyncedRef = useRef(false);  // Track if initial images sync has been done
   
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [regenerateModal, setRegenerateModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
@@ -1165,14 +1166,14 @@ export const ImageGeneration = (): JSX.Element => {
       } else if (sid) {
         const existingJobs = await checkExistingJobs(sid);
         const savedProgress = loadProgress(sid);
-        
+
         if (savedProgress && savedProgress.segments?.length > 0) {
           setSessionId(sid);
           let formattedSegments = savedProgress.segments;
-          
+
           if (existingJobs && existingJobs.length > 0) {
             formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
-            
+
             const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
             if (hasPending) {
               setIsBackgroundMode(true);
@@ -1180,11 +1181,60 @@ export const ImageGeneration = (): JSX.Element => {
               startBackgroundProcessing(sid);
             }
           }
-          
+
           setSegments(formattedSegments);
           setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
           setVideoSettings(savedProgress.videoSettings || null);
           setIsLoaded(true);
+        } else if (existingJobs && existingJobs.length > 0) {
+          // ✅ FIX: Rebuild segments from database when localStorage is empty (new browser/computer)
+          // This ensures images are not lost when switching devices
+          console.log('[Init] No localStorage, rebuilding from database jobs:', existingJobs.length);
+          setSessionId(sid);
+
+          // Get unique segment numbers and rebuild basic segments structure
+          const segmentNumbers = [...new Set(existingJobs.map(j => j.segment_number))].sort((a, b) => a - b);
+
+          let formattedSegments: Segment[] = segmentNumbers.map(segNum => {
+            const job = existingJobs.find(j => j.segment_number === segNum);
+            return {
+              id: String(segNum),
+              segmentId: `VIDEO-${String(segNum).padStart(3, '0')}`,
+              type: job?.segment_type || `SEGMENT_${segNum}`,
+              timing: `${(segNum - 1) * 8}-${segNum * 8}s`,
+              durationSeconds: 5,
+              shotType: job?.segment_type?.includes('HOOK') || job?.segment_type?.includes('CTA') ? 'CREATOR' : 'B-ROLL',
+              emotion: '',
+              transition: 'Cut',
+              script: '',
+              visualDirection: '',
+              imageUrl: job?.image_url || null,
+              images: [],
+              isGeneratingImage: job?.status === JOB_STATUS.PROCESSING,
+              imageError: job?.error_message || null,
+              jobId: job?.id
+            };
+          });
+
+          // Fetch all images for this session to populate images array
+          const imageMap = await fetchSegmentImages(sid);
+          if (imageMap.size > 0) {
+            formattedSegments = syncImagesWithSegments(imageMap, formattedSegments);
+          }
+
+          const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
+          if (hasPending) {
+            setIsBackgroundMode(true);
+            setShowBackgroundToast(true);
+            startBackgroundProcessing(sid);
+          }
+
+          setSegments(formattedSegments);
+          setCurrentTopic('Your Video');
+          setIsLoaded(true);
+
+          // Save to localStorage for future loads
+          saveProgress(formattedSegments, 'Your Video', null);
         } else {
           navigate('/topic-selection');
         }
@@ -1227,34 +1277,46 @@ export const ImageGeneration = (): JSX.Element => {
 
   // NEW: Sync images array from database after initialization
   // This ensures VisualPreviewGallery displays all regenerated images on page refresh
+  // ✅ FIX: Always sync once on load to ensure database is source of truth for images
   useEffect(() => {
     const syncImagesOnLoad = async () => {
       // Only run after initialization is complete and we have segments
       if (!sessionId || !isLoaded || !user || segments.length === 0) return;
-      
+
       // Skip if any segment is currently generating (will be handled by background processing)
       if (segments.some(seg => seg.isGeneratingImage)) return;
-      
-      // Skip if images are already populated (avoid unnecessary re-fetch)
-      const hasPopulatedImages = segments.some(seg => seg.images && seg.images.length > 0);
-      if (hasPopulatedImages) return;
-      
+
+      // ✅ FIX: Only skip if we've already done the initial sync for this session
+      // This ensures we always fetch from database once, even if localStorage has stale data
+      if (hasInitialSyncedRef.current) return;
+
       console.log('[InitSync] Syncing images from database...');
-      
+      hasInitialSyncedRef.current = true;  // Mark as synced to prevent re-runs
+
       try {
         const imageMap = await fetchSegmentImages(sessionId);
-        
+
         if (imageMap.size > 0) {
-          setSegments(prev => syncImagesWithSegments(imageMap, prev));
-          console.log(`[InitSync] Synced ${imageMap.size} segments with images`);
+          setSegments(prev => {
+            const updated = syncImagesWithSegments(imageMap, prev);
+            // Also update localStorage with the synced data
+            saveProgress(updated, currentTopic, videoSettings);
+            return updated;
+          });
+          console.log(`[InitSync] Synced ${imageMap.size} segments with images from database`);
         }
       } catch (err) {
         console.error('[InitSync] Failed to sync images:', err);
       }
     };
-    
+
     syncImagesOnLoad();
-  }, [sessionId, isLoaded, user, segments.length]); // Run when these change
+  }, [sessionId, isLoaded, user, segments.length, currentTopic, videoSettings]); // Run when these change
+
+  // Reset sync flag when session changes
+  useEffect(() => {
+    hasInitialSyncedRef.current = false;
+  }, [sessionId]);
 
   const startBackgroundProcessing = useCallback((sid: string) => {
     if (processingIntervalRef.current) {

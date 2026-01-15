@@ -21,9 +21,11 @@ import {
   MessageSquare,
   Shield,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Mic
 } from "lucide-react";
 import { PhoneInput } from "../../components/ui/phone-input";
+import { VoiceRecorder } from "../../components/features/VoiceRecorder";
 
 interface ProfileData {
   full_name: string;
@@ -44,7 +46,7 @@ interface ContentPreferences {
   creative_dna: string[];
 }
 
-type TabType = "info" | "content" | "phone" | "password" | "language";
+type TabType = "info" | "content" | "voice" | "phone" | "password" | "language";
 
 // Options for dropdowns
 const interestOptions = [
@@ -250,6 +252,10 @@ export const Profile = (): JSX.Element => {
   const [isLoadingNiches, setIsLoadingNiches] = useState(false);
   const nicheDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Voice State
+  const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
+  const [voiceDuration, setVoiceDuration] = useState(0);
+
   // Password State
   const [passwords, setPasswords] = useState({
     current: "",
@@ -311,7 +317,9 @@ export const Profile = (): JSX.Element => {
           voice_reference_duration_seconds: data.voice_reference_duration_seconds || 0,
         });
 
+        // Load voice reference data
         if (data.voice_reference_url) {
+          setVoiceUrl(data.voice_reference_url);
           setVoiceDuration(data.voice_reference_duration_seconds || 0);
         }
 
@@ -906,6 +914,7 @@ export const Profile = (): JSX.Element => {
   const tabs = [
     { id: "info" as TabType, label: language === 'id' ? "Info" : "Info", icon: User },
     { id: "content" as TabType, label: language === 'id' ? "Konten" : "Content", icon: Sparkles },
+    { id: "voice" as TabType, label: language === 'id' ? "Suara" : "Voice", icon: Mic },
     { id: "phone" as TabType, label: "WhatsApp", icon: Phone },
     { id: "password" as TabType, label: "Password", icon: Lock },
     { id: "language" as TabType, label: language === 'id' ? "Bahasa" : "Language", icon: Globe },
@@ -1289,6 +1298,33 @@ export const Profile = (): JSX.Element => {
                     ))}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Voice Tab */}
+            {activeTab === "voice" && (
+              <div className="max-w-lg space-y-4">
+                <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-xl p-4">
+                  <h3 className="text-white font-medium mb-2">
+                    {language === 'id' ? 'Untuk Model WAN 2.5' : 'For WAN 2.5 Model'}
+                  </h3>
+                  <p className="text-white/70 text-sm">
+                    {language === 'id'
+                      ? 'Rekaman suara ini akan digunakan untuk clone suara kamu di video yang menggunakan model WAN 2.5 dengan fitur voice integration.'
+                      : 'This voice recording will be used to clone your voice in videos using WAN 2.5 model with voice integration feature.'}
+                  </p>
+                </div>
+
+                <VoiceRecorder
+                  userId={user?.id || ''}
+                  currentVoiceUrl={voiceUrl}
+                  currentDuration={voiceDuration}
+                  onVoiceSaved={(url, duration) => {
+                    setVoiceUrl(url);
+                    setVoiceDuration(duration);
+                  }}
+                  language={language as 'id' | 'en'}
+                />
               </div>
             )}
 

@@ -229,17 +229,101 @@ serve(async (req) => {
 // ============================================================================
 
 /**
+ * Generate TTS audio for WAN 2.5 video model using Chatterbox Turbo
+ * Used for voice cloning integration with wan-25-preview
+ *
+ * @param scriptText - Text to synthesize
+ * @param voiceReferenceUrl - User's voice reference URL for cloning (optional)
+ * @param falApiKey - fal.ai API key
+ * @returns Audio URL or null if TTS fails/skipped
+ */
+async function generateTTSForWan(
+  scriptText: string,
+  voiceReferenceUrl: string | null,
+  falApiKey: string
+): Promise<string | null> {
+  // Skip if no script text
+  if (!scriptText || scriptText.trim().length === 0) {
+    console.log('[TTS_WAN] Skipping - no script text')
+    return null
+  }
+
+  console.log(`[TTS_WAN] Generating TTS for script: "${scriptText.substring(0, 50)}..."`)
+  console.log(`[TTS_WAN] Voice reference: ${voiceReferenceUrl ? 'custom' : 'preset (lucy)'}`)
+
+  const requestBody: any = {
+    text: scriptText.trim(),
+    temperature: 0.8
+  }
+
+  // Use voice cloning if user has reference, otherwise use preset voice
+  if (voiceReferenceUrl) {
+    requestBody.audio_url = voiceReferenceUrl
+    console.log('[TTS_WAN] Using voice cloning with user reference')
+  } else {
+    requestBody.voice = 'lucy' // Default preset voice
+    console.log('[TTS_WAN] Using preset voice: lucy')
+  }
+
+  try {
+    const response = await fetch('https://fal.run/fal-ai/chatterbox/text-to-speech/turbo', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${falApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`[TTS_WAN] Failed: ${response.status} - ${errorText}`)
+      return null
+    }
+
+    const data = await response.json()
+    const audioUrl = data.audio?.url || null
+
+    if (audioUrl) {
+      console.log(`[TTS_WAN] ✅ Generated audio: ${audioUrl.substring(0, 60)}...`)
+    } else {
+      console.warn('[TTS_WAN] Response missing audio URL')
+    }
+
+    return audioUrl
+  } catch (err: any) {
+    console.error('[TTS_WAN] Error:', err.message || err)
+    return null
+  }
+}
+
+/**
+ * WAN 2.5 specific options passed from frontend
+ */
+interface Wan25Options {
+  resolution?: '480p' | '720p' | '1080p';
+  seed?: number | null;
+  negativePrompt?: string | null;
+  duration?: '5' | '10';
+}
+
+/**
  * Submit video generation job to fal.ai queue
  * Returns request_id for polling
+ *
+ * @param audioUrl - Optional TTS audio URL for WAN 2.5 voice integration
+ * @param wan25Options - Optional WAN 2.5 specific settings
  */
 async function submitToFalQueue(
   modelSpecs: any,
   videoPrompt: string,
   imageUrl: string,
   duration: number,
-  falApiKey: string
+  falApiKey: string,
+  audioUrl?: string | null,
+  wan25Options?: Wan25Options
 ): Promise<{ request_id: string; status_url: string }> {
-  const endpoint = modelSpecs.endpoint // e.g., https://queue.fal.run/fal-ai/wan/video
+  const endpoint = modelSpecs.endpoint // e.g., https://queue.fal.run/fal-ai/wan-25-preview/image-to-video
 
   // Build request body based on model
   const requestBody: any = {
@@ -249,11 +333,47 @@ async function submitToFalQueue(
 
   // Duration handling (BOTH models support duration parameter)
   if (modelSpecs.key === 'wan-2.5' || modelSpecs.key === 'kling-2.5') {
-    requestBody.duration = String(duration) // "5" or "10"
-    console.log(`[FAL_SUBMIT] Duration: ${duration}s`)
+    // Use WAN 2.5 duration from options if provided, otherwise use segment duration
+    const effectiveDuration = (modelSpecs.key === 'wan-2.5' && wan25Options?.duration)
+      ? wan25Options.duration
+      : String(duration)
+    requestBody.duration = effectiveDuration
+    console.log(`[FAL_SUBMIT] Duration: ${effectiveDuration}s`)
   }
 
-  console.log(`[FAL_SUBMIT] Endpoint: ${endpoint}, Duration: ${duration}s, Model: ${modelSpecs.key}`)
+  // WAN 2.5 audio support: Add TTS audio URL for voice integration
+  if (modelSpecs.key === 'wan-2.5' && audioUrl) {
+    requestBody.audio_url = audioUrl
+    console.log(`[FAL_SUBMIT] Added audio_url for voice integration`)
+  }
+
+  // WAN 2.5 specific options: resolution, seed, negative_prompt
+  if (modelSpecs.key === 'wan-2.5' && wan25Options) {
+    // Resolution mapping for WAN 2.5
+    if (wan25Options.resolution) {
+      const resolutionMap: Record<string, string> = {
+        '480p': '480p',
+        '720p': '720p',
+        '1080p': '1080p'
+      }
+      requestBody.resolution = resolutionMap[wan25Options.resolution] || '720p'
+      console.log(`[FAL_SUBMIT] Resolution: ${requestBody.resolution}`)
+    }
+
+    // Seed for consistency across segments
+    if (wan25Options.seed !== null && wan25Options.seed !== undefined) {
+      requestBody.seed = wan25Options.seed
+      console.log(`[FAL_SUBMIT] Seed: ${wan25Options.seed}`)
+    }
+
+    // Negative prompt
+    if (wan25Options.negativePrompt) {
+      requestBody.negative_prompt = wan25Options.negativePrompt
+      console.log(`[FAL_SUBMIT] Negative prompt: ${wan25Options.negativePrompt.substring(0, 30)}...`)
+    }
+  }
+
+  console.log(`[FAL_SUBMIT] Endpoint: ${endpoint}, Duration: ${duration}s, Model: ${modelSpecs.key}, Audio: ${audioUrl ? 'yes' : 'no'}`)
 
   // Submit to queue
   const response = await fetch(endpoint, {
@@ -364,15 +484,18 @@ async function handlePreviewPrompts(requestBody: any) {
   const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
 
   // Map user selection to actual platform key
-  // DEFAULT = VEO 3.1 for best lip-sync quality (8s, 720p/1080p)
+  // DEFAULT = VEO 3.1 HD for best lip-sync quality (8s, 720p/1080p)
   const platformMap: Record<string, VideoModelKey> = {
     'veo31': 'veo-3.1-fast',     // VEO 3.1 Fast (8s, best lip-sync)
+    'veo-3.1-hd': 'veo-3.1-hd',  // VEO 3.1 HD (8s, premium quality)
+    'veo-3.1-fast': 'veo-3.1-fast', // VEO 3.1 Fast (8s, cost-effective)
+    'wan-25': 'wan-2.5',         // WAN 2.5 Preview (5s/10s, voice cloning)
     'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
     'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
     'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
-    'auto': 'veo-3.1-fast'       // Default to VEO 3.1 for consistent quality
+    'auto': 'veo-3.1-hd'         // Default to VEO 3.1 HD for quality
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-hd'
 
   const prompts: Array<{
     segment_id: string
@@ -524,15 +647,18 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   console.log(`[CREATE_JOBS] Creating ${segments.length} video jobs for session: ${session_id}, preferred_platform: ${preferred_platform}`)
 
   // Map user selection to actual platform key
-  // DEFAULT = VEO 3.1 for best lip-sync quality (8s, 720p/1080p)
+  // DEFAULT = VEO 3.1 HD for best lip-sync quality (8s, 720p/1080p)
   const platformMap: Record<string, VideoModelKey> = {
     'veo31': 'veo-3.1-fast',     // VEO 3.1 Fast (8s, best lip-sync)
+    'veo-3.1-hd': 'veo-3.1-hd',  // VEO 3.1 HD (8s, premium quality)
+    'veo-3.1-fast': 'veo-3.1-fast', // VEO 3.1 Fast (8s, cost-effective)
+    'wan-25': 'wan-2.5',         // WAN 2.5 Preview (5s/10s, voice cloning)
     'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
     'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
     'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
-    'auto': 'veo-3.1-fast'       // Default to VEO 3.1 for consistent quality
+    'auto': 'veo-3.1-hd'         // Default to VEO 3.1 HD for quality
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-hd'
 
   // ========================================================================
   // VOICE PROMPT RETRIEVAL (2026 - Avatar-linked)
@@ -713,7 +839,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 }
 
 async function handleProcessSingle(supabase: any, requestBody: any) {
-  const { job_id, session_id, user_id, is_retry, force_retry } = requestBody
+  const { job_id, session_id, user_id, is_retry, force_retry, wan25Options } = requestBody
 
   // Get API keys (check later based on provider)
   const falApiKey = Deno.env.get('FAL_AI_API_KEY')
@@ -973,12 +1099,42 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
       console.log(`[PROCESS_SINGLE] Using fal.ai: ${modelSpecs.key}`)
 
+      // ========================================================================
+      // WAN 2.5 TTS INTEGRATION: Generate voice audio before video submission
+      // This enables voice cloning via Chatterbox Turbo for WAN 2.5 model
+      // ========================================================================
+      let audioUrl: string | null = null
+      if (modelSpecs.key === 'wan-2.5' && scriptText) {
+        console.log(`[PROCESS_SINGLE] WAN 2.5 detected - generating TTS audio...`)
+
+        // Get user's voice reference from profile
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('voice_reference_url')
+          .eq('user_id', job.user_id)
+          .single()
+
+        audioUrl = await generateTTSForWan(
+          scriptText,
+          profile?.voice_reference_url || null,
+          falApiKey
+        )
+
+        if (audioUrl) {
+          console.log(`[PROCESS_SINGLE] TTS generated successfully`)
+        } else {
+          console.log(`[PROCESS_SINGLE] TTS skipped or failed - video will be silent`)
+        }
+      }
+
       const { request_id, status_url } = await submitToFalQueue(
         modelSpecs,
         videoPrompt,
         job.image_url,
         actualDuration,
-        falApiKey
+        falApiKey,
+        audioUrl, // Pass TTS audio URL for WAN 2.5
+        wan25Options // Pass WAN 2.5 specific settings (resolution, seed, negative_prompt, duration)
       )
 
       // Update job with fal request_id (store in veo_uuid field for compatibility)
