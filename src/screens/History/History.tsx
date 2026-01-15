@@ -180,8 +180,10 @@ export const History = (): JSX.Element => {
       const sessionToPlanned = new Map<string, any>();
       if (plannedData && Array.isArray(plannedData)) {
         plannedData.forEach(p => {
-          if (p && p.video_data?.sessionId) {
-            sessionToPlanned.set(p.video_data.sessionId, p);
+          // Support both camelCase and snake_case for session_id
+          const sessionId = p?.video_data?.sessionId || p?.video_data?.session_id;
+          if (p && sessionId) {
+            sessionToPlanned.set(sessionId, p);
           }
         });
       }
@@ -212,14 +214,26 @@ export const History = (): JSX.Element => {
           }
           
           const imagesReady = validSegments.filter(s => s.image_url).length;
-          const videosReady = validSegments.filter(s => s.video_url || s.status === JOB_STATUS.COMPLETED).length;
+          // videosReady = has video_url (actual video file exists)
+          const videosReady = validSegments.filter(s => s.video_url).length;
           const videosFailed = validSegments.filter(s => s.status === JOB_STATUS.FAILED).length;
           const videosProcessing = validSegments.filter(s => s.status === JOB_STATUS.PROCESSING).length;
           const videosPending = validSegments.filter(s => s.status === JOB_STATUS.PENDING).length;
-          const isComplete = videosReady === validSegments.length && validSegments.length > 0;
-          const hasFailed = videosFailed > 0 && videosProcessing === 0 && videosPending === 0; // Only failed if nothing is processing/pending
-          const isProcessing = videosProcessing > 0 || (videosPending > 0 && videosReady > 0); // Processing if any job is running OR resuming
+          const hasFailed = videosFailed > 0 && videosProcessing === 0 && videosPending === 0;
+          const isProcessing = videosProcessing > 0 || (videosPending > 0 && videosReady > 0);
           const planned = sessionToPlanned.get(sessionId);
+
+          // Get final_video_url - combined video with subtitles
+          const jobFinalVideoUrl = validSegments.find(s => s.final_video_url)?.final_video_url;
+          const plannedFinalVideoUrl = planned?.final_video_url;
+          const hasFinalVideo = !!(jobFinalVideoUrl || plannedFinalVideoUrl);
+
+          // isComplete (Published) = has final_video_url (combined video exists)
+          // NOT just all segments have video_url - that's just "Videos Ready"
+          const isComplete = hasFinalVideo;
+
+          // Debug: Log completion status
+          console.log(`[History] Session ${sessionId.slice(0,8)}: total=${validSegments.length}, videosReady=${videosReady}, hasFinalVideo=${hasFinalVideo}, isComplete=${isComplete}`);
 
           // Get topic from multiple sources with proper empty string handling
           const topicFromJob = validSegments[0]?.topic?.trim();
@@ -227,17 +241,37 @@ export const History = (): JSX.Element => {
           const topicFromPlannedData = planned?.video_data?.topic?.trim();
           const topicFromPlannedTitle = planned?.title?.trim();
           const topicFromScript = validSegments[0]?.script_text?.split('\n')[0]?.slice(0, 60)?.trim();
-          const topicTitle = (topicFromJob && topicFromJob.length > 0) 
-            ? topicFromJob 
-            : (topicFromImageJob && topicFromImageJob.length > 0)
-              ? topicFromImageJob
-              : (topicFromPlannedData && topicFromPlannedData.length > 0)
-                ? topicFromPlannedData
-                : (topicFromPlannedTitle && topicFromPlannedTitle.length > 0)
-                  ? topicFromPlannedTitle
-                  : (topicFromScript && topicFromScript.length > 0)
-                    ? topicFromScript
-                    : `Project ${sessionId.slice(0, 8)}`;
+
+          // Also check localStorage for saved progress (backup source)
+          let topicFromLocalStorage: string | null = null;
+          try {
+            const savedProgress = localStorage.getItem(`sparkfluence_video_progress_${sessionId}`);
+            if (savedProgress) {
+              const parsed = JSON.parse(savedProgress);
+              if (parsed.topic && parsed.topic !== 'Your Video' && parsed.topic.trim().length > 0) {
+                topicFromLocalStorage = parsed.topic.trim();
+              }
+            }
+          } catch (e) {
+            // Ignore localStorage errors
+          }
+
+          // Priority: plannedTitle > localStorage > job topics > script text > fallback
+          const topicTitle = (topicFromPlannedTitle && topicFromPlannedTitle.length > 0)
+            ? topicFromPlannedTitle
+            : (topicFromLocalStorage && topicFromLocalStorage.length > 0)
+              ? topicFromLocalStorage
+              : (topicFromJob && topicFromJob.length > 0)
+                ? topicFromJob
+                : (topicFromImageJob && topicFromImageJob.length > 0)
+                  ? topicFromImageJob
+                  : (topicFromPlannedData && topicFromPlannedData.length > 0)
+                    ? topicFromPlannedData
+                    : (topicFromScript && topicFromScript.length > 0)
+                      ? topicFromScript
+                      : `Project ${sessionId.slice(0, 8)}`;
+
+          console.log(`[History] Session ${sessionId.slice(0,8)}: plannedTitle="${topicFromPlannedTitle}", localStorage="${topicFromLocalStorage}", job="${topicFromJob}", imageJob="${topicFromImageJob}", final="${topicTitle}"`);
 
           // Get metadata from first segment OR from planned_content.video_data
           const firstSeg = validSegments[0];
@@ -266,27 +300,33 @@ export const History = (): JSX.Element => {
           const segmentDuration = firstSeg?.duration_seconds || videoData?.duration_seconds || 8;
           const totalDuration = validSegments.length * segmentDuration;
 
-          // Get final_video_url from video_generation_jobs first (new migration), then planned_content
-          const jobFinalVideoUrl = validSegments.find(s => s.final_video_url)?.final_video_url || undefined;
+          // Note: jobFinalVideoUrl and plannedFinalVideoUrl already computed above for isComplete
           const jobHasSubtitles = validSegments.some(s => s.has_subtitles);
-          
-          // Debug: Log final_video_url sources
-          if (jobFinalVideoUrl || planned?.final_video_url) {
-            console.log(`[History] Session ${sessionId.slice(0,8)}: jobFinalVideoUrl=${!!jobFinalVideoUrl}, plannedFinalVideoUrl=${!!planned?.final_video_url}`);
-          }
+          const allVideosReady = videosReady === validSegments.length && validSegments.length > 0;
 
-          // Calculate status text - PRIORITY: Processing > Failed > Pending
+          // Calculate status text - PRIORITY: Published > Videos Ready > Processing > Failed > stages
           let statusText = '';
+          const allImagesReady = imagesReady === validSegments.length;
+
           if (isComplete) {
-            statusText = t.common.done || 'Complete';
+            // Has final_video_url - fully published
+            statusText = t.common.done || 'Published';
+          } else if (allVideosReady) {
+            // All segment videos ready but not combined yet
+            statusText = language === 'id' ? 'Video Siap' : 'Videos Ready';
           } else if (isProcessing) {
             // Show processing status with progress
             statusText = `${t.videoEditor?.status?.processing || 'Processing'} ${videosReady}/${validSegments.length}`;
           } else if (hasFailed) {
             statusText = `${videosFailed} ${t.common.failed || 'failed'}`;
-          } else if (imagesReady < validSegments.length) {
+          } else if (!allImagesReady) {
+            // Still generating images
             statusText = `${t.videoEditor?.status?.images || 'Images'} ${imagesReady}/${validSegments.length}`;
+          } else if (videosReady === 0) {
+            // All images ready, no videos yet
+            statusText = language === 'id' ? 'Gambar Siap' : 'Images Ready';
           } else {
+            // Videos in progress (some ready, some not)
             statusText = `${t.videoEditor?.status?.videos || 'Videos'} ${videosReady}/${validSegments.length}`;
           }
 
@@ -311,7 +351,7 @@ export const History = (): JSX.Element => {
             created_at: validSegments[0]?.created_at || new Date().toISOString(),
             updated_at: validSegments[0]?.updated_at || new Date().toISOString(),
             planned_content_id: planned?.id,
-            final_video_url: jobFinalVideoUrl || planned?.final_video_url || undefined,
+            final_video_url: jobFinalVideoUrl || plannedFinalVideoUrl || undefined,
             thumbnail_url: planned?.thumbnail_url || validSegments.find(s => s.image_url)?.image_url,
             scheduled_date: planned?.scheduled_date,
             scheduled_time: planned?.scheduled_time,
@@ -340,25 +380,45 @@ export const History = (): JSX.Element => {
         imageJobsBySession.forEach((imgJobs, sessionId) => {
           // Skip if this session already has video jobs
           if (videoSessionIds.has(sessionId)) return;
-          
+
           try {
             const validImgJobs = imgJobs.filter((j: any) => j && typeof j.status === 'number');
             if (validImgJobs.length === 0) return;
-            
+
             const planned = sessionToPlanned.get(sessionId);
-            
+
             // Get topic from multiple sources with proper empty string handling
             const topicFromJob = validImgJobs[0]?.topic?.trim();
             const topicFromPlanned = planned?.title?.trim() || planned?.video_data?.topic?.trim();
             const topicFromScript = validImgJobs[0]?.script_text?.split('\n')[0]?.slice(0, 60)?.trim();
-            const topicTitle = (topicFromJob && topicFromJob.length > 0) 
-              ? topicFromJob 
-              : (topicFromPlanned && topicFromPlanned.length > 0)
-                ? topicFromPlanned
-                : (topicFromScript && topicFromScript.length > 0)
-                  ? topicFromScript
-                  : `Project ${sessionId.slice(0, 8)}`;
-            
+
+            // Also check localStorage for saved progress (backup source for image-only projects)
+            let topicFromLocalStorage: string | null = null;
+            try {
+              const savedProgress = localStorage.getItem(`sparkfluence_video_progress_${sessionId}`);
+              if (savedProgress) {
+                const parsed = JSON.parse(savedProgress);
+                if (parsed.topic && parsed.topic !== 'Your Video' && parsed.topic.trim().length > 0) {
+                  topicFromLocalStorage = parsed.topic.trim();
+                }
+              }
+            } catch (e) {
+              // Ignore localStorage errors
+            }
+
+            // Priority: plannedTitle > localStorage > job topic > script text > fallback
+            const topicTitle = (topicFromPlanned && topicFromPlanned.length > 0)
+              ? topicFromPlanned
+              : (topicFromLocalStorage && topicFromLocalStorage.length > 0)
+                ? topicFromLocalStorage
+                : (topicFromJob && topicFromJob.length > 0)
+                  ? topicFromJob
+                  : (topicFromScript && topicFromScript.length > 0)
+                    ? topicFromScript
+                    : `Project ${sessionId.slice(0, 8)}`;
+
+            console.log(`[History-ImageOnly-A] Session ${sessionId.slice(0,8)}: planned="${topicFromPlanned}", localStorage="${topicFromLocalStorage}", job="${topicFromJob}", final="${topicTitle}"`);
+
             // Calculate image stats
             const imagesCompleted = validImgJobs.filter((j: any) => j.status === JOB_STATUS.COMPLETED && j.image_url).length;
             const imagesFailed = validImgJobs.filter((j: any) => j.status === JOB_STATUS.FAILED).length;
@@ -439,26 +499,46 @@ export const History = (): JSX.Element => {
       } else if (imageJobsBySession.size > 0) {
         // No video jobs but have image jobs - show image-only sessions
         const projectList: ProjectGroup[] = [];
-        
+
         imageJobsBySession.forEach((imgJobs, sessionId) => {
           try {
             const validImgJobs = imgJobs.filter((j: any) => j && typeof j.status === 'number');
             if (validImgJobs.length === 0) return;
-            
+
             const planned = sessionToPlanned.get(sessionId);
-            
+
             // Get topic from multiple sources with proper empty string handling
             const topicFromJob = validImgJobs[0]?.topic?.trim();
             const topicFromPlanned = planned?.title?.trim() || planned?.video_data?.topic?.trim();
             const topicFromScript = validImgJobs[0]?.script_text?.split('\n')[0]?.slice(0, 60)?.trim();
-            const topicTitle = (topicFromJob && topicFromJob.length > 0) 
-              ? topicFromJob 
-              : (topicFromPlanned && topicFromPlanned.length > 0)
-                ? topicFromPlanned
-                : (topicFromScript && topicFromScript.length > 0)
-                  ? topicFromScript
-                  : `Project ${sessionId.slice(0, 8)}`;
-            
+
+            // Also check localStorage for saved progress (backup source for image-only projects)
+            let topicFromLocalStorage: string | null = null;
+            try {
+              const savedProgress = localStorage.getItem(`sparkfluence_video_progress_${sessionId}`);
+              if (savedProgress) {
+                const parsed = JSON.parse(savedProgress);
+                if (parsed.topic && parsed.topic !== 'Your Video' && parsed.topic.trim().length > 0) {
+                  topicFromLocalStorage = parsed.topic.trim();
+                }
+              }
+            } catch (e) {
+              // Ignore localStorage errors
+            }
+
+            // Priority: plannedTitle > localStorage > job topic > script text > fallback
+            const topicTitle = (topicFromPlanned && topicFromPlanned.length > 0)
+              ? topicFromPlanned
+              : (topicFromLocalStorage && topicFromLocalStorage.length > 0)
+                ? topicFromLocalStorage
+                : (topicFromJob && topicFromJob.length > 0)
+                  ? topicFromJob
+                  : (topicFromScript && topicFromScript.length > 0)
+                    ? topicFromScript
+                    : `Project ${sessionId.slice(0, 8)}`;
+
+            console.log(`[History-ImageOnly-B] Session ${sessionId.slice(0,8)}: planned="${topicFromPlanned}", localStorage="${topicFromLocalStorage}", job="${topicFromJob}", final="${topicTitle}"`);
+
             // Calculate image stats
             const imagesCompleted = validImgJobs.filter((j: any) => j.status === JOB_STATUS.COMPLETED && j.image_url).length;
             const imagesFailed = validImgJobs.filter((j: any) => j.status === JOB_STATUS.FAILED).length;
@@ -1072,18 +1152,23 @@ export const History = (): JSX.Element => {
                     {/* Progress Bar */}
                     <div className="mb-1.5">
                       <div className="h-1 bg-surface rounded-full overflow-hidden">
-                        <div 
+                        <div
                           className={`h-full transition-all ${
-                            project.is_complete 
-                              ? 'bg-green-500' 
+                            project.is_complete
+                              ? 'bg-green-500'
                               : project.is_processing
                               ? 'bg-blue-500'
                               : project.has_failed
                               ? 'bg-red-500'
+                              : project.images_ready === project.total_segments
+                              ? 'bg-purple-500'
                               : 'bg-amber-500'
                           }`}
-                          style={{ 
-                            width: `${(project.videos_ready / project.total_segments) * 100}%` 
+                          style={{
+                            // Show image progress if no videos yet, otherwise video progress
+                            width: `${project.videos_ready > 0
+                              ? (project.videos_ready / project.total_segments) * 100
+                              : (project.images_ready / project.total_segments) * 100}%`
                           }}
                         />
                       </div>

@@ -935,13 +935,15 @@ export const ImageGeneration = (): JSX.Element => {
   }, []);
 
   useEffect(() => {
-    if (sessionId && segments.length > 0) {
+    // Only save progress if we have a valid topic (not the default "Your Video")
+    // This prevents overwriting the topic with default value on initial load
+    if (sessionId && segments.length > 0 && currentTopic && currentTopic !== "Your Video") {
       const timeoutId = setTimeout(() => {
         saveProgress(segments, currentTopic, videoSettings);
       }, 1000);
       return () => clearTimeout(timeoutId);
     }
-  }, [segments, sessionId]);
+  }, [segments, sessionId, currentTopic, videoSettings]);
 
   const saveProgress = (updatedSegments: Segment[], topic: string, settings: VideoSettings | null) => {
     if (!sessionId) return;

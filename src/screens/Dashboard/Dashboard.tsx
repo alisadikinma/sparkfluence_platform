@@ -134,12 +134,36 @@ export const Dashboard = (): JSX.Element => {
         ...(videoJobs?.map(j => j.session_id) || [])
       ]);
 
-      // Check which sessions have final videos
+      // Fetch planned_content for final videos check
       const { data: plannedContent } = await supabase
         .from('planned_content')
-        .select('id, final_video_url, video_data')
-        .eq('user_id', user.id)
-        .not('final_video_url', 'is', null);
+        .select('id, title, final_video_url, video_data')
+        .eq('user_id', user.id);
+
+      // Create a map of session_id -> topic from jobs (find first non-null topic per session)
+      const sessionTopicMap = new Map<string, string>();
+
+      // 1. From image jobs
+      imageJobs?.forEach(job => {
+        if (job.topic && !sessionTopicMap.has(job.session_id)) {
+          sessionTopicMap.set(job.session_id, job.topic);
+        }
+      });
+
+      // 2. From video jobs
+      videoJobs?.forEach(job => {
+        if (job.topic && !sessionTopicMap.has(job.session_id)) {
+          sessionTopicMap.set(job.session_id, job.topic);
+        }
+      });
+
+      // 3. From planned_content title (override if exists)
+      plannedContent?.forEach(pc => {
+        const sessionId = pc.video_data?.session_id;
+        if (sessionId && pc.title) {
+          sessionTopicMap.set(sessionId, pc.title);
+        }
+      });
 
       // Get session IDs that have final videos (from video_data.session_id)
       const completedSessionIds = new Set<string>();
@@ -173,7 +197,8 @@ export const Dashboard = (): JSX.Element => {
         const imgJobs = imageJobsBySession[sessionId] || [];
         const vidJobs = videoJobsBySession[sessionId] || [];
 
-        if (imgJobs.length === 0) return;
+        // Skip only if BOTH image and video jobs are empty
+        if (imgJobs.length === 0 && vidJobs.length === 0) return;
 
         // Image stats
         const imgPending = imgJobs.filter(j => j.status === JOB_STATUS.PENDING).length;
@@ -218,18 +243,47 @@ export const Dashboard = (): JSX.Element => {
         const hasAnyFailed = imgFailed > 0 || vidFailed > 0;
 
         // Show job if:
-        // 1. Any stage has pending/processing
+        // 1. Any stage has pending/processing (image OR video)
         // 2. Images done but no video jobs yet (waiting for next stage)
         // 3. Has failures needing retry
-        // NOTE: Don't show "videos ready" jobs - user can combine from video-generation page
-        const imagesReadyForVideo = imgAllDone && imgFailed === 0 && vidTotal === 0;
+        // 4. Videos exist and not all completed yet
+        // 5. All videos ready but no final video (waiting for combine)
+        const imagesReadyForVideo = imgTotal > 0 && imgAllDone && imgFailed === 0 && vidTotal === 0;
+        const videosExistAndNotDone = vidTotal > 0 && !vidAllDone;
+        const videosReadyForCombine = vidAllDone && vidTotal > 0; // All videos completed, needs combine
         const needsRetry = hasAnyFailed;
 
-        if (hasAnyPendingOrProcessing || imagesReadyForVideo || needsRetry) {
+        // Show if any active work or waiting for next stage (including combine stage)
+        const shouldShow = hasAnyPendingOrProcessing || imagesReadyForVideo || videosExistAndNotDone || videosReadyForCombine || needsRetry;
+
+        if (shouldShow) {
+          // Get topic from: 1) planned_content 2) DB jobs 3) localStorage 4) fallback
+          const topicFromPlanned = sessionTopicMap.get(sessionId);
+          const topicFromJobs = imgJobs[0]?.topic || vidJobs[0]?.topic;
+
+          // Also check localStorage for saved progress (backup source)
+          let topicFromLocalStorage: string | null = null;
+          try {
+            const savedProgress = localStorage.getItem(`sparkfluence_video_progress_${sessionId}`);
+            if (savedProgress) {
+              const parsed = JSON.parse(savedProgress);
+              if (parsed.topic && parsed.topic !== 'Your Video') {
+                topicFromLocalStorage = parsed.topic;
+              }
+            }
+          } catch (e) {
+            // Ignore localStorage errors
+          }
+
+          // Priority: planned_content > localStorage > DB jobs > fallback
+          const finalTopic = topicFromPlanned || topicFromLocalStorage || topicFromJobs || 'Video Project';
+
+          console.log(`[Dashboard] Session ${sessionId.slice(0,8)}: planned="${topicFromPlanned}", localStorage="${topicFromLocalStorage}", jobs="${topicFromJobs}", final="${finalTopic}"`);
+
           activeJobsList.push({
             session_id: sessionId,
             stage,
-            topic: imgJobs[0]?.topic || vidJobs[0]?.topic || 'Video Project',
+            topic: finalTopic,
             image_total: imgTotal,
             image_completed: imgCompleted,
             image_failed: imgFailed,
@@ -241,7 +295,7 @@ export const Dashboard = (): JSX.Element => {
             video_pending: vidPending,
             video_processing: vidProcessing,
             has_final_video: false,
-            created_at: imgJobs[0]?.created_at || '',
+            created_at: imgJobs[0]?.created_at || vidJobs[0]?.created_at || '',
             updated_at: mostRecentUpdate.toISOString()
           });
         }
@@ -539,94 +593,114 @@ export const Dashboard = (): JSX.Element => {
                       return jobsText.combining;
                     };
                     
-                    // Get status badge
+                    // Get status badge - different colors per stage
+                    // Image = amber, Video = purple, Combining = blue
                     const getStatusBadge = () => {
-                      if (isWaitingForVideo) return { text: jobsText.continue, color: 'bg-blue-500/20 text-blue-400' };
-                      if (isWaitingForCombine) return { text: jobsText.videosReady, color: 'bg-blue-500/20 text-blue-400' };
+                      if (isWaitingForVideo) return { text: jobsText.imagesReady, color: 'bg-amber-500/20 text-amber-400' };
+                      if (isWaitingForCombine) return { text: jobsText.videosReady, color: 'bg-purple-500/20 text-purple-400' };
                       if (needsRetry) return { text: jobsText.needsRetry, color: allFailed ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400' };
                       if (isStalled) return { text: jobsText.paused, color: 'bg-amber-500/20 text-amber-400' };
+                      // Active processing badges
+                      if (currentStage === 'image') return { text: jobsText.imageGen, color: 'bg-amber-500/20 text-amber-400' };
+                      if (currentStage === 'video') return { text: jobsText.videoGen, color: 'bg-purple-500/20 text-purple-400' };
                       return null;
                     };
                     
                     const statusBadge = getStatusBadge();
                     
+                    // Stage-based border colors
+                    const getStageBorderColor = () => {
+                      if (allFailed) return 'border-red-500/50';
+                      if (needsRetry) return 'border-red-500/30';
+                      if (isStalled) return 'border-amber-500/50';
+                      if (currentStage === 'image' || isWaitingForVideo) return 'border-amber-500/50';
+                      if (currentStage === 'video') return 'border-purple-500/50';
+                      if (currentStage === 'combining' || isWaitingForCombine) return 'border-blue-500/50';
+                      return 'border-border-default';
+                    };
+
                     return (
                       <button
                         key={`${job.stage}-${job.session_id}`}
                         onClick={() => handleJobClick(job)}
-                        className={`bg-card border rounded-lg p-3 hover:border-primary/50 transition-all text-left min-w-[280px] max-w-[400px] flex-1 ${
-                          allFailed ? 'border-red-500/50' : 
-                          needsRetry || isStalled ? 'border-amber-500/50' : 
-                          isWaitingForVideo || isWaitingForCombine ? 'border-blue-500/50' : 
-                          'border-border-default'
-                        }`}
+                        className={`bg-card border rounded-lg p-3 hover:border-primary/50 transition-all text-left min-w-[280px] max-w-[400px] flex-1 ${getStageBorderColor()}`}
                       >
                         {/* Header */}
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <div className={`w-8 h-8 rounded-md flex items-center justify-center ${
-                              isWaitingForVideo || isWaitingForCombine ? 'bg-blue-500/20' :
-                              isStageComplete 
-                                ? allFailed ? 'bg-red-500/20' : hasErrors ? 'bg-amber-500/20' : 'bg-green-500/20'
-                                : isStalled ? 'bg-amber-500/20' : 'bg-primary/20'
+                              allFailed ? 'bg-red-500/20' :
+                              hasErrors ? 'bg-red-500/10' :
+                              isStalled ? 'bg-amber-500/20' :
+                              currentStage === 'image' || isWaitingForVideo ? 'bg-amber-500/20' :
+                              currentStage === 'video' ? 'bg-purple-500/20' :
+                              currentStage === 'combining' || isWaitingForCombine ? 'bg-blue-500/20' :
+                              'bg-primary/20'
                             }`}>
                               {currentStage === 'image' ? (
                                 <ImageIcon className={`w-4 h-4 ${
-                                  isWaitingForVideo ? 'text-blue-400' :
-                                  isStageComplete 
-                                    ? allFailed ? 'text-red-400' : hasErrors ? 'text-amber-400' : 'text-green-400'
-                                    : isStalled ? 'text-amber-400' : 'text-primary'
+                                  allFailed ? 'text-red-400' :
+                                  hasErrors ? 'text-red-400' :
+                                  isStalled ? 'text-amber-400' :
+                                  'text-amber-400'
+                                }`} />
+                              ) : currentStage === 'video' ? (
+                                <Video className={`w-4 h-4 ${
+                                  allFailed ? 'text-red-400' :
+                                  hasErrors ? 'text-red-400' :
+                                  isStalled ? 'text-amber-400' :
+                                  'text-purple-400'
                                 }`} />
                               ) : (
                                 <Video className={`w-4 h-4 ${
-                                  isWaitingForCombine ? 'text-blue-400' :
-                                  isStageComplete 
-                                    ? allFailed ? 'text-red-400' : hasErrors ? 'text-amber-400' : 'text-green-400'
-                                    : isStalled ? 'text-amber-400' : 'text-primary'
+                                  allFailed ? 'text-red-400' :
+                                  hasErrors ? 'text-red-400' :
+                                  'text-blue-400'
                                 }`} />
                               )}
                             </div>
-                            <div>
-                              <h3 className="text-text-primary font-medium text-xs">
-                                {getStageLabel()}
+                            <div className="flex-1 min-w-0">
+                              <h3 className="text-text-primary font-medium text-xs line-clamp-1">
+                                {job.topic || 'Video Project'}
                               </h3>
                               <p className="text-text-muted text-[10px]">
-                                {formatTimeAgo(job.updated_at)}
+                                {getStageLabel()} · {formatTimeAgo(job.updated_at)}
                               </p>
                             </div>
                           </div>
-                          
+
                           {/* Status indicator */}
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-shrink-0">
                             {statusBadge && (
                               <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusBadge.color}`}>
                                 {statusBadge.text}
                               </span>
                             )}
-                            {isWaitingForVideo || isWaitingForCombine ? (
-                              <ChevronRight className="w-4 h-4 text-blue-400" />
-                            ) : isStageComplete ? (
-                              allFailed ? (
-                                <AlertCircle className="w-4 h-4 text-red-400" />
-                              ) : hasErrors ? (
-                                <AlertCircle className="w-4 h-4 text-amber-400" />
-                              ) : (
-                                <CheckCircle2 className="w-4 h-4 text-green-400" />
-                              )
+                            {allFailed ? (
+                              <AlertCircle className="w-4 h-4 text-red-400" />
+                            ) : hasErrors ? (
+                              <AlertCircle className="w-4 h-4 text-red-400" />
+                            ) : isWaitingForVideo ? (
+                              <ChevronRight className="w-4 h-4 text-amber-400" />
+                            ) : isWaitingForCombine ? (
+                              <ChevronRight className="w-4 h-4 text-purple-400" />
                             ) : isStalled ? (
                               <Play className="w-4 h-4 text-amber-400" />
                             ) : isActivelyProcessing ? (
-                              <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                              <Loader2 className={`w-4 h-4 animate-spin ${
+                                currentStage === 'image' ? 'text-amber-400' :
+                                currentStage === 'video' ? 'text-purple-400' :
+                                'text-blue-400'
+                              }`} />
                             ) : (
-                              <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                              <Loader2 className={`w-4 h-4 animate-spin ${
+                                currentStage === 'image' ? 'text-amber-400' :
+                                currentStage === 'video' ? 'text-purple-400' :
+                                'text-blue-400'
+                              }`} />
                             )}
                           </div>
                         </div>
-
-                        {/* Topic */}
-                        <p className="text-text-secondary text-xs mb-2 line-clamp-1">
-                          {job.topic}
-                        </p>
 
                         {/* Multi-stage Progress */}
                         <div className="space-y-1">
