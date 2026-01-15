@@ -5,11 +5,11 @@ import { Logo } from "../../components/ui/logo";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../lib/supabase";
-import { apiEndpoints, API_KEY } from "../../lib/api";
+import { apiEndpoints, API_KEY, API_URL } from "../../lib/api";
 import { Loader2, CheckCircle, AlertCircle, Download, Calendar, Clock, RefreshCw, Captions, CaptionsOff, X, Play, Link2, ExternalLink } from "lucide-react";
 
-// Backend API imported from centralized config
-// See src/lib/api.ts for configuration
+// Backend URL from centralized config
+const BACKEND_URL = API_URL;
 
 // V2 Options defaults
 const DEFAULT_COMBINE_OPTIONS = {
