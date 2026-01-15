@@ -447,9 +447,10 @@ async function handlePreviewPrompts(requestBody: any) {
       ? validateDialogueLength(scriptText, selectedPlatform, actualDuration, language) 
       : { valid: true, wordCount: 0, maxWords: 0, languageAdjusted: false }
 
-    // Get resolution from model specs
-    const resolutionKeys = Object.keys(safeModelSpecs.resolutions)
-    const resolution = resolutionKeys.length > 0 ? resolutionKeys[0] : '720p'
+    // Get resolution from model specs based on aspect ratio
+    // VEO 3.1 Fast: 9:16 = 720p max, 16:9 = 1080p max
+    const aspectRatioSpec = safeModelSpecs.aspectRatios?.[aspect_ratio]
+    const resolution = aspectRatioSpec?.maxResolution || '720p'
 
     console.log(`[PREVIEW_PROMPTS] Segment ${i + 1}: ${segmentType}, duration=${actualDuration}s, platform=${selectedPlatform}`)
 
