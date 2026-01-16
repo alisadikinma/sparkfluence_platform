@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import { User, Upload, X, ChevronDown, Loader2, Trash2, Edit2, Check } from 'lucide-react';
 import { SavedAvatar, AvatarOption } from '../../hooks/useAvatarManager';
 import { Button } from './button';
@@ -74,9 +74,43 @@ export const AvatarDropdown: React.FC<AvatarDropdownProps> = ({
     savedAvatars: language === 'id' ? 'Avatar Tersimpan' : 'Saved Avatars',
   };
 
+  // Ref for measuring button position
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [openDirection, setOpenDirection] = useState<'up' | 'down'>('down');
+
+  // Calculate dropdown direction when dropdown opens
+  useLayoutEffect(() => {
+    if (!avatarDropdownOpen) {
+      setOpenDirection('down'); // Reset when closed
+      return;
+    }
+
+    // Small delay to ensure DOM is ready
+    const timer = setTimeout(() => {
+      if (!buttonRef.current) return;
+
+      const rect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const dropdownMaxHeight = 280;
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+
+      console.log('[AvatarDropdown] spaceBelow:', spaceBelow, 'spaceAbove:', spaceAbove, 'viewportHeight:', viewportHeight);
+
+      if (spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow) {
+        setOpenDirection('up');
+      } else {
+        setOpenDirection('down');
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [avatarDropdownOpen]);
+
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={onDropdownToggle}
         disabled={disabled || analyzingAvatar}
@@ -99,7 +133,11 @@ export const AvatarDropdown: React.FC<AvatarDropdownProps> = ({
 
       {/* Dropdown Menu */}
       {avatarDropdownOpen && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border-default rounded-lg shadow-lg z-50 overflow-hidden max-h-64 overflow-y-auto">
+        <div className={`absolute left-0 right-0 bg-surface border border-border-default rounded-lg shadow-lg z-50 overflow-hidden max-h-64 overflow-y-auto ${
+          openDirection === 'up'
+            ? 'bottom-full mb-1'
+            : 'top-full mt-1'
+        }`}>
           {/* No Avatar */}
           <button
             type="button"

@@ -125,7 +125,9 @@ serve(async (req) => {
       // Shorten mode parameters
       mode,
       script,
-      target_words
+      target_words,
+      // Translate mode parameters
+      scripts
       // NOTE: character_description is handled by VideoEditor -> generate-images
       // No need to pass avatar URL here anymore
     } = requestBody
@@ -138,18 +140,22 @@ serve(async (req) => {
 
       const shortenLang = sanitizeLanguage(language)
       const shortenPrompt = shortenLang === 'indonesian'
-        ? `Perpendek script berikut menjadi MAKSIMAL ${target_words} kata sambil mempertahankan pesan dan konteks utama. Jaga gaya bahasa casual Gen-Z Indonesia (gue/lo, bukan saya/kamu). Output HANYA script yang sudah diperpendek, tanpa penjelasan.
+        ? `Tulis ulang script berikut menjadi TEPAT ${target_words} kata. Pertahankan pesan utama dan konteks penting. Gunakan gaya bahasa casual Gen-Z Indonesia (gue/lo, BUKAN saya/kamu). Buat sepadat dan seimpactful mungkin dalam ${target_words} kata.
+
+PENTING: Output HARUS tepat ${target_words} kata, tidak kurang tidak lebih. Hitung kata dengan teliti.
 
 Script asli:
 "${script}"
 
-Script pendek (maks ${target_words} kata):`
-        : `Shorten the following script to MAXIMUM ${target_words} words while keeping the main message and context. Keep it conversational and engaging. Output ONLY the shortened script, no explanations.
+Script baru (TEPAT ${target_words} kata):`
+        : `Rewrite the following script to EXACTLY ${target_words} words. Keep the main message and important context. Make it as impactful and engaging as possible within ${target_words} words.
+
+IMPORTANT: Output MUST be exactly ${target_words} words, no more no less. Count words carefully.
 
 Original script:
 "${script}"
 
-Shortened script (max ${target_words} words):`;
+New script (EXACTLY ${target_words} words):`;
 
       try {
         // Get API key from pool only (no secrets fallback)
@@ -193,6 +199,7 @@ Shortened script (max ${target_words} words):`;
 
         // Fallback to OpenRouter from pool
         const openRouterKey = await getApiKeyFromPool(supabase, 'openrouter')
+        let openRouterSuccess = false
 
         if (openRouterKey) {
           console.log(`[Shorten] Using OpenRouter from pool: ${openRouterKey.keyName}`)
@@ -232,15 +239,218 @@ Shortened script (max ${target_words} words):`;
           }
         }
 
-        console.error('[Shorten] No API keys available in pool')
+        // OpenRouter also failed - try Gemini 1.5 Flash as final retry
+        if (!openRouterSuccess) {
+          console.log('[Shorten] OpenRouter failed, retrying with Gemini 1.5 Flash...')
+
+          const geminiRetryResult = await callGeminiHybrid(
+            supabase,
+            [{ role: 'user', content: shortenPrompt }],
+            { model: 'gemini-1.5-flash', temperature: 0.7, maxTokens: 500 }
+          )
+
+          if (geminiRetryResult.success && geminiRetryResult.content) {
+            const shortenedScript = geminiRetryResult.content.trim().replace(/^["']|["']$/g, '')
+            return new Response(
+              JSON.stringify({ success: true, shortened_script: shortenedScript }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            )
+          }
+        }
+
+        console.error('[Shorten] All providers failed')
         return new Response(
-          JSON.stringify({ success: false, error: 'No API keys available. Please add keys to api_keys_pool.' }),
+          JSON.stringify({ success: false, error: 'All API providers failed. Please try again later.' }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       } catch (err) {
         console.error('[Shorten] Error:', err)
         return new Response(
           JSON.stringify({ success: false, error: 'Shorten failed: ' + (err instanceof Error ? err.message : 'Unknown') }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
+
+    // ============================================================
+    // TRANSLATE MODE - Translate all scripts to target language
+    // ============================================================
+    if (mode === 'translate' && scripts && language) {
+      const scriptsArray = scripts as { segmentId: string; script: string; targetWords: number }[]
+      const targetLang = sanitizeLanguage(language)
+
+      console.log(`[Script] Translate mode - ${scriptsArray.length} segments to ${targetLang}`)
+
+      const langConfig = LANGUAGE_CONFIG[targetLang] || LANGUAGE_CONFIG['indonesian']
+
+      const translatePrompt = `You are a professional translator specializing in viral short-form video scripts.
+
+TARGET LANGUAGE: ${langConfig.name}
+STYLE: ${langConfig.style}
+EXAMPLE TONE: "${langConfig.example}"
+
+Translate the following scripts to ${langConfig.name}. Each script has a word limit - you MUST keep the translated script within that limit.
+
+CRITICAL RULES:
+1. Maintain the viral, engaging tone of the original
+2. Keep each script WITHIN its word limit (not exact, but must not exceed)
+3. Preserve the emotional impact and hooks
+4. Use natural ${langConfig.name} expressions, not literal translation
+${targetLang === 'indonesian' ? '5. Use gue/lo pronouns, NOT saya/kamu\n6. Mix with English slang naturally (literally, vibes, game-changer)' : ''}
+${targetLang === 'hindi' ? '5. Use Devanagari script for Hindi words\n6. Mix with English tech/trending terms naturally' : ''}
+
+INPUT SCRIPTS (JSON):
+${JSON.stringify(scriptsArray.map(s => ({ id: s.segmentId, script: s.script, maxWords: s.targetWords })), null, 2)}
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "translations": [
+    { "id": "segment_id", "script": "translated script here" }
+  ]
+}
+
+Return ONLY valid JSON, no explanations.`
+
+      try {
+        const geminiKey = await getApiKeyFromPool(supabase, 'gemini')
+
+        if (geminiKey) {
+          console.log(`[Translate] Using Gemini from pool: ${geminiKey.keyName}`)
+
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: translatePrompt }] }],
+                generationConfig: { temperature: 0.7, maxOutputTokens: 4000 }
+              })
+            }
+          )
+
+          if (response.ok) {
+            const data = await response.json()
+            let content = data?.candidates?.[0]?.content?.parts?.[0]?.text
+
+            if (content) {
+              await incrementUsage(supabase, geminiKey.keyId, scriptsArray.length)
+
+              // Clean JSON from markdown if present
+              content = content.trim()
+              if (content.startsWith('```json')) {
+                content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '')
+              } else if (content.startsWith('```')) {
+                content = content.replace(/```\n?/g, '')
+              }
+
+              try {
+                const parsed = JSON.parse(content)
+                return new Response(
+                  JSON.stringify({ success: true, translations: parsed.translations }),
+                  { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                )
+              } catch (parseErr) {
+                console.error('[Translate] JSON parse error:', parseErr, 'Content:', content)
+              }
+            }
+          } else {
+            console.log(`[Translate] Gemini returned ${response.status}`)
+          }
+        }
+
+        console.log('[Translate] Gemini failed/unavailable, trying OpenRouter...')
+
+        const openRouterKey = await getApiKeyFromPool(supabase, 'openrouter')
+        let openRouterSuccess = false
+
+        if (openRouterKey) {
+          console.log(`[Translate] Using OpenRouter from pool: ${openRouterKey.keyName}`)
+
+          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${openRouterKey.apiKey}`,
+              'HTTP-Referer': 'https://sparkfluence.com',
+              'X-Title': 'Sparkfluence'
+            },
+            body: JSON.stringify({
+              model: 'meta-llama/llama-3.3-70b-instruct',
+              messages: [{ role: 'user', content: translatePrompt }],
+              temperature: 0.7,
+              max_tokens: 4000
+            })
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            let orContent = data?.choices?.[0]?.message?.content
+
+            if (orContent) {
+              await incrementUsage(supabase, openRouterKey.keyId, scriptsArray.length)
+              openRouterSuccess = true
+
+              orContent = orContent.trim()
+              if (orContent.startsWith('```json')) {
+                orContent = orContent.replace(/```json\n?/g, '').replace(/```\n?/g, '')
+              } else if (orContent.startsWith('```')) {
+                orContent = orContent.replace(/```\n?/g, '')
+              }
+
+              try {
+                const parsed = JSON.parse(orContent)
+                return new Response(
+                  JSON.stringify({ success: true, translations: parsed.translations }),
+                  { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                )
+              } catch (parseErr) {
+                console.error('[Translate] JSON parse error:', parseErr)
+                openRouterSuccess = false  // JSON parse failed, try next provider
+              }
+            }
+          }
+        }
+
+        // OpenRouter also failed - try Gemini 1.5 Flash as final retry
+        if (!openRouterSuccess) {
+          console.log('[Translate] OpenRouter failed, retrying with Gemini 1.5 Flash...')
+
+          const geminiRetryResult = await callGeminiHybrid(
+            supabase,
+            [{ role: 'user', content: translatePrompt }],
+            { model: 'gemini-1.5-flash', temperature: 0.7, maxTokens: 4000 }
+          )
+
+          if (geminiRetryResult.success && geminiRetryResult.content) {
+            let content = geminiRetryResult.content.trim()
+            if (content.startsWith('```json')) {
+              content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '')
+            } else if (content.startsWith('```')) {
+              content = content.replace(/```\n?/g, '')
+            }
+
+            try {
+              const parsed = JSON.parse(content)
+              return new Response(
+                JSON.stringify({ success: true, translations: parsed.translations }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              )
+            } catch (parseErr) {
+              console.error('[Translate] Gemini retry JSON parse error:', parseErr)
+            }
+          }
+        }
+
+        console.error('[Translate] All providers failed')
+        return new Response(
+          JSON.stringify({ success: false, error: 'All API providers failed. Please try again later.' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      } catch (err) {
+        console.error('[Translate] Error:', err)
+        return new Response(
+          JSON.stringify({ success: false, error: 'Translate failed: ' + (err instanceof Error ? err.message : 'Unknown') }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
@@ -306,12 +516,13 @@ Shortened script (max ${target_words} words):`;
     )
 
     // ============================================================
-    // CALL LLM (Gemini PRIMARY, OpenRouter FALLBACK)
+    // CALL LLM (Gemini PRIMARY, OpenRouter FALLBACK, Gemini RETRY)
     // ============================================================
-    
+
     let generatedText: string = ''
     let llmSource = 'unknown'
-    
+    let lastError = ''
+
     // Try Gemini first (FAST - ~3-8 seconds)
     console.log('[LLM] Trying Gemini 2.0 Flash (primary)...')
     const geminiResult = await callGeminiHybrid(
@@ -334,8 +545,9 @@ Shortened script (max ${target_words} words):`;
     } else {
       // Fallback to OpenRouter if Gemini fails
       console.log('[LLM] Gemini failed:', geminiResult.error)
+      lastError = geminiResult.error || 'Gemini failed'
       console.log('[LLM] Trying OpenRouter fallback...')
-      
+
       const openRouterResult = await callOpenRouterHybrid(
         supabase,
         [
@@ -349,13 +561,42 @@ Shortened script (max ${target_words} words):`;
         }
       )
 
-      if (openRouterResult.error || !openRouterResult.data?.choices?.[0]?.message?.content) {
-        throw new Error(openRouterResult.error || 'All LLM providers failed')
-      }
+      if (openRouterResult.data?.choices?.[0]?.message?.content) {
+        console.log(`[LLM] OpenRouter success (source: ${openRouterResult.source})`)
+        generatedText = openRouterResult.data.choices[0].message.content
+        llmSource = `openrouter-${openRouterResult.source}`
+      } else {
+        // OpenRouter also failed - try Gemini one more time with different model
+        console.log('[LLM] OpenRouter failed:', openRouterResult.error)
+        lastError = openRouterResult.error || 'OpenRouter failed'
+        console.log('[LLM] Retrying with Gemini 1.5 Flash...')
 
-      console.log(`[LLM] OpenRouter success (source: ${openRouterResult.source})`)
-      generatedText = openRouterResult.data.choices[0].message.content
-      llmSource = `openrouter-${openRouterResult.source}`
+        const geminiRetry = await callGeminiHybrid(
+          supabase,
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          {
+            model: 'gemini-1.5-flash',  // Try different model
+            temperature: 0.6,
+            maxTokens: 4096
+          }
+        )
+
+        if (geminiRetry.success && geminiRetry.content) {
+          console.log(`[LLM] Gemini retry success (source: ${geminiRetry.source})`)
+          generatedText = geminiRetry.content
+          llmSource = `gemini-retry-${geminiRetry.source}`
+        } else {
+          // All providers failed
+          console.error('[LLM] All providers failed')
+          console.error('[LLM] Gemini error:', geminiResult.error)
+          console.error('[LLM] OpenRouter error:', openRouterResult.error)
+          console.error('[LLM] Gemini retry error:', geminiRetry.error)
+          throw new Error(`All LLM providers failed. Last error: ${lastError}`)
+        }
+      }
     }
 
     console.log(`[LLM] Final source: ${llmSource}`)

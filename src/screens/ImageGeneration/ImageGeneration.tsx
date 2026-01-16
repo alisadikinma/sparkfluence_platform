@@ -6,7 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segmentDuration";
-import { getWordLimitStatus, type LanguageCode } from "../../lib/wordLimits";
+import { getWordLimitStatus, getMaxWords, type LanguageCode } from "../../lib/wordLimits";
 import { getSuggestedKeywords } from "../../lib/keywordExtractor";  // Only need fallback function
 import { VisualPreviewGallery, GenerateBRollModal } from "./components";
 import {
@@ -42,6 +42,8 @@ interface Segment {
   transition: string;
   script: string;
   visualDirection: string;
+  creatorCostume?: string;                 // Topic-appropriate outfit for CREATOR shots (from LLM)
+  creatorAppearance?: string;              // Generic face description fallback (from LLM)
   imageUrl: string | null;                 // Keep for backward compatibility (selected image)
   images: SegmentImage[];                  // NEW: Array of all images for this segment
   isGeneratingImage: boolean;
@@ -892,8 +894,29 @@ export const ImageGeneration = (): JSX.Element => {
   // NEW: Image model selection state
   const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
   const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
   const [bRollModal, setBRollModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
+
+  // Language options for script output
+  const LANGUAGE_OPTIONS = [
+    { value: 'id', label: 'Indonesia', flag: '🇮🇩' },
+    { value: 'en', label: 'English', flag: '🇺🇸' },
+    { value: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
+  ] as const;
+
+  // Detect language from script text (for initial sync)
+  const detectScriptLanguage = (scripts: string[]): string => {
+    const combinedText = scripts.join(' ');
+    // Hindi: Devanagari Unicode range \u0900-\u097F
+    const hindiPattern = /[\u0900-\u097F]/;
+    // Indonesian markers: common words/particles
+    const indonesianPattern = /\b(gue|lo|banget|sih|dong|nih|tuh|gitu|aja|udah|nggak|kan)\b/i;
+
+    if (hindiPattern.test(combinedText)) return 'hi';
+    if (indonesianPattern.test(combinedText)) return 'id';
+    return 'en'; // default to English
+  };
 
   // Avatar info for voice prompt retrieval in VideoGeneration
   const [avatarOption, setAvatarOption] = useState<'none' | 'profile' | 'saved' | 'upload'>('none');
@@ -902,6 +925,9 @@ export const ImageGeneration = (): JSX.Element => {
 
   // AI Script Shortener state
   const [shorteningSegmentId, setShorteningSegmentId] = useState<string | null>(null);
+
+  // Script Translation state
+  const [isTranslating, setIsTranslating] = useState(false);
 
   const fromScriptLab = location.state?.fromScriptLab === true;
 
@@ -1106,13 +1132,18 @@ export const ImageGeneration = (): JSX.Element => {
         
         const existingJobs = await checkExistingJobs(sid);
         const savedProgress = loadProgress(sid);
-        
+
         let formattedSegments: Segment[];
-        
-        if (savedProgress && savedProgress.segments?.length > 0) {
+
+        // Check if savedProgress has valid script data
+        // If scripts are missing, prefer fresh data from navigation state
+        const savedHasScripts = savedProgress?.segments?.some((s: Segment) => s.script && s.script.trim().length > 0);
+
+        if (savedProgress && savedProgress.segments?.length > 0 && savedHasScripts) {
           formattedSegments = savedProgress.segments;
           setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
           setVideoSettings(savedProgress.videoSettings || stateData.videoSettings || null);
+          console.log('[Init] Using savedProgress with scripts');
         } else {
           // Auto-calculate duration based on segment type and video duration
           const videoDuration = stateData.videoSettings?.duration || '60s';
@@ -1133,6 +1164,8 @@ export const ImageGeneration = (): JSX.Element => {
               transition: seg.transition || 'Cut',
               script: seg.script_text || seg.script || '',
               visualDirection: seg.visual_direction || '',
+              creatorCostume: seg.creator_costume || '',  // Topic-appropriate outfit for CREATOR shots
+              creatorAppearance: seg.creator_appearance || '',  // Generic face description fallback
               imageUrl: null,
               images: [],                        // Initialize empty images array
               isGeneratingImage: false,
@@ -1143,15 +1176,19 @@ export const ImageGeneration = (): JSX.Element => {
           setCurrentTopic(stateData.topic?.split('\n')[0].trim() || 'Your Video');
           setVideoSettings(stateData.videoSettings || null);
 
-          // Set avatar info from ScriptLab
+          // Set avatar info from TopicSelection/ScriptLab
+          // TopicSelection sends: selectedAvatarUrl, characterDescription
+          // ScriptLab sends: avatarOption, avatarId, avatarUrl
           if (stateData.avatarOption) setAvatarOption(stateData.avatarOption);
           if (stateData.avatarId) setAvatarId(stateData.avatarId);
-          if (stateData.avatarUrl) setAvatarUrl(stateData.avatarUrl);
+          // Support both keys: selectedAvatarUrl (from TopicSelection) and avatarUrl (from ScriptLab)
+          const avatarUrlFromState = stateData.selectedAvatarUrl || stateData.avatarUrl;
+          if (avatarUrlFromState) setAvatarUrl(avatarUrlFromState);
         }
         
         if (existingJobs && existingJobs.length > 0) {
           formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
-          
+
           const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
           if (hasPending) {
             setIsBackgroundMode(true);
@@ -1159,10 +1196,37 @@ export const ImageGeneration = (): JSX.Element => {
             startBackgroundProcessing(sid);
           }
         }
-        
+
         setSegments(formattedSegments);
         setIsLoaded(true);
-        
+
+        // Auto-detect language from actual script content and sync with videoSettings
+        // This ensures the language selector always matches the script language
+        const scripts = formattedSegments.map((seg: Segment) => seg.script).filter(Boolean);
+        if (scripts.length > 0) {
+          const detectedLang = detectScriptLanguage(scripts);
+          console.log('[Init] Auto-detected script language:', detectedLang);
+          const baseSettings = stateData.videoSettings || { duration: '60s', aspectRatio: '9:16', resolution: '720p' };
+          setVideoSettings({ ...baseSettings, language: detectedLang });
+        } else {
+          setVideoSettings(stateData.videoSettings || null);
+        }
+
+        // Save progress to localStorage immediately after initialization from navigation state
+        // This ensures script data is persisted for page refresh/reload scenarios
+        const topicToSave = stateData.topic?.split('\n')[0].trim() || 'Your Video';
+        const settingsToSave = currentSettings;
+        const progressData = {
+          sessionId: sid,
+          topic: topicToSave,
+          videoSettings: settingsToSave,
+          segments: formattedSegments,
+          updatedAt: new Date().toISOString()
+        };
+        localStorage.setItem(`sparkfluence_video_progress_${sid}`, JSON.stringify(progressData));
+        localStorage.setItem('sparkfluence_active_session', sid);
+        console.log('[Init] Saved initial progress to localStorage with', formattedSegments.length, 'segments');
+
       } else if (sid) {
         const existingJobs = await checkExistingJobs(sid);
         const savedProgress = loadProgress(sid);
@@ -1184,7 +1248,17 @@ export const ImageGeneration = (): JSX.Element => {
 
           setSegments(formattedSegments);
           setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
-          setVideoSettings(savedProgress.videoSettings || null);
+
+          // Auto-detect language from actual script content and sync with videoSettings
+          const scripts = formattedSegments.map((seg: Segment) => seg.script).filter(Boolean);
+          if (scripts.length > 0) {
+            const detectedLang = detectScriptLanguage(scripts);
+            console.log('[Init] Auto-detected script language from savedProgress:', detectedLang);
+            const baseSettings = savedProgress.videoSettings || { duration: '60s', aspectRatio: '9:16', resolution: '720p' };
+            setVideoSettings({ ...baseSettings, language: detectedLang });
+          } else {
+            setVideoSettings(savedProgress.videoSettings || null);
+          }
           setIsLoaded(true);
         } else if (existingJobs && existingJobs.length > 0) {
           // ✅ FIX: Rebuild segments from database when localStorage is empty (new browser/computer)
@@ -1471,7 +1545,8 @@ export const ImageGeneration = (): JSX.Element => {
 
     try {
       // Use character_ref_png if available, otherwise fallback to avatar_url
-      const referenceImage = characterRefPng || userAvatarUrl || '';
+      // Priority: character_ref_png > navigation state (newly uploaded) > database profile
+      const referenceImage = characterRefPng || avatarUrl || userAvatarUrl || '';
       
       const segmentsData = segmentsToGenerate.map((seg, index) => {
         const originalIndex = segments.findIndex(s => s.id === seg.id);
@@ -1486,6 +1561,9 @@ export const ImageGeneration = (): JSX.Element => {
           visual_prompt: seg.visualDirection || '', // Empty = trigger visual brief extraction
           visual_direction: seg.visualDirection || '',
           script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
+          // Creator costume & appearance from LLM (for topic-appropriate outfit)
+          creator_costume: isCreatorShot ? (seg.creatorCostume || '') : null,
+          creator_appearance: isCreatorShot ? (seg.creatorAppearance || '') : null,
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null,
           // Reference image for B-ROLL or CREATOR
@@ -1578,7 +1656,8 @@ export const ImageGeneration = (): JSX.Element => {
 
     try {
       // Use character_ref_png if available, otherwise fallback to avatar_url
-      const referenceImage = characterRefPng || userAvatarUrl || '';
+      // Priority: character_ref_png > navigation state (newly uploaded) > database profile
+      const referenceImage = characterRefPng || avatarUrl || userAvatarUrl || '';
       
       const segmentsData = segments.map((seg, index) => {
         const isCreatorShot = seg.shotType === 'CREATOR'; // Only shot_type matters
@@ -1594,6 +1673,9 @@ export const ImageGeneration = (): JSX.Element => {
           script_text: seg.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: isCreatorShot ? referenceImage : null,
+          // Topic-appropriate costume for CREATOR segments (from LLM)
+          creator_costume: isCreatorShot ? (seg.creatorCostume || '') : null,
+          creator_appearance: isCreatorShot ? (seg.creatorAppearance || '') : null,
           // Reference image for B-ROLL
           reference_image_url: !isCreatorShot ? seg.referenceImageUrl : undefined,
           // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
@@ -1692,11 +1774,12 @@ export const ImageGeneration = (): JSX.Element => {
     );
 
     try {
-      const avatarUrl = segment.creatorAvatarUrl || userAvatarUrl || null;
+      // Priority: segment-specific > navigation state (newly uploaded) > database profile
+      const effectiveAvatarUrl = segment.creatorAvatarUrl || avatarUrl || userAvatarUrl || null;
       // Only CREATOR shot_type needs face reference
       const isCreatorShot = segment.shotType === 'CREATOR';
-      const referenceImage = isCreatorShot ? (characterRefPng || avatarUrl) : null;
-      
+      const referenceImage = isCreatorShot ? (characterRefPng || effectiveAvatarUrl) : null;
+
       const requestBody = {
         segments: [{
           segment_number: parseInt(segmentId),
@@ -1704,18 +1787,21 @@ export const ImageGeneration = (): JSX.Element => {
           visual_prompt: segment.visualDirection || '', // Empty = trigger visual brief extraction
           visual_direction: segment.visualDirection || '',
           shot_type: segment.shotType,
-          creator_avatar_url: avatarUrl,
+          creator_avatar_url: effectiveAvatarUrl,
           emotion: segment.emotion,
           segment_type: segment.type,
           script_text: segment.script, // ✅ CRITICAL: Script text for visual brief extraction (NOT as fallback prompt)
           character_description: isCreatorShot ? characterDescription : null,
           character_ref_png: referenceImage,
+          // Topic-appropriate costume for CREATOR segments (from LLM)
+          creator_costume: isCreatorShot ? (segment.creatorCostume || '') : null,
+          creator_appearance: isCreatorShot ? (segment.creatorAppearance || '') : null,
           // Reference image for B-ROLL
           reference_image_url: !isCreatorShot ? segment.referenceImageUrl : undefined,
           // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
           include_creator_face: !isCreatorShot ? (segment.includeCreatorFace || false) : false,
           // Pass creator ref for B-ROLL with include_creator_face
-          creator_ref_for_broll: (!isCreatorShot && segment.includeCreatorFace) ? (characterRefPng || avatarUrl) : null
+          creator_ref_for_broll: (!isCreatorShot && segment.includeCreatorFace) ? (characterRefPng || effectiveAvatarUrl) : null
         }],
         style: 'cinematic',
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
@@ -1793,7 +1879,7 @@ export const ImageGeneration = (): JSX.Element => {
       );
       return false;
     }
-  }, [segments, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic, sessionId, user, imageModels]);
+  }, [segments, avatarUrl, userAvatarUrl, characterDescription, characterRefPng, videoSettings, currentTopic, sessionId, user, imageModels]);
 
   const handleSelectImage = useCallback(async (imageId: string, segmentNumber: number) => {
     if (!user || !sessionId) return;
@@ -1944,8 +2030,9 @@ export const ImageGeneration = (): JSX.Element => {
       }
 
       // Determine if CREATOR shot and prepare reference images
+      // Priority: character_ref_png > navigation state (newly uploaded) > database profile
       const isCreatorShot = segment.shotType === 'CREATOR';
-      const creatorRef = characterRefPng || userAvatarUrl || null;
+      const creatorRef = characterRefPng || avatarUrl || userAvatarUrl || null;
 
       // Build request body with ALL relevant fields for comprehensive prompt synthesis
       const requestBody: Record<string, any> = {
@@ -1969,6 +2056,9 @@ export const ImageGeneration = (): JSX.Element => {
       if (isCreatorShot) {
         requestBody.character_description = characterDescription;
         requestBody.character_ref_png = creatorRef;
+        // Topic-appropriate costume from LLM
+        requestBody.creator_costume = segment.creatorCostume || '';
+        requestBody.creator_appearance = segment.creatorAppearance || '';
       } else {
         // B-ROLL fields
         requestBody.reference_image_url = segment.referenceImageUrl || null;
@@ -2060,7 +2150,8 @@ export const ImageGeneration = (): JSX.Element => {
     ));
 
     try {
-      const creatorRef = characterRefPng || userAvatarUrl || null;
+      // Priority: character_ref_png > navigation state (newly uploaded) > database profile
+      const creatorRef = characterRefPng || avatarUrl || userAvatarUrl || null;
       const maxGenNumber = Math.max(...(segment.images?.map(img => img.generationNumber) || []), 0);
 
       // Build request body
@@ -2107,6 +2198,10 @@ export const ImageGeneration = (): JSX.Element => {
         hasNotes: !!options.additionalNotes,
         refCount: options.referenceImages.length,
         includeCreatorFace: options.includeCreatorFace,
+        creatorRef: creatorRef ? creatorRef.substring(0, 60) + '...' : 'NULL',
+        characterRefPng: characterRefPng ? 'SET' : 'NULL',
+        avatarUrl: avatarUrl ? 'SET' : 'NULL',
+        userAvatarUrl: userAvatarUrl ? 'SET' : 'NULL',
       });
 
       const { data, error } = await supabase.functions.invoke('generate-images', {
@@ -2137,7 +2232,7 @@ export const ImageGeneration = (): JSX.Element => {
       ));
       alert(language === 'id' ? 'Gagal generate gambar' : 'Failed to generate image');
     }
-  }, [user, sessionId, bRollModal.segment, videoSettings, characterRefPng, userAvatarUrl, imageModels, startBackgroundProcessing, language]);
+  }, [user, sessionId, bRollModal.segment, videoSettings, characterRefPng, avatarUrl, userAvatarUrl, imageModels, startBackgroundProcessing, language]);
 
   const handlePrevious = () => {
     saveProgress(segments, currentTopic, videoSettings);
@@ -2173,6 +2268,82 @@ export const ImageGeneration = (): JSX.Element => {
   const totalDuration = segments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
   const allHaveImages = segments.every(seg => seg.imageUrl);
   const imagesGenerated = segments.filter(s => s.imageUrl).length;
+
+  // Handle language change - translate all scripts to new language
+  const handleLanguageChange = async (newLang: string) => {
+    const currentLang = videoSettings?.language || detectScriptLanguage(segments.map(s => s.script).filter(Boolean));
+
+    // If same language, just close dropdown
+    if (newLang === currentLang) {
+      setShowLanguageDropdown(false);
+      return;
+    }
+
+    // Map short code to full name for API
+    const langMap: Record<string, string> = {
+      'id': 'indonesian',
+      'en': 'english',
+      'hi': 'hindi',
+    };
+
+    setShowLanguageDropdown(false);
+    setIsTranslating(true);
+
+    try {
+      // Prepare scripts for translation with word limits
+      const scriptsToTranslate = segments.map(seg => ({
+        segmentId: seg.id,
+        script: seg.script,
+        targetWords: getMaxWords(seg.durationSeconds, newLang as LanguageCode)
+      }));
+
+      console.log('[Translate] Translating', scriptsToTranslate.length, 'scripts to', newLang);
+
+      const { data, error } = await supabase.functions.invoke('generate-script', {
+        body: {
+          mode: 'translate',
+          scripts: scriptsToTranslate,
+          language: langMap[newLang] || 'indonesian'
+        }
+      });
+
+      if (error) throw error;
+
+      if (data?.success && data?.translations) {
+        // Update segments with translated scripts
+        setSegments(prev => prev.map(seg => {
+          const translation = data.translations.find((t: any) => t.id === seg.id);
+          if (translation) {
+            return { ...seg, script: translation.script };
+          }
+          return seg;
+        }));
+
+        // Update videoSettings with new language
+        setVideoSettings(prev => prev
+          ? { ...prev, language: newLang }
+          : { duration: '60s', aspectRatio: '9:16', resolution: '720p', language: newLang }
+        );
+
+        console.log('[Translate] Successfully translated to', newLang);
+      } else {
+        console.error('[Translate] API error:', data?.error);
+        alert(language === 'id' ? 'Gagal menerjemahkan script. Coba lagi.' : 'Failed to translate scripts. Please try again.');
+      }
+    } catch (err) {
+      console.error('[Translate] Error:', err);
+      alert(language === 'id' ? 'Gagal menerjemahkan script. Coba lagi.' : 'Failed to translate scripts. Please try again.');
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  // Get current language label for display
+  const getCurrentLanguageLabel = () => {
+    const currentLang = videoSettings?.language || language || 'id';
+    const option = LANGUAGE_OPTIONS.find(opt => opt.value === currentLang);
+    return option ? `${option.flag} ${option.label}` : '🇮🇩 Indonesia';
+  };
 
   // Download helper function
   const handleDownloadImage = async (imageUrl: string, segmentType: string, segmentId: string) => {
@@ -2324,12 +2495,64 @@ export const ImageGeneration = (): JSX.Element => {
               </p>
             </div>
             
-            {/* Generate All Images Button + Model Dropdown */}
+            {/* Generate All Images Button + Language + Model Dropdown */}
             <div className="flex gap-2">
+              {/* Language Selection Dropdown */}
+              <div className="relative">
+                <Button
+                  onClick={() => {
+                    if (!isTranslating) {
+                      setShowLanguageDropdown(!showLanguageDropdown);
+                      setShowModelDropdown(false);
+                    }
+                  }}
+                  variant="outline"
+                  disabled={isTranslating}
+                  className="h-12 px-4 flex items-center gap-2"
+                >
+                  {isTranslating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="hidden sm:inline text-sm">{language === 'id' ? 'Menerjemahkan...' : 'Translating...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-base">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'id'))?.flag || '🇮🇩'}</span>
+                      <span className="hidden sm:inline text-sm">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'id'))?.label || 'Indonesia'}</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showLanguageDropdown ? 'rotate-180' : ''}`} />
+                    </>
+                  )}
+                </Button>
+
+                {showLanguageDropdown && !isTranslating && (
+                  <div className="absolute right-0 top-full mt-2 w-48 bg-card border border-border-default rounded-xl shadow-lg z-50 py-2">
+                    <p className="px-4 py-1 text-xs text-text-muted">{language === 'id' ? 'Bahasa Script' : language === 'hi' ? 'स्क्रिप्ट भाषा' : 'Script Language'}</p>
+                    {LANGUAGE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => handleLanguageChange(opt.value)}
+                        className={`w-full px-4 py-2 text-left flex items-center gap-3 hover:bg-surface transition-colors ${
+                          (videoSettings?.language || language || 'id') === opt.value ? 'bg-primary/10 text-primary' : 'text-text-primary'
+                        }`}
+                      >
+                        <span className="text-lg">{opt.flag}</span>
+                        <span className="text-sm">{opt.label}</span>
+                        {(videoSettings?.language || language || 'id') === opt.value && (
+                          <CheckCircle2 className="w-4 h-4 ml-auto text-primary" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Model Selection Dropdown */}
               <div className="relative">
                 <Button
-                  onClick={() => setShowModelDropdown(!showModelDropdown)}
+                  onClick={() => {
+                    setShowModelDropdown(!showModelDropdown);
+                    setShowLanguageDropdown(false);
+                  }}
                   variant="outline"
                   className="h-12 px-4 flex items-center gap-2"
                 >
@@ -2337,11 +2560,11 @@ export const ImageGeneration = (): JSX.Element => {
                   <span className="hidden sm:inline">Models</span>
                   <ChevronDown className={`w-4 h-4 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
                 </Button>
-                
+
                 {showModelDropdown && (
                   <div className="absolute right-0 top-full mt-2 w-72 bg-card border border-border-default rounded-xl shadow-lg z-50 p-4">
                     <h4 className="text-sm font-semibold text-text-primary mb-3">Image Model Selection</h4>
-                    
+
                     {/* A-ROLL Model */}
                     <div className="mb-3">
                       <label className="text-xs text-text-muted mb-1 block">A-ROLL (HOOK, CTA)</label>
@@ -2355,7 +2578,7 @@ export const ImageGeneration = (): JSX.Element => {
                         ))}
                       </select>
                     </div>
-                    
+
                     {/* B-ROLL Model */}
                     <div>
                       <label className="text-xs text-text-muted mb-1 block">B-ROLL (FORE, BODY, PEAK)</label>
@@ -2369,7 +2592,7 @@ export const ImageGeneration = (): JSX.Element => {
                         ))}
                       </select>
                     </div>
-                    
+
                     <p className="text-xs text-text-muted mt-3">Selected models apply to new generations</p>
                   </div>
                 )}
@@ -2732,7 +2955,7 @@ export const ImageGeneration = (): JSX.Element => {
         onGenerate={handleBRollGenerate}
         language={language}
         maxReferenceImages={3}
-        hasCreatorAvatar={!!(characterRefPng || userAvatarUrl)}  // NEW: Show warning if no avatar
+        hasCreatorAvatar={!!(characterRefPng || avatarUrl || userAvatarUrl)}  // Show warning if no avatar
       />
     </div>
   );

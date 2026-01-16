@@ -35,12 +35,18 @@ export const Welcome = (): JSX.Element => {
   const [cooldown, setCooldown] = useState(0);
   const [attemptsLeft, setAttemptsLeft] = useState(3);
 
+  // Flag to prevent re-checking after successful verification
+  const [verificationComplete, setVerificationComplete] = useState(false);
+
   // Check phone verification status on mount
   useEffect(() => {
     const checkPhoneVerification = async () => {
+      // Skip if verification was just completed in this session
+      if (verificationComplete) return;
+
       // Wait for auth to be determined
       if (authLoading) return;
-      
+
       if (!user) {
         navigate('/login');
         return;
@@ -65,7 +71,7 @@ export const Welcome = (): JSX.Element => {
     };
 
     checkPhoneVerification();
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, navigate, verificationComplete]);
 
   // Cooldown timer
   useEffect(() => {
@@ -213,6 +219,9 @@ export const Welcome = (): JSX.Element => {
           .select("onboarding_completed")
           .eq("user_id", user?.id)
           .maybeSingle();
+
+        // Set flag to prevent useEffect from re-checking and resetting step
+        setVerificationComplete(true);
 
         if (profile?.onboarding_completed) {
           navigate("/dashboard");

@@ -220,18 +220,9 @@ export const TopicSelection = (): JSX.Element => {
     }
   }, [onboardingLoading]);
 
-  // Regenerate topics when OUTPUT language changes
-  useEffect(() => {
-    const cached = getCachedTopics();
-    if (cached && cached.language !== outputLang && !loading) {
-      localStorage.removeItem(TOPICS_CACHE_KEY);
-      setSelectedTopic(null);
-      setPrompt("");
-      generateTopics();
-    } else if (!cached && !loading) {
-      generateTopics();
-    }
-  }, [outputLang]);
+  // Note: Language change no longer triggers topic regeneration
+  // Topics are universal ideas - only the script output language matters
+  // The outputLang is passed to ScriptLab for script generation
 
   const isCacheMatchingPreferences = (cached: any): boolean => {
     if (!cached) return false;

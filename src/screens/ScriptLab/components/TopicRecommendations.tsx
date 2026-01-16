@@ -229,11 +229,11 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     return `${interest}:${niches}:${dna}`;
   };
 
-  const isCacheValid = (timestamp: number, cachedLang: string, cachedNichesHash?: string) => {
+  const isCacheValid = (timestamp: number, cachedNichesHash?: string) => {
     const currentNichesHash = getNichesHash();
-    // Cache is valid if within expiry AND language matches AND niches match
-    return Date.now() - timestamp < TOPICS_CACHE_EXPIRY && 
-           cachedLang === language && 
+    // Cache is valid if within expiry AND niches match
+    // Note: Language is no longer checked - topics are universal ideas
+    return Date.now() - timestamp < TOPICS_CACHE_EXPIRY &&
            cachedNichesHash === currentNichesHash;
   };
 
@@ -261,8 +261,8 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     // Try cache first (unless forcing refresh)
     if (!forceRefresh) {
       const cached = getCachedTopics();
-      if (cached && cached.topics && cached.topics.length > 0 && 
-          isCacheValid(cached.timestamp, cached.language || 'en', cached.nichesHash)) {
+      if (cached && cached.topics && cached.topics.length > 0 &&
+          isCacheValid(cached.timestamp, cached.nichesHash)) {
         setTopics(cached.topics);
         setLoading(false);
         return;
@@ -271,7 +271,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
     // Generate new topics
     await generateTopics();
-  }, [user, language, onboardingData]);
+  }, [user, onboardingData]);
 
   const generateTopics = async () => {
     if (!onboardingData) {
@@ -345,18 +345,9 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     }
   }, [onboardingLoading, loadTopics]);
 
-  // IMPORTANT: Regenerate topics when language changes
-  useEffect(() => {
-    const cached = getCachedTopics();
-    // If language changed from cached language, regenerate
-    if (cached && cached.language !== language && !loading) {
-      console.log('[TopicRecommendations] Language changed, regenerating topics:', { from: cached.language, to: language });
-      localStorage.removeItem(TOPICS_CACHE_KEY);
-      setSelectedId(null);
-      setLoading(true);
-      generateTopics();
-    }
-  }, [language]);
+  // Note: Language change no longer triggers topic regeneration
+  // Topics are universal ideas - only the script output language matters
+  // The language is passed to generate-script edge function for script generation
 
   // Handle refresh
   const handleRefresh = async () => {

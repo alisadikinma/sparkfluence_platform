@@ -1072,6 +1072,12 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
     const hasCreatorRef = !!creator_ref_for_broll
     
     // Select provider using same logic as handleCreateJobs
+    console.log(`[REGENERATE_SINGLE] Provider selection inputs:`)
+    console.log(`  - isCreatorShot: ${isCreatorShot}`)
+    console.log(`  - hasReferenceImage: ${hasReferenceImage} (brollRef: ${!!brollRefImage})`)
+    console.log(`  - include_creator_face: ${include_creator_face} (type: ${typeof include_creator_face})`)
+    console.log(`  - hasCreatorRef: ${hasCreatorRef} (creator_ref_for_broll: ${creator_ref_for_broll ? 'SET' : 'NULL'})`)
+
     const providerChoice = selectImageProvider(
       isCreatorShot,
       hasReferenceImage,
@@ -1759,14 +1765,20 @@ function buildCinematicPrompt(params: PromptParams): string {
   // CREATOR SHOT - Use ENHANCED cinematography prompt builder (400+ chars)
   if (shotType === 'CREATOR' || ['HOOK', 'CTA', 'LOOP-END', 'ENDING_CTA'].includes(segmentType)) {
     const charDesc = characterDescription || segment.character_description || 'Professional content creator, confident posture, engaging presence'
-    
+
     // ========================================================================
-    // 2026-01-14: Use CONTEXTUAL COSTUME based on topic + script activity
-    // Gaming → casual gamer outfit, Fitness → gym clothes, Doctor → medical attire
+    // 2026-01-16: PRIORITY ORDER for costume selection:
+    // 1. segment.creator_costume (LLM-generated, topic-specific) - HIGHEST PRIORITY
+    // 2. getContextualCostume() fallback (keyword-based detection)
+    //
+    // This ensures LLM's topic-aware costume is used when available:
+    // - Fitness topic → "athletic wear, gym outfit"
+    // - Medical topic → "white doctor coat with stethoscope"
+    // - Police topic → "police uniform, law enforcement attire"
     // ========================================================================
-    const contextualCostume = getContextualCostume(topic, `${scriptText} ${visualDirection}`)
-    console.log(`[buildCinematicPrompt] CREATOR contextual costume: "${contextualCostume}"`)
-    
+    const creatorCostume = segment.creator_costume || getContextualCostume(topic, `${scriptText} ${visualDirection}`)
+    console.log(`[buildCinematicPrompt] CREATOR costume: "${creatorCostume}" (from: ${segment.creator_costume ? 'LLM' : 'contextual'})`)
+
     // Use FULL prompt builder (2026-01-11 enhanced)
     const fullPrompt = buildFullCinematographyPrompt({
       characterDescription: charDesc,
@@ -1775,7 +1787,7 @@ function buildCinematicPrompt(params: PromptParams): string {
       shotType: mappedShotType,
       segmentType: segmentType,
       aspectRatio: aspectRatio,
-      costume: contextualCostume, // Dynamic costume based on activity
+      costume: creatorCostume, // LLM-generated or contextual fallback
       visualReference: undefined // Can add film reference if needed
     })
     

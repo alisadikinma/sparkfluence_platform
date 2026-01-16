@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { useLanguage } from "../../../contexts/LanguageContext";
 import { useOnboardingStatus } from "../../../hooks/useOnboardingStatus";
 import { useAuth } from "../../../contexts/AuthContext";
@@ -32,6 +32,10 @@ interface ScriptFormProps {
     useDnaTone: boolean;
     creativeDna: string[] | null;
     characterDescription: string | null;
+    // Avatar info
+    avatarOption: "none" | "profile" | "saved" | "upload";
+    avatarId: string | null;
+    avatarUrl: string | null;
   }) => void;
   loading: boolean;
   selectedTopic?: SelectedTopic | null;
@@ -84,7 +88,39 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarDropdownRef = useRef<HTMLDivElement>(null);
+  const avatarButtonRef = useRef<HTMLButtonElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Dropdown direction state (up or down)
+  const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down');
+
+  // Calculate dropdown direction when it opens
+  useLayoutEffect(() => {
+    if (!avatarDropdownOpen) {
+      setDropdownDirection('down');
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!avatarButtonRef.current) return;
+
+      const rect = avatarButtonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const dropdownMaxHeight = 280;
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+
+      console.log('[ScriptForm] spaceBelow:', spaceBelow, 'spaceAbove:', spaceAbove);
+
+      if (spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow) {
+        setDropdownDirection('up');
+      } else {
+        setDropdownDirection('down');
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [avatarDropdownOpen]);
 
   const hasDnaTone = onboardingData?.creative_dna && onboardingData.creative_dna.length > 0;
 
@@ -415,6 +451,21 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
     e.preventDefault();
     if (!prompt.trim()) return;
 
+    // Determine the correct avatar URL based on selected option
+    let finalAvatarUrl: string | null = null;
+    if (avatarOption === 'profile' && cachedAvatarUrl) {
+      finalAvatarUrl = cachedAvatarUrl;
+    } else if (avatarOption === 'saved' && selectedSavedAvatar) {
+      finalAvatarUrl = selectedSavedAvatar.avatar_url;
+    } else if (avatarOption === 'upload' && uploadedAvatarPreview) {
+      finalAvatarUrl = uploadedAvatarPreview;
+    }
+
+    console.log('[ScriptForm] Submitting with avatar:', {
+      avatarOption,
+      finalAvatarUrl: finalAvatarUrl ? finalAvatarUrl.substring(0, 60) + '...' : 'NULL',
+    });
+
     onSubmit({
       prompt: prompt.trim(),
       inputType,
@@ -428,7 +479,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       // Avatar info for voice prompt retrieval
       avatarOption,
       avatarId: avatarOption === 'saved' && selectedSavedAvatar ? selectedSavedAvatar.id : null,
-      avatarUrl: uploadedAvatarPreview,
+      avatarUrl: finalAvatarUrl,
     });
   };
 
@@ -653,6 +704,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
               {/* Avatar Dropdown */}
               <div className="relative" ref={avatarDropdownRef}>
                 <button
+                  ref={avatarButtonRef}
                   type="button"
                   onClick={() => setAvatarDropdownOpen(!avatarDropdownOpen)}
                   disabled={loading || analyzingAvatar}
@@ -675,7 +727,9 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
                 {/* Avatar Dropdown Menu */}
                 {avatarDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border-default rounded-lg shadow-lg z-50 overflow-hidden max-h-64 overflow-y-auto">
+                  <div className={`absolute left-0 right-0 bg-surface border border-border-default rounded-lg shadow-lg z-50 overflow-hidden max-h-64 overflow-y-auto ${
+                    dropdownDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
+                  }`}>
                     {/* No Avatar */}
                     <button
                       type="button"

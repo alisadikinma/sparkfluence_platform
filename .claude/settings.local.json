@@ -30,7 +30,12 @@
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" log --oneline -5)",
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" add -A)",
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" commit -m \"$\\(cat <<''EOF''\nfeat: add GeminiGen VEO 3.1 webhook support and fix video generation\n\n- Add geminigen-webhook edge function to receive video completion callbacks\n- Add GeminiGen handler to handleProcessSingle in generate-videos\n- Fix voice_character column error \\(column was removed, use voice_prompt_id\\)\n- Add VEO 3.1 models to aiModels.ts configuration\n- Add voice_prompts table and migrations for voice management\n- Enhance VideoGeneration UI with better job status tracking\n- Update analyze-avatar for better face detection\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" push origin main)"
+      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" push origin main)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: ensure active session before profile update in Register\n\n- Add session validation before updating user_profiles \\(RLS requires auth.uid\\(\\) = user_id\\)\n- Double-check session is active and matches signup user ID\n- Add detailed logging for debugging profile update issues\n- Verify profile was updated correctly after save\n- Increase trigger wait time from 500ms to 800ms\n\nFixes issue where phone_verified remained false after registration\nbecause profile update was blocked by RLS policy.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(npx supabase:*)",
+      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" log --oneline -20)"
     ]
   }
 }
