@@ -797,6 +797,35 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
 
   console.log(`[CREATE_JOBS] Existing jobs: ${existingJobs?.length || 0}, Missing segments: ${missingRecords.length}`)
 
+  // Update existing jobs' preferred_platform if model changed
+  // This ensures VEO 3.1 Fast/HD selection is respected even for existing jobs
+  let updatedExistingJobs = existingJobs || []
+  if (existingJobs && existingJobs.length > 0) {
+    const jobsNeedingUpdate = existingJobs.filter(j => j.preferred_platform !== selectedPlatformForAll)
+    if (jobsNeedingUpdate.length > 0) {
+      console.log(`[CREATE_JOBS] 🔄 Updating ${jobsNeedingUpdate.length} existing jobs from ${jobsNeedingUpdate[0]?.preferred_platform} to ${selectedPlatformForAll}`)
+
+      const jobIds = jobsNeedingUpdate.map(j => j.id)
+      const { data: updatedJobs, error: updateError } = await supabase
+        .from('video_generation_jobs')
+        .update({
+          preferred_platform: selectedPlatformForAll,
+          updated_at: new Date().toISOString()
+        })
+        .in('id', jobIds)
+        .select()
+
+      if (updateError) {
+        console.error('[CREATE_JOBS] Update error:', updateError)
+      } else {
+        console.log(`[CREATE_JOBS] ✅ Updated ${updatedJobs?.length || 0} jobs to platform: ${selectedPlatformForAll}`)
+        // Replace updated jobs in the list
+        const updatedMap = new Map(updatedJobs?.map(j => [j.id, j]) || [])
+        updatedExistingJobs = existingJobs.map(j => updatedMap.get(j.id) || j)
+      }
+    }
+  }
+
   // Insert missing job records (if any)
   let newJobs: any[] = []
   if (missingRecords.length > 0) {
@@ -816,8 +845,8 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     console.log(`[CREATE_JOBS] ✅ Created ${newJobs.length} new jobs for missing segments`)
   }
 
-  // Combine existing and new jobs
-  const allJobs = [...(existingJobs || []), ...newJobs].sort((a, b) => a.segment_number - b.segment_number)
+  // Combine existing (possibly updated) and new jobs
+  const allJobs = [...updatedExistingJobs, ...newJobs].sort((a, b) => a.segment_number - b.segment_number)
   console.log(`[CREATE_JOBS] ✅ Total jobs: ${allJobs.length} (${existingJobs?.length || 0} existing + ${newJobs.length} new)`)
 
   return new Response(
@@ -1572,7 +1601,7 @@ async function handleLegacyMode(supabase: any, requestBody: any) {
           .eq('segment_id', segmentId)
           .single()
 
-        console.log('[LEGACY] Find existing job:', { existingJob, findError: findError?.message })
+        console.log('[LEGACY] Find existing job:', existingJob?.id || 'not found', findError ? `Error: ${findError.message}` : '(no error)')
 
         if (existingJob) {
           // UPDATE existing job with veo_uuid

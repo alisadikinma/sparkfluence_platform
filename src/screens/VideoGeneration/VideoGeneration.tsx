@@ -303,8 +303,7 @@ export const VideoGeneration = (): JSX.Element => {
   const [wan25Settings, setWan25Settings] = useState({
     resolution: '720p' as '480p' | '720p' | '1080p',
     seed: null as number | null, // null = random each time
-    negativePrompt: 'blur, distortion, low quality, deformed',
-    duration: '5' as '5' | '10' // Default 5s for WAN 2.5
+    negativePrompt: 'blur, distortion, low quality, deformed'
   });
 
   // Avatar info for voice prompt retrieval
@@ -320,6 +319,8 @@ export const VideoGeneration = (): JSX.Element => {
   // Sequential processing control refs
   const isSequentialProcessingRef = useRef(false);
   const shouldStopProcessingRef = useRef(false);
+  const activeJobCountRef = useRef(0); // Track active jobs for MAX_PARALLEL enforcement
+  const processingLoopIdRef = useRef(0); // Unique ID for each processing loop
 
   // ============================================================================
   // SESSION PERSISTENCE - Backup sessionId to sessionStorage for page refresh
@@ -1014,20 +1015,32 @@ export const VideoGeneration = (): JSX.Element => {
   const startBackgroundProcessing = useCallback((sid: string) => {
     // Prevent multiple simultaneous processing loops
     if (isSequentialProcessingRef.current) {
-      console.log('[VideoGen] Processing already running');
+      console.log('[VideoGen] ⚠️ Processing already running - SKIPPING');
       return;
     }
-    
+
+    // Generate unique loop ID to detect stale loops
+    const loopId = ++processingLoopIdRef.current;
+    console.log(`[VideoGen] 🆔 Starting processing loop #${loopId}`);
+
     shouldStopProcessingRef.current = false;
     isSequentialProcessingRef.current = true;
-    
+
     const STAGGER_DELAY_MS = 60000;  // 60 seconds (1 minute) between submissions
     const POLL_INTERVAL_MS = 10000;  // 10 seconds between status checks
     const MAX_PARALLEL = 3;          // Max 3 videos running at once
-    const MAX_POLL_ATTEMPTS = 60;    // 10 minutes max total wait
-    
+
     // Track active jobs being polled
-    const activePollingJobs = new Map<string, { jobId: string; segmentId: string; segmentNumber: number }>(); 
+    const activePollingJobs = new Map<string, { jobId: string; segmentId: string; segmentNumber: number }>();
+
+    // Helper to check if this loop is still valid
+    const isLoopValid = () => {
+      const valid = processingLoopIdRef.current === loopId && !shouldStopProcessingRef.current;
+      if (!valid) {
+        console.log(`[VideoGen] 🛑 Loop #${loopId} invalidated (current: #${processingLoopIdRef.current}, stop: ${shouldStopProcessingRef.current})`);
+      }
+      return valid;
+    }; 
     
     const processControlledParallel = async () => {
       console.log('[VideoGen] 🚀 Starting controlled parallel processing (max 3, 60s delay)...');
@@ -1088,8 +1101,7 @@ export const VideoGeneration = (): JSX.Element => {
           const wan25Opts = isWan25 ? {
             resolution: wan25Settings.resolution,
             seed: wan25Settings.seed,
-            negativePrompt: wan25Settings.negativePrompt,
-            duration: wan25Settings.duration
+            negativePrompt: wan25Settings.negativePrompt
           } : undefined;
 
           const { data, error } = await invokeWithRetry('generate-videos', {
@@ -1223,42 +1235,100 @@ export const VideoGeneration = (): JSX.Element => {
         };
         
         // ================================================================
-        // MAIN LOOP: Submit with controlled parallelism
+        // MAIN LOOP: SIMPLE & STRICT controlled parallelism
+        // - Max 3 videos running in parallel at any time
+        // - Always 60s delay between each submission
+        // - After 3 active, BLOCK until one completes before submitting next
         // ================================================================
-        while ((jobQueue.length > 0 || activePollingJobs.size > 0) && !shouldStopProcessingRef.current) {
-          
-          // Submit new jobs if we have capacity and jobs in queue
-          while (jobQueue.length > 0 && activePollingJobs.size < MAX_PARALLEL && !shouldStopProcessingRef.current) {
-            const job = jobQueue.shift()!;
-            const submitted = await submitJob(job);
-            
-            if (submitted) {
-              activePollingJobs.set(submitted.uuid, {
-                jobId: submitted.jobId,
-                segmentId: submitted.segmentId,
-                segmentNumber: submitted.segmentNumber
-              });
-              totalSubmitted++;
-              
-              // Wait 60s before submitting next (if more jobs in queue and we have capacity)
-              if (jobQueue.length > 0 && activePollingJobs.size < MAX_PARALLEL && !shouldStopProcessingRef.current) {
-                console.log(`[VideoGen] ⏳ Waiting 60s before next submission... (${activePollingJobs.size}/${MAX_PARALLEL} active)`);
-                await new Promise(resolve => setTimeout(resolve, STAGGER_DELAY_MS));
+        let lastSubmitTime = 0;
+        activeJobCountRef.current = 0;
+
+        console.log(`[VideoGen] 🎬 Loop #${loopId} starting with ${jobQueue.length} jobs, MAX_PARALLEL=${MAX_PARALLEL}`);
+
+        while (isLoopValid()) {
+          const activeCount = activePollingJobs.size;
+
+          console.log(`[VideoGen] [#${loopId}] 📊 Loop check: active=${activeCount}, queue=${jobQueue.length}`);
+
+          // ============================================================
+          // EXIT CONDITIONS
+          // ============================================================
+          if (jobQueue.length === 0 && activeCount === 0) {
+            console.log(`[VideoGen] [#${loopId}] ✅ All done - no queue, no active`);
+            break;
+          }
+
+          // ============================================================
+          // CASE 1: We have capacity AND jobs to submit
+          // ============================================================
+          if (jobQueue.length > 0 && activeCount < MAX_PARALLEL) {
+            // Enforce 60s delay between submissions
+            if (lastSubmitTime > 0) {
+              const timeSinceLastSubmit = Date.now() - lastSubmitTime;
+              if (timeSinceLastSubmit < STAGGER_DELAY_MS) {
+                const waitTime = STAGGER_DELAY_MS - timeSinceLastSubmit;
+                console.log(`[VideoGen] [#${loopId}] ⏳ Waiting ${Math.round(waitTime/1000)}s before next submission...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+                if (!isLoopValid()) break;
               }
             }
+
+            // Re-check capacity after delay
+            if (activePollingJobs.size >= MAX_PARALLEL) {
+              console.log(`[VideoGen] [#${loopId}] 🚫 Capacity full after delay, will poll`);
+            } else {
+              // Submit ONE job
+              const job = jobQueue.shift()!;
+              console.log(`[VideoGen] [#${loopId}] 📤 Submitting job ${job.segment_number}/${pendingJobs.length}...`);
+
+              const submitted = await submitJob(job);
+
+              if (submitted) {
+                activePollingJobs.set(submitted.uuid, {
+                  jobId: submitted.jobId,
+                  segmentId: submitted.segmentId,
+                  segmentNumber: submitted.segmentNumber
+                });
+                activeJobCountRef.current = activePollingJobs.size;
+                totalSubmitted++;
+                lastSubmitTime = Date.now();
+                console.log(`[VideoGen] [#${loopId}] ✅ Submitted! Active: ${activePollingJobs.size}/${MAX_PARALLEL}, Queue: ${jobQueue.length}`);
+              }
+
+              // Continue to next iteration - will check capacity again
+              continue;
+            }
           }
-          
-          // If we have MAX_PARALLEL running or queue empty, poll and wait for completion
-          if (activePollingJobs.size > 0) {
+
+          // ============================================================
+          // CASE 2: At capacity OR no jobs - must wait for completion
+          // ============================================================
+          if (activeCount > 0) {
+            if (activeCount >= MAX_PARALLEL) {
+              console.log(`[VideoGen] [#${loopId}] 🔒 AT MAX CAPACITY (${activeCount}/${MAX_PARALLEL}) - BLOCKING until completion...`);
+            } else {
+              console.log(`[VideoGen] [#${loopId}] ⏳ No jobs in queue, waiting for ${activeCount} active to complete...`);
+            }
+
+            // Poll until something completes
             const anyCompleted = await pollActiveJobs();
-            
-            // If nothing completed and we still have active jobs, wait before next poll
-            if (!anyCompleted && activePollingJobs.size > 0 && !shouldStopProcessingRef.current) {
+
+            if (anyCompleted) {
+              activeJobCountRef.current = activePollingJobs.size;
+              console.log(`[VideoGen] [#${loopId}] 🎉 Job completed! Active now: ${activePollingJobs.size}/${MAX_PARALLEL}`);
+              // Continue loop - will check if we can submit next
+            } else {
+              // Nothing completed, wait before polling again
               await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
             }
-            // If something completed and we have more jobs, the next iteration will submit
+          } else {
+            // No active jobs but still have queue (shouldn't happen, but safety)
+            console.log(`[VideoGen] [#${loopId}] ⚠️ No active jobs but have queue - continuing`);
           }
         }
+
+        activeJobCountRef.current = 0;
+        console.log(`[VideoGen] [#${loopId}] 🏁 Loop ended`);
         
         // ================================================================
         // DONE
@@ -1394,13 +1464,15 @@ export const VideoGeneration = (): JSX.Element => {
     const segmentsToGenerate = segments.filter(s => !s.videoUrl && s.imageUrl);
     if (segmentsToGenerate.length === 0) return;
 
-    // CRITICAL: Stop any existing processing loop and reset refs
-    // This fixes the bug where loop stops after 1 video when retrying
-    console.log('[VideoGen] Stopping any existing processing loop...');
+    // CRITICAL: Stop any existing processing loop and reset ALL refs
+    console.log('[VideoGen] 🛑 Stopping any existing processing loop...');
     shouldStopProcessingRef.current = true;
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for loop to stop
+    processingLoopIdRef.current++; // Invalidate any running loop
+    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for loop to stop
     isSequentialProcessingRef.current = false; // Reset ref to allow new loop
     shouldStopProcessingRef.current = false; // Reset stop flag
+    activeJobCountRef.current = 0; // Reset active job counter
+    console.log(`[VideoGen] ♻️ Refs reset, next loop will be #${processingLoopIdRef.current + 1}`);
 
     setIsGeneratingAll(true);
     setIsBackgroundMode(true);
@@ -1499,13 +1571,11 @@ export const VideoGeneration = (): JSX.Element => {
         });
       }
 
-      // Reset processing flag before starting (in case it's stuck from previous run)
-      isSequentialProcessingRef.current = false;
-
       // Check how many pending jobs exist
       const pendingCount = data?.data?.jobs?.filter((j: any) => j.status === 0).length || 0;
       console.log(`[VideoGen] Jobs ready, ${pendingCount} pending. Starting processing...`);
 
+      // NOTE: refs already reset in handleGenerateAllBackground before calling create_jobs
       // Start processing loop
       startBackgroundProcessing(sessionId);
 
@@ -1517,10 +1587,10 @@ export const VideoGeneration = (): JSX.Element => {
     }
   };
 
-  // Regenerate single video (legacy mode)
+  // Regenerate single video (using proper create_jobs + process_single flow)
   const handleRegenerateVideo = async (segmentId: string) => {
     const segment = segments.find(s => s.id === segmentId);
-    if (!segment || !segment.imageUrl || !user) return;
+    if (!segment || !segment.imageUrl || !user || !sessionId) return;
 
     setSegments(prev =>
       prev.map(seg =>
@@ -1531,51 +1601,106 @@ export const VideoGeneration = (): JSX.Element => {
     );
 
     try {
-      // Determine content language from settings
-      const contentLanguage = videoSettings?.language || 'indonesian';
-      
-      const { data, error } = await supabase.functions.invoke('generate-videos', {
-        body: {
+      // Check if job already exists for this segment
+      const { data: existingJob } = await supabase
+        .from('video_generation_jobs')
+        .select('id, preferred_platform')
+        .eq('session_id', sessionId)
+        .eq('segment_id', segmentId)
+        .single();
+
+      let jobId = existingJob?.id;
+
+      // Map UI model to platform key
+      const platformMap: Record<string, string> = {
+        'wan-25': 'wan-2.5',
+        'veo-3.1-fast': 'veo-3.1-fast',
+        'veo-3.1-hd': 'veo-3.1-hd',
+        'auto': 'veo-3.1-hd'
+      };
+      const selectedPlatform = platformMap[videoSettings?.model || 'auto'] || 'veo-3.1-hd';
+
+      if (!jobId) {
+        // Create job first using create_jobs mode
+        const contentLanguage = videoSettings?.language || 'indonesian';
+        const originalIndex = segments.findIndex(s => s.id === segmentId);
+
+        const { data: createData, error: createError } = await invokeWithRetry('generate-videos', {
+          mode: 'create_jobs',
+          user_id: user.id,
+          session_id: sessionId,
           segments: [{
             segment_id: segmentId,
-            segment_number: parseInt(segmentId),
+            segment_number: originalIndex + 1,
+            segment_type: segment.type || segment.element,
+            shot_type: segment.shotType || 'B-ROLL',
+            emotion: segment.emotion,
             script_text: segment.script,
             image_url: segment.imageUrl,
             duration_seconds: segment.durationSeconds,
-            type: segment.type || segment.element,
-            emotion: segment.emotion,
-            transition: segment.transition || 'Cut',
-            shot_type: segment.shotType || 'B-ROLL',
-            visual_direction: segment.visualDirection
+            visual_direction: segment.visualDirection,
+            transition: segment.transition || 'Cut'
           }],
+          topic: currentTopic,
           language: contentLanguage,
           aspect_ratio: videoSettings?.aspectRatio || '9:16',
-          resolution: videoSettings?.resolution || '1080p', // Default to 1080p Full HD
-          session_id: sessionId,
-          user_id: user.id
-        }
+          resolution: videoSettings?.resolution || '1080p',
+          preferred_platform: videoSettings?.model || 'auto',
+          avatar_selection: avatarOption === 'saved' ? 'saved' : avatarOption === 'profile' ? 'use_profile' : 'no_avatar',
+          avatar_id: avatarId,
+          profile_image_url: avatarUrl
+        });
+
+        if (createError) throw createError;
+        jobId = createData?.data?.jobs?.[0]?.id;
+      } else {
+        // Reset existing job to pending and update preferred_platform
+        await supabase
+          .from('video_generation_jobs')
+          .update({
+            status: JOB_STATUS.PENDING,
+            error_message: null,
+            veo_uuid: null,
+            video_url: null,
+            preferred_platform: selectedPlatform,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', jobId);
+      }
+
+      if (!jobId) throw new Error('Failed to create/find job');
+
+      // Process the job using process_single mode
+      const isWan25 = videoSettings?.model === 'wan-25';
+      const wan25Opts = isWan25 ? {
+        resolution: wan25Settings.resolution,
+        seed: wan25Settings.seed,
+        negativePrompt: wan25Settings.negativePrompt
+      } : undefined;
+
+      const { data, error } = await invokeWithRetry('generate-videos', {
+        mode: 'process_single',
+        job_id: jobId,
+        session_id: sessionId,
+        user_id: user.id,
+        wan25Options: wan25Opts
       });
 
       if (error) throw error;
 
-      const jobData = data?.data?.videos?.[0];
-      const veoUuid = jobData?.veo_response?.uuid;
+      const veoUuid = data?.data?.job?.veo_uuid;
+      if (!veoUuid) throw new Error('No UUID returned');
 
-      if (!veoUuid) throw new Error('No UUID returned from VEO');
-
-      // Update segment with UUID - realtime subscription will handle the rest
-      // when webhook updates the database, UI will auto-update
       setSegments(prev =>
         prev.map(seg =>
-          seg.id === segmentId ? { ...seg, veoUuid, isGeneratingVideo: true } : seg
+          seg.id === segmentId ? { ...seg, veoUuid, isGeneratingVideo: true, jobId } : seg
         )
       );
 
-      console.log(`[VideoGen] Video job submitted, UUID: ${veoUuid}. Waiting for webhook...`);
-      // No polling needed - realtime subscription will update UI when webhook fires
+      console.log(`[VideoGen] Single video regenerate submitted, UUID: ${veoUuid}`);
 
     } catch (err: any) {
-      console.error('Error generating video:', err);
+      console.error('Error regenerating video:', err);
       setSegments(prev =>
         prev.map(seg =>
           seg.id === segmentId
@@ -1620,9 +1745,17 @@ export const VideoGeneration = (): JSX.Element => {
       
       // Reset rate limit warning
       setRateLimitWarning(null);
-      
+
+      // Stop existing loop first, then reset refs
+      console.log('[VideoGen] 🛑 Retry: Stopping existing loop...');
+      shouldStopProcessingRef.current = true;
+      processingLoopIdRef.current++; // Invalidate any running loop
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      isSequentialProcessingRef.current = false;
+      shouldStopProcessingRef.current = false;
+      activeJobCountRef.current = 0;
+
       // Restart background processing
-      isSequentialProcessingRef.current = false; // Allow new loop to start
       setIsBackgroundMode(true);
       setShowBackgroundToast(true);
       startBackgroundProcessing(sessionId);
@@ -1952,13 +2085,30 @@ export const VideoGeneration = (): JSX.Element => {
                     );
                     // Reset all per-segment overrides when global model changes
                     setSegmentModelOverrides({});
+
+                    // Auto-adjust segment durations based on model capabilities
+                    // WAN 2.5: max 10s (5s→5s, 8s→10s)
+                    // VEO 3.1: max 8s (5s→5s, 10s→8s)
+                    setSegments(prev => prev.map(seg => {
+                      if (newModel === 'wan-25') {
+                        // WAN 2.5: upgrade 8s segments to 10s
+                        return seg.durationSeconds === 8
+                          ? { ...seg, durationSeconds: 10 }
+                          : seg;
+                      } else {
+                        // VEO 3.1 models: cap at 8s
+                        return seg.durationSeconds > 8
+                          ? { ...seg, durationSeconds: 8 }
+                          : seg;
+                      }
+                    }));
                   }}
                   className="bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1 text-white text-xs cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
                 >
                   <option value="auto">Auto (VEO 3.1 HD)</option>
-                  <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
-                  <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
-                  <option value="wan-25">WAN 2.5 + Voice ($0.15)</option>
+                  <option value="veo-3.1-hd">VEO 3.1 HD</option>
+                  <option value="veo-3.1-fast">VEO 3.1 Fast</option>
+                  <option value="wan-25">WAN 2.5 + Voice</option>
                 </select>
               </div>
 
@@ -1994,7 +2144,7 @@ export const VideoGeneration = (): JSX.Element => {
               )}
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Resolution */}
               <div>
                 <label className="text-white/60 text-xs mb-1 block">Resolution</label>
@@ -2009,22 +2159,6 @@ export const VideoGeneration = (): JSX.Element => {
                   <option value="480p">480p (Fast)</option>
                   <option value="720p">720p (Default)</option>
                   <option value="1080p">1080p (High)</option>
-                </select>
-              </div>
-
-              {/* Duration */}
-              <div>
-                <label className="text-white/60 text-xs mb-1 block">Duration</label>
-                <select
-                  value={wan25Settings.duration}
-                  onChange={(e) => setWan25Settings(prev => ({
-                    ...prev,
-                    duration: e.target.value as '5' | '10'
-                  }))}
-                  className="w-full bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1.5 text-white text-xs"
-                >
-                  <option value="5">5 seconds</option>
-                  <option value="10">10 seconds</option>
                 </select>
               </div>
 
@@ -2250,9 +2384,9 @@ export const VideoGeneration = (): JSX.Element => {
                             }}
                             className="bg-[#0a0a12] border border-[#3b3b4f] rounded px-2 py-1 text-white text-[10px] cursor-pointer hover:border-[#7c3aed] focus:border-[#7c3aed] focus:outline-none transition-colors"
                           >
-                            <option value="veo-3.1-hd">VEO 3.1 HD ($0.50)</option>
-                            <option value="veo-3.1-fast">VEO 3.1 Fast ($0.19)</option>
-                            <option value="wan-25">WAN 2.5 + Voice ($0.15)</option>
+                            <option value="veo-3.1-hd">VEO 3.1 HD</option>
+                            <option value="veo-3.1-fast">VEO 3.1 Fast</option>
+                            <option value="wan-25">WAN 2.5 + Voice</option>
                           </select>
                         </div>
                       )}

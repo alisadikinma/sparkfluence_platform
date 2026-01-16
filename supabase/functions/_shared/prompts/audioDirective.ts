@@ -108,7 +108,7 @@ export const EMOTION_SFX_MAP: Record<string, EmotionSFX> = {
   excitement: {
     undertone: 'subtle upbeat pulse, bright energy hum',
     accent_sfx: 'soft whoosh on gesture, crisp snap on emphasis',
-    ambient_texture: 'airy bright atmosphere, slight reverb shimmer',
+    ambient_texture: 'airy bright atmosphere, clean acoustic space',
     spatial_cue: 'close proximity, slightly elevated presence',
     voice_quality: 'energetic, upward inflection, bright resonance',
     breath_pattern: 'quick energized breaths between phrases',
