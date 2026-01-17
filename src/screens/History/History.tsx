@@ -1073,19 +1073,29 @@ export const History = (): JSX.Element => {
             </div>
           ) : (
             /* Card Grid - 5 columns on desktop, compact cards */
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-              {filteredProjects.map((project) => (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {filteredProjects.map((project) => {
+                // Determine status category for styling
+                const allVideosReady = project.videos_ready === project.total_segments && project.total_segments > 0;
+                const allImagesReady = project.images_ready === project.total_segments && project.total_segments > 0;
+                const isImagesOnly = project.videos_ready === 0 && allImagesReady;
+
+                return (
                 <div
                   key={project.session_id}
                   onClick={() => handleViewProject(project)}
-                  className={`bg-card border rounded-xl overflow-hidden transition-all cursor-pointer hover:scale-[1.02] hover:shadow-lg ${
+                  className={`bg-card border-2 rounded-xl overflow-hidden transition-all cursor-pointer hover:scale-[1.02] hover:shadow-xl ${
                     project.is_complete
-                      ? 'border-green-500/30 hover:border-green-500/50'
+                      ? 'border-green-400 shadow-[0_0_15px_rgba(74,222,128,0.4)]'
+                      : allVideosReady
+                      ? 'border-yellow-500/80 shadow-yellow-500/20 shadow-md'
                       : project.is_processing
-                      ? 'border-blue-500/30 hover:border-blue-500/50'
+                      ? 'border-blue-500/50'
                       : project.has_failed
-                      ? 'border-red-500/30 hover:border-red-500/50'
-                      : 'border-amber-500/30 hover:border-amber-500/50'
+                      ? 'border-red-500/70 shadow-red-500/15 shadow-md'
+                      : isImagesOnly
+                      ? 'border-purple-500/50'
+                      : 'border-gray-600/50'
                   }`}
                 >
                   {/* Thumbnail - compact */}
@@ -1101,27 +1111,48 @@ export const History = (): JSX.Element => {
                         <ImageIcon className="w-8 h-8 text-text-muted" />
                       </div>
                     )}
-                    
-                    {/* Status Badge - Priority: Complete > Processing > Failed > Draft */}
-                    <div className="absolute top-1.5 right-1.5">
+
+                    {/* Status overlay gradient based on status */}
+                    <div className={`absolute inset-0 pointer-events-none ${
+                      project.is_complete
+                        ? 'bg-gradient-to-t from-green-900/70 via-green-900/20 to-transparent'
+                        : allVideosReady
+                        ? 'bg-gradient-to-t from-yellow-900/50 via-transparent to-transparent'
+                        : project.has_failed
+                        ? 'bg-gradient-to-t from-red-900/50 via-transparent to-transparent'
+                        : ''
+                    }`} />
+
+                    {/* Status Badge - Different colors for Done vs Videos Ready */}
+                    <div className="absolute top-2 right-2">
                       {project.is_complete ? (
-                        <span className="flex items-center gap-0.5 text-[9px] text-green-500 bg-green-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
-                          <CheckCircle className="w-2.5 h-2.5" />
-                          {t.common?.done || 'Done'}
+                        <span className="flex items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-green-500 to-green-400 px-2.5 py-1 rounded-md shadow-[0_0_10px_rgba(74,222,128,0.5)]">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {language === 'id' ? 'Selesai' : 'Published'}
+                        </span>
+                      ) : allVideosReady ? (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-yellow-900 bg-yellow-400 px-2 py-1 rounded-md shadow-lg">
+                          <Video className="w-3 h-3" />
+                          {language === 'id' ? 'Siap Combine' : 'Ready to Combine'}
                         </span>
                       ) : project.is_processing ? (
-                        <span className="flex items-center gap-0.5 text-[9px] text-blue-400 bg-blue-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
-                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-white bg-blue-500 px-2 py-1 rounded-md shadow-lg animate-pulse">
+                          <Loader2 className="w-3 h-3 animate-spin" />
                           {project.videos_ready}/{project.total_segments}
                         </span>
                       ) : project.has_failed ? (
-                        <span className="flex items-center gap-0.5 text-[9px] text-red-500 bg-red-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
-                          <AlertCircle className="w-2.5 h-2.5" />
-                          {project.videos_failed} {t.common?.failed || 'Failed'}
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-white bg-red-500 px-2 py-1 rounded-md shadow-lg">
+                          <AlertCircle className="w-3 h-3" />
+                          {t.common?.failed || 'Failed'}
+                        </span>
+                      ) : isImagesOnly ? (
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-white bg-purple-500 px-2 py-1 rounded-md shadow-lg">
+                          <ImageIcon className="w-3 h-3" />
+                          {language === 'id' ? 'Gambar Siap' : 'Images Ready'}
                         </span>
                       ) : (
-                        <span className="flex items-center gap-0.5 text-[9px] text-amber-500 bg-amber-500/20 backdrop-blur-sm px-1.5 py-0.5 rounded-full">
-                          <AlertCircle className="w-2.5 h-2.5" />
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-gray-300 bg-gray-700 px-2 py-1 rounded-md shadow-lg">
+                          <Clock className="w-3 h-3" />
                           {t.planner?.draft || 'Draft'}
                         </span>
                       )}
@@ -1129,52 +1160,71 @@ export const History = (): JSX.Element => {
 
                     {/* Play overlay on hover */}
                     <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                        <Play className="w-4 h-4 text-white ml-0.5" />
+                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                        <Play className="w-5 h-5 text-white ml-0.5" />
                       </div>
                     </div>
 
                     {/* Segment count */}
-                    <div className="absolute bottom-1.5 left-1.5">
-                      <span className="flex items-center gap-0.5 text-[9px] text-white bg-black/60 backdrop-blur-sm px-1 py-0.5 rounded">
-                        <Video className="w-2 h-2" />
+                    <div className="absolute bottom-2 left-2">
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-white bg-black/70 backdrop-blur-sm px-1.5 py-0.5 rounded">
+                        <Video className="w-2.5 h-2.5" />
                         {project.total_segments}
                       </span>
                     </div>
                   </div>
 
                   {/* Card Content - compact */}
-                  <div className="p-2">
-                    <h3 className="text-text-primary text-xs font-medium line-clamp-2 mb-1.5 min-h-[32px]">
+                  <div className="p-2.5">
+                    <h3 className="text-text-primary text-xs font-medium line-clamp-2 mb-2 min-h-[32px]">
                       {project.topic_title}
                     </h3>
 
-                    {/* Progress Bar */}
-                    <div className="mb-1.5">
-                      <div className="h-1 bg-surface rounded-full overflow-hidden">
+                    {/* Progress Bar - THICKER and more visible */}
+                    <div className="mb-2">
+                      <div className="h-1.5 bg-surface rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all ${
                             project.is_complete
                               ? 'bg-green-500'
+                              : allVideosReady
+                              ? 'bg-yellow-500'
                               : project.is_processing
-                              ? 'bg-blue-500'
+                              ? 'bg-blue-500 animate-pulse'
                               : project.has_failed
                               ? 'bg-red-500'
-                              : project.images_ready === project.total_segments
+                              : isImagesOnly
                               ? 'bg-purple-500'
-                              : 'bg-amber-500'
+                              : 'bg-gray-500'
                           }`}
                           style={{
-                            // Show image progress if no videos yet, otherwise video progress
-                            width: `${project.videos_ready > 0
-                              ? (project.videos_ready / project.total_segments) * 100
-                              : (project.images_ready / project.total_segments) * 100}%`
+                            width: project.is_complete
+                              ? '100%'
+                              : `${project.videos_ready > 0
+                                ? (project.videos_ready / project.total_segments) * 100
+                                : (project.images_ready / project.total_segments) * 100}%`
                           }}
                         />
                       </div>
-                      {/* Status text under progress */}
-                      <p className="text-[8px] text-text-muted mt-0.5">
-                        {project.status_text}
+                      {/* Status text - color coded and clear labels */}
+                      <p className={`text-[9px] mt-1 font-medium ${
+                        project.is_complete
+                          ? 'text-green-400'
+                          : allVideosReady
+                          ? 'text-yellow-400'
+                          : project.is_processing
+                          ? 'text-blue-400'
+                          : project.has_failed
+                          ? 'text-red-400'
+                          : isImagesOnly
+                          ? 'text-purple-400'
+                          : 'text-gray-400'
+                      }`}>
+                        {project.is_complete
+                          ? (language === 'id' ? 'Selesai' : 'Published')
+                          : allVideosReady
+                          ? (language === 'id' ? 'Siap Combine' : 'Ready to Combine')
+                          : project.status_text}
                       </p>
                     </div>
 
@@ -1195,13 +1245,46 @@ export const History = (): JSX.Element => {
                         <Cpu className="w-2 h-2" />
                         {project.model === 'sora2' ? 'SORA 2' : project.model === 'veo31' ? 'VEO 3.1' : 'Auto'}
                       </span>
-                      {/* Language - Display full name */}
-                      <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
-                        <Globe className="w-2 h-2" />
-                        {project.language === 'id' || project.language === 'indonesian' ? '🇮🇩 ID' 
-                          : project.language === 'en' || project.language === 'english' ? '🇺🇸 EN' 
-                          : project.language === 'hi' || project.language === 'hindi' ? '🇮🇳 HI' 
-                          : project.language?.toUpperCase() || '🇮🇩 ID'}
+                      {/* Language Flag with icon */}
+                      <span className="flex items-center gap-1 text-[9px] text-text-primary bg-surface px-1.5 py-0.5 rounded font-medium">
+                        {project.language === 'id' || project.language === 'indonesian' ? (
+                          <>
+                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
+                              <rect width="24" height="8" fill="#FF0000"/>
+                              <rect y="8" width="24" height="8" fill="#FFFFFF"/>
+                            </svg>
+                            ID
+                          </>
+                        ) : project.language === 'en' || project.language === 'english' ? (
+                          <>
+                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
+                              <rect width="24" height="16" fill="#012169"/>
+                              <path d="M0,0 L24,16 M24,0 L0,16" stroke="#FFFFFF" strokeWidth="2"/>
+                              <path d="M0,0 L24,16 M24,0 L0,16" stroke="#C8102E" strokeWidth="1"/>
+                              <path d="M12,0 V16 M0,8 H24" stroke="#FFFFFF" strokeWidth="4"/>
+                              <path d="M12,0 V16 M0,8 H24" stroke="#C8102E" strokeWidth="2"/>
+                            </svg>
+                            EN
+                          </>
+                        ) : project.language === 'hi' || project.language === 'hindi' ? (
+                          <>
+                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
+                              <rect width="24" height="5.33" fill="#FF9933"/>
+                              <rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/>
+                              <rect y="10.66" width="24" height="5.33" fill="#138808"/>
+                              <circle cx="12" cy="8" r="2" fill="#000080"/>
+                            </svg>
+                            IN
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
+                              <rect width="24" height="8" fill="#FF0000"/>
+                              <rect y="8" width="24" height="8" fill="#FFFFFF"/>
+                            </svg>
+                            ID
+                          </>
+                        )}
                       </span>
                     </div>
 
@@ -1225,7 +1308,8 @@ export const History = (): JSX.Element => {
                     </div>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </main>
