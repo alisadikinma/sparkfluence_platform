@@ -139,8 +139,11 @@ serve(async (req) => {
       console.log(`[Script] Shorten mode - target: ${target_words} words`)
 
       const shortenLang = sanitizeLanguage(language)
-      const shortenPrompt = shortenLang === 'indonesian'
-        ? `Tulis ulang script berikut menjadi TEPAT ${target_words} kata. Pertahankan pesan utama dan konteks penting. Gunakan gaya bahasa casual Gen-Z Indonesia (gue/lo, BUKAN saya/kamu). Buat sepadat dan seimpactful mungkin dalam ${target_words} kata.
+
+      // Build language-specific shorten prompt
+      let shortenPrompt: string
+      if (shortenLang === 'indonesian') {
+        shortenPrompt = `Tulis ulang script berikut menjadi TEPAT ${target_words} kata. Pertahankan pesan utama dan konteks penting. Gunakan gaya bahasa casual Gen-Z Indonesia (gue/lo, BUKAN saya/kamu). Buat sepadat dan seimpactful mungkin dalam ${target_words} kata.
 
 PENTING: Output HARUS tepat ${target_words} kata, tidak kurang tidak lebih. Hitung kata dengan teliti.
 
@@ -148,14 +151,26 @@ Script asli:
 "${script}"
 
 Script baru (TEPAT ${target_words} kata):`
-        : `Rewrite the following script to EXACTLY ${target_words} words. Keep the main message and important context. Make it as impactful and engaging as possible within ${target_words} words.
+      } else if (shortenLang === 'hindi') {
+        shortenPrompt = `इस स्क्रिप्ट को ठीक ${target_words} शब्दों में दोबारा लिखें। मुख्य संदेश और महत्वपूर्ण संदर्भ को बनाए रखें। Casual Hinglish style में लिखें (tum/yaar का उपयोग करें)। ${target_words} शब्दों में maximum impact बनाएं।
+
+महत्वपूर्ण: Output में ठीक ${target_words} शब्द होने चाहिए, न कम न ज्यादा। शब्दों को ध्यान से गिनें।
+
+Original script:
+"${script}"
+
+New script (EXACTLY ${target_words} words in Hindi/Hinglish):`
+      } else {
+        // Default: English
+        shortenPrompt = `Rewrite the following script to EXACTLY ${target_words} words. Keep the main message and important context. Make it as impactful and engaging as possible within ${target_words} words.
 
 IMPORTANT: Output MUST be exactly ${target_words} words, no more no less. Count words carefully.
 
 Original script:
 "${script}"
 
-New script (EXACTLY ${target_words} words):`;
+New script (EXACTLY ${target_words} words):`
+      }
 
       try {
         // Get API key from pool only (no secrets fallback)

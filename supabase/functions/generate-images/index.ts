@@ -1107,7 +1107,9 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
     include_creator_face,
     creator_ref_for_broll,
     // NEW 2026-01-15: Content language for B-ROLL ethnicity
-    language = 'id'
+    language = 'id',
+    // NEW 2026-01-17: Topic for contextual costume selection
+    topic
   } = requestBody
 
   if (!user_id || !session_id || !segment_number) {
@@ -1172,6 +1174,8 @@ async function handleRegenerateSingle(supabase: any, requestBody: any) {
       // B-ROLL with creator face multi-ref fields
       include_creator_face: include_creator_face || false,
       creator_ref_for_broll: creator_ref_for_broll || null,
+      // NEW 2026-01-17: Topic for contextual costume selection
+      topic: topic || null,
       // Provider selection
       provider: providerChoice.primary,
       fallback_provider: providerChoice.fallback,
@@ -1842,7 +1846,11 @@ function buildCinematicPrompt(params: PromptParams): string {
     // - Police topic → "police uniform, law enforcement attire"
     // ========================================================================
     const creatorCostume = segment.creator_costume || getContextualCostume(topic, `${scriptText} ${visualDirection}`)
-    console.log(`[buildCinematicPrompt] CREATOR costume: "${creatorCostume}" (from: ${segment.creator_costume ? 'LLM' : 'contextual'})`)
+    console.log(`[buildCinematicPrompt] CREATOR costume selection:`)
+    console.log(`  - Topic: "${topic}"`)
+    console.log(`  - segment.creator_costume: "${segment.creator_costume || 'NOT SET'}"`)
+    console.log(`  - Final costume: "${creatorCostume}"`)
+    console.log(`  - Source: ${segment.creator_costume ? 'LLM-generated' : 'contextual-fallback'}`)
 
     // Use FULL prompt builder (2026-01-11 enhanced)
     const fullPrompt = buildFullCinematographyPrompt({

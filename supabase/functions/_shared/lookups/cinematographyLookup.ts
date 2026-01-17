@@ -864,9 +864,12 @@ export function getCostumeForTopic(topic: string): string {
  * @returns Appropriate costume string
  */
 export function getContextualCostume(topic: string, scriptText?: string): string {
-  const combinedText = `${topic} ${scriptText || ''}`.toLowerCase();
-  
-  // Activity keyword priorities (check these first before topic-based)
+  const topicLower = (topic || '').toLowerCase();
+  const scriptLower = (scriptText || '').toLowerCase();
+
+  // Activity keyword priorities
+  // NOTE: We check TOPIC FIRST, then script. Topic determines costume, not script content.
+  // This prevents script mentioning "health" from overriding a "tech" topic's costume.
   const activityKeywords: Array<{ keywords: string[]; costume: string }> = [
     // Gaming/Entertainment (CASUAL - must override formal defaults)
     {
@@ -900,7 +903,7 @@ export function getContextualCostume(topic: string, scriptText?: string): string
     },
     // Tech/Coding (CASUAL TECH)
     {
-      keywords: ['coding', 'programming', 'developer', 'tech', 'startup', 'hacking'],
+      keywords: ['coding', 'programming', 'developer', 'tech', 'startup', 'hacking', 'ai', 'software', 'trends'],
       costume: 'casual tech wear, comfortable hoodie, developer style',
     },
     // Business/Professional (FORMAL)
@@ -910,21 +913,35 @@ export function getContextualCostume(topic: string, scriptText?: string): string
     },
     // Medical/Health (PROFESSIONAL)
     {
-      keywords: ['medical', 'doctor', 'hospital', 'health', 'clinic', 'pharmacy'],
+      keywords: ['medical', 'doctor', 'hospital', 'clinic', 'pharmacy', 'nurse', 'healthcare worker'],
       costume: 'white doctor coat with stethoscope',
     },
   ];
-  
-  // Check activity keywords first (higher priority than topic)
+
+  // PRIORITY 1: Check TOPIC keywords first (topic determines costume)
   for (const activity of activityKeywords) {
     for (const keyword of activity.keywords) {
-      if (combinedText.includes(keyword)) {
+      if (topicLower.includes(keyword)) {
         return activity.costume;
       }
     }
   }
-  
-  // Fallback to topic-based costume
+
+  // PRIORITY 2: If topic doesn't match, check script (but NOT for medical/professional)
+  // This prevents "health tech" in script from making tech topic wear doctor coat
+  const nonMedicalActivities = activityKeywords.filter(a =>
+    !a.keywords.some(k => ['medical', 'doctor', 'hospital', 'clinic', 'pharmacy', 'nurse', 'healthcare worker'].includes(k))
+  );
+
+  for (const activity of nonMedicalActivities) {
+    for (const keyword of activity.keywords) {
+      if (scriptLower.includes(keyword)) {
+        return activity.costume;
+      }
+    }
+  }
+
+  // PRIORITY 3: Fallback to topic-based costume lookup
   return getCostumeForTopic(topic);
 }
 
@@ -1058,11 +1075,13 @@ export function buildFullCinematographyPrompt(params: FullPromptParams): string 
       : 'Square 1024×1024';
   
   // Build the FULL prompt (target 400+ chars)
+  // NOTE: Costume instruction is emphasized for image-to-image models (Nano Banana /edit)
+  // to override the original clothing from reference image
   const prompt = `A photorealistic cinematic ${shotType.frame} of ${characterDescription}.
 
 Expression: ${emotionSpecs.promptPhrase}
 Pose: ${emotionSpecs.body}, engaged with camera
-Wardrobe: ${finalCostume}
+OUTFIT/CLOTHING: Subject is wearing ${finalCostume}. This outfit is REQUIRED and must match the ${topic || 'content'} theme.
 
 Camera: ${shotTypeKey}, ${shotType.lens}, eye-level to slight low angle
 Composition: Rule of thirds, subject positioned off-center

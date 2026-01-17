@@ -510,24 +510,30 @@ Pick ONE category from the list. Output ONLY the category name.`
   // ========================================================================
   // STEP 3: If LLM failed, use keyword-based fallback
   // ========================================================================
+  let outfit: string
+
   if (!wasLLMUsed) {
-    const fallbackOutfit = getContextualCostume(input.topic, input.scriptSnippet || '')
-    
-    // Try to reverse-map fallback outfit to a category
-    for (const [cat, outfit] of Object.entries(COSTUME_CATEGORIES)) {
-      if (outfit === fallbackOutfit) {
+    // Use getContextualCostume() which has improved priority logic:
+    // 1. Check TOPIC keywords first (topic determines costume)
+    // 2. Check script keywords (excluding medical to prevent "health tech" → doctor coat)
+    // 3. Fallback to generic topic lookup
+    outfit = getContextualCostume(input.topic, input.scriptSnippet || '')
+
+    // Try to reverse-map fallback outfit to a category for caching
+    for (const [cat, catOutfit] of Object.entries(COSTUME_CATEGORIES)) {
+      if (catOutfit === outfit) {
         category = cat
         break
       }
     }
-    
-    console.log(`[getContextualOutfitAsync] 📋 Fallback: "${input.topic}" → ${category}`)
+
+    console.log(`[getContextualOutfitAsync] 📋 Fallback: "${input.topic}" → ${category} → "${outfit.substring(0, 50)}..."`)
+  } else {
+    // ========================================================================
+    // STEP 4: Get outfit from LLM-classified category
+    // ========================================================================
+    outfit = getCostumeByCategory(category)
   }
-  
-  // ========================================================================
-  // STEP 4: Get outfit from category
-  // ========================================================================
-  const outfit = getCostumeByCategory(category)
   
   // ========================================================================
   // STEP 5: Cache the result
@@ -635,14 +641,16 @@ export async function buildCreatorPromptAsync(
   let prompt: string
   
   if (input.hasReferenceImage) {
-    const outfitLine = input.contextualOutfit 
-      ? `Outfit: ${input.contextualOutfit}` 
-      : '(Outfit from reference image)'
-    
+    // CRITICAL: Must explicitly instruct to CHANGE outfit from reference image
+    // Image edit models preserve original clothing unless explicitly told to change
+    const outfitInstruction = input.contextualOutfit
+      ? `IMPORTANT: Change the person's outfit to: ${input.contextualOutfit}. Do NOT keep the original clothing from reference.`
+      : ''
+
     prompt = `The person from the reference image with ${emotionSpecs.expression}.
 
 Pose: ${emotionSpecs.body}
-${outfitLine}
+${outfitInstruction}
 
 Camera: ${cameraSpecs}
 Composition: Rule of thirds, subject positioned for visual balance
@@ -651,7 +659,8 @@ Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : 'Rembrandt'} pat
 Color: Cinematic warm tones, Vision3 500T film stock look
 Background: Contextual for ${input.topic || 'content creation'}, moderate depth blur
 
-Maintain exact facial features, face shape, and skin tone from reference image.
+Preserve ONLY: exact facial features, face shape, and skin tone from reference image.
+Do NOT preserve: clothing, accessories, or background from reference.
 Style: Cinematic photorealistic, natural skin texture, high quality.
 Clean frame, no text overlays, no watermarks.`
     

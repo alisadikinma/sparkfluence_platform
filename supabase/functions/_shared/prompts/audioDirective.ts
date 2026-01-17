@@ -457,11 +457,21 @@ Exclude: no music, no subtitles, no audience sounds
  * 
  * Enhanced 2026: Now includes emotion-based SFX + volume priority
  */
+export interface BRollVoiceCharacter {
+  gender: string;
+  age: string;
+  accent: string;
+  tone: string;
+  pace: string;
+  description?: string;
+}
+
 export function getBRollAudioDirective(
   category: string,
   emotion: string = 'neutral',
   hasVoiceover: boolean = false,
-  voiceoverText: string = ''
+  voiceoverText: string = '',
+  voiceCharacter?: BRollVoiceCharacter
 ): string {
   const ambientByCategory: Record<string, string> = {
     'tech': 'soft server hum, subtle electronic beeps',
@@ -478,12 +488,25 @@ export function getBRollAudioDirective(
 
   // SIMPLIFIED: Compact format (~8 lines vs ~25 lines before)
   if (hasVoiceover && voiceoverText) {
+    // Build voice description from character info for consistency
+    let voiceDesc = 'Natural narrator voice';
+    if (voiceCharacter) {
+      voiceDesc = `${voiceCharacter.gender} voice, ${voiceCharacter.age}, ${voiceCharacter.accent}`;
+    }
+
     return `
 AUDIO:
 Voiceover: "${voiceoverText}"
-Delivery: Natural narrator, NOT lip-synced
+
+VOICE CHARACTER:
+${voiceCharacter ? voiceCharacter.description || voiceDesc : voiceDesc}
+${voiceCharacter ? `Accent: ${voiceCharacter.accent} | Tone: ${voiceCharacter.tone} | Pace: ${voiceCharacter.pace}` : ''}
+Maintain consistent voice across all segments.
+
+Delivery: Natural narrator, NOT lip-synced, dry voice recording
+Voice quality: Close-mic, no reverb, no echo, studio-dry sound
 Ambient: ${ambient} (ducked under voice)
-Exclude: no music, no subtitles, no audience sounds
+Exclude: no music, no subtitles, no audience sounds, no reverb/echo on voice
 `;
   }
 

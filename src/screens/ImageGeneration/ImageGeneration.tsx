@@ -1241,7 +1241,7 @@ export const ImageGeneration = (): JSX.Element => {
         // Save progress to localStorage immediately after initialization from navigation state
         // This ensures script data is persisted for page refresh/reload scenarios
         const topicToSave = stateData.topic?.split('\n')[0].trim() || 'Your Video';
-        const settingsToSave = currentSettings;
+        const settingsToSave = stateData.videoSettings || null;
         const progressData = {
           sessionId: sid,
           topic: topicToSave,
@@ -1760,7 +1760,14 @@ export const ImageGeneration = (): JSX.Element => {
     setShorteningSegmentId(segmentId);
 
     try {
-      const scriptLang = videoSettings?.language || language || 'id';
+      // Map short code to full name for API (same as translate)
+      const langMap: Record<string, string> = {
+        'id': 'indonesian',
+        'en': 'english',
+        'hi': 'hindi',
+      };
+      const shortCode = videoSettings?.language || language || 'id';
+      const scriptLang = langMap[shortCode] || 'indonesian';
 
       const { data, error } = await supabase.functions.invoke('generate-script', {
         body: {
@@ -2076,6 +2083,8 @@ export const ImageGeneration = (): JSX.Element => {
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
         // Content language for B-ROLL ethnicity (id/hi/en)
         language: videoSettings?.language || 'id',
+        // Topic for contextual costume selection
+        topic: currentTopic || '',
       };
 
       // Add CREATOR-specific fields
@@ -2197,6 +2206,8 @@ export const ImageGeneration = (): JSX.Element => {
         shot_type: segment.shotType,
         emotion: segment.emotion,
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
+        // Topic for contextual costume selection
+        topic: currentTopic || '',
         // B-ROLL specific
         include_creator_face: options.includeCreatorFace,
         creator_ref_for_broll: options.includeCreatorFace ? creatorRef : null,

@@ -9,7 +9,7 @@ import { calculateSegmentDuration } from "../../lib/segmentDuration";
 import {
   Play, RefreshCw, Check, X, Loader2, Video,
   ChevronRight, AlertCircle, Cloud, CheckCircle2, Maximize2,
-  Mic, Camera, Volume2, Download
+  Mic, Camera, Volume2, Download, Captions, CaptionsOff
 } from "lucide-react";
 
 interface Segment {
@@ -298,6 +298,9 @@ export const VideoGeneration = (): JSX.Element => {
   // Voice reference for WAN 2.5 (Chatterbox TTS)
   const [voiceReferenceUrl, setVoiceReferenceUrl] = useState<string | null>(null);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
+
+  // Subtitle toggle for combine step
+  const [enableSubtitles, setEnableSubtitles] = useState(false);
 
   // WAN 2.5 specific settings
   const [wan25Settings, setWan25Settings] = useState({
@@ -1007,10 +1010,10 @@ export const VideoGeneration = (): JSX.Element => {
   }, [location.state, searchParams, navigate, user?.id]);
 
   // ============================================================================
-  // CONTROLLED PARALLEL PROCESSING (2026)
-  // - Max 3 videos running in parallel
-  // - 60 second delay between submissions
-  // - Wait for completion before starting next (after initial 3)
+  // STRICT SEQUENTIAL PROCESSING (2026)
+  // - Only 1 video at a time (Geminigen.ai security requirement)
+  // - Must wait for current video to COMPLETE before starting next
+  // - 60 second minimum delay between submissions
   // ============================================================================
   const startBackgroundProcessing = useCallback((sid: string) => {
     // Prevent multiple simultaneous processing loops
@@ -1028,7 +1031,7 @@ export const VideoGeneration = (): JSX.Element => {
 
     const STAGGER_DELAY_MS = 60000;  // 60 seconds (1 minute) between submissions
     const POLL_INTERVAL_MS = 10000;  // 10 seconds between status checks
-    const MAX_PARALLEL = 3;          // Max 3 videos running at once
+    const MAX_PARALLEL = 1;          // STRICT SEQUENTIAL: Only 1 video at a time (Geminigen.ai security requirement)
 
     // Track active jobs being polled
     const activePollingJobs = new Map<string, { jobId: string; segmentId: string; segmentNumber: number }>();
@@ -1043,7 +1046,7 @@ export const VideoGeneration = (): JSX.Element => {
     }; 
     
     const processControlledParallel = async () => {
-      console.log('[VideoGen] 🚀 Starting controlled parallel processing (max 3, 60s delay)...');
+      console.log('[VideoGen] 🚀 Starting STRICT SEQUENTIAL processing (1 at a time, wait for completion)...');
       
       if (!user) {
         console.error('[VideoGen] No user - aborting');
@@ -1083,9 +1086,9 @@ export const VideoGeneration = (): JSX.Element => {
         console.log(`[VideoGen] Found ${pendingJobs.length} pending jobs: ${pendingJobs.map(j => j.segment_type).join(' → ')}`);
         
         // ================================================================
-        // PHASE 2: Submit jobs with controlled parallelism
-        // - Submit up to MAX_PARALLEL initially with 60s delay between each
-        // - After that, wait for one to complete before submitting next
+        // PHASE 2: Submit jobs STRICTLY SEQUENTIAL
+        // - Only 1 job at a time (Geminigen.ai security requirement)
+        // - Wait for current job to COMPLETE before submitting next
         // ================================================================
         const jobQueue = [...pendingJobs]; // Jobs waiting to be submitted
         const completedUuids = new Set<string>();
@@ -1235,10 +1238,10 @@ export const VideoGeneration = (): JSX.Element => {
         };
         
         // ================================================================
-        // MAIN LOOP: SIMPLE & STRICT controlled parallelism
-        // - Max 3 videos running in parallel at any time
-        // - Always 60s delay between each submission
-        // - After 3 active, BLOCK until one completes before submitting next
+        // MAIN LOOP: STRICT SEQUENTIAL PROCESSING
+        // - Only 1 video at a time (Geminigen.ai security requirement)
+        // - MUST wait for current video to COMPLETE before starting next
+        // - 60s minimum delay between submissions
         // ================================================================
         let lastSubmitTime = 0;
         activeJobCountRef.current = 0;

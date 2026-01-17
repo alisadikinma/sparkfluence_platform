@@ -733,12 +733,36 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
   const actualCharacterDescription = character_description || creator_appearance
 
+  // ========================================================================
+  // FETCH SELECTED IMAGES FROM DATABASE (2026-01-17)
+  // Get the is_selected=true image for each segment from image_generation_jobs
+  // This ensures we use the user's selected image, not stale frontend state
+  // ========================================================================
+  const { data: selectedImages } = await supabase
+    .from('image_generation_jobs')
+    .select('segment_number, image_url')
+    .eq('session_id', session_id)
+    .eq('user_id', user_id)
+    .eq('is_selected', true)
+    .eq('status', 2) // Only completed images
+
+  // Create a map of segment_number -> selected image URL
+  const selectedImageMap = new Map<number, string>()
+  if (selectedImages && selectedImages.length > 0) {
+    selectedImages.forEach((img: any) => {
+      selectedImageMap.set(img.segment_number, img.image_url)
+    })
+    console.log(`[CREATE_JOBS] 📸 Found ${selectedImages.length} selected images from database`)
+  }
+
   // Create job records with SAME voice character for all
   const jobRecords = segments.map((segment: any, index: number) => {
     const segmentId = segment.segment_id || segment.id || String(index + 1)
     const segmentType = segment.segment_type || segment.type || segment.element || `SEGMENT_${index + 1}`
     const scriptText = segment.script_text || segment.script || ''
-    const imageUrl = segment.image_url || segment.imageUrl
+    const segmentNumber = segment.segment_number || index + 1
+    // PRIORITY: 1) Selected from DB, 2) Request body, 3) null
+    const imageUrl = selectedImageMap.get(segmentNumber) || segment.image_url || segment.imageUrl
     // DURATION FIX: Use safe parser
     const duration = safeParseDuration(segment.duration_seconds, 8)
     const emotion = segment.emotion || 'authority'
@@ -1046,13 +1070,42 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
     )
   }
 
+  // ========================================================================
+  // FETCH LATEST SELECTED IMAGE (2026-01-17)
+  // Always use is_selected=true from image_generation_jobs
+  // This ensures regenerated/reselected images are used, not stale job data
+  // ========================================================================
+  const { data: selectedImage } = await supabase
+    .from('image_generation_jobs')
+    .select('image_url')
+    .eq('session_id', job.session_id)
+    .eq('user_id', job.user_id)
+    .eq('segment_number', job.segment_number)
+    .eq('is_selected', true)
+    .eq('status', 2) // Only completed images
+    .single()
+
+  // Use selected image from DB if available, otherwise fallback to job.image_url
+  const actualImageUrl = selectedImage?.image_url || job.image_url
+
+  // If selected image differs from job, update the job record
+  if (selectedImage?.image_url && selectedImage.image_url !== job.image_url) {
+    console.log(`[PROCESS_SINGLE] 📸 Updating job image_url with selected image`)
+    await supabase
+      .from('video_generation_jobs')
+      .update({ image_url: selectedImage.image_url })
+      .eq('id', job.id)
+
+    job.image_url = selectedImage.image_url
+  }
+
   // Check if job has image
-  if (!job.image_url) {
+  if (!actualImageUrl) {
     await supabase
       .from('video_generation_jobs')
       .update({ status: JOB_STATUS.FAILED, error_message: 'No image URL', updated_at: new Date().toISOString() })
       .eq('id', job.id)
-    
+
     return new Response(
       JSON.stringify({ success: false, error: { code: 'NO_IMAGE', message: 'Job has no image URL' } }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -2673,6 +2726,7 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
   const contextualMotions = generateContextualMotions(visualBrief, segmentType)
   
   // Build B-roll specific prompt (SIMPLIFIED 2026)
+  // Include voiceChar for consistent voiceover across all segments
   const brollPrompt = buildEnhancedBrollVideoPrompt({
     segmentId,
     segmentNumber,
@@ -2691,7 +2745,8 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
     scriptText,
     visualBrief,
     contextualMotions,
-    topic
+    topic,
+    voiceCharacter: voiceChar  // Pass voice character for voiceover consistency
   })
   
   return brollPrompt
@@ -2702,7 +2757,8 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
 // Uses Visual Brief extraction for contextual, specific motion descriptions
 // ============================================================================
 
-// SIMPLIFIED (2026): Removed unused params - backgroundDescription, soundEffects, language, voiceCharacter
+// SIMPLIFIED (2026): Removed unused params - backgroundDescription, soundEffects, language
+// RE-ADDED (2026-01): voiceCharacter for B-ROLL voiceover consistency
 interface EnhancedBrollPromptParams {
   segmentId: string
   segmentNumber: number
@@ -2726,6 +2782,7 @@ interface EnhancedBrollPromptParams {
     cameraEnhancement: string
   }
   topic: string
+  voiceCharacter?: VoiceCharacter  // For voiceover consistency across segments
 }
 
 function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): string {
@@ -2747,38 +2804,50 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
     scriptText = '',
     visualBrief,
     contextualMotions,
-    topic
+    topic,
+    voiceCharacter
   } = params
-  
+
   const hasVoiceover = scriptText && scriptText.trim().length > 0
   const cameraMove = getCameraMovement(segmentType, emotion)
   const resolution = aspectRatio === '16:9' ? '1080p' : '720p'
-  
+
   // Visual description
   const primaryVisual = visualBrief.primarySubject.element
-  const visualDesc = visualDirection || 
+  const visualDesc = visualDirection ||
     `${primaryVisual} ${visualBrief.primarySubject.action} in ${visualBrief.environmentType} setting`
-  
+
   const lightingLine = lightingDescription || `${timeOfDay}, ${environment} lighting`
   const actualOutputIntent = outputIntent || generateBrollOutputIntent(segmentType)
-  
-  // Get audio directive (simplified)
+
+  // Get audio directive with voice character for consistency
   const brollCategory = detectBRollCategory(visualDesc)
+  const brollVoiceChar = voiceCharacter ? {
+    gender: voiceCharacter.gender,
+    age: voiceCharacter.age,
+    accent: voiceCharacter.accent,
+    tone: voiceCharacter.tone,
+    pace: voiceCharacter.pace,
+    description: voiceCharacter.description
+  } : undefined
   const brollAudioDirective = getBRollAudioDirective(
     brollCategory,
     emotion,
     hasVoiceover,
-    hasVoiceover ? scriptText : ''
+    hasVoiceover ? scriptText : '',
+    brollVoiceChar
   )
   
   const isSoraModel = platform.startsWith('sora-')
-  const platformLabel = isSoraModel ? 'SORA 2 B-ROLL' : 'VEO 3.1 B-ROLL'
-  
+  // Format: [VEO 3.1 - BODY-2 B-ROLL] for easy traceback
+  const platformBase = isSoraModel ? 'SORA 2' : 'VEO 3.1'
+  const segmentLabel = segmentType.toUpperCase()
+
   // ============================================================================
   // SIMPLIFIED PROMPT FORMAT (2026) - ~30 lines vs ~60 lines before
   // Removed: PHYSICS section, verbose SUBJECT/AMBIENT MOTION, redundant exclusions
   // ============================================================================
-  return `[${platformLabel} — ${segmentId}.${segmentNumber}]
+  return `[${platformBase} - ${segmentLabel} B-ROLL]
 
 DURATION: ${duration}s | ${resolution} | ${aspectRatio}
 
@@ -2802,7 +2871,7 @@ TRANSITION: ${getTransition(transition)}
 
 INTENT: ${actualOutputIntent}
 
-NEGATIVE: blurry, distortion, text, human faces, static frames`
+NEGATIVE: blurry, distortion, text overlays, subtitles, watermarks, human faces, static frames`
 }
 
 function generateBrollOutputIntent(segmentType: string): string {
