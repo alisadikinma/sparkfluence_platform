@@ -31,7 +31,7 @@ const getCacheKey = (sessionId: string) => `sparkfluence_combined_${sessionId}`;
 // Platform configuration
 const PLATFORM_CONFIG = {
   youtube: { name: "YouTube", implemented: true },
-  instagram: { name: "Instagram", implemented: false },
+  instagram: { name: "Instagram", implemented: true },
   tiktok: { name: "TikTok", implemented: false },
 };
 
@@ -77,7 +77,7 @@ export const FullVideo: React.FC = () => {
   const [publishToPublic, setPublishToPublic] = useState(false);
   
   // Linked accounts state
-  const [linkedAccounts, setLinkedAccounts] = useState<string[]>([]);
+  const [linkedAccounts, setLinkedAccounts] = useState<string[]>(['youtube', 'instagram']);
   const [showConnectionWarning, setShowConnectionWarning] = useState(false);
   const [warningPlatform, setWarningPlatform] = useState<string | null>(null);
   
@@ -2232,7 +2232,7 @@ export const FullVideo: React.FC = () => {
                     className="bg-gradient-to-r from-[#7c3aed] to-[#ec4899] text-white hover:from-[#6d28d9] hover:to-[#db2777] h-12 font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Calendar className="w-5 h-5" />
-                    {loading ? "Planning..." : "Plan"}
+                    {loading ? "Planning..." : "Add to Planner"}
                   </Button>
                   <Button
                     onClick={() => navigate("/history")}
