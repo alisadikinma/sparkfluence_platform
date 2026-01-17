@@ -35,13 +35,7 @@ import { injectProductNamingRule } from '../_shared/prompts/productNamingRule.ts
 import { checkAndFixEntities } from '../_shared/entityCheck.ts'
 // Security: Input sanitization
 import { sanitizePromptInput, sanitizePlatform, sanitizeLanguage, sanitizeDuration } from '../_shared/inputSanitizer.ts'
-import { getCorsHeaders } from '../_shared/cors.ts'
-
-// Legacy corsHeaders for backward compatibility (will be replaced with dynamic CORS)
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 
 // Supported languages with their script generation styles
 const LANGUAGE_CONFIG: Record<string, { 
@@ -96,9 +90,12 @@ const LANGUAGE_CONFIG: Record<string, {
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  // Handle CORS preflight
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
+
+  // Get dynamic CORS headers for this request
+  const requestCorsHeaders = getCorsHeaders(req.headers.get('origin'));
 
   try {
     const supabase = createClient(
@@ -202,7 +199,7 @@ New script (EXACTLY ${target_words} words):`
               const shortenedScript = content.trim().replace(/^["']|["']$/g, '')
               return new Response(
                 JSON.stringify({ success: true, shortened_script: shortenedScript }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
               )
             }
           } else {
@@ -246,7 +243,7 @@ New script (EXACTLY ${target_words} words):`
               const shortenedScript = orContent.trim().replace(/^["']|["']$/g, '')
               return new Response(
                 JSON.stringify({ success: true, shortened_script: shortenedScript }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
               )
             }
           } else {
@@ -268,7 +265,7 @@ New script (EXACTLY ${target_words} words):`
             const shortenedScript = geminiRetryResult.content.trim().replace(/^["']|["']$/g, '')
             return new Response(
               JSON.stringify({ success: true, shortened_script: shortenedScript }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
             )
           }
         }
@@ -276,13 +273,13 @@ New script (EXACTLY ${target_words} words):`
         console.error('[Shorten] All providers failed')
         return new Response(
           JSON.stringify({ success: false, error: 'All API providers failed. Please try again later.' }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
         )
       } catch (err) {
         console.error('[Shorten] Error:', err)
         return new Response(
           JSON.stringify({ success: false, error: 'Shorten failed: ' + (err instanceof Error ? err.message : 'Unknown') }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
         )
       }
     }
@@ -363,7 +360,7 @@ Return ONLY valid JSON, no explanations.`
                 const parsed = JSON.parse(content)
                 return new Response(
                   JSON.stringify({ success: true, translations: parsed.translations }),
-                  { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                  { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
                 )
               } catch (parseErr) {
                 console.error('[Translate] JSON parse error:', parseErr, 'Content:', content)
@@ -417,7 +414,7 @@ Return ONLY valid JSON, no explanations.`
                 const parsed = JSON.parse(orContent)
                 return new Response(
                   JSON.stringify({ success: true, translations: parsed.translations }),
-                  { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                  { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
                 )
               } catch (parseErr) {
                 console.error('[Translate] JSON parse error:', parseErr)
@@ -449,7 +446,7 @@ Return ONLY valid JSON, no explanations.`
               const parsed = JSON.parse(content)
               return new Response(
                 JSON.stringify({ success: true, translations: parsed.translations }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
               )
             } catch (parseErr) {
               console.error('[Translate] Gemini retry JSON parse error:', parseErr)
@@ -460,13 +457,13 @@ Return ONLY valid JSON, no explanations.`
         console.error('[Translate] All providers failed')
         return new Response(
           JSON.stringify({ success: false, error: 'All API providers failed. Please try again later.' }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
         )
       } catch (err) {
         console.error('[Translate] Error:', err)
         return new Response(
           JSON.stringify({ success: false, error: 'Translate failed: ' + (err instanceof Error ? err.message : 'Unknown') }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
         )
       }
     }
@@ -474,7 +471,7 @@ Return ONLY valid JSON, no explanations.`
     if (!content || !input_type) {
       return new Response(
         JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required fields' } }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -485,7 +482,7 @@ Return ONLY valid JSON, no explanations.`
     if (!sanitizedContent) {
       return new Response(
         JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Content is empty or invalid' } }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -505,7 +502,7 @@ Return ONLY valid JSON, no explanations.`
       const result = await regenerateSegment(supabase, sanitizedContent, segment_type, selectedLanguage)
       return new Response(
         JSON.stringify({ success: true, data: result }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -790,14 +787,14 @@ Return ONLY valid JSON, no explanations.`
 
     return new Response(
       JSON.stringify({ success: true, data: scriptData }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
     )
 
   } catch (error) {
     console.error('Error:', error)
     return new Response(
       JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: error.message } }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 })
