@@ -923,6 +923,9 @@ export const ImageGeneration = (): JSX.Element => {
   const [avatarId, setAvatarId] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
+  // Saved avatars for B-ROLL modal picker
+  const [savedAvatars, setSavedAvatars] = useState<{ id: string; name: string; url: string }[]>([]);
+
   // AI Script Shortener state
   const [shorteningSegmentId, setShorteningSegmentId] = useState<string | null>(null);
 
@@ -1099,15 +1102,31 @@ export const ImageGeneration = (): JSX.Element => {
     const fetchUserProfile = async () => {
       if (!user) return;
       try {
+        // Fetch profile
         const { data } = await supabase
           .from('user_profiles')
           .select('character_description, avatar_url, character_ref_png')
           .eq('user_id', user.id)
           .single();
-        
+
         if (data?.character_description) setCharacterDescription(data.character_description);
         if (data?.avatar_url) setUserAvatarUrl(data.avatar_url);
         if (data?.character_ref_png) setCharacterRefPng(data.character_ref_png);
+
+        // Fetch saved avatars for B-ROLL modal picker
+        const { data: avatars } = await supabase
+          .from('user_avatars')
+          .select('id, name, avatar_url')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (avatars && avatars.length > 0) {
+          setSavedAvatars(avatars.map(a => ({
+            id: a.id,
+            name: a.name,
+            url: a.avatar_url
+          })));
+        }
       } catch (err) {
         console.error('Error fetching user profile:', err);
       }
@@ -1183,7 +1202,14 @@ export const ImageGeneration = (): JSX.Element => {
           if (stateData.avatarId) setAvatarId(stateData.avatarId);
           // Support both keys: selectedAvatarUrl (from TopicSelection) and avatarUrl (from ScriptLab)
           const avatarUrlFromState = stateData.selectedAvatarUrl || stateData.avatarUrl;
-          if (avatarUrlFromState) setAvatarUrl(avatarUrlFromState);
+          if (avatarUrlFromState) {
+            setAvatarUrl(avatarUrlFromState);
+            // Also set creatorAvatarUrl for all segments that don't have one yet
+            formattedSegments = formattedSegments.map(seg => ({
+              ...seg,
+              creatorAvatarUrl: seg.creatorAvatarUrl || avatarUrlFromState
+            }));
+          }
         }
         
         if (existingJobs && existingJobs.length > 0) {
@@ -2115,6 +2141,7 @@ export const ImageGeneration = (): JSX.Element => {
     additionalNotes: string;
     includeCreatorFace: boolean;
     referenceImages: { url: string; source: 'unsplash' | 'pexels' | 'upload'; photographer?: string }[];
+    selectedAvatarUrl?: string;  // NEW: Avatar selected in modal
   }) => {
     if (!user || !sessionId || !bRollModal.segment) return;
 
@@ -2150,8 +2177,9 @@ export const ImageGeneration = (): JSX.Element => {
     ));
 
     try {
-      // Priority: character_ref_png > navigation state (newly uploaded) > database profile
-      const creatorRef = characterRefPng || avatarUrl || userAvatarUrl || null;
+      // Priority: modal selection > segment-specific > session avatar > profile avatar
+      // options.selectedAvatarUrl is the avatar user explicitly selected in the modal picker
+      const creatorRef = options.selectedAvatarUrl || segment.creatorAvatarUrl || avatarUrl || userAvatarUrl || null;
       const maxGenNumber = Math.max(...(segment.images?.map(img => img.generationNumber) || []), 0);
 
       // Build request body
@@ -2199,9 +2227,11 @@ export const ImageGeneration = (): JSX.Element => {
         refCount: options.referenceImages.length,
         includeCreatorFace: options.includeCreatorFace,
         creatorRef: creatorRef ? creatorRef.substring(0, 60) + '...' : 'NULL',
-        characterRefPng: characterRefPng ? 'SET' : 'NULL',
-        avatarUrl: avatarUrl ? 'SET' : 'NULL',
-        userAvatarUrl: userAvatarUrl ? 'SET' : 'NULL',
+        // Priority: modal > segment > session > profile
+        modalSelectedAvatar: options.selectedAvatarUrl ? 'SET' : 'NULL',
+        segmentCreatorAvatarUrl: segment.creatorAvatarUrl ? 'SET' : 'NULL',
+        sessionAvatarUrl: avatarUrl ? 'SET' : 'NULL',
+        profileAvatarUrl: userAvatarUrl ? 'SET' : 'NULL',
       });
 
       const { data, error } = await supabase.functions.invoke('generate-images', {
@@ -2232,7 +2262,7 @@ export const ImageGeneration = (): JSX.Element => {
       ));
       alert(language === 'id' ? 'Gagal generate gambar' : 'Failed to generate image');
     }
-  }, [user, sessionId, bRollModal.segment, videoSettings, characterRefPng, avatarUrl, userAvatarUrl, imageModels, startBackgroundProcessing, language]);
+  }, [user, sessionId, bRollModal.segment, videoSettings, avatarUrl, userAvatarUrl, imageModels, startBackgroundProcessing, language]);
 
   const handlePrevious = () => {
     saveProgress(segments, currentTopic, videoSettings);
@@ -2807,7 +2837,7 @@ export const ImageGeneration = (): JSX.Element => {
                         </div>
 
                         {/* Visual Preview */}
-                        <div className="w-full sm:w-44 flex-shrink-0">
+                        <div className="w-full sm:w-52 flex-shrink-0">
                           <label className="text-text-secondary text-xs mb-1.5 block">
                             {uiText.visualPreview}
                             {isCreatorShot && (
@@ -2955,7 +2985,16 @@ export const ImageGeneration = (): JSX.Element => {
         onGenerate={handleBRollGenerate}
         language={language}
         maxReferenceImages={3}
-        hasCreatorAvatar={!!(characterRefPng || avatarUrl || userAvatarUrl)}  // Show warning if no avatar
+        // Avatar props for picker
+        // Priority: segment's DB avatar > navigation state avatar > lookup by avatarId > null
+        sessionAvatarUrl={
+          bRollModal.segment?.creatorAvatarUrl ||
+          avatarUrl ||
+          (avatarId ? savedAvatars.find(a => a.id === avatarId)?.url : null) ||
+          null
+        }
+        profileAvatarUrl={userAvatarUrl}
+        availableAvatars={savedAvatars.map(a => ({ ...a, source: 'saved' as const }))}
       />
     </div>
   );

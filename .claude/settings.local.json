@@ -35,7 +35,8 @@
       "Bash(git push:*)",
       "Bash(git commit:*)",
       "Bash(npx supabase:*)",
-      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" log --oneline -20)"
+      "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" log --oneline -20)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

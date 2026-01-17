@@ -630,23 +630,75 @@ async function handleProcessSingle(
   // Build reference image(s) for generation
   let referenceImageForGeneration: string | undefined = undefined
   let multiRefImages: string[] | undefined = undefined
-  
+
+  // ========================================================================
+  // 2026-01-17: Helper to validate image URLs
+  // Some URLs (Wikipedia, etc.) may not be directly accessible by fal.ai
+  // We filter out invalid URLs to prevent API errors
+  // ========================================================================
+  const isValidImageUrl = (url: string): boolean => {
+    if (!url || typeof url !== 'string') return false
+
+    // Must be a valid URL
+    try {
+      const parsed = new URL(url)
+      if (!['http:', 'https:'].includes(parsed.protocol)) return false
+    } catch {
+      return false
+    }
+
+    // Block known problematic sources that fal.ai can't access
+    const blockedDomains = [
+      'upload.wikimedia.org',  // Wikipedia - often blocked by user-agent
+      'commons.wikimedia.org',
+      'wikipedia.org',
+    ]
+
+    const urlLower = url.toLowerCase()
+    for (const domain of blockedDomains) {
+      if (urlLower.includes(domain)) {
+        console.warn(`[PROCESS_SINGLE] ⚠️ Blocked domain detected: ${domain} - skipping reference image`)
+        return false
+      }
+    }
+
+    return true
+  }
+
   if (isCreatorShot) {
     // CREATOR shots: single avatar reference
     referenceImageForGeneration = job.character_ref_png || undefined
   } else if (includeCreatorFace && creatorRefForBroll) {
     // B-ROLL with "Include Creator Face": multi-image reference
     // Use FLUX Kontext Multi which supports image_urls array
-    multiRefImages = [creatorRefForBroll]
-    if (job.reference_image_url) {
-      multiRefImages.push(job.reference_image_url)
+    // CRITICAL: Only include valid, accessible URLs
+    const validCreatorRef = isValidImageUrl(creatorRefForBroll) ? creatorRefForBroll : null
+    const validSceneRef = job.reference_image_url && isValidImageUrl(job.reference_image_url)
+      ? job.reference_image_url
+      : null
+
+    if (validCreatorRef) {
+      multiRefImages = [validCreatorRef]
+      if (validSceneRef) {
+        multiRefImages.push(validSceneRef)
+      }
+      console.log(`[PROCESS_SINGLE] Multi-ref mode: ${multiRefImages.length} valid images (creator + scene)`)
+    } else {
+      // Creator ref is invalid - this is a critical error for includeCreatorFace
+      console.error(`[PROCESS_SINGLE] ❌ Creator reference URL is invalid or inaccessible: ${creatorRefForBroll?.substring(0, 60)}...`)
+      throw new Error(`Creator face reference image is invalid or from blocked domain. Please use an image from Supabase storage or a directly accessible URL.`)
     }
-    console.log(`[PROCESS_SINGLE] Multi-ref mode: ${multiRefImages.length} images (creator + scene)`)
   } else {
     // B-ROLL with scene reference only
-    referenceImageForGeneration = job.reference_image_url || undefined
+    const sceneRef = job.reference_image_url
+    if (sceneRef && isValidImageUrl(sceneRef)) {
+      referenceImageForGeneration = sceneRef
+    } else if (sceneRef) {
+      console.warn(`[PROCESS_SINGLE] ⚠️ Scene reference URL invalid, proceeding without: ${sceneRef?.substring(0, 60)}...`)
+      // Not critical for regular B-ROLL - can proceed without reference
+    }
   }
-  
+
   if (referenceImageForGeneration) {
     console.log(`[PROCESS_SINGLE] Reference image: ${referenceImageForGeneration.substring(0, 60)}...`)
   }
@@ -860,6 +912,13 @@ async function handleProcessSingle(
   }
 
   try {
+    // ========================================================================
+    // 2026-01-17 FIX: Don't fallback to T2I models when includeCreatorFace=true
+    // because T2I models (seedream-v4, qwen-image) don't support reference images
+    // and the output won't have the creator's face - wasting tokens!
+    // ========================================================================
+    const shouldAllowFallback = !includeCreatorFace || !creatorRefForBroll
+
     // Try PRIMARY provider first
     try {
       imageUrl = await generateWithProvider(primaryProvider)
@@ -869,8 +928,14 @@ async function handleProcessSingle(
       const primaryErrorMsg = primaryError instanceof Error ? primaryError.message : 'Unknown error'
       console.warn(`[PROCESS_SINGLE] ⚠️ Primary provider (${primaryProvider}) failed: ${primaryErrorMsg}`)
       errorMessages.push(`Primary (${primaryProvider}): ${primaryErrorMsg}`)
-      
-      // Try FALLBACK provider
+
+      // Check if fallback is allowed (not for includeCreatorFace scenarios)
+      if (!shouldAllowFallback) {
+        console.error(`[PROCESS_SINGLE] ❌ Fallback DISABLED for includeCreatorFace=true (would lose face reference)`)
+        throw new Error(`Image generation failed: ${primaryErrorMsg}. Fallback disabled because includeCreatorFace requires reference image support.`)
+      }
+
+      // Try FALLBACK provider (only for regular B-ROLL without creator face)
       if (fallbackProvider && fallbackProvider !== primaryProvider) {
         console.log(`[PROCESS_SINGLE] Trying fallback provider: ${fallbackProvider}`)
         try {

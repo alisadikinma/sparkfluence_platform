@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '../../../components/ui/button';
 import { supabase } from '../../../lib/supabase';
-import { getSuggestedKeywords } from '../../../lib/keywordExtractor';
 import {
-  X, Loader2, Search, Upload, Camera, Sparkles, User, Trash2, CheckCircle2
+  X, Loader2, Search, Upload, Camera, Sparkles, User, Trash2, CheckCircle2, ChevronDown
 } from 'lucide-react';
 
 // ============================================================================
@@ -31,6 +30,15 @@ interface SegmentForModal {
   shotType: string;
   includeCreatorFace?: boolean;
   referenceImageUrl?: string;
+  imageUrl?: string | null;  // Current selected image for this segment
+  images?: { imageUrl: string }[];  // All images for this segment
+}
+
+interface AvatarOption {
+  id: string;
+  name: string;
+  url: string;
+  source: 'profile' | 'saved' | 'session';
 }
 
 interface GenerateBRollModalProps {
@@ -40,13 +48,18 @@ interface GenerateBRollModalProps {
   onGenerate: (options: GenerateOptions) => void;
   language?: string;
   maxReferenceImages?: number;
-  hasCreatorAvatar?: boolean;  // NEW: To show warning if checkbox checked but no avatar
+  // Avatar-related props
+  availableAvatars?: AvatarOption[];
+  sessionAvatarUrl?: string | null;  // Avatar selected for this session/script
+  profileAvatarUrl?: string | null;  // User's profile avatar
+  onAvatarSelect?: (avatarUrl: string) => void;
 }
 
 interface GenerateOptions {
   additionalNotes: string;
   includeCreatorFace: boolean;
   referenceImages: SelectedReference[];
+  selectedAvatarUrl?: string;  // NEW: Selected avatar for B-ROLL
 }
 
 interface SelectedReference {
@@ -72,7 +85,7 @@ const getCachedResults = (keyword: string): StockImageResult[] | null => {
     const cacheKey = BROLL_CACHE_PREFIX + keyword.toLowerCase().trim().replace(/\s+/g, '_');
     const cached = localStorage.getItem(cacheKey);
     if (!cached) return null;
-    
+
     const parsed: CachedResult = JSON.parse(cached);
     if (Date.now() - parsed.timestamp > BROLL_CACHE_EXPIRY_MS) {
       localStorage.removeItem(cacheKey);
@@ -104,13 +117,18 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   onGenerate,
   language = 'en',
   maxReferenceImages = 3,
-  hasCreatorAvatar = false  // NEW: default false
+  availableAvatars = [],
+  sessionAvatarUrl = null,
+  profileAvatarUrl = null,
+  onAvatarSelect,
 }) => {
   // Form state
   const [additionalNotes, setAdditionalNotes] = useState('');
   const [includeCreatorFace, setIncludeCreatorFace] = useState(false);
   const [selectedReferences, setSelectedReferences] = useState<SelectedReference[]>([]);
-  
+  const [selectedAvatarUrl, setSelectedAvatarUrl] = useState<string | null>(null);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<StockImageResult[]>([]);
@@ -118,28 +136,37 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [smartSuggestions, setSmartSuggestions] = useState<string[]>([]);
   const [isExtractingKeywords, setIsExtractingKeywords] = useState(false);
-  
+
   // URL paste state
   const [pasteUrl, setPasteUrl] = useState('');
-  
+
   const modalContentRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const avatarPickerRef = useRef<HTMLDivElement>(null);
+
+  // Determine if we have any avatar available
+  const hasAnyAvatar = !!(sessionAvatarUrl || profileAvatarUrl || availableAvatars.length > 0);
+
+  // Get current avatar URL (prioritize session > selected > profile)
+  const currentAvatarUrl = selectedAvatarUrl || sessionAvatarUrl || profileAvatarUrl;
 
   // UI Text
   const uiText = {
-    title: language === 'id' ? 'Generate B-ROLL Image' : 'Generate B-ROLL Image',
-    segment: language === 'id' ? 'Segmen' : 'Segment',
     additionalNotes: language === 'id' ? 'Catatan Tambahan (opsional)' : 'Additional Notes (optional)',
-    notesPlaceholder: language === 'id' 
-      ? 'Contoh: Pencahayaan lebih dramatis, golden hour, lebih modern...' 
+    notesPlaceholder: language === 'id'
+      ? 'Contoh: Pencahayaan lebih dramatis, golden hour, lebih modern...'
       : 'e.g., More dramatic lighting, golden hour, more modern...',
     includeCreatorFace: language === 'id' ? 'Sertakan Wajah Creator' : 'Include Creator Face',
-    includeCreatorFaceHint: language === 'id' 
-      ? 'Akan menampilkan avatar kamu di image menggunakan FLUX Kontext' 
-      : 'Will include your avatar in the image using FLUX Kontext',
+    includeCreatorFaceHint: language === 'id'
+      ? 'Akan menampilkan avatar kamu di image'
+      : 'Will include your avatar in the image',
     noAvatarWarning: language === 'id'
-      ? '⚠️ Upload avatar di Settings terlebih dahulu untuk menggunakan fitur ini'
-      : '⚠️ Upload your avatar in Settings first to use this feature',
+      ? '⚠️ Upload avatar di Settings terlebih dahulu'
+      : '⚠️ Upload avatar in Settings first',
+    selectAvatar: language === 'id' ? 'Pilih Avatar' : 'Select Avatar',
+    sessionAvatar: language === 'id' ? 'Avatar Script Ini' : 'Current Script Avatar',
+    profileAvatar: language === 'id' ? 'Avatar Profil' : 'Profile Avatar',
+    savedAvatar: language === 'id' ? 'Avatar Tersimpan' : 'Saved Avatar',
     referenceImage: language === 'id' ? 'Reference Image (opsional)' : 'Reference Image (optional)',
     searchPlaceholder: language === 'id' ? 'Cari gambar stock...' : 'Search stock images...',
     search: language === 'id' ? 'Cari' : 'Search',
@@ -168,7 +195,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
       document.body.style.left = '0';
       document.body.style.right = '0';
       document.body.style.overflow = 'hidden';
-      
+
       return () => {
         document.body.style.position = '';
         document.body.style.top = '';
@@ -183,37 +210,57 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   // Reset state and extract keywords when modal opens
   useEffect(() => {
     if (isOpen && segment) {
-      // Reset form - ALWAYS default to unchecked (don't persist from previous)
+      // Reset form
       setAdditionalNotes('');
-      setIncludeCreatorFace(false);  // BUG FIX: Always default unchecked
+      setIncludeCreatorFace(false);
       setSelectedReferences([]);
       setSearchQuery('');
       setSearchResults([]);
       setSearchError(null);
       setPasteUrl('');
       setSmartSuggestions([]);
-      
+      setShowAvatarPicker(false);
+      // Default to session avatar if available
+      setSelectedAvatarUrl(sessionAvatarUrl || profileAvatarUrl || null);
+
       // Extract keywords via LLM
       extractKeywordsAndSearch();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, segment?.id]);
+  }, [isOpen, segment?.id, sessionAvatarUrl, profileAvatarUrl]);
+
+  // Close avatar picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (avatarPickerRef.current && !avatarPickerRef.current.contains(event.target as Node)) {
+        setShowAvatarPicker(false);
+      }
+    };
+
+    if (showAvatarPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showAvatarPicker]);
 
   // ============================================================================
   // HANDLERS
   // ============================================================================
 
-  // Extract keywords from visual direction using LLM
+  // Extract keywords from script using LLM (focus on script only, not visual direction)
   const extractKeywordsAndSearch = async () => {
     if (!segment) return;
-    
+
     setIsExtractingKeywords(true);
-    
+
+    // Use script only for keyword extraction - visual direction can be confusing
+    const scriptText = segment.script || '';
+
     try {
       const { data, error } = await supabase.functions.invoke('search-stock-images', {
         body: {
-          visualDirection: segment.visualDirection || '',
-          script: segment.script || '',
+          visualDirection: '', // Don't use visual direction
+          script: scriptText,
           enableSmartExtraction: true,
           orientation: 'portrait',
           per_page: 20,
@@ -226,21 +273,29 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
       if (error) throw error;
 
       if (data?.success && data?.data?.smartExtraction?.suggestedQueries?.length > 0) {
-        const suggestions = data.data.smartExtraction.suggestedQueries;
-        const bestQuery = data.data.query || suggestions[0] || '';
-        
+        let suggestions = data.data.smartExtraction.suggestedQueries as string[];
+
+        // Extract emphasized words from script (e.g., **Xiaomi**)
+        const emphasizedWords = extractEmphasizedWords(scriptText);
+        if (emphasizedWords.length > 0) {
+          // Add emphasized words to front of suggestions
+          suggestions = [...emphasizedWords, ...suggestions.filter(s => !emphasizedWords.includes(s.toLowerCase()))];
+        }
+
+        const bestQuery = suggestions[0] || data.data.query || '';
+
         setSearchQuery(bestQuery);
-        setSmartSuggestions(suggestions);
-        
+        setSmartSuggestions(suggestions.slice(0, 5));
+
         // Auto-search with best query
         if (bestQuery) {
           setTimeout(() => handleSearch(bestQuery), 100);
         }
       } else {
-        // Fallback to frontend extraction
-        const fallbackSuggestions = getSuggestedKeywords(segment.visualDirection, segment.script);
+        // Fallback to frontend extraction (script only)
+        const fallbackSuggestions = extractKeywordsFromScript(scriptText);
         setSmartSuggestions(fallbackSuggestions);
-        
+
         if (fallbackSuggestions.length > 0) {
           setSearchQuery(fallbackSuggestions[0]);
           setTimeout(() => handleSearch(fallbackSuggestions[0]), 100);
@@ -249,16 +304,135 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
     } catch (err) {
       setIsExtractingKeywords(false);
       console.error('Keyword extraction error:', err);
-      
-      // Fallback
-      const fallbackSuggestions = getSuggestedKeywords(segment.visualDirection || '', segment.script || '');
+
+      // Fallback (script only)
+      const fallbackSuggestions = extractKeywordsFromScript(scriptText);
       setSmartSuggestions(fallbackSuggestions);
-      
+
       if (fallbackSuggestions.length > 0) {
         setSearchQuery(fallbackSuggestions[0]);
         setTimeout(() => handleSearch(fallbackSuggestions[0]), 100);
       }
     }
+  };
+
+  // Extract emphasized words from script (e.g., **Xiaomi** -> "Xiaomi")
+  const extractEmphasizedWords = (script: string): string[] => {
+    const emphasisRegex = /\*\*([^*]+)\*\*/g;
+    const matches: string[] = [];
+    let match;
+
+    while ((match = emphasisRegex.exec(script)) !== null) {
+      const word = match[1].trim();
+      if (word.length > 2) {
+        matches.push(word);
+      }
+    }
+
+    return matches;
+  };
+
+  // Simple keyword extraction from script text
+  const extractKeywordsFromScript = (script: string): string[] => {
+    if (!script) return ['modern', 'technology'];
+
+    const suggestions: string[] = [];
+
+    // First, extract emphasized words (highest priority)
+    const emphasizedWords = extractEmphasizedWords(script);
+    suggestions.push(...emphasizedWords);
+
+    const lowerScript = script.toLowerCase();
+
+    // Tech & cybersecurity keywords
+    const techKeywords: Record<string, string[]> = {
+      'keamanan siber': ['cybersecurity', 'hacker', 'security'],
+      'cybersecurity': ['cybersecurity', 'hacker', 'network security'],
+      'cyber': ['cybersecurity', 'digital security'],
+      'siber': ['cybersecurity', 'hacker'],
+      'hacker': ['hacker', 'cybersecurity', 'code'],
+      'security': ['security', 'protection', 'shield'],
+      'data': ['data center', 'server', 'database'],
+      'cloud': ['cloud computing', 'server room', 'data center'],
+      'ai': ['artificial intelligence', 'robot', 'technology'],
+      'machine learning': ['AI technology', 'neural network'],
+      'blockchain': ['blockchain', 'cryptocurrency', 'digital'],
+      'iot': ['smart device', 'connected devices', 'technology'],
+      'software': ['coding', 'programming', 'developer'],
+      'aplikasi': ['mobile app', 'software', 'technology'],
+      'digital': ['digital', 'technology', 'modern'],
+      'teknologi': ['technology', 'innovation', 'modern'],
+      'technology': ['technology', 'innovation', 'futuristic'],
+    };
+
+    // Brand keywords (map to relevant imagery) - include the brand name itself!
+    const brandKeywords: Record<string, string[]> = {
+      'xiaomi': ['Xiaomi', 'Xiaomi smartphone', 'smart device', 'tech innovation'],
+      'samsung': ['Samsung', 'Samsung phone', 'electronics', 'smartphone'],
+      'apple': ['Apple', 'iPhone', 'minimalist technology', 'premium device'],
+      'google': ['Google', 'tech company', 'innovation', 'digital'],
+      'microsoft': ['Microsoft', 'software', 'enterprise tech', 'office'],
+      'tesla': ['Tesla', 'electric car', 'innovation', 'futuristic'],
+      'amazon': ['Amazon', 'ecommerce', 'delivery', 'warehouse'],
+      'netflix': ['Netflix', 'streaming', 'entertainment', 'movie'],
+      'spotify': ['Spotify', 'music streaming', 'audio', 'headphones'],
+      'tiktok': ['TikTok', 'social media', 'content creator', 'viral'],
+      'instagram': ['Instagram', 'social media', 'photography', 'lifestyle'],
+      'youtube': ['YouTube', 'video', 'content creator', 'streaming'],
+      'huawei': ['Huawei', 'Huawei phone', 'smartphone', 'technology'],
+      'oppo': ['OPPO', 'OPPO phone', 'smartphone', 'camera phone'],
+      'vivo': ['Vivo', 'Vivo phone', 'smartphone', 'selfie'],
+    };
+
+    // Industry keywords
+    const industryKeywords: Record<string, string[]> = {
+      'finance': ['finance', 'banking', 'money'],
+      'keuangan': ['finance', 'banking', 'investment'],
+      'health': ['healthcare', 'medical', 'hospital'],
+      'kesehatan': ['healthcare', 'medical', 'wellness'],
+      'education': ['education', 'learning', 'classroom'],
+      'pendidikan': ['education', 'school', 'learning'],
+      'retail': ['shopping', 'store', 'retail'],
+      'travel': ['travel', 'vacation', 'destination'],
+      'food': ['food', 'restaurant', 'cuisine'],
+      'makanan': ['food', 'cooking', 'restaurant'],
+      'fashion': ['fashion', 'clothing', 'style'],
+      'gaming': ['gaming', 'esports', 'video game'],
+      'music': ['music', 'concert', 'musician'],
+      'sport': ['sports', 'athlete', 'fitness'],
+      'olahraga': ['sports', 'fitness', 'athlete'],
+    };
+
+    // Check brand keywords FIRST (higher priority)
+    for (const [key, values] of Object.entries(brandKeywords)) {
+      if (lowerScript.includes(key)) {
+        suggestions.push(...values);
+      }
+    }
+
+    // Check tech keywords
+    for (const [key, values] of Object.entries(techKeywords)) {
+      if (lowerScript.includes(key)) {
+        suggestions.push(...values);
+      }
+    }
+
+    // Check industry keywords
+    for (const [key, values] of Object.entries(industryKeywords)) {
+      if (lowerScript.includes(key)) {
+        suggestions.push(...values);
+      }
+    }
+
+    // Remove duplicates and limit
+    const uniqueSuggestions = [...new Set(suggestions)].slice(0, 5);
+
+    // If no matches, return generic based on common words
+    if (uniqueSuggestions.length === 0) {
+      return ['modern office', 'technology', 'professional'];
+    }
+
+    return uniqueSuggestions;
   };
 
   // Search stock images
@@ -313,10 +487,10 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   // Select a reference image
   const handleSelectReference = (img: StockImageResult) => {
     if (selectedReferences.length >= maxReferenceImages) return;
-    
+
     // Check if already selected
     if (selectedReferences.some(ref => ref.url === img.url_regular)) return;
-    
+
     setSelectedReferences(prev => [...prev, {
       url: img.url_regular,
       source: img.provider,
@@ -333,10 +507,10 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   const handleUsePasteUrl = () => {
     if (!pasteUrl.trim()) return;
     if (selectedReferences.length >= maxReferenceImages) return;
-    
+
     // Check if already selected
     if (selectedReferences.some(ref => ref.url === pasteUrl.trim())) return;
-    
+
     setSelectedReferences(prev => [...prev, {
       url: pasteUrl.trim(),
       source: 'upload'
@@ -344,12 +518,20 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
     setPasteUrl('');
   };
 
+  // Select avatar
+  const handleAvatarSelect = (url: string) => {
+    setSelectedAvatarUrl(url);
+    setShowAvatarPicker(false);
+    onAvatarSelect?.(url);
+  };
+
   // Submit
   const handleSubmit = () => {
     onGenerate({
       additionalNotes: additionalNotes.trim(),
       includeCreatorFace,
-      referenceImages: selectedReferences
+      referenceImages: selectedReferences,
+      selectedAvatarUrl: includeCreatorFace ? currentAvatarUrl || undefined : undefined,
     });
     onClose();
   };
@@ -369,107 +551,266 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
 
   const canSelectMore = selectedReferences.length < maxReferenceImages;
 
+  // Build avatar options list - show ALL avatars with proper labels
+  // Priority: Session avatar first (marked as "Script ini"), then all saved avatars with their names
+  const avatarOptions: { url: string; label: string; source: string; isDefault?: boolean }[] = [];
+
+  // Find saved avatar that matches session URL (to get its name)
+  const sessionAvatarInfo = availableAvatars.find(av => av.url === sessionAvatarUrl);
+
+  // 1. Session avatar (the one used for this script) - FIRST and marked as default
+  if (sessionAvatarUrl) {
+    avatarOptions.push({
+      url: sessionAvatarUrl,
+      label: sessionAvatarInfo?.name
+        ? `${sessionAvatarInfo.name} (${uiText.sessionAvatar})`
+        : uiText.sessionAvatar,
+      source: 'session',
+      isDefault: true
+    });
+  }
+
+  // 2. All other saved avatars (excluding the session one)
+  availableAvatars.forEach(av => {
+    if (av.url !== sessionAvatarUrl) {
+      avatarOptions.push({ url: av.url, label: av.name || uiText.savedAvatar, source: 'saved' });
+    }
+  });
+
+  // 3. Profile avatar (only if different from session and not in saved list)
+  const profileInSaved = availableAvatars.some(av => av.url === profileAvatarUrl);
+  if (profileAvatarUrl && profileAvatarUrl !== sessionAvatarUrl && !profileInSaved) {
+    avatarOptions.push({ url: profileAvatarUrl, label: uiText.profileAvatar, source: 'profile' });
+  }
+
   return (
-    <div 
+    <div
       className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 isolate"
       onClick={handleBackdropClick}
       onWheelCapture={(e) => e.stopPropagation()}
     >
-      <div 
+      <div
         ref={modalContentRef}
-        className="bg-card border border-border-default rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        className="bg-card border border-border-default rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
         onWheel={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border-default flex-shrink-0">
-          <div>
-            <h3 className="text-lg font-bold text-text-primary">{uiText.title}</h3>
-            <p className="text-xs text-text-muted">{uiText.segment}: {segment.type} (B-ROLL)</p>
+        {/* Header - With current image preview */}
+        <div className="flex items-start gap-3 p-4 border-b border-border-default flex-shrink-0">
+          {/* Current image thumbnail */}
+          {(segment.imageUrl || segment.images?.[0]?.imageUrl) && (
+            <div className="flex-shrink-0 w-16 h-24 rounded-lg overflow-hidden border border-border-default">
+              <img
+                src={segment.imageUrl || segment.images?.[0]?.imageUrl}
+                alt="Current"
+                className="w-full h-full object-cover"
+              />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-bold text-text-primary">
+              Generate {segment.type} (B-ROLL) Image
+            </h3>
+            {/* Script inline below title */}
+            {segment.script && (
+              <p className="text-sm text-text-secondary mt-1 line-clamp-2 italic">
+                "{segment.script}"
+              </p>
+            )}
           </div>
-          <button 
-            onClick={onClose} 
-            className="p-2 hover:bg-surface rounded-lg transition-colors"
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-surface rounded-lg transition-colors flex-shrink-0"
           >
             <X className="w-5 h-5 text-text-secondary" />
           </button>
         </div>
 
-        {/* Content - Scrollable */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          
-          {/* Additional Notes */}
-          <div>
-            <label className="text-sm font-medium text-text-primary block mb-2">
-              {uiText.additionalNotes}
-            </label>
-            <textarea
-              value={additionalNotes}
-              onChange={(e) => setAdditionalNotes(e.target.value)}
-              placeholder={uiText.notesPlaceholder}
-              className="w-full bg-surface border border-border-default rounded-lg p-3 text-text-primary resize-none h-20 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
+        {/* Content - Two Column Layout */}
+        <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
 
-          {/* Include Creator Face Toggle */}
-          <div className={`flex items-start gap-3 p-3 rounded-lg border ${includeCreatorFace && !hasCreatorAvatar ? 'bg-amber-500/10 border-amber-500/50' : 'bg-surface/50 border-border-default'}`}>
-            <input
-              type="checkbox"
-              id="includeCreatorFace"
-              checked={includeCreatorFace}
-              onChange={(e) => setIncludeCreatorFace(e.target.checked)}
-              className="mt-1 w-4 h-4 rounded border-border-default text-primary focus:ring-primary"
-            />
-            <label htmlFor="includeCreatorFace" className="flex-1 cursor-pointer">
-              <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
-                <User className="w-4 h-4 text-primary" />
-                {uiText.includeCreatorFace}
+          {/* LEFT COLUMN: Form Controls */}
+          <div className="w-full md:w-2/5 p-4 space-y-4 overflow-y-auto border-b md:border-b-0 md:border-r border-border-default">
+
+            {/* Additional Notes */}
+            <div>
+              <label className="text-sm font-medium text-text-primary block mb-2">
+                {uiText.additionalNotes}
+              </label>
+              <textarea
+                value={additionalNotes}
+                onChange={(e) => setAdditionalNotes(e.target.value)}
+                placeholder={uiText.notesPlaceholder}
+                className="w-full bg-surface border border-border-default rounded-lg p-3 text-text-primary resize-none h-20 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
+            {/* Include Creator Face Toggle with Avatar Picker */}
+            <div className={`rounded-lg border transition-all ${
+              includeCreatorFace
+                ? hasAnyAvatar
+                  ? 'bg-primary/5 border-primary/30'
+                  : 'bg-amber-500/10 border-amber-500/50'
+                : 'bg-surface/50 border-border-default'
+            }`}>
+              {/* Checkbox row */}
+              <div className="flex items-start gap-3 p-3">
+                <input
+                  type="checkbox"
+                  id="includeCreatorFace"
+                  checked={includeCreatorFace}
+                  onChange={(e) => setIncludeCreatorFace(e.target.checked)}
+                  className="mt-1 w-4 h-4 rounded border-border-default text-primary focus:ring-primary"
+                />
+                <label htmlFor="includeCreatorFace" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                    <User className="w-4 h-4 text-primary" />
+                    {uiText.includeCreatorFace}
+                  </div>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    {uiText.includeCreatorFaceHint}
+                  </p>
+                </label>
               </div>
-              <p className="text-xs text-text-muted mt-0.5">
-                {uiText.includeCreatorFaceHint}
-              </p>
-              {/* Warning when checkbox checked but no avatar */}
-              {includeCreatorFace && !hasCreatorAvatar && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 font-medium">
-                  {uiText.noAvatarWarning}
-                </p>
+
+              {/* Avatar Picker - shown when checked */}
+              {includeCreatorFace && (
+                <div className="px-3 pb-3 pt-0">
+                  {hasAnyAvatar ? (
+                    <div className="relative" ref={avatarPickerRef}>
+                      {/* Selected Avatar Display */}
+                      <button
+                        onClick={() => setShowAvatarPicker(!showAvatarPicker)}
+                        className="w-full flex items-center gap-3 p-2 bg-surface border border-border-default rounded-lg hover:border-primary/50 transition-colors"
+                      >
+                        {currentAvatarUrl ? (
+                          <img
+                            src={currentAvatarUrl}
+                            alt="Selected avatar"
+                            className="w-10 h-10 rounded-full object-cover border-2 border-primary"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-surface-hover flex items-center justify-center">
+                            <User className="w-5 h-5 text-text-muted" />
+                          </div>
+                        )}
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-medium text-text-primary">
+                            {/* Find current avatar's label from options */}
+                            {avatarOptions.find(av => av.url === currentAvatarUrl)?.label || uiText.selectAvatar}
+                          </p>
+                          <p className="text-xs text-text-muted">
+                            {avatarOptions.length > 1
+                              ? (language === 'id' ? 'Klik untuk ganti' : 'Click to change')
+                              : (language === 'id' ? 'Avatar terpilih' : 'Selected avatar')}
+                          </p>
+                        </div>
+                        <ChevronDown className={`w-4 h-4 text-text-muted transition-transform ${showAvatarPicker ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {/* Avatar Dropdown */}
+                      {showAvatarPicker && avatarOptions.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border-default rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
+                          {avatarOptions.map((av, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleAvatarSelect(av.url)}
+                              className={`w-full flex items-center gap-3 p-2 hover:bg-surface transition-colors ${
+                                currentAvatarUrl === av.url ? 'bg-primary/10' : ''
+                              } ${idx === 0 ? 'rounded-t-lg' : ''} ${idx === avatarOptions.length - 1 ? 'rounded-b-lg' : ''}`}
+                            >
+                              <img
+                                src={av.url}
+                                alt={av.label}
+                                className={`w-8 h-8 rounded-full object-cover border-2 ${
+                                  currentAvatarUrl === av.url ? 'border-primary' : 'border-transparent'
+                                }`}
+                              />
+                              <div className="flex-1 text-left">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm text-text-primary">{av.label}</p>
+                                  {av.isDefault && (
+                                    <span className="px-1.5 py-0.5 text-[10px] bg-primary/20 text-primary rounded-full">
+                                      Default
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              {currentAvatarUrl === av.url && (
+                                <CheckCircle2 className="w-4 h-4 text-primary" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                      {uiText.noAvatarWarning}
+                    </p>
+                  )}
+                </div>
               )}
-            </label>
+            </div>
+
+            {/* Selected References Preview */}
+            {selectedReferences.length > 0 && (
+              <div>
+                <label className="text-sm font-medium text-text-primary block mb-2">
+                  {uiText.selected} ({selectedReferences.length}/{maxReferenceImages})
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {selectedReferences.map((ref, idx) => (
+                    <div key={idx} className="relative w-16 h-24 rounded-lg overflow-hidden border-2 border-primary group">
+                      <img
+                        src={ref.url}
+                        alt={`Reference ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        onClick={() => handleRemoveReference(ref.url)}
+                        className="absolute top-1 right-1 p-1 bg-red-500 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="w-3 h-3 text-white" />
+                      </button>
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-[8px] text-center py-0.5">
+                        {ref.source.toUpperCase()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* URL Paste */}
+            <div>
+              <label className="text-sm font-medium text-text-primary block mb-2">
+                {uiText.orPasteUrl}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={pasteUrl}
+                  onChange={(e) => setPasteUrl(e.target.value)}
+                  placeholder="https://..."
+                  className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <Button
+                  onClick={handleUsePasteUrl}
+                  disabled={!pasteUrl.trim() || !canSelectMore}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Upload className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
           </div>
 
-          {/* Reference Image Section */}
-          <div>
+          {/* RIGHT COLUMN: Reference Image Picker */}
+          <div className="w-full md:w-3/5 p-4 flex flex-col overflow-hidden">
             <label className="text-sm font-medium text-text-primary block mb-2">
               {uiText.referenceImage}
             </label>
-            
-            {/* Selected References */}
-            {selectedReferences.length > 0 && (
-              <div className="flex gap-2 mb-3 flex-wrap">
-                {selectedReferences.map((ref, idx) => (
-                  <div key={idx} className="relative w-20 h-28 rounded-lg overflow-hidden border-2 border-primary group">
-                    <img 
-                      src={ref.url} 
-                      alt={`Reference ${idx + 1}`}
-                      className="w-full h-full object-cover"
-                    />
-                    <button
-                      onClick={() => handleRemoveReference(ref.url)}
-                      className="absolute top-1 right-1 p-1 bg-red-500 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <Trash2 className="w-3 h-3 text-white" />
-                    </button>
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-[8px] text-center py-0.5">
-                      {ref.source.toUpperCase()}
-                    </div>
-                  </div>
-                ))}
-                {selectedReferences.length < maxReferenceImages && (
-                  <div className="w-20 h-28 rounded-lg border-2 border-dashed border-border-default flex items-center justify-center text-text-muted">
-                    <span className="text-xs">+{maxReferenceImages - selectedReferences.length}</span>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Search Bar */}
             <div className="flex gap-2 mb-2">
@@ -482,13 +823,13 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                   placeholder={uiText.searchPlaceholder}
-                  className="w-full pl-10 pr-4 py-2.5 bg-surface border border-border-default rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full pl-10 pr-4 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
-              <Button 
-                onClick={() => handleSearch()} 
+              <Button
+                onClick={() => handleSearch()}
                 disabled={isSearching || !searchQuery.trim()}
-                className="px-4"
+                size="sm"
               >
                 {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : uiText.search}
               </Button>
@@ -496,12 +837,12 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
 
             {/* AI Suggestions */}
             {smartSuggestions.length > 0 && (
-              <div className="flex flex-wrap gap-2 items-center mb-3">
+              <div className="flex flex-wrap gap-1.5 items-center mb-2">
                 <span className="text-xs text-text-muted flex items-center gap-1">
                   {isExtractingKeywords ? (
                     <><Loader2 className="w-3 h-3 animate-spin" /> {uiText.extracting}</>
                   ) : (
-                    <><Sparkles className="w-3 h-3 text-primary" /> {uiText.aiSuggestions}:</>
+                    <><Sparkles className="w-3 h-3 text-primary" /></>
                   )}
                 </span>
                 {smartSuggestions.map((keyword, idx) => (
@@ -512,9 +853,9 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                       setSearchQuery(keyword);
                       handleSearch(keyword);
                     }}
-                    className={`px-2.5 py-1 text-xs rounded-full transition-colors disabled:opacity-50 ${
-                      idx === 0 
-                        ? 'bg-primary text-white hover:bg-primary/90' 
+                    className={`px-2 py-0.5 text-xs rounded-full transition-colors disabled:opacity-50 ${
+                      idx === 0
+                        ? 'bg-primary text-white hover:bg-primary/90'
                         : 'bg-primary/10 text-primary hover:bg-primary/20'
                     }`}
                   >
@@ -523,25 +864,6 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                 ))}
               </div>
             )}
-
-            {/* URL Paste */}
-            <div className="flex gap-2 mb-3">
-              <input
-                type="text"
-                value={pasteUrl}
-                onChange={(e) => setPasteUrl(e.target.value)}
-                placeholder={uiText.orPasteUrl}
-                className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <Button 
-                onClick={handleUsePasteUrl} 
-                disabled={!pasteUrl.trim() || !canSelectMore} 
-                variant="outline"
-                className="px-3"
-              >
-                <Upload className="w-4 h-4 mr-1" /> {uiText.useUrl}
-              </Button>
-            </div>
 
             {/* Search Error */}
             {searchError && (
@@ -556,32 +878,32 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
               </p>
             )}
 
-            {/* Search Results Grid */}
-            <div className="h-48 overflow-y-auto rounded-lg border border-border-default bg-surface/30">
+            {/* Search Results Grid - Larger area */}
+            <div className="flex-1 min-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-surface/30">
               {isSearching ? (
-                <div className="flex items-center justify-center h-full">
+                <div className="flex items-center justify-center h-full min-h-[200px]">
                   <Loader2 className="w-6 h-6 animate-spin text-primary" />
                 </div>
               ) : searchResults.length > 0 ? (
-                <div className="grid grid-cols-4 gap-2 p-2">
+                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2 p-2">
                   {searchResults.map((img) => {
                     const isSelected = selectedReferences.some(ref => ref.url === img.url_regular);
                     return (
                       <div
                         key={`${img.provider}-${img.id}`}
                         className={`relative aspect-[9/16] rounded-lg overflow-hidden cursor-pointer transition-all ${
-                          isSelected 
-                            ? 'ring-2 ring-primary opacity-50 cursor-not-allowed' 
-                            : canSelectMore 
-                              ? 'hover:ring-2 ring-primary/50' 
+                          isSelected
+                            ? 'ring-2 ring-primary opacity-50 cursor-not-allowed'
+                            : canSelectMore
+                              ? 'hover:ring-2 ring-primary/50 hover:scale-[1.02]'
                               : 'opacity-50 cursor-not-allowed'
                         }`}
                         onClick={() => !isSelected && canSelectMore && handleSelectReference(img)}
                       >
-                        <img 
-                          src={img.url_thumb} 
-                          alt={img.alt_description || ''} 
-                          className="w-full h-full object-cover" 
+                        <img
+                          src={img.url_thumb}
+                          alt={img.alt_description || ''}
+                          className="w-full h-full object-cover"
                           loading="lazy"
                         />
                         {isSelected && (
@@ -589,16 +911,16 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                             <CheckCircle2 className="w-6 h-6 text-white" />
                           </div>
                         )}
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-1.5">
-                          <p className="text-[9px] text-white truncate">{img.photographer}</p>
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-1">
+                          <p className="text-[8px] text-white truncate">{img.photographer}</p>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                  <Camera className="w-10 h-10 text-text-muted/30 mb-2" />
+                <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center py-8">
+                  <Camera className="w-12 h-12 text-text-muted/30 mb-2" />
                   <p className="text-text-secondary text-sm">{uiText.searchHint}</p>
                 </div>
               )}
@@ -611,9 +933,10 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
           <Button onClick={onClose} variant="outline" className="flex-1">
             {uiText.cancel}
           </Button>
-          <Button 
-            onClick={handleSubmit} 
-            className="flex-1 bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
+          <Button
+            onClick={handleSubmit}
+            disabled={includeCreatorFace && !hasAnyAvatar}
+            className="flex-1 bg-gradient-to-r from-primary to-accent-pink hover:opacity-90 disabled:opacity-50"
           >
             <Sparkles className="w-4 h-4 mr-2" />
             {uiText.generate}

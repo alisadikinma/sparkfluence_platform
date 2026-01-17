@@ -2237,7 +2237,7 @@ export const VideoGeneration = (): JSX.Element => {
         )}
 
         {/* Segments Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {segments.map((segment, index) => (
             <div 
               key={segment.id} 
@@ -2299,10 +2299,10 @@ export const VideoGeneration = (): JSX.Element => {
               </div>
 
               {/* Content */}
-              <div className="p-4">
-                <div className="flex gap-4">
+              <div className="p-3 sm:p-4">
+                <div className="flex gap-3 sm:gap-4">
                   {/* Image Preview */}
-                  <div className="w-28 sm:w-32 h-40 sm:h-44 flex-shrink-0 bg-[#0a0a12] rounded-lg overflow-hidden relative group">
+                  <div className="w-24 sm:w-28 h-36 sm:h-40 flex-shrink-0 bg-[#0a0a12] rounded-lg overflow-hidden relative group">
                     {segment.imageUrl ? (
                       <>
                         <img
@@ -2523,10 +2523,10 @@ export const VideoGeneration = (): JSX.Element => {
                           </div>
                         </div>
                       ) : segment.videoUrl ? (
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 flex-wrap">
                           <Button
                             onClick={() => setPreviewVideo(segment.videoUrl)}
-                            className="flex-1 bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
+                            className="flex-1 min-w-[100px] bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
                           >
                             <Play className="w-4 h-4 mr-1" />
                             {uiText.preview}
@@ -2536,7 +2536,7 @@ export const VideoGeneration = (): JSX.Element => {
                               if (segment.videoUrl) handleDownloadVideo(segment.videoUrl, segment.type || segment.element || 'segment', segment.id);
                             }}
                             variant="outline"
-                            className="border-green-500/50 bg-green-600 hover:bg-green-700 text-white"
+                            className="border-green-500/50 bg-green-600 hover:bg-green-700 text-white flex-shrink-0"
                             title="Download Video"
                           >
                             <Download className="w-4 h-4" />
@@ -2545,7 +2545,7 @@ export const VideoGeneration = (): JSX.Element => {
                             onClick={() => handleRegenerateVideo(segment.id)}
                             variant="outline"
                             disabled={isBackgroundMode}
-                            className="border-[#2b2b38] bg-white hover:bg-white/80"
+                            className="border-[#2b2b38] bg-white hover:bg-white/80 flex-shrink-0"
                             title="Regenerate"
                           >
                             <RefreshCw className="w-4 h-4 text-black" />
