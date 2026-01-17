@@ -3,13 +3,15 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { usePlanner } from "../../contexts/PlannerContext";
 import { supabase } from "../../lib/supabase";
 import { AppSidebar } from "../../components/layout/AppSidebar";
 import { TopNavbar } from "../../components/layout/TopNavbar";
-import { 
+import {
   Clock, Video, Play, Trash2, X,
   CheckCircle, AlertCircle, Loader2, Image as ImageIcon,
-  Calendar, Download, Globe, Monitor, Cpu, FileText, Wrench, Film
+  Calendar, Download, Globe, Monitor, Cpu, FileText, Wrench, Film,
+  Save
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 
@@ -85,12 +87,13 @@ export const History = (): JSX.Element => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t, language } = useLanguage();
+  const { addPlannedContent, updatePlannedContent } = usePlanner();
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<ProjectGroup[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<ProjectGroup | null>(null);
-  
+
   // New states for actions
   const [isRepairing, setIsRepairing] = useState(false);
   const [isCombining, setIsCombining] = useState(false);
@@ -99,6 +102,13 @@ export const History = (): JSX.Element => {
   const [subtitleStep, setSubtitleStep] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [videoError, setVideoError] = useState(false);
+
+  // Schedule form states
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [schedulePlatforms, setSchedulePlatforms] = useState<string[]>([]);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   // Get locale for date formatting
   const getLocale = () => {
@@ -672,6 +682,82 @@ export const History = (): JSX.Element => {
     setSelectedProject(null);
     setVideoError(false);
     setActionError(null);
+    setShowScheduleForm(false);
+    setScheduleDate('');
+    setScheduleTime('09:00');
+    setSchedulePlatforms([]);
+  };
+
+  // Handle schedule form submit
+  const handleSaveSchedule = async () => {
+    if (!selectedProject || !user) return;
+    if (!scheduleDate || schedulePlatforms.length === 0) {
+      setActionError(language === 'id' ? 'Pilih tanggal dan minimal 1 platform' : 'Select date and at least 1 platform');
+      return;
+    }
+
+    setIsSavingSchedule(true);
+    setActionError(null);
+
+    try {
+      // Check if planned_content exists for this session
+      if (selectedProject.planned_content_id) {
+        // Update existing
+        const success = await updatePlannedContent(selectedProject.planned_content_id, {
+          scheduled_date: scheduleDate,
+          scheduled_time: scheduleTime,
+          platforms: schedulePlatforms,
+        });
+        if (!success) throw new Error('Failed to update schedule');
+      } else {
+        // Create new planned_content
+        await addPlannedContent({
+          title: selectedProject.topic_title,
+          description: selectedProject.description || '',
+          content_type: 'video',
+          platforms: schedulePlatforms,
+          scheduled_date: scheduleDate,
+          scheduled_time: scheduleTime,
+          status: 'scheduled',
+          thumbnail_url: selectedProject.thumbnail_url,
+          final_video_url: selectedProject.final_video_url,
+          video_data: {
+            session_id: selectedProject.session_id,
+            segments: selectedProject.segments,
+          },
+        });
+      }
+
+      // Update local state
+      setProjects(prev => prev.map(p =>
+        p.session_id === selectedProject.session_id
+          ? { ...p, scheduled_date: scheduleDate, scheduled_time: scheduleTime, platforms: schedulePlatforms }
+          : p
+      ));
+
+      // Update selectedProject
+      setSelectedProject(prev => prev ? {
+        ...prev,
+        scheduled_date: scheduleDate,
+        scheduled_time: scheduleTime,
+        platforms: schedulePlatforms,
+      } : null);
+
+      setShowScheduleForm(false);
+    } catch (err) {
+      console.error('Error saving schedule:', err);
+      setActionError(language === 'id' ? 'Gagal menyimpan jadwal' : 'Failed to save schedule');
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
+
+  const togglePlatform = (platform: string) => {
+    setSchedulePlatforms(prev =>
+      prev.includes(platform)
+        ? prev.filter(p => p !== platform)
+        : [...prev, platform]
+    );
   };
 
   const handleDeleteProject = async (e: React.MouseEvent, sessionId: string) => {
@@ -1123,37 +1209,37 @@ export const History = (): JSX.Element => {
                         : ''
                     }`} />
 
-                    {/* Status Badge - Different colors for Done vs Videos Ready */}
-                    <div className="absolute top-2 right-2">
+                    {/* Status Badge - Compact size */}
+                    <div className="absolute top-1.5 right-1.5">
                       {project.is_complete ? (
-                        <span className="flex items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-green-500 to-green-400 px-2.5 py-1 rounded-md shadow-[0_0_10px_rgba(74,222,128,0.5)]">
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          {language === 'id' ? 'Selesai' : 'Published'}
+                        <span className="flex items-center gap-0.5 text-[8px] font-semibold text-white bg-green-500/90 px-1.5 py-0.5 rounded shadow-sm">
+                          <CheckCircle className="w-2.5 h-2.5" />
+                          {language === 'id' ? 'Selesai' : 'Done'}
                         </span>
                       ) : allVideosReady ? (
-                        <span className="flex items-center gap-1 text-[10px] font-semibold text-yellow-900 bg-yellow-400 px-2 py-1 rounded-md shadow-lg">
-                          <Video className="w-3 h-3" />
-                          {language === 'id' ? 'Siap Combine' : 'Ready to Combine'}
+                        <span className="flex items-center gap-0.5 text-[8px] font-semibold text-yellow-900 bg-yellow-400/90 px-1.5 py-0.5 rounded shadow-sm">
+                          <Video className="w-2.5 h-2.5" />
+                          Ready
                         </span>
                       ) : project.is_processing ? (
-                        <span className="flex items-center gap-1 text-[10px] font-medium text-white bg-blue-500 px-2 py-1 rounded-md shadow-lg animate-pulse">
-                          <Loader2 className="w-3 h-3 animate-spin" />
+                        <span className="flex items-center gap-0.5 text-[8px] font-medium text-white bg-blue-500/90 px-1.5 py-0.5 rounded shadow-sm animate-pulse">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           {project.videos_ready}/{project.total_segments}
                         </span>
                       ) : project.has_failed ? (
-                        <span className="flex items-center gap-1 text-[10px] font-semibold text-white bg-red-500 px-2 py-1 rounded-md shadow-lg">
-                          <AlertCircle className="w-3 h-3" />
-                          {t.common?.failed || 'Failed'}
+                        <span className="flex items-center gap-0.5 text-[8px] font-semibold text-white bg-red-500/90 px-1.5 py-0.5 rounded shadow-sm">
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          Failed
                         </span>
                       ) : isImagesOnly ? (
-                        <span className="flex items-center gap-1 text-[10px] font-medium text-white bg-purple-500 px-2 py-1 rounded-md shadow-lg">
-                          <ImageIcon className="w-3 h-3" />
-                          {language === 'id' ? 'Gambar Siap' : 'Images Ready'}
+                        <span className="flex items-center gap-0.5 text-[8px] font-medium text-white bg-purple-500/90 px-1.5 py-0.5 rounded shadow-sm">
+                          <ImageIcon className="w-2.5 h-2.5" />
+                          Images
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1 text-[10px] font-medium text-gray-300 bg-gray-700 px-2 py-1 rounded-md shadow-lg">
-                          <Clock className="w-3 h-3" />
-                          {t.planner?.draft || 'Draft'}
+                        <span className="flex items-center gap-0.5 text-[8px] font-medium text-gray-200 bg-gray-700/90 px-1.5 py-0.5 rounded shadow-sm">
+                          <Clock className="w-2.5 h-2.5" />
+                          Draft
                         </span>
                       )}
                     </div>
@@ -1228,63 +1314,56 @@ export const History = (): JSX.Element => {
                       </p>
                     </div>
 
-                    {/* Metadata Row */}
-                    <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-                      {/* Duration */}
-                      <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
-                        <Clock className="w-2 h-2" />
-                        {project.total_duration_seconds}s
-                      </span>
-                      {/* Resolution */}
-                      <span className="flex items-center gap-0.5 text-[8px] text-text-muted bg-surface px-1 py-0.5 rounded">
-                        <Monitor className="w-2 h-2" />
-                        {project.resolution || '1080p'}
-                      </span>
-                      {/* Model */}
-                      <span className="flex items-center gap-0.5 text-[8px] text-purple-400 bg-purple-500/10 px-1 py-0.5 rounded">
-                        <Cpu className="w-2 h-2" />
-                        {project.model === 'sora2' ? 'SORA 2' : project.model === 'veo31' ? 'VEO 3.1' : 'Auto'}
-                      </span>
-                      {/* Language Flag with icon */}
-                      <span className="flex items-center gap-1 text-[9px] text-text-primary bg-surface px-1.5 py-0.5 rounded font-medium">
+                    {/* Schedule & Platforms - Show for published videos with schedule */}
+                    {project.is_complete && project.scheduled_date && (
+                      <div className="mb-2 p-1.5 rounded-lg bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/20">
+                        <div className="flex items-center justify-between gap-1">
+                          {/* Schedule Date & Time */}
+                          <div className="flex items-center gap-1 text-[9px] text-cyan-400">
+                            <Calendar className="w-2.5 h-2.5" />
+                            <span>
+                              {new Date(project.scheduled_date).toLocaleDateString(getLocale(), {
+                                month: 'short',
+                                day: 'numeric'
+                              })}
+                              {project.scheduled_time && ` ${project.scheduled_time}`}
+                            </span>
+                          </div>
+                          {/* Platforms */}
+                          {project.platforms && project.platforms.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              {project.platforms.map((platform) => (
+                                <span key={platform} className="w-3.5 h-3.5">
+                                  {platform === 'tiktok' && <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/></svg>}
+                                  {platform === 'youtube' && <svg className="w-3.5 h-3.5 text-red-500" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>}
+                                  {platform === 'instagram' && <svg className="w-3.5 h-3.5 text-pink-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Metadata Row - Single line with separators */}
+                    <div className="flex items-center gap-1 text-[9px] text-text-muted mb-1.5">
+                      <span>{project.total_duration_seconds}s</span>
+                      <span className="text-text-muted/50">|</span>
+                      <span>{project.resolution || '1080p'}</span>
+                      <span className="text-text-muted/50">|</span>
+                      <span className="text-purple-400">{project.model === 'sora2' ? 'SORA2' : project.model === 'veo31' ? 'VEO3' : 'Auto'}</span>
+                      <span className="text-text-muted/50">|</span>
+                      <span className="flex items-center gap-0.5">
                         {project.language === 'id' || project.language === 'indonesian' ? (
-                          <>
-                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
-                              <rect width="24" height="8" fill="#FF0000"/>
-                              <rect y="8" width="24" height="8" fill="#FFFFFF"/>
-                            </svg>
-                            ID
-                          </>
+                          <svg className="w-3 h-2" viewBox="0 0 24 16"><rect width="24" height="8" fill="#FF0000"/><rect y="8" width="24" height="8" fill="#FFF"/></svg>
                         ) : project.language === 'en' || project.language === 'english' ? (
-                          <>
-                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
-                              <rect width="24" height="16" fill="#012169"/>
-                              <path d="M0,0 L24,16 M24,0 L0,16" stroke="#FFFFFF" strokeWidth="2"/>
-                              <path d="M0,0 L24,16 M24,0 L0,16" stroke="#C8102E" strokeWidth="1"/>
-                              <path d="M12,0 V16 M0,8 H24" stroke="#FFFFFF" strokeWidth="4"/>
-                              <path d="M12,0 V16 M0,8 H24" stroke="#C8102E" strokeWidth="2"/>
-                            </svg>
-                            EN
-                          </>
+                          <svg className="w-3 h-2" viewBox="0 0 24 16"><rect width="24" height="16" fill="#012169"/><path d="M0,0 L24,16 M24,0 L0,16" stroke="#FFF" strokeWidth="2"/><path d="M12,0 V16 M0,8 H24" stroke="#FFF" strokeWidth="4"/><path d="M12,0 V16 M0,8 H24" stroke="#C8102E" strokeWidth="2"/></svg>
                         ) : project.language === 'hi' || project.language === 'hindi' ? (
-                          <>
-                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
-                              <rect width="24" height="5.33" fill="#FF9933"/>
-                              <rect y="5.33" width="24" height="5.33" fill="#FFFFFF"/>
-                              <rect y="10.66" width="24" height="5.33" fill="#138808"/>
-                              <circle cx="12" cy="8" r="2" fill="#000080"/>
-                            </svg>
-                            IN
-                          </>
+                          <svg className="w-3 h-2" viewBox="0 0 24 16"><rect width="24" height="5.33" fill="#FF9933"/><rect y="5.33" width="24" height="5.33" fill="#FFF"/><rect y="10.66" width="24" height="5.33" fill="#138808"/></svg>
                         ) : (
-                          <>
-                            <svg className="w-3 h-2.5 rounded-sm overflow-hidden" viewBox="0 0 24 16">
-                              <rect width="24" height="8" fill="#FF0000"/>
-                              <rect y="8" width="24" height="8" fill="#FFFFFF"/>
-                            </svg>
-                            ID
-                          </>
+                          <svg className="w-3 h-2" viewBox="0 0 24 16"><rect width="24" height="8" fill="#FF0000"/><rect y="8" width="24" height="8" fill="#FFF"/></svg>
                         )}
+                        {project.language === 'id' || project.language === 'indonesian' ? 'ID' : project.language === 'en' || project.language === 'english' ? 'EN' : project.language === 'hi' || project.language === 'hindi' ? 'IN' : 'ID'}
                       </span>
                     </div>
 
@@ -1315,309 +1394,299 @@ export const History = (): JSX.Element => {
         </main>
       </div>
 
-      {/* Video Detail Modal - Enhanced with more actions */}
+      {/* Video Detail Modal - Compact layout */}
       {selectedProject && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={closeModal}>
           <div
-            className="bg-card rounded-2xl max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+            className="bg-card rounded-xl max-w-2xl w-full overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border-default sticky top-0 bg-card z-10">
-              <h3 className="text-lg font-semibold text-text-primary">
+            {/* Modal Header - Compact */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border-default">
+              <h3 className="text-base font-semibold text-text-primary">
                 {t.gallery?.viewDetails || 'View Details'}
               </h3>
               <button
                 onClick={closeModal}
-                className="p-1.5 hover:bg-surface rounded-lg transition-colors"
+                className="p-1 hover:bg-surface rounded-lg transition-colors"
               >
-                <X className="w-5 h-5 text-text-secondary" />
+                <X className="w-4 h-4 text-text-secondary" />
               </button>
             </div>
 
-            {/* Modal Body - Two columns */}
-            <div className="p-6 flex flex-col md:flex-row gap-6">
-              {/* Left - Video Preview */}
-              <div className="w-full md:w-[280px] flex-shrink-0">
-                <div className="bg-black rounded-xl overflow-hidden aspect-[9/16] relative">
-                  {selectedProject.final_video_url && !videoError ? (
-                    <video
-                      src={selectedProject.final_video_url}
-                      controls
-                      className="w-full h-full object-contain"
-                      poster={selectedProject.thumbnail_url || undefined}
-                      onError={() => setVideoError(true)}
-                    />
-                  ) : selectedProject.thumbnail_url ? (
-                    <>
-                      <img
-                        src={selectedProject.thumbnail_url}
-                        alt={selectedProject.topic_title}
-                        className="w-full h-full object-cover"
+            {/* Modal Body - Horizontal layout */}
+            <div className="p-4 flex gap-4">
+              {/* Left - Video Preview with glow effect */}
+              <div className="w-[160px] flex-shrink-0">
+                <div className="relative group">
+                  {/* Glow effect behind video */}
+                  <div className="absolute -inset-1 bg-gradient-to-b from-primary/30 via-purple-500/20 to-cyan-500/30 rounded-xl blur-md opacity-60 group-hover:opacity-100 transition-opacity" />
+                  <div className="relative bg-black rounded-xl overflow-hidden aspect-[9/16] ring-1 ring-white/10">
+                    {selectedProject.final_video_url && !videoError ? (
+                      <video
+                        src={selectedProject.final_video_url}
+                        controls
+                        className="w-full h-full object-contain"
+                        poster={selectedProject.thumbnail_url || undefined}
+                        onError={() => setVideoError(true)}
                       />
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 p-4">
-                        {videoError ? (
-                          <>
-                            <AlertCircle className="w-10 h-10 text-amber-400 mb-2" />
-                            <p className="text-white/80 text-xs text-center mb-3">
-                              {uiText.videoNotFound}
-                            </p>
-                          </>
-                        ) : !selectedProject.final_video_url ? (
-                          <>
-                            <Film className="w-10 h-10 text-amber-400 mb-2" />
-                            <p className="text-white/80 text-xs text-center mb-3">
-                              {uiText.noFinalVideo}
-                            </p>
-                          </>
-                        ) : (
-                          <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center cursor-pointer hover:bg-white/30 transition-colors">
-                            <Play className="w-7 h-7 text-white ml-1" />
-                          </div>
-                        )}
+                    ) : selectedProject.thumbnail_url ? (
+                      <>
+                        <img
+                          src={selectedProject.thumbnail_url}
+                          alt={selectedProject.topic_title}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-[1px]">
+                          {videoError ? (
+                            <AlertCircle className="w-8 h-8 text-amber-400 animate-pulse" />
+                          ) : !selectedProject.final_video_url ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <Film className="w-8 h-8 text-amber-400" />
+                              <span className="text-[10px] text-amber-300">No video</span>
+                            </div>
+                          ) : (
+                            <Play className="w-8 h-8 text-white" />
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-b from-surface to-card">
+                        <Video className="w-8 h-8 text-text-muted" />
                       </div>
-                    </>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-surface">
-                      <Video className="w-12 h-12 text-text-muted" />
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* Right - Details */}
               <div className="flex-1 min-w-0">
-                {/* Date & Status Badges */}
-                <div className="flex items-center gap-2 mb-4 flex-wrap">
-                  <span className="px-3 py-1 bg-surface text-text-primary text-sm rounded-full">
-                    {formatDate(selectedProject.updated_at)}
-                  </span>
-                  <span className="px-3 py-1 bg-green-500/20 text-green-500 text-sm rounded-full flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3" />
-                    {t.common?.done || 'Done'}
-                  </span>
-                  {!selectedProject.final_video_url && (
-                    <span className="px-3 py-1 bg-amber-500/20 text-amber-500 text-sm rounded-full flex items-center gap-1">
+                {/* Title + Status inline */}
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <h2 className="text-base font-bold text-text-primary line-clamp-2">
+                    {selectedProject.topic_title}
+                  </h2>
+                  {/* Status badge */}
+                  {selectedProject.scheduled_date && selectedProject.platforms && selectedProject.platforms.length > 0 ? (
+                    <span className="px-2 py-0.5 bg-green-500/20 text-green-500 text-xs rounded-full flex items-center gap-1 whitespace-nowrap">
+                      <CheckCircle className="w-3 h-3" />
+                      {language === 'id' ? 'Terjadwal' : 'Scheduled'}
+                    </span>
+                  ) : selectedProject.final_video_url ? (
+                    <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-xs rounded-full flex items-center gap-1 whitespace-nowrap">
+                      <Video className="w-3 h-3" />
+                      {language === 'id' ? 'Siap' : 'Ready'}
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-500 text-xs rounded-full flex items-center gap-1 whitespace-nowrap">
                       <AlertCircle className="w-3 h-3" />
-                      {language === 'id' ? 'Belum Combine' : 'Not Combined'}
+                      {language === 'id' ? 'Draft' : 'Draft'}
                     </span>
                   )}
                 </div>
 
-                {/* Title */}
-                <h2 className="text-xl font-bold text-text-primary mb-3">
-                  {selectedProject.topic_title}
-                </h2>
-
-                {/* Description */}
-                <p className="text-text-secondary text-sm mb-4">
-                  {selectedProject.description || (t.history?.empty?.description || 'Your generation history will appear here')}
-                </p>
+                {/* Meta info - inline compact */}
+                <div className="flex items-center gap-3 text-xs text-text-muted mb-3">
+                  <span>{formatDate(selectedProject.updated_at)}</span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {selectedProject.total_duration_seconds}s
+                  </span>
+                  {selectedProject.platforms && selectedProject.platforms.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      {selectedProject.platforms.map((platform) => (
+                        <span key={platform} className="w-4 h-4">
+                          {platform === 'tiktok' && <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/></svg>}
+                          {platform === 'youtube' && <svg className="w-4 h-4 text-red-500" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>}
+                          {platform === 'instagram' && <svg className="w-4 h-4 text-pink-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* Error Message */}
                 {actionError && (
-                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4">
-                    <p className="text-red-400 text-sm flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4" />
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-2 mb-3">
+                    <p className="text-red-400 text-xs flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
                       {actionError}
                     </p>
                   </div>
                 )}
 
-                {/* Platform & Time */}
-                <div className="flex items-center gap-8 mb-6">
-                  {/* Platforms */}
-                  <div>
-                    <p className="text-text-muted text-xs mb-2">
-                      {t.planner?.detail?.platform || 'Platform'}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      {(selectedProject.platforms && selectedProject.platforms.length > 0) ? (
-                        selectedProject.platforms.map((platform) => (
-                          <div key={platform} className="w-8 h-8 rounded-lg bg-surface flex items-center justify-center">
-                            {platform === 'tiktok' && (
-                              <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/>
-                              </svg>
-                            )}
-                            {platform === 'youtube' && (
-                              <svg className="w-5 h-5 text-red-500" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-                              </svg>
-                            )}
-                            {platform === 'instagram' && (
-                              <svg className="w-5 h-5 text-pink-500" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-                              </svg>
-                            )}
-                          </div>
-                        ))
-                      ) : (
-                        <span className="text-text-muted text-sm">-</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Duration */}
-                  <div>
-                    <p className="text-text-muted text-xs mb-2">
-                      {t.gallery?.videoInfo?.duration || 'Duration'}
-                    </p>
-                    <div className="flex items-center gap-2 text-text-primary">
-                      <Clock className="w-4 h-4" />
-                      <span>{selectedProject.total_duration_seconds}s</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Action Buttons - Grid layout */}
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Row 1: Primary actions */}
+                {/* Action Buttons - Enhanced with gradient effects */}
+                <div className="space-y-2">
                   {selectedProject.final_video_url && !videoError ? (
                     <>
-                      <Button
+                      {/* Primary Action - Download with glow */}
+                      <button
                         onClick={handleDownload}
-                        className="bg-primary hover:bg-primary-hover text-white flex items-center justify-center gap-2"
+                        className="w-full relative group overflow-hidden rounded-lg bg-gradient-to-r from-purple-600 via-primary to-purple-600 p-[1px]"
                       >
-                        <Download className="w-4 h-4" />
-                        {t.common?.download || 'Download'}
-                      </Button>
-                      <Button
-                        onClick={handleAddSubtitle}
-                        disabled={isAddingSubtitle}
-                        variant="outline"
-                        className={`relative overflow-hidden transition-all duration-500 ${
-                          isAddingSubtitle 
-                            ? 'border-purple-500 bg-purple-950/50 text-white min-h-[80px] col-span-2' 
-                            : 'border-purple-500/50 text-purple-400 hover:bg-purple-500/10'
-                        } flex flex-col items-center justify-center gap-1 py-3`}
-                      >
-                        {isAddingSubtitle ? (
-                          <>
-                            {/* Animated gradient background */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-purple-900/0 via-purple-600/30 to-purple-900/0 animate-pulse" />
-                            
-                            {/* Progress bar container */}
-                            <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-purple-950">
-                              {/* Animated progress fill with glow */}
-                              <div 
-                                className="h-full bg-gradient-to-r from-purple-500 via-fuchsia-500 to-purple-500 transition-all duration-500 ease-out relative"
-                                style={{ width: `${subtitleProgress}%` }}
-                              >
-                                {/* Shimmer effect */}
-                                <div 
-                                  className="absolute inset-0 animate-shimmer"
-                                  style={{ 
-                                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
-                                    backgroundSize: '200% 100%'
-                                  }} 
-                                />
-                                {/* Glow on leading edge */}
-                                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-fuchsia-400 rounded-full blur-md animate-pulse" />
-                              </div>
-                            </div>
-                            
-                            {/* Content */}
-                            <div className="relative z-10 flex flex-col items-center gap-2">
-                              {/* Percentage with glow */}
-                              <div className="flex items-center gap-3">
-                                {/* Spinning loader with gradient */}
-                                <div className="relative w-8 h-8">
-                                  <div className="absolute inset-0 rounded-full border-2 border-purple-500/30" />
-                                  <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-fuchsia-500 animate-spin" />
-                                  <div className="absolute inset-1 rounded-full bg-purple-500/20 animate-pulse" />
-                                </div>
-                                <span className="text-2xl font-bold bg-gradient-to-r from-purple-300 via-fuchsia-300 to-purple-300 bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">
-                                  {subtitleProgress}%
-                                </span>
-                              </div>
-                              
-                              {/* Step text with typing effect */}
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm text-purple-200/90 font-medium">
-                                  {subtitleStep}
-                                </span>
-                                <span className="flex gap-0.5">
-                                  <span className="w-1.5 h-1.5 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                  <span className="w-1.5 h-1.5 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                  <span className="w-1.5 h-1.5 bg-fuchsia-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                                </span>
-                              </div>
-                            </div>
-                            
-                            {/* Corner accents */}
-                            <div className="absolute top-0 left-0 w-3 h-3 border-l-2 border-t-2 border-purple-400/50" />
-                            <div className="absolute top-0 right-0 w-3 h-3 border-r-2 border-t-2 border-purple-400/50" />
-                            <div className="absolute bottom-1.5 left-0 w-3 h-3 border-l-2 border-b-2 border-purple-400/50" />
-                            <div className="absolute bottom-1.5 right-0 w-3 h-3 border-r-2 border-b-2 border-purple-400/50" />
-                          </>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <FileText className="w-4 h-4" />
-                            {selectedProject?.has_subtitles ? uiText.replaceSubtitle : uiText.addSubtitle}
+                        <div className="absolute inset-0 bg-gradient-to-r from-purple-600 via-primary to-purple-600 opacity-75 group-hover:opacity-100 blur-sm transition-opacity" />
+                        <div className="relative bg-card hover:bg-card/80 rounded-lg px-4 py-2.5 flex items-center justify-center gap-2 transition-all">
+                          <Download className="w-4 h-4 text-primary" />
+                          <span className="text-sm font-medium text-white">{t.common?.download || 'Download'}</span>
+                        </div>
+                      </button>
+
+                      {/* Secondary Actions Row */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleAddSubtitle}
+                          disabled={isAddingSubtitle}
+                          className="flex-1 relative group overflow-hidden rounded-lg border border-purple-500/30 hover:border-purple-500/60 bg-purple-500/5 hover:bg-purple-500/10 px-3 py-2 transition-all disabled:opacity-50"
+                        >
+                          <div className="flex items-center justify-center gap-1.5">
+                            {isAddingSubtitle ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />
+                                <span className="text-xs text-purple-300">{subtitleProgress}%</span>
+                              </>
+                            ) : (
+                              <>
+                                <FileText className="w-3.5 h-3.5 text-purple-400" />
+                                <span className="text-xs text-purple-300">{selectedProject?.has_subtitles ? 'Replace' : 'Add'} Subtitle</span>
+                              </>
+                            )}
                           </div>
-                        )}
-                      </Button>
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteProject(e as any, selectedProject.session_id)}
+                          className="px-3 py-2 rounded-lg border border-red-500/30 hover:border-red-500/60 bg-red-500/5 hover:bg-red-500/10 transition-all group"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-400 group-hover:text-red-300" />
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <>
-                      <Button
+                      {/* Primary Action - Combine */}
+                      <button
                         onClick={handleCombineVideo}
                         disabled={isCombining}
-                        className="bg-primary hover:bg-primary-hover text-white flex items-center justify-center gap-2"
+                        className="w-full relative group overflow-hidden rounded-lg bg-gradient-to-r from-blue-600 via-primary to-purple-600 p-[1px] disabled:opacity-50"
                       >
-                        {isCombining ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Film className="w-4 h-4" />
-                        )}
-                        {isCombining ? uiText.combining : uiText.combineVideo}
-                      </Button>
-                      <Button
-                        onClick={handleRepairLink}
-                        disabled={isRepairing}
-                        variant="outline"
-                        className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10 flex items-center justify-center gap-2"
-                      >
-                        {isRepairing ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Wrench className="w-4 h-4" />
-                        )}
-                        {isRepairing ? uiText.repairing : uiText.repairLink}
-                      </Button>
+                        <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-primary to-purple-600 opacity-75 group-hover:opacity-100 blur-sm transition-opacity" />
+                        <div className="relative bg-card hover:bg-card/80 rounded-lg px-4 py-2.5 flex items-center justify-center gap-2 transition-all">
+                          {isCombining ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <Film className="w-4 h-4 text-primary" />}
+                          <span className="text-sm font-medium text-white">{isCombining ? 'Combining...' : 'Combine Video'}</span>
+                        </div>
+                      </button>
+
+                      {/* Secondary Actions Row */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleRepairLink}
+                          disabled={isRepairing}
+                          className="flex-1 rounded-lg border border-amber-500/30 hover:border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10 px-3 py-2 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                          {isRepairing ? <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" /> : <Wrench className="w-3.5 h-3.5 text-amber-400" />}
+                          <span className="text-xs text-amber-300">Repair</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteProject(e as any, selectedProject.session_id)}
+                          className="px-3 py-2 rounded-lg border border-red-500/30 hover:border-red-500/60 bg-red-500/5 hover:bg-red-500/10 transition-all group"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-400 group-hover:text-red-300" />
+                        </button>
+                      </div>
                     </>
                   )}
-                  
-                  {/* Row 2: Secondary actions */}
-                  <Button
-                    onClick={(e) => {
-                      handleDeleteProject(e as any, selectedProject.session_id);
-                    }}
-                    variant="outline"
-                    className="border-red-500/50 text-red-400 hover:bg-red-500/10 flex items-center justify-center gap-2"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    {t.common?.delete || 'Delete'}
-                  </Button>
-                  
-                  {/* If video exists but has error, show repair option */}
-                  {selectedProject.final_video_url && videoError && (
-                    <Button
-                      onClick={handleRepairLink}
-                      disabled={isRepairing}
-                      variant="outline"
-                      className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10 flex items-center justify-center gap-2"
-                    >
-                      {isRepairing ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Wrench className="w-4 h-4" />
-                      )}
-                      {isRepairing ? uiText.repairing : uiText.repairLink}
-                    </Button>
-                  )}
                 </div>
+
+                {/* Schedule Section - Glassmorphism style */}
+                {(!selectedProject.platforms || selectedProject.platforms.length === 0 || !selectedProject.scheduled_date) && selectedProject.final_video_url && (
+                  <div className="mt-3 relative overflow-hidden rounded-xl bg-gradient-to-br from-cyan-500/10 via-transparent to-purple-500/10 border border-cyan-500/20">
+                    <div className="absolute inset-0 backdrop-blur-sm" />
+                    <div className="relative p-3">
+                      {!showScheduleForm ? (
+                        <button
+                          onClick={() => {
+                            setShowScheduleForm(true);
+                            setScheduleDate(selectedProject.scheduled_date || '');
+                            setScheduleTime(selectedProject.scheduled_time || '09:00');
+                            setSchedulePlatforms(selectedProject.platforms || []);
+                          }}
+                          className="w-full flex items-center justify-center gap-2 text-cyan-400 text-sm py-1.5 hover:text-cyan-300 transition-colors"
+                        >
+                          <Calendar className="w-4 h-4" />
+                          <span className="font-medium">{language === 'id' ? 'Atur Jadwal Publish' : 'Schedule Publishing'}</span>
+                          <span className="text-cyan-500/50">→</span>
+                        </button>
+                      ) : (
+                        <div className="space-y-3">
+                          {/* Header */}
+                          <div className="flex items-center gap-2 pb-2 border-b border-cyan-500/20">
+                            <Calendar className="w-4 h-4 text-cyan-400" />
+                            <span className="text-sm font-medium text-white">{language === 'id' ? 'Jadwal Publish' : 'Schedule'}</span>
+                          </div>
+
+                          {/* Date & Time Row */}
+                          <div className="flex gap-2">
+                            <div className="flex-[2]">
+                              <input
+                                type="date"
+                                value={scheduleDate}
+                                onChange={(e) => setScheduleDate(e.target.value)}
+                                min={new Date().toISOString().split('T')[0]}
+                                className="w-full bg-black/30 border border-cyan-500/30 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 [color-scheme:dark]"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-[100px]">
+                              <input
+                                type="time"
+                                value={scheduleTime}
+                                onChange={(e) => setScheduleTime(e.target.value)}
+                                className="w-full bg-black/30 border border-cyan-500/30 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 [color-scheme:dark]"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Platforms Row */}
+                          <div className="flex items-center gap-2">
+                            {['tiktok', 'youtube', 'instagram'].map((p) => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => togglePlatform(p)}
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border transition-all ${
+                                  schedulePlatforms.includes(p)
+                                    ? 'border-cyan-400 bg-cyan-500/20 shadow-[0_0_10px_rgba(34,211,238,0.3)]'
+                                    : 'border-white/10 bg-black/20 hover:border-white/30'
+                                }`}
+                              >
+                                {p === 'tiktok' && <svg className={`w-4 h-4 ${schedulePlatforms.includes(p) ? 'text-white' : 'text-white/50'}`} viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005 20.1a6.34 6.34 0 0010.86-4.43v-7a8.16 8.16 0 004.77 1.52v-3.4a4.85 4.85 0 01-1-.1z"/></svg>}
+                                {p === 'youtube' && <svg className={`w-4 h-4 ${schedulePlatforms.includes(p) ? 'text-red-400' : 'text-white/50'}`} viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>}
+                                {p === 'instagram' && <svg className={`w-4 h-4 ${schedulePlatforms.includes(p) ? 'text-pink-400' : 'text-white/50'}`} viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={handleSaveSchedule}
+                              disabled={isSavingSchedule || !scheduleDate || schedulePlatforms.length === 0}
+                              className="flex-1 bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-black font-medium py-2 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(34,211,238,0.3)]"
+                            >
+                              {isSavingSchedule ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                              {language === 'id' ? 'Simpan Jadwal' : 'Save Schedule'}
+                            </button>
+                            <button
+                              onClick={() => setShowScheduleForm(false)}
+                              className="px-4 py-2 rounded-lg border border-white/20 text-white/60 hover:text-white hover:border-white/40 transition-all"
+                            >
+                              {language === 'id' ? 'Batal' : 'Cancel'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
               </div>
             </div>
           </div>

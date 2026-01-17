@@ -118,10 +118,10 @@ export const Dashboard = (): JSX.Element => {
 
       if (imageError) console.error('Error fetching image jobs:', imageError);
 
-      // Fetch video generation jobs
+      // Fetch video generation jobs (include final_video_url to check completion)
       const { data: videoJobs, error: videoError } = await supabase
         .from('video_generation_jobs')
-        .select('session_id, topic, status, created_at, updated_at')
+        .select('session_id, topic, status, created_at, updated_at, final_video_url')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -165,14 +165,26 @@ export const Dashboard = (): JSX.Element => {
         }
       });
 
-      // Get session IDs that have final videos (from video_data.session_id)
+      // Get session IDs that have final videos (PUBLISHED)
+      // Check from: 1) planned_content.final_video_url 2) video_generation_jobs.final_video_url
       const completedSessionIds = new Set<string>();
+
+      // 1. Check from planned_content
       plannedContent?.forEach(pc => {
         const sessionId = pc.video_data?.session_id;
         if (sessionId && pc.final_video_url) {
           completedSessionIds.add(sessionId);
         }
       });
+
+      // 2. Check from video_generation_jobs - if ANY job in session has final_video_url
+      videoJobs?.forEach(job => {
+        if (job.session_id && job.final_video_url) {
+          completedSessionIds.add(job.session_id);
+        }
+      });
+
+      console.log('[Dashboard] Completed/Published sessions:', Array.from(completedSessionIds));
 
       // Group jobs by session
       const imageJobsBySession: Record<string, any[]> = {};

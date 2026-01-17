@@ -503,7 +503,7 @@ export const hi = {
   dashboard: {
     welcome: "वापसी पर स्वागत है",
     welcomeSubtitle: "आपकी सामग्री के साथ क्या हो रहा है, देखें",
-    greeting: "नमस्ते, {name}! AI आपकी प्रोडक्टिविटी बढ़ाने के लिए तैयार है।",
+    greeting: "हाय, {name}!",
     quickActions: "त्वरित क्रियाएँ",
     quickActionsData: {
       createNow: "अभी बनाएँ",

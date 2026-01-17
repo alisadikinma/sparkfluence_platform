@@ -495,7 +495,7 @@ export const id: TranslationKeys = {
   dashboard: {
     welcome: 'Selamat datang kembali',
     welcomeSubtitle: 'Berikut yang terjadi dengan konten Anda',
-    greeting: 'Halo, {name}! AI siap menemani produktivitasmu.',
+    greeting: 'Hai, {name}!',
     quickActions: 'Aksi Cepat',
     quickActionsData: {
       createNow: 'Buat Sekarang',

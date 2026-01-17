@@ -497,7 +497,7 @@ export const en = {
   dashboard: {
     welcome: 'Welcome back',
     welcomeSubtitle: "Here's what's happening with your content",
-    greeting: 'Hello, {name}! AI is ready to accompany your productivity.',
+    greeting: 'Hi, {name}!',
     quickActions: 'Quick Actions',
     quickActionsData: {
       createNow: 'Create Now',
