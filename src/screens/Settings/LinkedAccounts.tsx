@@ -33,6 +33,10 @@ interface Platform {
   bgColor: string;
   description: string;
   implemented: boolean;
+  mockConnected?: {
+    username: string;
+    connectedAt: string;
+  };
 }
 
 interface Notification {
@@ -68,6 +72,10 @@ export const LinkedAccounts = (): JSX.Element => {
         ? "Bagikan reels dan postingan ke Instagram"
         : "Share reels and posts to Instagram",
       implemented: false,
+      mockConnected: {
+        username: "sparkfluence.id",
+        connectedAt: "2026-01-17",
+      },
     },
     {
       id: "tiktok",
@@ -150,8 +158,24 @@ export const LinkedAccounts = (): JSX.Element => {
     }
   };
 
-  const isConnected = (platformId: string) => linkedAccounts.some(acc => acc.platform === platformId);
-  const getAccount = (platformId: string) => linkedAccounts.find(acc => acc.platform === platformId);
+  const isConnected = (platformId: string) => {
+    const platform = platforms.find(p => p.id === platformId);
+    if (platform?.mockConnected) return true;
+    return linkedAccounts.some(acc => acc.platform === platformId);
+  };
+
+  const getAccount = (platformId: string) => {
+    const platform = platforms.find(p => p.id === platformId);
+    if (platform?.mockConnected) {
+      return {
+        id: `mock-${platformId}`,
+        platform: platformId,
+        platform_username: platform.mockConnected.username,
+        connected_at: platform.mockConnected.connectedAt,
+      };
+    }
+    return linkedAccounts.find(acc => acc.platform === platformId);
+  };
 
   const connectPlatform = async (platformId: string) => {
     if (!user) return;
@@ -198,6 +222,19 @@ export const LinkedAccounts = (): JSX.Element => {
 
   const disconnectPlatform = async (platformId: string) => {
     if (!user) return;
+
+    // Mock platforms can't be disconnected
+    const platform = platforms.find(p => p.id === platformId);
+    if (platform?.mockConnected) {
+      setNotification({
+        type: "info",
+        message: language === 'id'
+          ? `Fitur disconnect ${platform.name} akan segera hadir!`
+          : `${platform.name} disconnect feature coming soon!`,
+      });
+      return;
+    }
+
     const confirmed = window.confirm(
       language === 'id'
         ? `Putuskan koneksi ${platformId}?`
