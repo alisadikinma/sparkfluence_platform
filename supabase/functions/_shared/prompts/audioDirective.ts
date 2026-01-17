@@ -486,7 +486,18 @@ export function getBRollAudioDirective(
 
   const ambient = ambientByCategory[category] || ambientByCategory.default;
 
-  // SIMPLIFIED: Compact format (~8 lines vs ~25 lines before)
+  // ============================================================================
+  // FIX (2026-01-17): B-ROLL with voiceover must be OFF-SCREEN NARRATION
+  // ============================================================================
+  // Problem: VEO 3.1 was generating people appearing and lip-syncing in B-ROLL
+  // because the prompt wasn't clear that the voice is OFF-SCREEN narration.
+  //
+  // Solution:
+  // 1. Explicitly state voice is OFF-SCREEN NARRATOR (not visible in video)
+  // 2. Add strong exclusions for on-screen speakers/lip-sync
+  // 3. Keep voice character for consistency but clarify it's invisible narrator
+  // ============================================================================
+
   if (hasVoiceover && voiceoverText) {
     // Build voice description from character info for consistency
     let voiceDesc = 'Natural narrator voice';
@@ -496,24 +507,27 @@ export function getBRollAudioDirective(
 
     return `
 AUDIO:
-Voiceover: "${voiceoverText}"
+OFF-SCREEN NARRATION (voice NOT visible in video): "${voiceoverText}"
 
-VOICE CHARACTER:
+NARRATOR VOICE (invisible, off-camera):
 ${voiceCharacter ? voiceCharacter.description || voiceDesc : voiceDesc}
 ${voiceCharacter ? `Accent: ${voiceCharacter.accent} | Tone: ${voiceCharacter.tone} | Pace: ${voiceCharacter.pace}` : ''}
-Maintain consistent voice across all segments.
-
-Delivery: Natural narrator, NOT lip-synced, dry voice recording
-Voice quality: Close-mic, no reverb, no echo, studio-dry sound
+Voice quality: Close-mic, dry recording, no reverb
 Ambient: ${ambient} (ducked under voice)
-Exclude: no music, no subtitles, no audience sounds, no reverb/echo on voice
+
+⚠️ CRITICAL EXCLUSIONS:
+- NO lip-sync or mouths moving
+- NO on-screen speakers or talking
+- NO one speaking to camera
+- The narrator voice is COMPLETELY OFF-SCREEN (like documentary narration)
+- If people appear, they must NOT be talking or lip-syncing
 `;
   }
 
   return `
 AUDIO:
 Ambient: ${ambient}
-Exclude: no music, no subtitles, no audience sounds
+Exclude: no music, no subtitles, no talking, no lip-sync
 `;
 }
 

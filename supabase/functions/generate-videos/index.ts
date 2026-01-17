@@ -2746,7 +2746,7 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
     visualBrief,
     contextualMotions,
     topic,
-    voiceCharacter: voiceChar  // Pass voice character for voiceover consistency
+    voiceCharacter: voiceChar  // Keep for voice consistency, audio directive now handles off-screen narration
   })
   
   return brollPrompt
@@ -2758,7 +2758,8 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
 // ============================================================================
 
 // SIMPLIFIED (2026): Removed unused params - backgroundDescription, soundEffects, language
-// RE-ADDED (2026-01): voiceCharacter for B-ROLL voiceover consistency
+// FIX (2026-01-17): voiceCharacter kept for voice consistency, but audio directive now
+// explicitly states OFF-SCREEN NARRATION to prevent people appearing in B-ROLL
 interface EnhancedBrollPromptParams {
   segmentId: string
   segmentNumber: number
@@ -2774,7 +2775,7 @@ interface EnhancedBrollPromptParams {
   outputIntent?: string
   transition: string
   platform: VideoModelKey
-  scriptText?: string
+  scriptText?: string  // Used for voiceover text (off-screen narration)
   visualBrief: VisualBrief
   contextualMotions: {
     subjectMotions: string[]
@@ -2782,7 +2783,7 @@ interface EnhancedBrollPromptParams {
     cameraEnhancement: string
   }
   topic: string
-  voiceCharacter?: VoiceCharacter  // For voiceover consistency across segments
+  voiceCharacter?: VoiceCharacter  // For OFF-SCREEN voiceover consistency (narrator not visible)
 }
 
 function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): string {
@@ -2846,14 +2847,18 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
   // ============================================================================
   // SIMPLIFIED PROMPT FORMAT (2026) - ~30 lines vs ~60 lines before
   // Removed: PHYSICS section, verbose SUBJECT/AMBIENT MOTION, redundant exclusions
+  // FIX (2026-01-17): Added explicit NO PEOPLE instruction in STARTING FRAME
   // ============================================================================
   return `[${platformBase} - ${segmentLabel} B-ROLL]
+
+⚠️ THIS IS B-ROLL FOOTAGE: NO lip-sync, NO talking, NO speaking to camera. Voiceover is OFF-SCREEN only.
 
 DURATION: ${duration}s | ${resolution} | ${aspectRatio}
 
 STARTING FRAME:
 From reference image — ${visualDesc}. ${propsDescription ? `Props: ${propsDescription}.` : ''}
 Focus: ${primaryVisual}, ${visualBrief.primarySubject.attributes.join(', ')}.
+IMPORTANT: If people appear, they must NOT be talking or lip-syncing. Voice is off-screen narration only.
 
 CAMERA:
 ${cameraMove.promptPhrase}. ${contextualMotions.cameraEnhancement}.
@@ -2871,7 +2876,7 @@ TRANSITION: ${getTransition(transition)}
 
 INTENT: ${actualOutputIntent}
 
-NEGATIVE: blurry, distortion, text overlays, subtitles, watermarks, human faces, static frames`
+NEGATIVE: blurry, distortion, text overlays, subtitles, watermarks, lip-sync, speaking to camera, mouths moving, on-screen speaker, talking head, static frames`
 }
 
 function generateBrollOutputIntent(segmentType: string): string {
