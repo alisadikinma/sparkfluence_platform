@@ -86,6 +86,20 @@ const LANGUAGE_CONFIG: Record<string, {
       pattern: 'Relatable problem + solution tease',
       example: 'यार, 90% लोग [X] में fail क्यों होते हैं? Reason सिर्फ एक है...'
     }
+  },
+  french: {
+    name: 'French',
+    style: 'Modern French - conversational, engaging, uses trending phrases common on TikTok/Instagram France, casual tu/vous mix',
+    example: "J'avais le même problème, mais cette astuce a tout changé pour moi !",
+    foreshadow: {
+      tease: '...et le dernier est le plus [fou/important/game-changer]',
+      urgency: 'Regardez jusqu\'à la fin / Restez jusqu\'à la fin',
+      example: "Je vais vous montrer 3 méthodes, et la troisième est absolument folle. Regardez jusqu'à la fin !"
+    },
+    hook: {
+      pattern: 'Curiosity gap + bold claim',
+      example: "Voici pourquoi 90% des gens échouent à [X]—et ce n'est pas ce que vous pensez..."
+    }
   }
 }
 

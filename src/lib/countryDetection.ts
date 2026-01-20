@@ -279,3 +279,50 @@ export function getSupportedCountries(): Array<{ code: string; name: string }> {
     name: COUNTRY_NAMES[code] || code
   })).sort((a, b) => a.name.localeCompare(b.name));
 }
+
+// Country code to script language mapping
+const COUNTRY_TO_SCRIPT_LANGUAGE: Record<string, string> = {
+  // Indonesian
+  'ID': 'id',
+
+  // Hindi
+  'IN': 'hi',
+  'NP': 'hi', // Nepal - Hindi is widely understood
+
+  // French
+  'FR': 'fr',
+  'BE': 'fr', // Belgium (French-speaking)
+  'CH': 'fr', // Switzerland (French-speaking)
+  'CA': 'fr', // Canada (Quebec) - can be changed to 'en' if preferred
+
+  // English (default for most countries)
+  'US': 'en',
+  'GB': 'en',
+  'AU': 'en',
+  'NZ': 'en',
+  'SG': 'en',
+  'PH': 'en',
+  'MY': 'en',
+  'NG': 'en',
+  'ZA': 'en',
+  'KE': 'en',
+  'AE': 'en',
+  'PK': 'en',
+  'BD': 'en',
+
+  // Other countries default to English
+};
+
+/**
+ * Get default script language based on country code
+ * Used for video script/VO generation (not UI language)
+ *
+ * @param countryCode Country code (e.g., 'ID', 'FR', 'IN')
+ * @returns Script language code (e.g., 'id', 'fr', 'hi', 'en')
+ */
+export function getScriptLanguageFromCountry(countryCode: string | undefined | null): string {
+  if (!countryCode) return 'en';
+
+  const upperCode = countryCode.toUpperCase();
+  return COUNTRY_TO_SCRIPT_LANGUAGE[upperCode] || 'en';
+}

@@ -1,23 +1,25 @@
 /**
  * Word Limit Calculator for Sparkfluence
- * 
+ *
  * Based on speaking rates (Words Per Minute):
  * - Indonesian: 130 WPM
  * - English: 150 WPM
  * - Hindi: 120 WPM
- * 
+ * - French: 140 WPM
+ *
  * Safety margin: 80% of max to account for pauses/breaths
- * 
+ *
  * Example: 5s Indonesian = (130 / 60) × 5 × 0.8 = 8.67 ≈ 9 words
  */
 
-export type LanguageCode = 'id' | 'en' | 'hi';
+export type LanguageCode = 'id' | 'en' | 'hi' | 'fr';
 
 // Words per minute by language
 const WPM: Record<LanguageCode, number> = {
   id: 130,  // Indonesian
   en: 150,  // English
   hi: 120,  // Hindi
+  fr: 140,  // French
 };
 
 // Safety margin (80% of max capacity)
@@ -102,16 +104,18 @@ export function getWordLimitStatus(
 
 /**
  * Pre-calculated word limits table for quick reference
- * Format: { durationSeconds: { id: max, en: max, hi: max } }
+ * Format: { durationSeconds: { id: max, en: max, hi: max, fr: max } }
+ *
+ * French (140 WPM): 140/60 * seconds * 0.8
  */
 export const WORD_LIMITS_TABLE: Record<number, Record<LanguageCode, number>> = {
-  3: { id: 5, en: 6, hi: 5 },
-  5: { id: 9, en: 10, hi: 8 },
-  7: { id: 12, en: 14, hi: 11 },
-  8: { id: 14, en: 16, hi: 13 },
-  10: { id: 17, en: 20, hi: 16 },
-  12: { id: 21, en: 24, hi: 19 },
-  15: { id: 26, en: 30, hi: 24 },
+  3: { id: 5, en: 6, hi: 5, fr: 6 },
+  5: { id: 9, en: 10, hi: 8, fr: 9 },
+  7: { id: 12, en: 14, hi: 11, fr: 13 },
+  8: { id: 14, en: 16, hi: 13, fr: 15 },
+  10: { id: 17, en: 20, hi: 16, fr: 19 },
+  12: { id: 21, en: 24, hi: 19, fr: 22 },
+  15: { id: 26, en: 30, hi: 24, fr: 28 },
 };
 
 /**
@@ -135,8 +139,9 @@ export function formatWordCount(result: WordLimitResult, language: LanguageCode 
     id: { words: 'kata', overBy: 'lebih' },
     en: { words: 'words', overBy: 'over by' },
     hi: { words: 'शब्द', overBy: 'अधिक' },
+    fr: { words: 'mots', overBy: 'de trop' },
   };
-  
+
   const label = labels[language] || labels.en;
   
   if (result.status === 'error') {

@@ -74,14 +74,14 @@ You are NOT a writer. You are an engineer applying:
 - Viewers disengage when delivery feels unnatural
 
 ### Word Limit Reference Table:
-| Duration | ID Words | EN Words | HI Words |
-|----------|----------|----------|----------|
-| 4s | 7 | 8 | 6 |
-| 5s | 9 | 10 | 8 |
-| 7s | 12 | 14 | 11 |
-| 8s | 14 | 16 | 13 |
-| 10s | 17 | 20 | 16 |
-| 15s | 26 | 30 | 24 |
+| Duration | ID Words | EN Words | HI Words | FR Words |
+|----------|----------|----------|----------|----------|
+| 4s | 7 | 8 | 6 | 7 |
+| 5s | 9 | 10 | 8 | 9 |
+| 7s | 12 | 14 | 11 | 13 |
+| 8s | 14 | 16 | 13 | 15 |
+| 10s | 17 | 20 | 16 | 19 |
+| 15s | 26 | 30 | 24 | 28 |
 
 ### Example Transformation:
 ❌ BAD (24 words - over limit for 7s CTA):
@@ -738,12 +738,13 @@ ${CASE_STUDIES}
 export function getMaxWordsForDuration(durationSeconds: number, language: string = 'indonesian'): number {
   const speechRates: Record<string, number> = {
     indonesian: 130, // WPM
-    hindi: 125,
-    english: 150,
-    spanish: 145,
+    hindi: 120,      // WPM (updated)
+    english: 150,    // WPM
+    french: 140,     // WPM
+    spanish: 145,    // WPM
   };
   const safetyMargin = 0.80; // 80% of theoretical max
-  const wpm = speechRates[language.toLowerCase()] || speechRates.indonesian;
+  const wpm = speechRates[language.toLowerCase()] || speechRates.english;
   const wordsPerSecond = wpm / 60;
   return Math.floor(durationSeconds * wordsPerSecond * safetyMargin);
 }
@@ -790,7 +791,25 @@ export function getStructureByDuration(duration: string, videoModel?: string, la
 - Better to be impactful in fewer words than rushed
 
 CRITICAL: Max 8s per segment for VEO 3.1. Total = 30s exactly. No FORE for 30s videos.`,
-    
+
+    '45s': `
+6 segments for 45s video (VEO 3.1 - max 8s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS |
+|---------|--------|----------|----------|------------|
+| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words |
+| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words |
+| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words |
+| PEAK | 29-37s | 8s | B-ROLL | ${w8} words |
+| CTA | 37-45s | 8s | CREATOR | ${w8} words |
+
+⚠️ WORD LIMIT RULES:
+- Each script_text MUST NOT exceed the MAX WORDS column
+- HOOK: ${w5} words max - short, punchy, scroll-stopping
+- CTA: ${w8} words max - quick call to action
+
+CRITICAL: Max 8s per segment for VEO 3.1. Total = 45s exactly.`,
+
     '60s': `
 8 segments for 60s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS |
@@ -853,7 +872,22 @@ CRITICAL: Max 8s per segment for VEO 3.1. Total = 90s exactly.`
 - HOOK & CTA: ${w5} words max - ultra concise
 
 Note: No FORESHADOW for 30s — go straight to value. HOOK must be exactly 5s for scroll-stopping.`,
-    
+
+    '45s': `
+4 segments for 45s video (Sora 2.0 - max 15s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS |
+|---------|--------|----------|----------|------------|
+| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
+| BODY-1 | 5-20s | 15s | B-ROLL | ${w15} words |
+| PEAK | 20-35s | 15s | B-ROLL | ${w15} words |
+| CTA | 35-45s | 10s | CREATOR | ${w10} words |
+
+⚠️ WORD LIMIT RULES:
+- Each script_text MUST NOT exceed the MAX WORDS column
+- HOOK: ${w5} words max - ultra concise
+
+CRITICAL: HOOK must be exactly 5s (scroll-stopper). Total = 45s exactly.`,
+
     '60s': `
 5 segments for 60s video (Sora 2.0 - max 15s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS |

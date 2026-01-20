@@ -903,6 +903,7 @@ export const ImageGeneration = (): JSX.Element => {
     { value: 'id', label: 'Indonesia', flag: '🇮🇩' },
     { value: 'en', label: 'English', flag: '🇺🇸' },
     { value: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
+    { value: 'fr', label: 'Français', flag: '🇫🇷' },
   ] as const;
 
   // Detect language from script text (for initial sync)
@@ -1765,9 +1766,10 @@ export const ImageGeneration = (): JSX.Element => {
         'id': 'indonesian',
         'en': 'english',
         'hi': 'hindi',
+        'fr': 'french',
       };
-      const shortCode = videoSettings?.language || language || 'id';
-      const scriptLang = langMap[shortCode] || 'indonesian';
+      const shortCode = videoSettings?.language || language || 'en';
+      const scriptLang = langMap[shortCode] || 'english';
 
       const { data, error } = await supabase.functions.invoke('generate-script', {
         body: {
@@ -2325,6 +2327,7 @@ export const ImageGeneration = (): JSX.Element => {
       'id': 'indonesian',
       'en': 'english',
       'hi': 'hindi',
+      'fr': 'french',
     };
 
     setShowLanguageDropdown(false);
@@ -2344,7 +2347,7 @@ export const ImageGeneration = (): JSX.Element => {
         body: {
           mode: 'translate',
           scripts: scriptsToTranslate,
-          language: langMap[newLang] || 'indonesian'
+          language: langMap[newLang] || 'english'
         }
       });
 
@@ -2558,8 +2561,8 @@ export const ImageGeneration = (): JSX.Element => {
                     </>
                   ) : (
                     <>
-                      <span className="text-base">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'id'))?.flag || '🇮🇩'}</span>
-                      <span className="hidden sm:inline text-sm">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'id'))?.label || 'Indonesia'}</span>
+                      <span className="text-base">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'en'))?.flag || '🇺🇸'}</span>
+                      <span className="hidden sm:inline text-sm">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'en'))?.label || 'English'}</span>
                       <ChevronDown className={`w-4 h-4 transition-transform ${showLanguageDropdown ? 'rotate-180' : ''}`} />
                     </>
                   )}

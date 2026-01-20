@@ -4,6 +4,7 @@ import { useOnboardingStatus } from "../../../hooks/useOnboardingStatus";
 import { useAuth } from "../../../contexts/AuthContext";
 import { supabase } from "../../../lib/supabase";
 import { getAvatarWithCache } from "../../../lib/avatarCache";
+import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
 import { Sparkles, ChevronDown, ScrollText, User, Upload, X, Loader2, Trash2, Edit2, Check } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 
@@ -60,7 +61,9 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("60s");
   const [useDnaTone, setUseDnaTone] = useState(true);
+  // Script language based on user's country (not UI language)
   const [scriptLang, setScriptLang] = useState("en");
+  const [scriptLangInitialized, setScriptLangInitialized] = useState(false);
 
   // Avatar state
   const [avatarOption, setAvatarOption] = useState<AvatarOption>("profile");
@@ -123,6 +126,15 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   }, [avatarDropdownOpen]);
 
   const hasDnaTone = onboardingData?.creative_dna && onboardingData.creative_dna.length > 0;
+
+  // Set script language based on user's country (only once when data loads)
+  useEffect(() => {
+    if (!scriptLangInitialized && onboardingData?.country) {
+      const defaultLang = getScriptLanguageFromCountry(onboardingData.country);
+      setScriptLang(defaultLang);
+      setScriptLangInitialized(true);
+    }
+  }, [onboardingData?.country, scriptLangInitialized]);
 
   // Load profile data and saved avatars on mount
   useEffect(() => {
@@ -497,6 +509,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const durationOptions = [
     { value: "30s", label: "30s" },
+    { value: "45s", label: "45s" },
     { value: "60s", label: "60s" },
     { value: "90s", label: "90s" },
   ];
@@ -505,6 +518,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
     { value: "id", label: "Indonesia" },
     { value: "en", label: "English" },
     { value: "hi", label: "हिन्दी" },
+    { value: "fr", label: "Français" },
   ];
 
   const uiText = {

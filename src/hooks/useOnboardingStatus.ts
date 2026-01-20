@@ -13,6 +13,7 @@ interface OnboardingStatus {
     objectives: string[];
     selected_niches: string[];
     creative_dna: string[];
+    country: string;
   } | null;
 }
 
@@ -34,7 +35,7 @@ export const useOnboardingStatus = () => {
       try {
         const { data, error } = await supabase
           .from('user_profiles')
-          .select('onboarding_completed, interest, profession, platforms, objectives, selected_niches, creative_dna')
+          .select('onboarding_completed, interest, profession, platforms, objectives, selected_niches, creative_dna, country')
           .eq('user_id', user.id)
           .single();
 
@@ -53,7 +54,8 @@ export const useOnboardingStatus = () => {
             platforms: data.platforms || [],
             objectives: data.objectives || [],
             selected_niches: data.selected_niches || [],
-            creative_dna: data.creative_dna || []
+            creative_dna: data.creative_dna || [],
+            country: data.country || ''
           } : null
         });
       } catch (err) {

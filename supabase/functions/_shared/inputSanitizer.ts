@@ -103,7 +103,7 @@ export function sanitizePlatform(
  */
 export function sanitizeLanguage(
   language: string | undefined | null,
-  allowedLanguages: string[] = ['indonesian', 'english', 'hindi']
+  allowedLanguages: string[] = ['indonesian', 'english', 'hindi', 'french']
 ): string {
   if (!language || typeof language !== 'string') {
     return allowedLanguages[0];
@@ -122,14 +122,14 @@ export function sanitizeLanguage(
  */
 export function sanitizeDuration(
   duration: string | undefined | null,
-  allowedDurations: string[] = ['30s', '60s', '90s']
+  allowedDurations: string[] = ['30s', '45s', '60s', '90s']
 ): string {
   if (!duration || typeof duration !== 'string') {
-    return allowedDurations[1]; // Default to 60s
+    return allowedDurations[2]; // Default to 60s
   }
 
   const normalized = duration.toLowerCase().trim();
-  return allowedDurations.includes(normalized) ? normalized : allowedDurations[1];
+  return allowedDurations.includes(normalized) ? normalized : allowedDurations[2];
 }
 
 /**

@@ -83,12 +83,13 @@ export const ScriptLab = (): JSX.Element => {
         'id': 'indonesian',
         'en': 'english',
         'hi': 'hindi',
+        'fr': 'french',
       };
 
       await new Promise(resolve => setTimeout(resolve, 600));
       setGeneratingStep(currentPhases[1].step);
       setGeneratingPhase(2);
-      
+
       await new Promise(resolve => setTimeout(resolve, 600));
       setGeneratingStep(currentPhases[2].step);
       setGeneratingPhase(3);
@@ -100,7 +101,7 @@ export const ScriptLab = (): JSX.Element => {
           duration: formData.duration,
           aspect_ratio: formData.ratio,
           platform: formData.ratio === "9:16" ? 'tiktok' : 'youtube',
-          language: langMap[formData.language] || 'indonesian',
+          language: langMap[formData.language] || 'english',
           user_id: user?.id,
           // DNA Tone: When enabled, use creative_dna styles for script generation
           use_dna_tone: formData.useDnaTone,
@@ -153,7 +154,7 @@ export const ScriptLab = (): JSX.Element => {
           videoSettings: {
             duration: formData.duration,
             aspectRatio: formData.ratio,
-            language: langMap[formData.language] || 'indonesian',
+            language: langMap[formData.language] || 'english',
             model: formData.model
           },
           characterDescription: formData.characterDescription,

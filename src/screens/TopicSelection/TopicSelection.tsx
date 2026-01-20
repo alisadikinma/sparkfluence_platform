@@ -9,6 +9,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
 import { generateOrderId } from "../../lib/orderIdGenerator";
 import { useAvatarManager } from "../../hooks/useAvatarManager";
+import { getScriptLanguageFromCountry } from "../../lib/countryDetection";
 import { AvatarDropdown, AvatarNameModal } from "../../components/ui/avatar-dropdown";
 import {
   Loader2, Sparkles, RefreshCw,
@@ -28,6 +29,7 @@ const LANGUAGE_OPTIONS = [
   { value: 'id', label: 'Indonesia' },
   { value: 'en', label: 'English' },
   { value: 'hi', label: 'हिन्दी' },
+  { value: 'fr', label: 'Français' },
 ] as const;
 
 const RATIO_OPTIONS = [
@@ -37,6 +39,7 @@ const RATIO_OPTIONS = [
 
 const DURATION_OPTIONS = [
   { value: '30s', label: '30s' },
+  { value: '45s', label: '45s' },
   { value: '60s', label: '60s' },
   { value: '90s', label: '90s' },
 ];
@@ -76,6 +79,14 @@ const fallbackTopicsByLang: Record<string, Topic[]> = {
     { id: 5, title: "नवीनतम ट्रेंड्स और क्या है हॉट", description: "अपडेट रहें जो आपके निच में मायने रखता है" },
     { id: 6, title: "मेरी प्रक्रिया के पर्दे के पीछे", description: "अपना वर्कफ़्लो दिखाएं और अपने दर्शकों से जुड़ें" },
   ],
+  fr: [
+    { id: 1, title: "5 Habitudes Matinales Qui Ont Change Ma Vie", description: "Partagez des conseils de productivite personnels qui resonnent avec votre audience" },
+    { id: 2, title: "La Verite Que Personne Ne Dit", description: "Revelez des connaissances d'initie qui construisent confiance et autorite" },
+    { id: 3, title: "De Debutant a Pro en 30 Jours", description: "Documentez votre parcours et inspirez les autres a agir" },
+    { id: 4, title: "Arretez de Faire Cette Erreur", description: "Abordez les points de douleur que votre audience rencontre quotidiennement" },
+    { id: 5, title: "Dernieres Tendances & Ce Qui Est Hot", description: "Restez a jour avec ce qui compte dans votre niche" },
+    { id: 6, title: "Les Coulisses de Mon Processus Creatif", description: "Montrez votre workflow et connectez avec votre audience" },
+  ],
 };
 
 const getFallbackTopics = (lang: string): Topic[] => {
@@ -108,7 +119,12 @@ export const TopicSelection = (): JSX.Element => {
   const [inputType, setInputType] = useState<InputType>("topic");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("60s"); // Default 60s for better content
-  const [outputLang, setOutputLang] = useState<string>(uiLang);
+  // Script language based on user's country (not UI language)
+  const [outputLang, setOutputLang] = useState<string>(() => {
+    // Initial value: try to get from profile country, fallback to 'en'
+    return 'en';
+  });
+  const [outputLangInitialized, setOutputLangInitialized] = useState(false);
   const [useDnaTone, setUseDnaTone] = useState(true);
   const [generatingPhase, setGeneratingPhase] = useState(0);
   
@@ -120,6 +136,15 @@ export const TopicSelection = (): JSX.Element => {
 
   const hasDnaTone = dbOnboardingData?.creative_dna && dbOnboardingData.creative_dna.length > 0;
   const isReturning = location.state?.returning === true;
+
+  // Set script language based on user's country (only once when data loads)
+  useEffect(() => {
+    if (!outputLangInitialized && dbOnboardingData?.country) {
+      const defaultLang = getScriptLanguageFromCountry(dbOnboardingData.country);
+      setOutputLang(defaultLang);
+      setOutputLangInitialized(true);
+    }
+  }, [dbOnboardingData?.country, outputLangInitialized]);
 
   // Cleanup cooldown interval on unmount
   useEffect(() => {
@@ -293,12 +318,13 @@ export const TopicSelection = (): JSX.Element => {
     setRefreshing(true);
     setError(null);
 
-    const langMap: Record<string, 'indonesian' | 'english' | 'hindi'> = {
+    const langMap: Record<string, string> = {
       'id': 'indonesian',
       'en': 'english',
       'hi': 'hindi',
+      'fr': 'french',
     };
-    const targetLanguage = langMap[outputLang] || 'indonesian';
+    const targetLanguage = langMap[outputLang] || 'english';
 
     try {
       const interest = dbOnboardingData?.interest || '';
@@ -430,16 +456,17 @@ export const TopicSelection = (): JSX.Element => {
         'id': 'indonesian',
         'en': 'english',
         'hi': 'hindi',
+        'fr': 'french',
       };
 
       await new Promise(resolve => setTimeout(resolve, 600));
       setGeneratingStep(currentPhases[1].step);
       setGeneratingPhase(2);
-      
+
       await new Promise(resolve => setTimeout(resolve, 600));
       setGeneratingStep(currentPhases[2].step);
       setGeneratingPhase(3);
-      
+
       const { data: scriptData, error: scriptError } = await supabase.functions.invoke('generate-script', {
         body: {
           input_type: inputType,
@@ -447,7 +474,7 @@ export const TopicSelection = (): JSX.Element => {
           duration: duration,
           aspect_ratio: ratio,
           platform: onboardingData.platforms?.[0] || 'tiktok',
-          language: langMap[outputLang] || 'indonesian',
+          language: langMap[outputLang] || 'english',
           user_id: user?.id,
           // DNA Tone: When enabled, use creative_dna styles for script generation
           use_dna_tone: useDnaTone && hasDnaTone,
@@ -487,7 +514,7 @@ export const TopicSelection = (): JSX.Element => {
           videoSettings: {
             duration,
             aspectRatio: ratio,
-            language: langMap[outputLang] || 'indonesian',
+            language: langMap[outputLang] || 'english',
             model: 'auto' // v2.0: Auto-select best model per segment
           },
           // Hybrid approach:
