@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY job_worker.py .
+COPY webhook_handler.py .
 COPY ffmpeg/ ./ffmpeg/
 
 RUN mkdir -p /app/videos
