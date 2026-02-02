@@ -1,0 +1,60 @@
+services:
+  sparkfluence-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sparkfluence-api
+    restart: unless-stopped
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    
+    volumes:
+      - sparkfluence_videos:/app/videos
+    
+    environment:
+      - TZ=Asia/Jakarta
+      - BACKEND_API_KEY=${BACKEND_API_KEY:-sparkfluence_prod_key_2024}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    
+    expose:
+      - "8000"
+    
+    labels:
+      - "traefik.enable=true"
+      # Main router
+      - "traefik.http.routers.sparkfluence-api.rule=Host(`sparkfluence-api.alisadikinma.com`)"
+      - "traefik.http.routers.sparkfluence-api.entrypoints=websecure"
+      - "traefik.http.routers.sparkfluence-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.sparkfluence-api.loadbalancer.server.port=8000"
+      # CORS middleware
+      - "traefik.http.routers.sparkfluence-api.middlewares=sparkfluence-cors"
+      - "traefik.http.middlewares.sparkfluence-cors.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE,PATCH"
+      - "traefik.http.middlewares.sparkfluence-cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.sparkfluence-cors.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.sparkfluence-cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.sparkfluence-cors.headers.addvaryheader=true"
+    
+    networks:
+      - proxy
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  sparkfluence_videos:
+
+networks:
+  proxy:
+    external: true
