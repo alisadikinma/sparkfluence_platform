@@ -672,6 +672,31 @@ Return ONLY valid JSON, no explanations.`
     }
 
     // ============================================================
+    // P0 #2.0: WORD LIMIT POST-PROCESSING (Auto-fix)
+    // ============================================================
+    if (scriptData.segments && scriptData.segments.length > 0) {
+      console.log('[PostProcess] Running word limit auto-fix...')
+
+      const postProcessResult = postProcessWordLimits(scriptData.segments, selectedLanguage)
+
+      // Replace segments with post-processed version
+      scriptData.segments = postProcessResult.segments
+
+      // Add post-processing report to quality_report
+      scriptData.quality_report = {
+        ...scriptData.quality_report,
+        post_processing: {
+          hook_adjusted: postProcessResult.hook_adjusted,
+          body_splits: postProcessResult.body_splits,
+          strict_violations: postProcessResult.strict_violations,
+          strict_violations_count: postProcessResult.strict_violations.length,
+        },
+      }
+
+      console.log(`[PostProcess] Complete - ${postProcessResult.body_splits} splits, ${postProcessResult.strict_violations.length} strict violations`)
+    }
+
+    // ============================================================
     // P0 #2: VALIDATION & AUTO-FIX
     // ============================================================
     if (scriptData.segments && scriptData.segments.length > 0) {
@@ -1508,7 +1533,7 @@ function countWords(text: string): number {
 
 /**
  * Validate word counts for all segments against their duration-based limits
- * 
+ *
  * Thresholds:
  * - OK: ≤100% of max words
  * - WARNING: 80-100% of max words (close to limit)
@@ -1518,16 +1543,16 @@ function validateWordCounts(segments: any[], language: string = 'indonesian'): W
   const details: WordCountDetail[] = []
   let segmentsOverLimit = 0
   let segmentsWarning = 0
-  
+
   for (const segment of segments) {
     const scriptText = segment.script_text || ''
     const durationSeconds = segment.duration_seconds || 8
-    
+
     // Get max words for this segment's duration
     const maxWords = getMaxWordsForDuration(durationSeconds, language)
     const actualWords = countWords(scriptText)
     const percentage = maxWords > 0 ? Math.round((actualWords / maxWords) * 100) : 0
-    
+
     // Determine status
     let status: 'ok' | 'warning' | 'over' = 'ok'
     if (actualWords > maxWords) {
@@ -1537,7 +1562,7 @@ function validateWordCounts(segments: any[], language: string = 'indonesian'): W
       status = 'warning'
       segmentsWarning++
     }
-    
+
     details.push({
       segment_id: segment.segment_id || 'unknown',
       type: segment.type || 'unknown',
@@ -1548,12 +1573,309 @@ function validateWordCounts(segments: any[], language: string = 'indonesian'): W
       status
     })
   }
-  
+
   return {
     total_segments: segments.length,
     segments_over_limit: segmentsOverLimit,
     segments_warning: segmentsWarning,
     all_passed: segmentsOverLimit === 0,
     details
+  }
+}
+
+// ============================================================================
+// WORD LIMIT POST-PROCESSING (P0 #2.6 - Auto-fix over-limit segments)
+// ============================================================================
+
+interface PostProcessingResult {
+  segments: any[]
+  hook_adjusted: boolean
+  body_splits: number
+  strict_violations: string[]
+}
+
+/**
+ * Adjust HOOK duration if word count exceeds 5s limit but fits in 8s
+ * HOOK can only be 5s or 8s (supported video durations)
+ */
+function adjustHookDuration(segments: any[], language: string): { segments: any[], adjusted: boolean } {
+  let adjusted = false
+
+  const result = segments.map(segment => {
+    const segmentType = (segment.type || '').toUpperCase()
+    if (segmentType !== 'HOOK') return segment
+
+    const actualWords = countWords(segment.script_text || '')
+    const max5s = getMaxWordsForDuration(5, language)  // ~9 words (Indonesian), ~10 (English), ~9 (French)
+    const max8s = getMaxWordsForDuration(8, language)  // ~14 words (Indonesian), ~16 (English), ~15 (French)
+
+    if (actualWords <= max5s) {
+      // Fits in 5s, use 5s
+      return { ...segment, duration_seconds: 5, timing: '0-5s' }
+    } else if (actualWords <= max8s) {
+      // Needs 8s (only supported option above 5s)
+      console.log(`[HookAdjust] HOOK has ${actualWords} words (>${max5s}), extending to 8s`)
+      adjusted = true
+
+      return {
+        ...segment,
+        duration_seconds: 8,
+        timing: '0-8s'
+      }
+    } else {
+      // Over 8s max - cap at 8s, log warning
+      console.warn(`[HookAdjust] ⚠️ HOOK has ${actualWords} words (max ${max8s}). Needs manual edit.`)
+      adjusted = true
+
+      return {
+        ...segment,
+        duration_seconds: 8,
+        timing: '0-8s',
+        _word_limit_warning: `Over limit: ${actualWords}/${max8s} words`
+      }
+    }
+  })
+
+  return { segments: result, adjusted }
+}
+
+/**
+ * Snap duration to nearest supported video duration
+ * Supported durations: 5s, 8s (VEO), 10s (WAN)
+ */
+function snapToSupportedDuration(duration: number): number {
+  const SUPPORTED_DURATIONS = [5, 8, 10]
+
+  // Find nearest supported duration
+  let nearest = SUPPORTED_DURATIONS[0]
+  let minDiff = Math.abs(duration - nearest)
+
+  for (const supported of SUPPORTED_DURATIONS) {
+    const diff = Math.abs(duration - supported)
+    if (diff < minDiff) {
+      minDiff = diff
+      nearest = supported
+    }
+  }
+
+  return nearest
+}
+
+/**
+ * Auto-split BODY segments that exceed word limit
+ * BODY segments are splittable - content can be divided into multiple visuals
+ * FORE, PEAK, CTA are NOT splittable - they have fixed purposes
+ *
+ * IMPORTANT: Split segments use only supported durations (5s, 8s, 10s)
+ */
+function autoSplitOverlimitSegments(
+  segments: any[],
+  language: string
+): { segments: any[], splits_applied: number } {
+  const result: any[] = []
+  let splitsApplied = 0
+
+  for (const segment of segments) {
+    const segmentType = (segment.type || '').toUpperCase()
+
+    // Only BODY segments are splittable
+    const isSplittable = segmentType.startsWith('BODY')
+
+    if (!isSplittable) {
+      // HOOK, FORE, PEAK, CTA, LOOP-END - cannot split, add as-is
+      result.push(segment)
+      continue
+    }
+
+    const scriptText = segment.script_text || ''
+    const duration = segment.duration_seconds || 8
+    const maxWords = getMaxWordsForDuration(duration, language)
+    const actualWords = countWords(scriptText)
+
+    if (actualWords <= maxWords) {
+      // Within limit, no split needed
+      result.push(segment)
+      continue
+    }
+
+    // SPLIT NEEDED
+    console.log(`[AutoSplit] ${segment.segment_id} (${segment.type}) has ${actualWords}/${maxWords} words, splitting...`)
+    splitsApplied++
+
+    // Split script text by sentences
+    const sentences = scriptText.match(/[^.!?]+[.!?]+/g) || [scriptText]
+
+    if (sentences.length < 2) {
+      // Can't split - single long sentence, just log warning and add as-is
+      console.warn(`[AutoSplit] Cannot split ${segment.type} - single sentence. Needs manual edit.`)
+      result.push({
+        ...segment,
+        _word_limit_warning: `Cannot auto-split: ${actualWords}/${maxWords} words in single sentence`
+      })
+      continue
+    }
+
+    // Split roughly in half by sentences
+    const midpoint = Math.ceil(sentences.length / 2)
+    const part1 = sentences.slice(0, midpoint).join(' ').trim()
+    const part2 = sentences.slice(midpoint).join(' ').trim()
+
+    // Calculate word counts for each part
+    const words1 = countWords(part1)
+    const words2 = countWords(part2)
+
+    // Use supported durations only (5s, 8s, 10s)
+    // Each split segment gets 5s minimum, or 8s if original was 8s+
+    const baseSplitDuration = duration >= 8 ? 5 : 5  // Default to 5s per split
+
+    // Check if 5s is enough for each part, otherwise use 8s
+    const max5s = getMaxWordsForDuration(5, language)
+    const duration1 = words1 <= max5s ? 5 : 8
+    const duration2 = words2 <= max5s ? 5 : 8
+
+    // Create two segments
+    const baseType = segment.type
+    const segmentA = {
+      ...segment,
+      segment_id: `${segment.segment_id}a`,
+      type: `${baseType}a`,
+      duration_seconds: duration1,
+      script_text: part1,
+      visual_direction: segment.visual_direction, // Keep original - will need image gen for both
+    }
+
+    const segmentB = {
+      ...segment,
+      segment_id: `${segment.segment_id}b`,
+      type: `${baseType}b`,
+      duration_seconds: duration2,
+      script_text: part2,
+      visual_direction: `Continuation of ${baseType}: ${segment.visual_direction?.substring(0, 100) || 'similar visual'}...`,
+    }
+
+    result.push(segmentA, segmentB)
+
+    console.log(`[AutoSplit] Split ${baseType} into ${segmentA.type}(${words1}w/${duration1}s) + ${segmentB.type}(${words2}w/${duration2}s)`)
+  }
+
+  return { segments: result, splits_applied: splitsApplied }
+}
+
+/**
+ * Recalculate all segment timings after adjustments/splits
+ * Ensures timing fields are consecutive and accurate
+ */
+function recalculateTimings(segments: any[]): any[] {
+  let currentTime = 0
+
+  return segments.map((segment, index) => {
+    const duration = segment.duration_seconds || 8
+    const startTime = currentTime
+    const endTime = currentTime + duration
+    currentTime = endTime
+
+    return {
+      ...segment,
+      segment_id: `VIDEO-${String(index + 1).padStart(3, '0')}`,
+      timing: `${startTime}-${endTime}s`
+    }
+  })
+}
+
+/**
+ * Check for strict limit violations (FORE, PEAK, CTA that are still over limit)
+ * These cannot be auto-fixed and need manual attention
+ */
+function checkStrictViolations(segments: any[], language: string): string[] {
+  const violations: string[] = []
+  const STRICT_SEGMENTS = ['FORE', 'PEAK', 'CTA', 'LOOP-END']
+
+  for (const segment of segments) {
+    const segmentType = (segment.type || '').toUpperCase()
+
+    // Only check strict segments (non-splittable)
+    if (!STRICT_SEGMENTS.some(s => segmentType.includes(s))) continue
+
+    const scriptText = segment.script_text || ''
+    const duration = segment.duration_seconds || 8
+    const maxWords = getMaxWordsForDuration(duration, language)
+    const actualWords = countWords(scriptText)
+
+    if (actualWords > maxWords) {
+      violations.push(`${segment.type}: ${actualWords}/${maxWords} words (+${actualWords - maxWords} over)`)
+    }
+  }
+
+  return violations
+}
+
+/**
+ * Normalize all segment durations to supported values (5s, 8s, 10s)
+ * This ensures no segment has an unsupported duration like 3s, 4s, 6s, etc.
+ */
+function normalizeDurations(segments: any[]): any[] {
+  return segments.map(segment => {
+    const currentDuration = segment.duration_seconds || 8
+
+    // If already a supported duration, keep it
+    if ([5, 8, 10].includes(currentDuration)) {
+      return segment
+    }
+
+    // Snap to nearest supported duration
+    const normalizedDuration = snapToSupportedDuration(currentDuration)
+
+    if (normalizedDuration !== currentDuration) {
+      console.log(`[NormalizeDuration] ${segment.type}: ${currentDuration}s → ${normalizedDuration}s`)
+    }
+
+    return {
+      ...segment,
+      duration_seconds: normalizedDuration
+    }
+  })
+}
+
+/**
+ * Main post-processing function that applies all word limit fixes
+ */
+function postProcessWordLimits(segments: any[], language: string): PostProcessingResult {
+  console.log('[PostProcess] Starting word limit post-processing...')
+
+  // Step 0: Normalize all durations to supported values first
+  let processedSegments = normalizeDurations(segments)
+
+  // Step 1: Adjust HOOK duration if needed (will use 5s or 8s only)
+  const hookResult = adjustHookDuration(processedSegments, language)
+  processedSegments = hookResult.segments
+
+  // Step 2: Auto-split over-limit BODY segments (will use 5s or 8s per split)
+  const splitResult = autoSplitOverlimitSegments(processedSegments, language)
+  processedSegments = splitResult.segments
+
+  // Step 3: Recalculate timings after all adjustments
+  processedSegments = recalculateTimings(processedSegments)
+
+  // Step 4: Final normalization to ensure all durations are valid
+  processedSegments = normalizeDurations(processedSegments)
+
+  // Step 5: Check for remaining strict violations
+  const strictViolations = checkStrictViolations(processedSegments, language)
+
+  // Log summary
+  console.log(`[PostProcess] Summary:`)
+  console.log(`  - HOOK adjusted: ${hookResult.adjusted}`)
+  console.log(`  - BODY splits: ${splitResult.splits_applied}`)
+  console.log(`  - Strict violations: ${strictViolations.length}`)
+  if (strictViolations.length > 0) {
+    console.warn(`[PostProcess] ⚠️ Strict limit violations (need manual fix):`)
+    strictViolations.forEach(v => console.warn(`    - ${v}`))
+  }
+
+  return {
+    segments: processedSegments,
+    hook_adjusted: hookResult.adjusted,
+    body_splits: splitResult.splits_applied,
+    strict_violations: strictViolations
   }
 }

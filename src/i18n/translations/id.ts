@@ -133,6 +133,8 @@ export const id: TranslationKeys = {
     planner: 'Planner',
     gallery: 'Galeri',
     settings: 'Pengaturan',
+    creatorLab: 'Creator Lab',
+    adStudio: 'Ad Studio',
     scriptLab: 'Script Lab',
     visualForge: 'Visual Forge',
     videoGenie: 'Video Genie',

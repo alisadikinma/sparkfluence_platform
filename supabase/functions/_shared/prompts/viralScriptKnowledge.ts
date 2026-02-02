@@ -48,15 +48,15 @@ You are NOT a writer. You are an engineer applying:
 
 ⚠️ IMPORTANT: The exact segment structure will be provided dynamically based on:
 - Video duration (30s, 60s, 90s)
-- Video model (VEO 3.1 max 8s/segment, Sora 2.0 max 15s/segment)
+- Video model (VEO 3.1 max 8s/segment, WAN 2.5 max 10s/segment)
 
 **Follow the structure table provided in the user prompt EXACTLY.**
 
 ### General Rules:
-- HOOK: Always 5s (scroll-stopper, non-negotiable)
-- CTA: 5-8s depending on duration
-- B-ROLL segments: Max 8s for VEO, Max 15s for Sora
-- Total duration must match exactly (30s, 60s, or 90s)
+- HOOK: 5-8s (flexible, can extend if more words needed)
+- CTA: 5-10s depending on duration
+- B-ROLL segments: Max 8s for VEO 3.1, Max 10s for WAN 2.5
+- Total duration must match exactly (30s, 45s, 60s, or 90s)
 
 ## 2.5. ⚠️ WORD LIMIT ENFORCEMENT (CRITICAL - NON-NEGOTIABLE)
 
@@ -724,13 +724,14 @@ ${CASE_STUDIES}
 // ============================================================================
 
 /**
- * VIDEO MODEL CONSTRAINTS:
- * - VEO 3.1: Max 8s per segment (fast lip-sync)
- * - Sora 2.0: Max 10-15s per segment (longer form)
- * 
+ * VIDEO MODEL CONSTRAINTS (from aiModels.ts):
+ * - VEO 3.1 HD/Fast: supportedDurations [8], max 8s per segment
+ * - WAN 2.5: supportedDurations [5, 10], max 10s per segment
+ * - Kling 2.5: supportedDurations [5, 10], max 10s per segment (backup)
+ *
  * WORD LIMITS (Based on speech rate × 80% safety margin):
  * - Indonesian: 130 WPM → ~1.7 words/second
- * - Hindi: 125 WPM → ~1.6 words/second  
+ * - Hindi: 120 WPM → ~1.6 words/second
  * - English: 150 WPM → ~2.0 words/second
  */
 
@@ -760,10 +761,35 @@ const WORD_LIMITS_ID: Record<number, number> = {
 };
 
 export function getStructureByDuration(duration: string, videoModel?: string, language: string = 'indonesian'): string {
-  // Determine max segment duration based on video model
-  const isVEO = videoModel?.toLowerCase()?.includes('veo') || videoModel?.toLowerCase()?.includes('3.1');
-  const maxSegment = isVEO ? 8 : 15; // VEO max 8s, Sora max 15s
-  const modelName = isVEO ? 'VEO 3.1' : 'Sora 2.0';
+  /**
+   * Determine max segment duration based on video model.
+   *
+   * Supported models (from aiModels.ts):
+   * - VEO 3.1 (HD/Fast): supportedDurations [8], max 8s per segment
+   * - WAN 2.5: supportedDurations [5, 10], max 10s per segment
+   * - Kling 2.5: supportedDurations [5, 10], max 10s per segment (backup for WAN)
+   *
+   * Detection logic:
+   * - "veo" or "3.1" → VEO 3.1 (8s max)
+   * - "wan" or "kling" → 10s max
+   * - Default: 10s max (WAN 2.5 structure)
+   */
+  const modelLower = (videoModel || '').toLowerCase();
+  const isVEO = modelLower.includes('veo') || (modelLower.includes('3.1') && !modelLower.includes('wan'));
+
+  let maxSegment: number;
+  let modelName: string;
+
+  if (isVEO) {
+    // VEO 3.1 HD/Fast: max 8s per segment (best for lip-sync)
+    maxSegment = 8;
+    modelName = 'VEO 3.1';
+  } else {
+    // WAN 2.5 / Kling 2.5 / Default: max 10s per segment
+    maxSegment = 10;
+    modelName = modelLower.includes('wan') ? 'WAN 2.5' :
+                modelLower.includes('kling') ? 'Kling 2.5' : 'WAN 2.5 (default)';
+  }
   
   // Get word limits based on language
   const w4 = getMaxWordsForDuration(4, language);
@@ -794,139 +820,154 @@ CRITICAL: Max 8s per segment for VEO 3.1. Total = 30s exactly. No FORE for 30s v
 
     '45s': `
 6 segments for 45s video (VEO 3.1 - max 8s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words |
-| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words |
-| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words |
-| PEAK | 29-37s | 8s | B-ROLL | ${w8} words |
-| CTA | 37-45s | 8s | CREATOR | ${w8} words |
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE - can extend to 8s |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
+| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split if over |
+| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split if over |
+| PEAK | 29-37s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
+| CTA | 37-45s | 8s | CREATOR | ${w8} words | ⛔ STRICT - ultra concise |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- HOOK: ${w5} words max - short, punchy, scroll-stopping
-- CTA: ${w8} words max - quick call to action
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): If you need more words, use up to 8s. 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): Write naturally, system will auto-split if over limit
+- FORE, PEAK, CTA (STRICT ⛔): CANNOT be expanded. YOU MUST write within ${w8} words!
 
-CRITICAL: Max 8s per segment for VEO 3.1. Total = 45s exactly.`,
+CRITICAL: Max 8s per segment. Total = 45s exactly.`,
 
     '60s': `
 8 segments for 60s video (VEO 3.1 - max 8s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words |
-| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words |
-| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words |
-| BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words |
-| BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words |
-| PEAK | 45-53s | 8s | B-ROLL | ${w8} words |
-| CTA | 53-60s | 7s | CREATOR | ${w7} words |
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE - can extend to 8s |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
+| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split if over |
+| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split if over |
+| BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words | Can split if over |
+| BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words | Can split if over |
+| PEAK | 45-53s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
+| CTA | 53-60s | 7s | CREATOR | ${w7} words | ⛔ STRICT - ultra concise |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- HOOK: ${w5} words max - short, punchy, scroll-stopping
-- CTA: ${w7} words max - quick call to action, no rambling
-- B-ROLL: ${w8} words max - concise narration
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w - extend if needed
+- BODY-X (SPLITTABLE): Write naturally, system will auto-split if over
+- FORE, PEAK, CTA (STRICT ⛔): NO expansion. MUST be within word limit!
 
-CRITICAL: Max 8s per segment for VEO 3.1. Total = 60s exactly.`,
+CRITICAL: Max 8s per segment. Total = 60s exactly.`,
     
     '90s': `
 12 segments for 90s video (VEO 3.1 - max 8s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words |
-| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words |
-| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words |
-| BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words |
-| BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words |
-| BODY-5 | 45-53s | 8s | B-ROLL | ${w8} words |
-| BODY-6 | 53-61s | 8s | B-ROLL | ${w8} words |
-| BODY-7 | 61-69s | 8s | B-ROLL | ${w8} words |
-| PEAK | 69-77s | 8s | B-ROLL | ${w8} words |
-| CTA | 77-85s | 8s | CREATOR | ${w8} words |
-| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words |
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
+| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-5 | 45-53s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-6 | 53-61s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-7 | 61-69s | 8s | B-ROLL | ${w8} words | Can split |
+| PEAK | 69-77s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
+| CTA | 77-85s | 8s | CREATOR | ${w8} words | ⛔ STRICT |
+| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- Write CONCISE, IMPACTFUL scripts - quality over quantity
-- If you can't fit the message, split into separate points
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): Write naturally, auto-split if over
+- FORE, PEAK, CTA, LOOP-END (STRICT ⛔): NO expansion!
 
-CRITICAL: Max 8s per segment for VEO 3.1. Total = 90s exactly.`
+CRITICAL: Max 8s per segment. Total = 90s exactly.`
   };
-  
-  // SORA 2.0 OPTIMIZED structures (max 10-15s per segment)
-  const soraStructures: Record<string, string> = {
+
+  // WAN 2.5 OPTIMIZED structures (max 10s per segment)
+  const wanStructures: Record<string, string> = {
     '30s': `
-4 segments for 30s video (Sora 2.0 - max 10s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| BODY-1 | 5-15s | 10s | B-ROLL | ${w10} words |
-| BODY-2 | 15-25s | 10s | B-ROLL | ${w10} words |
-| CTA | 25-30s | 5s | CREATOR | ${w5} words |
+4 segments for 30s video (WAN 2.5 - max 10s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| BODY-1 | 5-15s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-2 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
+| CTA | 25-30s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- HOOK & CTA: ${w5} words max - ultra concise
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): 10s=${w10}w, can auto-split
+- CTA (STRICT ⛔): 5s=${w5}w - ultra concise
 
-Note: No FORESHADOW for 30s — go straight to value. HOOK must be exactly 5s for scroll-stopping.`,
+CRITICAL: Max 10s per segment. Total = 30s exactly.`,
 
     '45s': `
-4 segments for 45s video (Sora 2.0 - max 15s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| BODY-1 | 5-20s | 15s | B-ROLL | ${w15} words |
-| PEAK | 20-35s | 15s | B-ROLL | ${w15} words |
-| CTA | 35-45s | 10s | CREATOR | ${w10} words |
+5 segments for 45s video (WAN 2.5 - max 10s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
+| CTA | 35-45s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- HOOK: ${w5} words max - ultra concise
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w - extend if needed
+- BODY-X (SPLITTABLE): 10s=${w10}w - auto-split if over
+- FORE, CTA (STRICT ⛔): 10s=${w10}w - NO expansion!
 
-CRITICAL: HOOK must be exactly 5s (scroll-stopper). Total = 45s exactly.`,
+CRITICAL: Max 10s per segment. Total = 45s exactly.`,
 
     '60s': `
-5 segments for 60s video (Sora 2.0 - max 15s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| FORE | 5-15s | 10s | B-ROLL | ${w10} words |
-| BODY-1 | 15-30s | 15s | B-ROLL | ${w15} words |
-| PEAK | 30-45s | 15s | B-ROLL | ${w15} words |
-| CTA | 45-55s | 10s | CREATOR | ${w10} words |
+6 segments for 60s video (WAN 2.5 - max 10s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
+| PEAK | 35-50s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| CTA | 50-60s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- Longer segments (15s) allow more words but still be CONCISE
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): 10s=${w10}w
+- FORE, PEAK, CTA (STRICT ⛔): 10s=${w10}w - NO expansion!
 
-CRITICAL: HOOK must be exactly 5s (scroll-stopper, non-negotiable). Use 15s for content-dense segments.`,
-    
+CRITICAL: Max 10s per segment. Total = 60s exactly.`,
+
     '90s': `
-7 segments for 90s video (Sora 2.0 - max 15s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| FORE | 5-15s | 10s | B-ROLL | ${w10} words |
-| BODY-1 | 15-30s | 15s | B-ROLL | ${w15} words |
-| BODY-2 | 30-45s | 15s | B-ROLL | ${w15} words |
-| BODY-3 | 45-60s | 15s | B-ROLL | ${w15} words |
-| PEAK | 60-75s | 15s | B-ROLL | ${w15} words |
-| CTA | 75-85s | 10s | CREATOR | ${w10} words |
+9 segments for 90s video (WAN 2.5 - max 10s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-3 | 35-45s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-4 | 45-55s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-5 | 55-65s | 10s | B-ROLL | ${w10} words | Can split |
+| PEAK | 65-80s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| CTA | 80-90s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
 
-⚠️ WORD LIMIT RULES:
-- Each script_text MUST NOT exceed the MAX WORDS column
-- Quality of message > quantity of words
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): 10s=${w10}w - auto-split if over
+- FORE, PEAK, CTA (STRICT ⛔): 10s=${w10}w - NO expansion!
 
-CRITICAL: HOOK must be exactly 5s. Fewer segments with longer durations = better content flow.`
+CRITICAL: Max 10s per segment. Total = 90s exactly.`
   };
 
-  const structures = isVEO ? veoStructures : soraStructures;
-  
+  // Select appropriate structure based on model
+  // VEO 3.1 = max 8s, WAN 2.5 = max 10s
+  let structures: Record<string, string>;
+  if (isVEO) {
+    structures = veoStructures;
+  } else {
+    // WAN 2.5 or default
+    structures = wanStructures;
+  }
+
   // Log which model structure is being used
   console.log(`[StructureGuide] Using ${modelName} structure for ${duration} video (max ${maxSegment}s/segment)`);
-  
+
   return structures[duration] || structures['60s'];
 }

@@ -37,7 +37,28 @@
       "Bash(npx supabase:*)",
       "Bash(git -C \"D:\\\\Projects\\\\sparkfluence_platform\" log --oneline -20)",
       "Bash(npx tsc:*)",
-      "Bash(npx deno:*)"
+      "Bash(npx deno:*)",
+      "Bash(gh repo view:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:obra.github.io)",
+      "Bash(claude:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:composio.dev)",
+      "mcp__mcp-registry__search_mcp_registry",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:mcpservers.org)",
+      "Bash(if exist package.json echo FOUND: package.json)",
+      "Bash(if exist tsconfig.json echo FOUND: TypeScript config)",
+      "Bash(if exist \"vite.config.ts\" echo FOUND: Vite config)",
+      "Bash(if exist \"docker-compose.yml\" echo FOUND: Docker Compose)",
+      "Bash(if exist Dockerfile echo FOUND: Dockerfile)",
+      "Bash(if exist \"supabase\\\\config.toml\" echo FOUND: Supabase config)",
+      "Bash(if exist \"backend\\\\main.py\" echo FOUND: Python backend)",
+      "Bash(test:*)",
+      "Bash(if not exist \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\" mkdir \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\")"
     ]
   }
 }

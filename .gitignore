@@ -16,3 +16,4 @@ tmpclaude-*
 nul
 settings.local.json*.backup-*
 *before-redirect*
+.nemp/

@@ -54,6 +54,28 @@ const JOB_STATUS = {
   FAILED: 3
 };
 
+// Supported video segment durations: 5s, 8s (VEO), 10s (WAN)
+const SUPPORTED_DURATIONS = [5, 8, 10];
+
+/**
+ * Snap duration to nearest supported video duration
+ * This ensures segments don't have unsupported durations like 3s, 4s, 6s, etc.
+ */
+function snapToSupportedDuration(duration: number): number {
+  let nearest = SUPPORTED_DURATIONS[0];
+  let minDiff = Math.abs(duration - nearest);
+
+  for (const supported of SUPPORTED_DURATIONS) {
+    const diff = Math.abs(duration - supported);
+    if (diff < minDiff) {
+      minDiff = diff;
+      nearest = supported;
+    }
+  }
+
+  return nearest;
+}
+
 // ============================================================================
 // SESSION REFRESH & RETRY HELPER
 // Fixes ERR_CONNECTION_CLOSED during long polling operations
@@ -936,7 +958,7 @@ export const VideoGeneration = (): JSX.Element => {
               id: job.segment_id,
               type: mappedType,
               timing: '',
-              durationSeconds: job.duration_seconds || calculateSegmentDuration(mappedType, '60s'),
+              durationSeconds: snapToSupportedDuration(job.duration_seconds || calculateSegmentDuration(mappedType, '60s')),
               script: job.script_text || '',
               visualDirection: '',
               emotion: job.emotion || '',

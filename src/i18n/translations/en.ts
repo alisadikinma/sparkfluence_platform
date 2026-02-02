@@ -132,6 +132,8 @@ export const en = {
     planner: 'Planner',
     gallery: 'Gallery',
     settings: 'Settings',
+    creatorLab: 'Creator Lab',
+    adStudio: 'Ad Studio',
     scriptLab: 'Script Lab',
     visualForge: 'Visual Forge',
     videoGenie: 'Video Genie',

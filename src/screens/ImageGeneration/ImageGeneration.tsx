@@ -101,6 +101,28 @@ interface ImageModelSettings {
 
 // Keyword extraction functions imported from lib/keywordExtractor.ts
 
+// Supported video segment durations: 5s, 8s (VEO), 10s (WAN)
+const SUPPORTED_DURATIONS = [5, 8, 10];
+
+/**
+ * Snap duration to nearest supported video duration
+ * This ensures frontend doesn't display unsupported durations like 3s, 4s, 6s, etc.
+ */
+function snapToSupportedDuration(duration: number): number {
+  let nearest = SUPPORTED_DURATIONS[0];
+  let minDiff = Math.abs(duration - nearest);
+
+  for (const supported of SUPPORTED_DURATIONS) {
+    const diff = Math.abs(duration - supported);
+    if (diff < minDiff) {
+      minDiff = diff;
+      nearest = supported;
+    }
+  }
+
+  return nearest;
+}
+
 // ImageGallery Component - displays multiple images per segment
 interface ImageGalleryProps {
   images: SegmentImage[];
@@ -934,6 +956,7 @@ export const ImageGeneration = (): JSX.Element => {
   const [isTranslating, setIsTranslating] = useState(false);
 
   const fromScriptLab = location.state?.fromScriptLab === true;
+  const fromAdStudio = location.state?.fromAdStudio === true;
 
   const uiText = {
     title: language === 'id' ? 'Editor Video' : language === 'hi' ? 'वीडियो एडिटर' : 'Video Editor',
@@ -1160,7 +1183,11 @@ export const ImageGeneration = (): JSX.Element => {
         const savedHasScripts = savedProgress?.segments?.some((s: Segment) => s.script && s.script.trim().length > 0);
 
         if (savedProgress && savedProgress.segments?.length > 0 && savedHasScripts) {
-          formattedSegments = savedProgress.segments;
+          // Normalize durations from saved progress to supported values
+          formattedSegments = savedProgress.segments.map((seg: Segment) => ({
+            ...seg,
+            durationSeconds: snapToSupportedDuration(seg.durationSeconds || 8)
+          }));
           setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
           setVideoSettings(savedProgress.videoSettings || stateData.videoSettings || null);
           console.log('[Init] Using savedProgress with scripts');
@@ -1170,14 +1197,18 @@ export const ImageGeneration = (): JSX.Element => {
 
           formattedSegments = stateData.segments.map((seg: any, index: number) => {
             const segmentType = seg.type || `SEGMENT_${index + 1}`;
-            const autoDuration = calculateSegmentDuration(segmentType, videoDuration);
+            // Use duration from backend (post-processed) if available, otherwise auto-calculate
+            const backendDuration = seg.duration_seconds || seg.durationSeconds;
+            const calculatedDuration = backendDuration || calculateSegmentDuration(segmentType, videoDuration);
+            // Always snap to supported durations (5s, 8s, 10s) to avoid unsupported values
+            const segmentDuration = snapToSupportedDuration(calculatedDuration);
 
             return {
               id: String(index + 1),
               segmentId: seg.segment_id || `VIDEO-${String(index + 1).padStart(3, '0')}`,
               type: segmentType,
               timing: seg.timing || `${index * 8}-${(index + 1) * 8}s`,
-              durationSeconds: autoDuration,  // Auto-calculated duration
+              durationSeconds: segmentDuration,  // Normalized to supported duration (5s, 8s, 10s)
               shotType: seg.shot_type || 'B-ROLL',
               creatorAvatarUrl: seg.creator_avatar_url || undefined,
               emotion: seg.emotion || '',
@@ -2279,9 +2310,11 @@ export const ImageGeneration = (): JSX.Element => {
 
   const handlePrevious = () => {
     saveProgress(segments, currentTopic, videoSettings);
-    
+
     if (fromScriptLab) {
       navigate("/script-lab");
+    } else if (fromAdStudio) {
+      navigate("/ad-studio");
     } else {
       navigate("/topic-selection", { state: { returning: true } });
     }
@@ -2729,7 +2762,8 @@ export const ImageGeneration = (): JSX.Element => {
                             className="text-text-muted text-xs bg-transparent border border-border-default rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer hover:border-primary"
                             title={videoSettings ? getDurationExplanation(segment.type, videoSettings.duration) : ''}
                           >
-                            {[3, 4, 5, 6, 7, 8].map(d => (
+                            {/* Only supported durations: 5s, 8s (VEO), 10s (WAN) */}
+                            {[5, 8, 10].map(d => (
                               <option key={d} value={d}>{d}s</option>
                             ))}
                           </select>

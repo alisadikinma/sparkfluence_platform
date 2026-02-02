@@ -131,6 +131,8 @@ export const hi = {
     planner: "प्लानर",
     gallery: "गैलरी",
     settings: "सेटिंग्स",
+    creatorLab: "क्रिएटर लैब",
+    adStudio: "ऐड स्टूडियो",
     scriptLab: "स्क्रिप्ट लैब",
     visualForge: "विज़ुअल फोर्ज",
     videoGenie: "वीडियो जीनि",

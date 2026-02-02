@@ -4,9 +4,8 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAuth } from "../../contexts/AuthContext";
 import {
-  Menu, X, Home, Calendar, Clock, Sparkles, Image, Video,
-  MessageCircle, FlaskConical,
-  ChevronLeft, ChevronRight
+  Menu, X, Home, Calendar, Clock, Sparkles,
+  FlaskConical, Target, ChevronLeft, ChevronRight
 } from "lucide-react";
 
 // Admin emails for special menu access
@@ -17,7 +16,7 @@ const ADMIN_EMAILS = [
 ];
 
 interface AppSidebarProps {
-  activePage: 'dashboard' | 'planner' | 'history' | 'settings' | 'scriptLab';
+  activePage: 'dashboard' | 'planner' | 'history' | 'settings' | 'scriptLab' | 'adStudio';
 }
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
@@ -46,10 +45,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ activePage }) => {
       { id: 'history', icon: Clock, label: t.nav.history, path: '/history' },
     ],
     aiTools: [
-      { id: 'scriptLab', icon: Sparkles, label: t.nav.scriptLab, path: '/script-lab' },
-      { id: 'visualForge', icon: Image, label: t.nav.visualForge, comingSoon: true },
-      { id: 'videoGenie', icon: Video, label: t.nav.videoGenie, comingSoon: true },
-      { id: 'aiChat', icon: MessageCircle, label: 'AI Chat', comingSoon: true },
+      { id: 'scriptLab', icon: Sparkles, label: t.nav.creatorLab, path: '/script-lab' },
+      { id: 'adStudio', icon: Target, label: t.nav.adStudio, path: '/ad-studio' },
     ],
     admin: [
       { id: 'engineTest', icon: FlaskConical, label: 'Engine Test', path: '/sparkfluence-engine-test' },
