@@ -17,12 +17,12 @@ services:
       - "traefik.docker.network=proxy"
       
       # HTTP → HTTPS redirect
-      - "traefik.http.routers.sparkfluence-redirect.rule=Host(`sparkfluence.alisadikinma.com`)"
+      - "traefik.http.routers.sparkfluence-redirect.rule=Host(`sparkfluence.studio`)"
       - "traefik.http.routers.sparkfluence-redirect.entrypoints=web"
       - "traefik.http.routers.sparkfluence-redirect.middlewares=redirect-https@file"
       
       # HTTPS router
-      - "traefik.http.routers.sparkfluence.rule=Host(`sparkfluence.alisadikinma.com`)"
+      - "traefik.http.routers.sparkfluence.rule=Host(`sparkfluence.studio`)"
       - "traefik.http.routers.sparkfluence.entrypoints=websecure"
       - "traefik.http.routers.sparkfluence.tls=true"
       - "traefik.http.routers.sparkfluence.tls.certresolver=letsencrypt"

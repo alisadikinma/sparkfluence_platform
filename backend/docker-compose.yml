@@ -31,7 +31,7 @@ services:
     labels:
       - "traefik.enable=true"
       # Main router
-      - "traefik.http.routers.sparkfluence-api.rule=Host(`sparkfluence-api.alisadikinma.com`)"
+      - "traefik.http.routers.sparkfluence-api.rule=Host(`api.sparkfluence.studio`)"
       - "traefik.http.routers.sparkfluence-api.entrypoints=websecure"
       - "traefik.http.routers.sparkfluence-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.sparkfluence-api.loadbalancer.server.port=8000"
