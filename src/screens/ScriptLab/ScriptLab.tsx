@@ -281,27 +281,41 @@ export const ScriptLab = (): JSX.Element => {
         <div className="pt-16 sm:pt-20 pb-6 sm:pb-8 px-3 sm:px-6 lg:px-10 xl:px-12">
           {/* Error Message */}
           {error && (
-            <div className="w-full max-w-4xl mx-auto mb-6">
+            <div className="mb-6">
               <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4">
                 <p className="text-red-400 text-sm text-center">{error}</p>
               </div>
             </div>
           )}
 
-          {/* Topic Recommendations */}
-          <TopicRecommendations
-            onSelectTopic={handleSelectTopic}
-            disabled={loading}
-          />
+          {/* 2-column layout on desktop: 40% form (left), 60% topics (right) */}
+          <div className="lg:flex lg:gap-6 xl:gap-8 max-w-4xl lg:max-w-none mx-auto">
+            {/* Left 40%: Script Form (sticky on desktop) */}
+            <div className="lg:w-[40%] lg:flex-shrink-0">
+              <div className="lg:sticky lg:top-24">
+                {/* Section Title */}
+                <div className="flex items-center gap-2 mb-3 sm:mb-5">
+                  <PenTool className="w-4 h-4 sm:w-6 sm:h-6 text-primary" />
+                  <h3 className="text-sm sm:text-xl font-semibold text-text-primary">
+                    {uiLanguage === 'id' ? 'Buat Script' : uiLanguage === 'hi' ? 'स्क्रिप्ट बनाएं' : 'Create Script'}
+                  </h3>
+                </div>
+                <ScriptForm
+                  onSubmit={handleSubmit}
+                  loading={loading}
+                  selectedTopic={selectedTopic}
+                  onClearTopic={handleClearTopic}
+                />
+              </div>
+            </div>
 
-          {/* Main Form Area */}
-          <div className="w-full max-w-4xl mx-auto">
-            <ScriptForm
-              onSubmit={handleSubmit}
-              loading={loading}
-              selectedTopic={selectedTopic}
-              onClearTopic={handleClearTopic}
-            />
+            {/* Right 60%: Topic Recommendations */}
+            <div className="lg:w-[60%] min-w-0">
+              <TopicRecommendations
+                onSelectTopic={handleSelectTopic}
+                disabled={loading}
+              />
+            </div>
           </div>
         </div>
       </main>

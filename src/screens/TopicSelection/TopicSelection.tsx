@@ -14,16 +14,21 @@ import { AvatarDropdown, AvatarNameModal } from "../../components/ui/avatar-drop
 import {
   Loader2, Sparkles, RefreshCw,
   ChevronDown, ScrollText, AlertCircle,
-  Dna, Target, Lightbulb, Zap, Brain, PenTool
+  Dna, Target, Lightbulb, Zap, Brain, PenTool,
+  Hash, ChevronRight, Check
 } from "lucide-react";
 
-interface Topic {
-  id: number;
-  title: string;
-  description: string;
-}
+// ============================================================================
+// Types
+// ============================================================================
+
+import { Topic, TrendingSource, SOURCE_BADGE_CONFIG } from "../../types/topic";
 
 type InputType = "topic" | "transcript";
+
+// ============================================================================
+// Constants
+// ============================================================================
 
 const LANGUAGE_OPTIONS = [
   { value: 'id', label: 'Indonesia' },
@@ -46,6 +51,8 @@ const DURATION_OPTIONS = [
 
 const TOPICS_CACHE_KEY = 'sparkfluence_cached_topics';
 const TOPICS_CACHE_EXPIRY = 60 * 60 * 1000; // 1 hour
+const MAX_BATCHES = 4; // Max 4 batches = 24 topics
+const TOPICS_PER_BATCH = 6;
 
 // Rate limiting constants
 const REFRESH_RATE_LIMIT_KEY = 'sparkfluence_refresh_rate';
@@ -53,45 +60,73 @@ const MAX_REFRESHES_PER_WINDOW = 3;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const COOLDOWN_MS = 30 * 1000;
 
-// Language-aware fallback topics
+// SOURCE_BADGE_CONFIG imported from shared types
+
+// ============================================================================
+// Fallback Topics
+// ============================================================================
+
 const fallbackTopicsByLang: Record<string, Topic[]> = {
   id: [
-    { id: 1, title: "5 Kebiasaan Pagi yang Mengubah Hidupku", description: "Bagikan tips produktivitas personal yang relate dengan audience" },
-    { id: 2, title: "Rahasia yang Tidak Pernah Dibahas Orang", description: "Ungkap pengetahuan insider yang membangun kepercayaan" },
-    { id: 3, title: "Dari Nol hingga Mahir dalam 30 Hari", description: "Dokumentasikan perjalananmu dan inspirasi orang lain" },
-    { id: 4, title: "Berhenti Melakukan Kesalahan Ini", description: "Bahas masalah umum yang sering dihadapi audience" },
-    { id: 5, title: "Tren Terbaru yang Wajib Kamu Tahu", description: "Update informasi terkini yang relevan dengan niche kamu" },
-    { id: 6, title: "Di Balik Layar Proses Kreatifku", description: "Tunjukkan alur kerja kreatif yang menginspirasi viewer" },
+    { id: 1, title: "5 Kebiasaan Pagi yang Mengubah Hidupku", description: "Bagikan tips produktivitas personal yang relate dengan audience", trending_source: 'ai', hashtags: ['#produktivitas', '#kebiasaanpagi'] },
+    { id: 2, title: "Rahasia yang Tidak Pernah Dibahas Orang", description: "Ungkap pengetahuan insider yang membangun kepercayaan", trending_source: 'ai', hashtags: ['#rahasia', '#insider'] },
+    { id: 3, title: "Dari Nol hingga Mahir dalam 30 Hari", description: "Dokumentasikan perjalananmu dan inspirasi orang lain", trending_source: 'ai', hashtags: ['#challenge30hari', '#belajar'] },
+    { id: 4, title: "Berhenti Melakukan Kesalahan Ini", description: "Bahas masalah umum yang sering dihadapi audience", trending_source: 'ai', hashtags: ['#tips', '#kesalahan'] },
+    { id: 5, title: "Tren Terbaru yang Wajib Kamu Tahu", description: "Update informasi terkini yang relevan dengan niche kamu", trending_source: 'ai', hashtags: ['#trending', '#update'] },
+    { id: 6, title: "Di Balik Layar Proses Kreatifku", description: "Tunjukkan alur kerja kreatif yang menginspirasi viewer", trending_source: 'ai', hashtags: ['#behindthescenes', '#kreatif'] },
   ],
   en: [
-    { id: 1, title: "5 Morning Habits That Changed My Life", description: "Share personal productivity tips that resonate with your audience" },
-    { id: 2, title: "The Truth About [Your Niche] Nobody Talks About", description: "Reveal insider knowledge that builds trust and authority" },
-    { id: 3, title: "How I Went From Beginner to Pro in 30 Days", description: "Document your journey and inspire others to take action" },
-    { id: 4, title: "Stop Making This Common Mistake", description: "Address pain points your audience faces daily" },
-    { id: 5, title: "Latest Trends & What's Hot Right Now", description: "Stay up to date with what matters in your niche" },
-    { id: 6, title: "Behind the Scenes of My Creative Process", description: "Show your workflow and connect with your audience" },
+    { id: 1, title: "5 Morning Habits That Changed My Life", description: "Share personal productivity tips that resonate with your audience", trending_source: 'ai', hashtags: ['#morninghabits', '#productivity'] },
+    { id: 2, title: "The Truth About [Your Niche] Nobody Talks About", description: "Reveal insider knowledge that builds trust and authority", trending_source: 'ai', hashtags: ['#truth', '#insider'] },
+    { id: 3, title: "How I Went From Beginner to Pro in 30 Days", description: "Document your journey and inspire others to take action", trending_source: 'ai', hashtags: ['#30daychallenge', '#journey'] },
+    { id: 4, title: "Stop Making This Common Mistake", description: "Address pain points your audience faces daily", trending_source: 'ai', hashtags: ['#tips', '#mistakes'] },
+    { id: 5, title: "Latest Trends & What's Hot Right Now", description: "Stay up to date with what matters in your niche", trending_source: 'ai', hashtags: ['#trending', '#whatshot'] },
+    { id: 6, title: "Behind the Scenes of My Creative Process", description: "Show your workflow and connect with your audience", trending_source: 'ai', hashtags: ['#bts', '#creative'] },
   ],
   hi: [
-    { id: 1, title: "5 सुबह की आदतें जिन्होंने मेरी ज़िंदगी बदल दी", description: "व्यक्तिगत उत्पादकता टिप्स साझा करें जो आपके दर्शकों से जुड़ें" },
-    { id: 2, title: "वो सच जो कोई नहीं बताता", description: "अंदरूनी जानकारी प्रकट करें जो विश्वास और अधिकार बनाती है" },
-    { id: 3, title: "30 दिनों में शुरुआत से प्रो तक", description: "अपनी यात्रा का दस्तावेज़ीकरण करें और दूसरों को प्रेरित करें" },
-    { id: 4, title: "यह गलती करना बंद करें", description: "आम समस्याओं को संबोधित करें जो आपके दर्शक रोज़ाना झेलते हैं" },
-    { id: 5, title: "नवीनतम ट्रेंड्स और क्या है हॉट", description: "अपडेट रहें जो आपके निच में मायने रखता है" },
-    { id: 6, title: "मेरी प्रक्रिया के पर्दे के पीछे", description: "अपना वर्कफ़्लो दिखाएं और अपने दर्शकों से जुड़ें" },
+    { id: 1, title: "5 सुबह की आदतें जिन्होंने मेरी ज़िंदगी बदल दी", description: "व्यक्तिगत उत्पादकता टिप्स साझा करें जो आपके दर्शकों से जुड़ें", trending_source: 'ai', hashtags: ['#morninghabits', '#productivity'] },
+    { id: 2, title: "वो सच जो कोई नहीं बताता", description: "अंदरूनी जानकारी प्रकट करें जो विश्वास और अधिकार बनाती है", trending_source: 'ai', hashtags: ['#truth', '#insider'] },
+    { id: 3, title: "30 दिनों में शुरुआत से प्रो तक", description: "अपनी यात्रा का दस्तावेज़ीकरण करें और दूसरों को प्रेरित करें", trending_source: 'ai', hashtags: ['#30daychallenge', '#journey'] },
+    { id: 4, title: "यह गलती करना बंद करें", description: "आम समस्याओं को संबोधित करें जो आपके दर्शक रोज़ाना झेलते हैं", trending_source: 'ai', hashtags: ['#tips', '#mistakes'] },
+    { id: 5, title: "नवीनतम ट्रेंड्स और क्या है हॉट", description: "अपडेट रहें जो आपके निच में मायने रखता है", trending_source: 'ai', hashtags: ['#trending', '#whatshot'] },
+    { id: 6, title: "मेरी प्रक्रिया के पर्दे के पीछे", description: "अपना वर्कफ़्लो दिखाएं और अपने दर्शकों से जुड़ें", trending_source: 'ai', hashtags: ['#bts', '#creative'] },
   ],
   fr: [
-    { id: 1, title: "5 Habitudes Matinales Qui Ont Change Ma Vie", description: "Partagez des conseils de productivite personnels qui resonnent avec votre audience" },
-    { id: 2, title: "La Verite Que Personne Ne Dit", description: "Revelez des connaissances d'initie qui construisent confiance et autorite" },
-    { id: 3, title: "De Debutant a Pro en 30 Jours", description: "Documentez votre parcours et inspirez les autres a agir" },
-    { id: 4, title: "Arretez de Faire Cette Erreur", description: "Abordez les points de douleur que votre audience rencontre quotidiennement" },
-    { id: 5, title: "Dernieres Tendances & Ce Qui Est Hot", description: "Restez a jour avec ce qui compte dans votre niche" },
-    { id: 6, title: "Les Coulisses de Mon Processus Creatif", description: "Montrez votre workflow et connectez avec votre audience" },
+    { id: 1, title: "5 Habitudes Matinales Qui Ont Change Ma Vie", description: "Partagez des conseils de productivite personnels qui resonnent avec votre audience", trending_source: 'ai', hashtags: ['#habitudes', '#productivite'] },
+    { id: 2, title: "La Verite Que Personne Ne Dit", description: "Revelez des connaissances d'initie qui construisent confiance et autorite", trending_source: 'ai', hashtags: ['#verite', '#insider'] },
+    { id: 3, title: "De Debutant a Pro en 30 Jours", description: "Documentez votre parcours et inspirez les autres a agir", trending_source: 'ai', hashtags: ['#defi30jours', '#parcours'] },
+    { id: 4, title: "Arretez de Faire Cette Erreur", description: "Abordez les points de douleur que votre audience rencontre quotidiennement", trending_source: 'ai', hashtags: ['#conseils', '#erreurs'] },
+    { id: 5, title: "Dernieres Tendances & Ce Qui Est Hot", description: "Restez a jour avec ce qui compte dans votre niche", trending_source: 'ai', hashtags: ['#tendances', '#hot'] },
+    { id: 6, title: "Les Coulisses de Mon Processus Creatif", description: "Montrez votre workflow et connectez avec votre audience", trending_source: 'ai', hashtags: ['#coulisses', '#creatif'] },
   ],
 };
 
 const getFallbackTopics = (lang: string): Topic[] => {
   return fallbackTopicsByLang[lang] || fallbackTopicsByLang.en;
 };
+
+// ============================================================================
+// Skeleton Card Component
+// ============================================================================
+
+const SkeletonCard = () => (
+  <div className="p-4 rounded-xl border-2 border-[#2b2b38] bg-[#1a1a24] animate-pulse">
+    <div className="flex items-center gap-2 mb-3">
+      <div className="h-5 w-16 bg-[#2b2b38] rounded-full" />
+    </div>
+    <div className="h-4 w-3/4 bg-[#2b2b38] rounded mb-2" />
+    <div className="h-3 w-full bg-[#2b2b38] rounded mb-1" />
+    <div className="h-3 w-2/3 bg-[#2b2b38] rounded mb-3" />
+    <div className="flex gap-1.5">
+      <div className="h-5 w-16 bg-[#2b2b38] rounded-full" />
+      <div className="h-5 w-20 bg-[#2b2b38] rounded-full" />
+    </div>
+  </div>
+);
+
+// ============================================================================
+// Main Component
+// ============================================================================
 
 export const TopicSelection = (): JSX.Element => {
   const navigate = useNavigate();
@@ -100,7 +135,7 @@ export const TopicSelection = (): JSX.Element => {
   const { onboardingData } = useOnboarding();
   const { data: dbOnboardingData, loading: onboardingLoading } = useOnboardingStatus();
   const { language: uiLang } = useLanguage();
-  
+
   const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedTopic, setSelectedTopic] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,27 +143,27 @@ export const TopicSelection = (): JSX.Element => {
   const [generating, setGenerating] = useState(false);
   const [generatingStep, setGeneratingStep] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  
+
+  // Batch / Load More state
+  const [currentBatch, setCurrentBatch] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   // Rate limiting state
   const [rateLimited, setRateLimited] = useState(false);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
-  const cooldownIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  
+  const cooldownIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Form state
   const [prompt, setPrompt] = useState("");
   const [inputType, setInputType] = useState<InputType>("topic");
   const [ratio, setRatio] = useState("9:16");
-  const [duration, setDuration] = useState("60s"); // Default 60s for better content
-  // Script language based on user's country (not UI language)
-  const [outputLang, setOutputLang] = useState<string>(() => {
-    // Initial value: try to get from profile country, fallback to 'en'
-    return 'en';
-  });
+  const [duration, setDuration] = useState("60s");
+  const [outputLang, setOutputLang] = useState<string>(() => 'en');
   const [outputLangInitialized, setOutputLangInitialized] = useState(false);
   const [useDnaTone, setUseDnaTone] = useState(true);
   const [generatingPhase, setGeneratingPhase] = useState(0);
-  
-  // Avatar management - using shared hook
+
+  // Avatar management
   const avatarManager = useAvatarManager({
     userId: user?.id,
     language: uiLang
@@ -137,7 +172,7 @@ export const TopicSelection = (): JSX.Element => {
   const hasDnaTone = dbOnboardingData?.creative_dna && dbOnboardingData.creative_dna.length > 0;
   const isReturning = location.state?.returning === true;
 
-  // Set script language based on user's country (only once when data loads)
+  // Set script language based on user's country
   useEffect(() => {
     if (!outputLangInitialized && dbOnboardingData?.country) {
       const defaultLang = getScriptLanguageFromCountry(dbOnboardingData.country);
@@ -160,7 +195,10 @@ export const TopicSelection = (): JSX.Element => {
     checkRateLimit();
   }, []);
 
-  // Rate limiting functions
+  // ========================================================================
+  // Rate Limiting
+  // ========================================================================
+
   const getRateLimitData = (): { timestamps: number[]; cooldownUntil: number | null } => {
     try {
       const data = localStorage.getItem(REFRESH_RATE_LIMIT_KEY);
@@ -192,7 +230,7 @@ export const TopicSelection = (): JSX.Element => {
     }
 
     const recentTimestamps = data.timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-    
+
     if (recentTimestamps.length >= MAX_REFRESHES_PER_WINDOW) {
       const cooldownUntil = now + COOLDOWN_MS;
       setRateLimitData({ timestamps: recentTimestamps, cooldownUntil });
@@ -223,7 +261,7 @@ export const TopicSelection = (): JSX.Element => {
     cooldownIntervalRef.current = setInterval(() => {
       const now = Date.now();
       const remaining = Math.ceil((cooldownUntil - now) / 1000);
-      
+
       if (remaining <= 0) {
         setRateLimited(false);
         setCooldownRemaining(0);
@@ -238,6 +276,10 @@ export const TopicSelection = (): JSX.Element => {
     }, 1000);
   };
 
+  // ========================================================================
+  // Topic Generation
+  // ========================================================================
+
   // Initial load
   useEffect(() => {
     if (!onboardingLoading) {
@@ -245,43 +287,40 @@ export const TopicSelection = (): JSX.Element => {
     }
   }, [onboardingLoading]);
 
-  // Note: Language change no longer triggers topic regeneration
-  // Topics are universal ideas - only the script output language matters
-  // The outputLang is passed to ScriptLab for script generation
-
   const isCacheMatchingPreferences = (cached: any): boolean => {
     if (!cached) return false;
-    
+
     const currentInterest = dbOnboardingData?.interest || '';
     const currentNiches = dbOnboardingData?.selected_niches || [];
     const currentDna = dbOnboardingData?.creative_dna || [];
-    
+
     if (cached.interest !== currentInterest) return false;
-    
+
     const cachedNiches = cached.niches || [];
-    if (cachedNiches.length !== currentNiches.length || 
+    if (cachedNiches.length !== currentNiches.length ||
         !cachedNiches.every((n: string, i: number) => n === currentNiches[i])) return false;
-    
+
     const cachedDna = cached.dna || [];
-    if (cachedDna.length !== currentDna.length || 
+    if (cachedDna.length !== currentDna.length ||
         !cachedDna.every((d: string, i: number) => d === currentDna[i])) return false;
-    
+
     return true;
   };
 
   const loadTopics = useCallback(async () => {
     const cached = getCachedTopics();
-    
-    if (cached && 
-        (isReturning || isCacheValid(cached.timestamp)) && 
+
+    if (cached &&
+        (isReturning || isCacheValid(cached.timestamp)) &&
         cached.language === outputLang &&
         isCacheMatchingPreferences(cached)) {
       setTopics(cached.topics);
+      setCurrentBatch(cached.batch || 1);
       setLoading(false);
       return;
     }
-    
-    await generateTopics();
+
+    await generateTopics(1);
   }, [isReturning, outputLang, dbOnboardingData]);
 
   const getCachedTopics = () => {
@@ -298,10 +337,11 @@ export const TopicSelection = (): JSX.Element => {
     return Date.now() - timestamp < TOPICS_CACHE_EXPIRY;
   };
 
-  const cacheTopics = (topics: Topic[]) => {
+  const cacheTopics = (allTopics: Topic[], batch: number) => {
     try {
       localStorage.setItem(TOPICS_CACHE_KEY, JSON.stringify({
-        topics,
+        topics: allTopics,
+        batch,
         timestamp: Date.now(),
         interest: dbOnboardingData?.interest || '',
         niches: dbOnboardingData?.selected_niches || [],
@@ -313,9 +353,14 @@ export const TopicSelection = (): JSX.Element => {
     }
   };
 
-  const generateTopics = async () => {
-    setLoading(true);
-    setRefreshing(true);
+  const generateTopics = async (batch: number, existingTopics: Topic[] = []) => {
+    const isLoadMore = batch > 1;
+    if (isLoadMore) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+      setRefreshing(true);
+    }
     setError(null);
 
     const langMap: Record<string, string> = {
@@ -334,22 +379,29 @@ export const TopicSelection = (): JSX.Element => {
       if (!interest || selectedNiches.length === 0 || dnaStyles.length === 0) {
         const fallbackTopics = getFallbackTopics(outputLang);
         setTopics(fallbackTopics);
-        cacheTopics(fallbackTopics);
+        cacheTopics(fallbackTopics, 1);
         setLoading(false);
         setRefreshing(false);
+        setLoadingMore(false);
         return;
       }
 
       const savedCountry = localStorage.getItem('sparkfluence_user_country') || 'ID';
 
+      // Collect all displayed titles for exclusion
+      const excludeTitles = existingTopics.map(t => t.title);
+
       const { data, error: funcError } = await supabase.functions.invoke('generate-topic-suggestions', {
-        body: { 
-          interest, 
+        body: {
+          interest,
           niches: selectedNiches,
           dnaStyles,
           language: targetLanguage,
-          count: 6,
-          country: savedCountry
+          count: TOPICS_PER_BATCH,
+          country: savedCountry,
+          batch,
+          exclude_titles: excludeTitles,
+          user_id: user?.id,
         }
       });
 
@@ -359,35 +411,48 @@ export const TopicSelection = (): JSX.Element => {
         throw new Error(data?.error?.message || 'Failed to generate topics');
       }
 
-      const generatedTopics: Topic[] = data.data.topics.slice(0, 6).map((t: any, index: number) => ({
-        id: index + 1,
+      const newTopics: Topic[] = data.data.topics.slice(0, TOPICS_PER_BATCH).map((t: any, index: number) => ({
+        id: existingTopics.length + index + 1,
         title: t.title,
-        description: t.description
+        description: t.description,
+        trending_source: t.trending_source || 'ai',
+        trending_keyword: t.trending_keyword || null,
+        hashtags: t.hashtags || [],
       }));
 
+      // Pad with fallback if needed
       const fallbackTopics = getFallbackTopics(outputLang);
-      while (generatedTopics.length < 6) {
-        const fallbackIndex = generatedTopics.length;
-        generatedTopics.push({
-          ...fallbackTopics[fallbackIndex],
-          id: generatedTopics.length + 1
+      while (newTopics.length < TOPICS_PER_BATCH && fallbackTopics.length > 0) {
+        const fb = fallbackTopics[newTopics.length % fallbackTopics.length];
+        newTopics.push({
+          ...fb,
+          id: existingTopics.length + newTopics.length + 1,
         });
       }
 
-      setTopics(generatedTopics);
-      cacheTopics(generatedTopics);
+      const allTopics = isLoadMore ? [...existingTopics, ...newTopics] : newTopics;
+
+      setTopics(allTopics);
+      setCurrentBatch(batch);
+      cacheTopics(allTopics, batch);
+
     } catch (err: any) {
       console.error('Error generating topics:', err);
-      const fallbackTopics = getFallbackTopics(outputLang);
-      setTopics(fallbackTopics);
-      // DON'T cache fallback topics on error - allows retry to fetch fresh from API
-      // cacheTopics(fallbackTopics); // Removed to enable refresh
-      setError(err.message || 'Gagal memuat topik dari server. Menggunakan topik default.');
+      if (!isLoadMore) {
+        const fallbackTopics = getFallbackTopics(outputLang);
+        setTopics(fallbackTopics);
+      }
+      setError(err.message || 'Failed to load topics. Using defaults.');
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   };
+
+  // ========================================================================
+  // Handlers
+  // ========================================================================
 
   const handleRefresh = async () => {
     if (refreshing || rateLimited) return;
@@ -397,12 +462,43 @@ export const TopicSelection = (): JSX.Element => {
     localStorage.removeItem(TOPICS_CACHE_KEY);
     setSelectedTopic(null);
     setPrompt("");
-    await generateTopics();
+    setCurrentBatch(1);
+    await generateTopics(1);
+  };
+
+  const handleLoadMore = async () => {
+    if (loadingMore || rateLimited) return;
+    if (currentBatch >= MAX_BATCHES) return;
+    if (!checkRateLimit()) return;
+
+    recordRefresh();
+    await generateTopics(currentBatch + 1, topics);
+  };
+
+  const recordTopicSelection = async (topic: Topic) => {
+    if (!user?.id) return;
+    try {
+      await supabase.from('user_topic_history').insert({
+        user_id: user.id,
+        topic_title: topic.title,
+        topic_description: topic.description,
+        trending_source: topic.trending_source || 'ai',
+        trending_keyword: topic.trending_keyword || null,
+        action: 'selected',
+      });
+    } catch (e) {
+      console.error('Error recording topic selection:', e);
+    }
   };
 
   const handleTopicSelect = (topic: Topic) => {
-    setSelectedTopic(prev => prev === topic.id ? null : topic.id);
-    setPrompt(`${topic.title}\n\n${topic.description}`);
+    if (selectedTopic === topic.id) {
+      setSelectedTopic(null);
+      setPrompt("");
+    } else {
+      setSelectedTopic(topic.id);
+      setPrompt(`${topic.title}\n\n${topic.description}`);
+    }
   };
 
   const handlePromptChange = (value: string) => {
@@ -420,6 +516,12 @@ export const TopicSelection = (): JSX.Element => {
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
+
+    // Record topic selection to history (for dedup)
+    const selected = topics.find(t => t.id === selectedTopic);
+    if (selected) {
+      recordTopicSelection(selected);
+    }
 
     setGenerating(true);
     setGeneratingPhase(0);
@@ -451,7 +553,7 @@ export const TopicSelection = (): JSX.Element => {
     try {
       setGeneratingStep(currentPhases[0].step);
       setGeneratingPhase(1);
-      
+
       const langMap: Record<string, string> = {
         'id': 'indonesian',
         'en': 'english',
@@ -476,10 +578,8 @@ export const TopicSelection = (): JSX.Element => {
           platform: onboardingData.platforms?.[0] || 'tiktok',
           language: langMap[outputLang] || 'english',
           user_id: user?.id,
-          // DNA Tone: When enabled, use creative_dna styles for script generation
           use_dna_tone: useDnaTone && hasDnaTone,
           creative_dna: useDnaTone && hasDnaTone ? dbOnboardingData?.creative_dna : null,
-          // v2.0: Auto-select best model per segment
           video_model: 'auto'
         }
       });
@@ -497,17 +597,12 @@ export const TopicSelection = (): JSX.Element => {
       const segments = scriptData.data.segments;
       const existingSessionId = location.state?.sessionId;
       const sessionId = existingSessionId || `video_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-      // Generate Order ID for tracking (SF-YYYYMMDD-XXXX)
       const orderId = generateOrderId();
 
-      // Pass avatar data to ImageGeneration
-      // PRIMARY: selectedAvatarUrl for image reference (gpt-image-1)
-      // FALLBACK: characterDescription for providers without image reference (Z-Image, FLUX)
       navigate("/image-generation", {
         state: {
           sessionId,
-          orderId, // Pass Order ID to next screen
+          orderId,
           topic: prompt.trim(),
           segments: segments,
           metadata: scriptData.data.metadata,
@@ -515,11 +610,8 @@ export const TopicSelection = (): JSX.Element => {
             duration,
             aspectRatio: ratio,
             language: langMap[outputLang] || 'english',
-            model: 'auto' // v2.0: Auto-select best model per segment
+            model: 'auto'
           },
-          // Hybrid approach:
-          // - selectedAvatarUrl: for gpt-image-1 image reference (primary)
-          // - characterDescription: for fallback text-based providers
           selectedAvatarUrl: avatarManager.selectedAvatarUrl,
           characterDescription: avatarManager.characterDescription
         }
@@ -533,30 +625,33 @@ export const TopicSelection = (): JSX.Element => {
     }
   };
 
-  // Loading state
+  // ========================================================================
+  // Loading State
+  // ========================================================================
+
   if (loading) {
     const loadingText = {
       id: {
         title: refreshing ? "Memperbarui Topik..." : "Membuat Ide Topik...",
-        subtitle: refreshing 
+        subtitle: refreshing
           ? "AI sedang membuat topik baru berdasarkan preferensi terbaru kamu"
           : "AI sedang menyusun topik berdasarkan niche & gaya kamu"
       },
       en: {
         title: refreshing ? "Refreshing Topics..." : "Generating Topic Ideas...",
-        subtitle: refreshing 
+        subtitle: refreshing
           ? "AI is creating new topics based on your latest preferences"
           : "AI is crafting topics based on your niches & style"
       },
       hi: {
         title: refreshing ? "विषय अपडेट हो रहे हैं..." : "विषय विचार बना रहे हैं...",
-        subtitle: refreshing 
+        subtitle: refreshing
           ? "AI आपकी नवीनतम प्राथमिकताओं के आधार पर नए विषय बना रहा है"
           : "AI आपके निच और शैली के आधार पर विषय तैयार कर रहा है"
       }
     };
     const currentText = loadingText[uiLang as keyof typeof loadingText] || loadingText.en;
-    
+
     return (
       <div className="w-full min-h-screen bg-[#0a0a12] flex flex-col items-center justify-center px-4">
         <div className="flex flex-col items-center gap-4">
@@ -573,7 +668,10 @@ export const TopicSelection = (): JSX.Element => {
     );
   }
 
-  // Generating script state
+  // ========================================================================
+  // Generating Script State
+  // ========================================================================
+
   if (generating) {
     const phaseIcons = [
       <Brain key="brain" className="w-8 h-8 text-white" />,
@@ -658,25 +756,29 @@ export const TopicSelection = (): JSX.Element => {
     );
   }
 
+  // ========================================================================
+  // UI Text
+  // ========================================================================
+
   const inputTypeOptions = [
     {
       value: "topic" as InputType,
       label: uiLang === 'id' ? "Topik" : uiLang === 'hi' ? "विषय" : "Topic",
       icon: <Sparkles className="w-4 h-4" />,
-      placeholder: uiLang === 'id' 
-        ? "Contoh: 5 kebiasaan pagi yang meningkatkan produktivitas..." 
-        : uiLang === 'hi' 
-        ? "उदाहरण: 5 सुबह की आदतें जो उत्पादकता बढ़ाएं..." 
+      placeholder: uiLang === 'id'
+        ? "Contoh: 5 kebiasaan pagi yang meningkatkan produktivitas..."
+        : uiLang === 'hi'
+        ? "उदाहरण: 5 सुबह की आदतें जो उत्पादकता बढ़ाएं..."
         : "e.g., 5 Morning habits that boost productivity...",
     },
     {
       value: "transcript" as InputType,
       label: uiLang === 'id' ? "Transkrip" : uiLang === 'hi' ? "ट्रांसक्रिप्ट" : "Transcript",
       icon: <ScrollText className="w-4 h-4" />,
-      placeholder: uiLang === 'id' 
-        ? "Tempel transkrip video atau narasi yang sudah ada..." 
-        : uiLang === 'hi' 
-        ? "मौजूदा वीडियो ट्रांसक्रिप्ट या नरेशन पेस्ट करें..." 
+      placeholder: uiLang === 'id'
+        ? "Tempel transkrip video atau narasi yang sudah ada..."
+        : uiLang === 'hi'
+        ? "मौजूदा वीडियो ट्रांसक्रिप्ट या नरेशन पेस्ट करें..."
         : "Paste existing video transcript or narration...",
     },
   ];
@@ -685,26 +787,33 @@ export const TopicSelection = (): JSX.Element => {
 
   const uiText = {
     title: uiLang === 'id' ? "Pilih topik" : uiLang === 'hi' ? "एक विषय चुनें" : "Choose a topic",
-    subtitle: uiLang === 'id' 
-      ? "Pilih satu topik AI atau masukkan ide kamu sendiri" 
-      : uiLang === 'hi' 
-      ? "AI-जनित विषय चुनें या अपना विचार दर्ज करें" 
+    subtitle: uiLang === 'id'
+      ? "Pilih satu topik AI atau masukkan ide kamu sendiri"
+      : uiLang === 'hi'
+      ? "AI-जनित विषय चुनें या अपना विचार दर्ज करें"
       : "Select one AI-generated topic or enter your own idea",
     basedOn: uiLang === 'id' ? "Berdasarkan:" : uiLang === 'hi' ? "आधारित:" : "Based on:",
-    aiTopics: uiLang === 'id' ? "Topik Rekomendasi AI" : uiLang === 'hi' ? "AI-जनित विषय" : "AI-Generated Topics",
+    aiTopics: uiLang === 'id' ? "Topik Trending" : uiLang === 'hi' ? "ट्रेंडिंग विषय" : "Trending Topics",
     refresh: uiLang === 'id' ? "Refresh" : uiLang === 'hi' ? "रीफ्रेश" : "Refresh",
     wait: uiLang === 'id' ? "Tunggu" : uiLang === 'hi' ? "रुकें" : "Wait",
     orType: uiLang === 'id' ? "atau ketik topik sendiri" : uiLang === 'hi' ? "या अपना विषय टाइप करें" : "or type your own topic",
     generateVideo: uiLang === 'id' ? "Buat Script" : uiLang === 'hi' ? "स्क्रिप्ट बनाएं" : "Generate Script",
     previous: uiLang === 'id' ? "Sebelumnya" : uiLang === 'hi' ? "पिछला" : "Previous",
     step: uiLang === 'id' ? "Langkah" : uiLang === 'hi' ? "चरण" : "Step",
-    rateLimitWarning: uiLang === 'id' 
-      ? "Terlalu banyak percobaan refresh. Mohon tunggu" 
-      : uiLang === 'hi' 
-      ? "बहुत अधिक रीफ्रेश प्रयास। कृपया प्रतीक्षा करें" 
+    rateLimitWarning: uiLang === 'id'
+      ? "Terlalu banyak percobaan refresh. Mohon tunggu"
+      : uiLang === 'hi'
+      ? "बहुत अधिक रीफ्रेश प्रयास। कृपया प्रतीक्षा करें"
       : "Too many refresh attempts. Please wait",
     seconds: uiLang === 'id' ? "detik" : uiLang === 'hi' ? "सेकंड" : "seconds",
+    loadMore: uiLang === 'id' ? "Muat Lebih Banyak" : uiLang === 'hi' ? "और लोड करें" : "Load More Topics",
+    loadingMore: uiLang === 'id' ? "Memuat..." : uiLang === 'hi' ? "लोड हो रहा है..." : "Loading...",
+    topicCount: uiLang === 'id' ? "topik" : uiLang === 'hi' ? "विषय" : "topics",
   };
+
+  // ========================================================================
+  // Render
+  // ========================================================================
 
   return (
     <div className="min-h-screen bg-[#0a0a12] flex items-center justify-center p-4 sm:p-6">
@@ -714,7 +823,7 @@ export const TopicSelection = (): JSX.Element => {
           <div className="flex justify-center mb-6">
             <Logo />
           </div>
-          
+
           <div className="flex gap-2 mb-8 justify-center max-w-md mx-auto">
             {[1, 2, 3, 4, 5, 6, 7].map((step) => (
               <div
@@ -732,18 +841,18 @@ export const TopicSelection = (): JSX.Element => {
           <p className="text-white/60 text-center text-sm max-w-2xl mx-auto mb-4">
             {uiText.subtitle}
           </p>
-          
+
           {(dbOnboardingData?.interest || dbOnboardingData?.selected_niches?.length || hasDnaTone) && (
             <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
               <span className="text-white/40 text-xs">{uiText.basedOn}</span>
-              
+
               {dbOnboardingData?.interest && (
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-[#1a1a24] border border-[#2b2b38] rounded-full">
                   <Lightbulb className="w-3 h-3 text-yellow-400" />
                   <span className="text-white/70 text-xs">{dbOnboardingData.interest}</span>
                 </div>
               )}
-              
+
               {dbOnboardingData?.selected_niches && dbOnboardingData.selected_niches.length > 0 && (
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-[#1a1a24] border border-[#2b2b38] rounded-full">
                   <Target className="w-3 h-3 text-[#7c3aed]" />
@@ -753,7 +862,7 @@ export const TopicSelection = (): JSX.Element => {
                   </span>
                 </div>
               )}
-              
+
               {hasDnaTone && (
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-[#1a1a24] border border-[#2b2b38] rounded-full">
                   <Dna className="w-3 h-3 text-[#ec4899]" />
@@ -781,15 +890,18 @@ export const TopicSelection = (): JSX.Element => {
               <h3 className="text-base sm:text-lg font-semibold text-white">
                 {uiText.aiTopics}
               </h3>
+              <span className="text-white/40 text-xs">
+                {topics.length} {uiText.topicCount}
+              </span>
             </div>
-            
+
             <button
               onClick={handleRefresh}
               disabled={refreshing || rateLimited}
               className={`flex items-center gap-2 text-sm transition-colors ${
-                rateLimited 
-                  ? "text-orange-400 cursor-not-allowed" 
-                  : refreshing 
+                rateLimited
+                  ? "text-orange-400 cursor-not-allowed"
+                  : refreshing
                     ? "text-[#7c3aed]/50 cursor-not-allowed"
                     : "text-[#7c3aed] hover:text-[#9f67ff]"
               }`}
@@ -817,33 +929,99 @@ export const TopicSelection = (): JSX.Element => {
             </div>
           )}
 
+          {/* Topic Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {topics.slice(0, 6).map((topic) => {
+            {topics.map((topic) => {
               const isSelected = selectedTopic === topic.id;
+              const source = topic.trending_source || 'ai';
+              const badge = SOURCE_BADGE_CONFIG[source];
 
               return (
                 <button
                   key={topic.id}
                   onClick={() => handleTopicSelect(topic)}
                   className={`
-                    text-left p-4 rounded-xl border-2 transition-all duration-200
+                    text-left p-4 rounded-xl border-2 transition-all duration-200 relative group
                     hover:scale-[1.02] active:scale-[0.98] cursor-pointer
                     ${isSelected
-                      ? "bg-[#7c3aed]/20 border-[#7c3aed] shadow-lg shadow-[#7c3aed]/20"
-                      : "bg-[#1a1a24] border-[#2b2b38] hover:border-[#7c3aed]/50 hover:bg-[#1a1a24]/80"
+                      ? "bg-[#7c3aed]/15 border-[#7c3aed] shadow-lg shadow-[#7c3aed]/20"
+                      : "bg-[#1a1a24] border-[#2b2b38] hover:border-[#7c3aed]/50 hover:shadow-md hover:shadow-[#7c3aed]/10"
                     }
                   `}
                 >
-                  <h4 className="text-white font-medium text-sm mb-2 line-clamp-2">
+                  {/* Selected checkmark */}
+                  {isSelected && (
+                    <div className="absolute top-3 right-3 w-5 h-5 rounded-full bg-[#7c3aed] flex items-center justify-center">
+                      <Check className="w-3 h-3 text-white" />
+                    </div>
+                  )}
+
+                  {/* Source Badge */}
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full border ${badge.bg} ${badge.text} ${badge.border}`}>
+                      {badge.label}
+                    </span>
+                  </div>
+
+                  {/* Title */}
+                  <h4 className="text-white font-medium text-sm mb-1.5 line-clamp-2 pr-6">
                     {topic.title}
                   </h4>
-                  <p className="text-white/50 text-xs line-clamp-2">
+
+                  {/* Description */}
+                  <p className="text-white/50 text-xs line-clamp-2 mb-3">
                     {topic.description}
                   </p>
+
+                  {/* Hashtags */}
+                  {topic.hashtags && topic.hashtags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {topic.hashtags.slice(0, 3).map((tag, i) => (
+                        <span
+                          key={i}
+                          className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] text-white/40 bg-[#2a2a38] rounded-full"
+                        >
+                          <Hash className="w-2.5 h-2.5" />
+                          {tag.replace(/^#/, '')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </button>
               );
             })}
+
+            {/* Skeleton cards while loading more */}
+            {loadingMore && Array.from({ length: TOPICS_PER_BATCH }).map((_, i) => (
+              <SkeletonCard key={`skeleton-${i}`} />
+            ))}
           </div>
+
+          {/* Load More Button */}
+          {currentBatch < MAX_BATCHES && !loadingMore && (
+            <div className="flex justify-center mt-4">
+              <button
+                onClick={handleLoadMore}
+                disabled={rateLimited}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all
+                  ${rateLimited
+                    ? "text-white/30 bg-[#1a1a24] border border-[#2b2b38] cursor-not-allowed"
+                    : "text-[#7c3aed] bg-[#7c3aed]/10 border border-[#7c3aed]/30 hover:bg-[#7c3aed]/20 hover:border-[#7c3aed]/50"
+                  }
+                `}
+              >
+                {loadingMore ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
+                {loadingMore ? uiText.loadingMore : uiText.loadMore}
+                <span className="text-xs opacity-60">
+                  ({currentBatch}/{MAX_BATCHES})
+                </span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Divider */}
@@ -941,7 +1119,7 @@ export const TopicSelection = (): JSX.Element => {
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-white/60 pointer-events-none" />
             </div>
 
-            {/* Avatar Dropdown - Using shared component */}
+            {/* Avatar Dropdown */}
             <AvatarDropdown
               avatarOption={avatarManager.avatarOption}
               avatarDropdownOpen={avatarManager.avatarDropdownOpen}
@@ -1025,7 +1203,7 @@ export const TopicSelection = (): JSX.Element => {
         </div>
       </div>
 
-      {/* Avatar Name Modal - for new uploads */}
+      {/* Avatar Name Modal */}
       <AvatarNameModal
         show={avatarManager.showNameModal}
         name={avatarManager.newAvatarName}

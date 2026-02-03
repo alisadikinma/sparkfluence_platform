@@ -3,21 +3,17 @@ import { useLanguage } from "../../../contexts/LanguageContext";
 import { useOnboardingStatus } from "../../../hooks/useOnboardingStatus";
 import { supabase } from "../../../lib/supabase";
 import { useAuth } from "../../../contexts/AuthContext";
-import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle } from "lucide-react";
-
-interface Topic {
-  id: number;
-  title: string;
-  description: string;
-}
+import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
+import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle, Hash, TrendingUp, Check, Plus, Search, X } from "lucide-react";
+import { Topic, SOURCE_BADGE_CONFIG } from "../../../types/topic";
 
 interface TopicRecommendationsProps {
   onSelectTopic: (topic: Topic) => void;
   disabled?: boolean;
 }
 
-// Cache settings
-const TOPICS_CACHE_KEY = 'sparkfluence_scriptlab_topics';
+// Cache settings - v2: invalidated to support 9 initial topics
+const TOPICS_CACHE_KEY = 'sparkfluence_scriptlab_topics_v2';
 const TOPICS_CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
 
 // Rate limiting constants
@@ -26,28 +22,40 @@ const MAX_REFRESHES_PER_WINDOW = 3;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const COOLDOWN_MS = 30 * 1000;
 
-// Language-aware fallback topics
+// Language-aware fallback topics (9 per language to match INITIAL_COUNT)
 const fallbackTopicsByLang: Record<string, Topic[]> = {
   id: [
-    { id: 1, title: "5 Kebiasaan Pagi yang Mengubah Hidupku", description: "Bagikan tips produktivitas personal yang relate dengan audience" },
-    { id: 2, title: "Rahasia yang Tidak Pernah Dibahas Orang", description: "Ungkap pengetahuan insider yang membangun kepercayaan" },
-    { id: 3, title: "Dari Nol hingga Mahir dalam 30 Hari", description: "Dokumentasikan perjalananmu dan inspirasi orang lain" },
-    { id: 4, title: "Berhenti Melakukan Kesalahan Ini", description: "Bahas masalah umum yang sering dihadapi audience" },
-    { id: 5, title: "Cara Cepat Menguasai Skill Baru", description: "Tutorial praktis yang langsung bisa diterapkan" },
+    { id: 1, title: "5 Kebiasaan Pagi yang Mengubah Hidupku", description: "Bagikan tips produktivitas personal yang relate dengan audience", trending_source: 'ai', hashtags: ['#morningroutine', '#produktivitas', '#tips'] },
+    { id: 2, title: "Rahasia yang Tidak Pernah Dibahas Orang", description: "Ungkap pengetahuan insider yang membangun kepercayaan", trending_source: 'ai', hashtags: ['#rahasia', '#insider', '#fakta'] },
+    { id: 3, title: "Dari Nol hingga Mahir dalam 30 Hari", description: "Dokumentasikan perjalananmu dan inspirasi orang lain", trending_source: 'ai', hashtags: ['#challenge', '#30hari', '#growth'] },
+    { id: 4, title: "Berhenti Melakukan Kesalahan Ini", description: "Bahas masalah umum yang sering dihadapi audience", trending_source: 'ai', hashtags: ['#tips', '#mistake', '#belajar'] },
+    { id: 5, title: "Cara Cepat Menguasai Skill Baru", description: "Tutorial praktis yang langsung bisa diterapkan", trending_source: 'ai', hashtags: ['#tutorial', '#skillup', '#belajar'] },
+    { id: 6, title: "Fakta Mengejutkan yang Jarang Orang Tahu", description: "Konten edukatif yang bikin audience penasaran", trending_source: 'ai', hashtags: ['#fakta', '#edukasi', '#viral'] },
+    { id: 7, title: "Review Jujur: Produk yang Lagi Hype", description: "Ulasan produk trending yang lagi banyak dibicarakan", trending_source: 'ai', hashtags: ['#review', '#honest', '#produk'] },
+    { id: 8, title: "Day in My Life sebagai Content Creator", description: "Behind the scenes kehidupan sehari-hari yang relatable", trending_source: 'ai', hashtags: ['#dayinmylife', '#creator', '#behindthescenes'] },
+    { id: 9, title: "Hal yang Gue Sesali Tidak Lakukan Lebih Awal", description: "Berbagi pengalaman hidup yang bisa jadi pelajaran", trending_source: 'ai', hashtags: ['#lifelesson', '#motivasi', '#sharing'] },
   ],
   en: [
-    { id: 1, title: "5 Morning Habits That Changed My Life", description: "Share personal productivity tips that resonate with your audience" },
-    { id: 2, title: "The Truth About [Your Niche] Nobody Talks About", description: "Reveal insider knowledge that builds trust and authority" },
-    { id: 3, title: "How I Went From Beginner to Pro in 30 Days", description: "Document your journey and inspire others to take action" },
-    { id: 4, title: "Stop Making This Common Mistake", description: "Address pain points your audience faces daily" },
-    { id: 5, title: "The Fastest Way to Learn Any New Skill", description: "Practical tutorial that can be applied immediately" },
+    { id: 1, title: "5 Morning Habits That Changed My Life", description: "Share personal productivity tips that resonate with your audience", trending_source: 'ai', hashtags: ['#morningroutine', '#productivity', '#habits'] },
+    { id: 2, title: "The Truth About [Your Niche] Nobody Talks About", description: "Reveal insider knowledge that builds trust and authority", trending_source: 'ai', hashtags: ['#truth', '#insider', '#exposed'] },
+    { id: 3, title: "How I Went From Beginner to Pro in 30 Days", description: "Document your journey and inspire others to take action", trending_source: 'ai', hashtags: ['#journey', '#30daychallenge', '#growth'] },
+    { id: 4, title: "Stop Making This Common Mistake", description: "Address pain points your audience faces daily", trending_source: 'ai', hashtags: ['#mistakes', '#tips', '#learning'] },
+    { id: 5, title: "The Fastest Way to Learn Any New Skill", description: "Practical tutorial that can be applied immediately", trending_source: 'ai', hashtags: ['#tutorial', '#skillup', '#learning'] },
+    { id: 6, title: "Things I Wish I Knew Before Starting", description: "Share hard-earned lessons to help beginners avoid pitfalls", trending_source: 'ai', hashtags: ['#beginner', '#advice', '#lessons'] },
+    { id: 7, title: "Honest Review: Is This Worth the Hype?", description: "Give your audience an authentic take on trending products", trending_source: 'ai', hashtags: ['#review', '#honest', '#trending'] },
+    { id: 8, title: "A Day in My Life as a Creator", description: "Behind the scenes content that builds authentic connection", trending_source: 'ai', hashtags: ['#dayinmylife', '#creator', '#behindthescenes'] },
+    { id: 9, title: "Unpopular Opinions That Changed My Perspective", description: "Challenge conventional thinking and spark engagement", trending_source: 'ai', hashtags: ['#unpopularopinion', '#perspective', '#debate'] },
   ],
   hi: [
-    { id: 1, title: "5 सुबह की आदतें जिन्होंने मेरी ज़िंदगी बदल दी", description: "व्यक्तिगत उत्पादकता टिप्स साझा करें जो आपके दर्शकों से जुड़ें" },
-    { id: 2, title: "वो सच जो कोई नहीं बताता", description: "अंदरूनी जानकारी प्रकट करें जो विश्वास और अधिकार बनाती है" },
-    { id: 3, title: "30 दिनों में शुरुआत से प्रो तक", description: "अपनी यात्रा का दस्तावेज़ीकरण करें और दूसरों को प्रेरित करें" },
-    { id: 4, title: "यह गलती करना बंद करें", description: "आम समस्याओं को संबोधित करें जो आपके दर्शक रोज़ाना झेलते हैं" },
-    { id: 5, title: "कोई भी नया स्किल सीखने का सबसे तेज़ तरीका", description: "व्यावहारिक ट्यूटोरियल जो तुरंत लागू किया जा सके" },
+    { id: 1, title: "5 सुबह की आदतें जिन्होंने मेरी ज़िंदगी बदल दी", description: "व्यक्तिगत उत्पादकता टिप्स साझा करें जो आपके दर्शकों से जुड़ें", trending_source: 'ai', hashtags: ['#morningroutine', '#productivity', '#habits'] },
+    { id: 2, title: "वो सच जो कोई नहीं बताता", description: "अंदरूनी जानकारी प्रकट करें जो विश्वास और अधिकार बनाती है", trending_source: 'ai', hashtags: ['#truth', '#insider', '#facts'] },
+    { id: 3, title: "30 दिनों में शुरुआत से प्रो तक", description: "अपनी यात्रा का दस्तावेज़ीकरण करें और दूसरों को प्रेरित करें", trending_source: 'ai', hashtags: ['#challenge', '#30days', '#growth'] },
+    { id: 4, title: "यह गलती करना बंद करें", description: "आम समस्याओं को संबोधित करें जो आपके दर्शक रोज़ाना झेलते हैं", trending_source: 'ai', hashtags: ['#mistakes', '#tips', '#learning'] },
+    { id: 5, title: "कोई भी नया स्किल सीखने का सबसे तेज़ तरीका", description: "व्यावहारिक ट्यूटोरियल जो तुरंत लागू किया जा सके", trending_source: 'ai', hashtags: ['#tutorial', '#skillup', '#learning'] },
+    { id: 6, title: "काश मुझे यह पहले पता होता", description: "कड़ी मेहनत से सीखे गए सबक नए लोगों की मदद के लिए", trending_source: 'ai', hashtags: ['#advice', '#lessons', '#beginner'] },
+    { id: 7, title: "ईमानदार रिव्यू: क्या यह इतना अच्छा है?", description: "ट्रेंडिंग प्रोडक्ट्स पर अपनी सच्ची राय दें", trending_source: 'ai', hashtags: ['#review', '#honest', '#trending'] },
+    { id: 8, title: "एक क्रिएटर के रूप में मेरा पूरा दिन", description: "बिहाइंड द सीन्स कंटेंट जो प्रामाणिक कनेक्शन बनाता है", trending_source: 'ai', hashtags: ['#dayinmylife', '#creator', '#behindthescenes'] },
+    { id: 9, title: "अनपॉपुलर ओपिनियन जो आपकी सोच बदल दे", description: "पारंपरिक सोच को चुनौती दें और जुड़ाव बढ़ाएं", trending_source: 'ai', hashtags: ['#unpopularopinion', '#perspective', '#debate'] },
   ],
 };
 
@@ -64,17 +72,37 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   const { user } = useAuth();
   const { data: onboardingData, loading: onboardingLoading } = useOnboardingStatus();
 
+  // Script/content language derived from user's country (consistent with LLM call)
+  const scriptLanguage = onboardingData?.country
+    ? getScriptLanguageFromCountry(onboardingData.country)
+    : language;
+
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [currentBatch, setCurrentBatch] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const MAX_BATCHES = 4;
+  const INITIAL_COUNT = 9;
+  const LOAD_MORE_COUNT = 3;
+
+  // Search keyword state
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [activeKeyword, setActiveKeyword] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [trendingChips, setTrendingChips] = useState<Array<{ keyword: string; source: string; volume_score: number }>>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<string[]>([]);
+  const autocompleteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
 
   // Mobile carousel state
   const [carouselIndex, setCarouselIndex] = useState(0);
   const carouselRef = useRef<HTMLDivElement>(null);
   const touchStartX = useRef<number>(0);
   const touchEndX = useRef<number>(0);
-  const autoPlayRef = useRef<NodeJS.Timeout | null>(null);
+  const autoPlayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-play carousel every 3 seconds
   useEffect(() => {
@@ -113,13 +141,16 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   // Rate limiting state
   const [rateLimited, setRateLimited] = useState(false);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
-  const cooldownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cooldownIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cleanup cooldown interval on unmount
+  // Cleanup cooldown interval and autocomplete debounce on unmount
   useEffect(() => {
     return () => {
       if (cooldownIntervalRef.current) {
         clearInterval(cooldownIntervalRef.current);
+      }
+      if (autocompleteDebounceRef.current) {
+        clearTimeout(autocompleteDebounceRef.current);
       }
     };
   }, []);
@@ -128,6 +159,104 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   useEffect(() => {
     checkRateLimit();
   }, []);
+
+  // Fetch trending chips on mount
+  useEffect(() => {
+    const fetchTrendingChips = async () => {
+      try {
+        const savedCountry = localStorage.getItem('sparkfluence_user_country') || 'ID';
+        const { data, error } = await supabase
+          .from('trending_topics')
+          .select('keyword, source, volume_score')
+          .eq('country', savedCountry)
+          .gt('expires_at', new Date().toISOString())
+          .order('volume_score', { ascending: false })
+          .limit(15);
+
+        if (error || !data) {
+          console.log('[TopicRecommendations] No trending chips:', error?.message);
+          return;
+        }
+
+        // Deduplicate by lowercase keyword
+        const seen = new Set<string>();
+        const unique = data.filter((item: any) => {
+          const key = item.keyword.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 10);
+
+        setTrendingChips(unique);
+      } catch (err) {
+        console.error('[TopicRecommendations] Error fetching trending chips:', err);
+      }
+    };
+
+    fetchTrendingChips();
+  }, []);
+
+  // Close autocomplete on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Fetch autocomplete suggestions from YouTube/Google suggest API
+  const fetchAutocompleteSuggestions = useCallback(async (query: string) => {
+    if (query.trim().length < 2) {
+      setAutocompleteSuggestions([]);
+      return;
+    }
+    try {
+      const langCode = language === 'id' ? 'id' : language === 'hi' ? 'hi' : 'en';
+      const { data, error } = await supabase.functions.invoke('autocomplete-keywords', {
+        body: { query: query.trim(), lang: langCode }
+      });
+      if (error) throw error;
+      if (data?.suggestions) {
+        setAutocompleteSuggestions(data.suggestions.slice(0, 8));
+      }
+    } catch (err) {
+      console.error('[Autocomplete] Error:', err);
+      // Fallback: filter trending chips locally
+      const q = query.trim().toLowerCase();
+      const fallback = trendingChips
+        .filter(chip => chip.keyword.toLowerCase().includes(q))
+        .map(chip => chip.keyword);
+      setAutocompleteSuggestions(fallback.length > 0 ? fallback : trendingChips.map(c => c.keyword));
+    }
+  }, [language, trendingChips]);
+
+  // Handle search input change with debounced API call
+  const handleSearchInputChange = (value: string) => {
+    setSearchKeyword(value);
+    if (value.trim().length >= 1) {
+      setShowSuggestions(true);
+      // Debounce API call (300ms)
+      if (autocompleteDebounceRef.current) clearTimeout(autocompleteDebounceRef.current);
+      if (value.trim().length >= 2) {
+        autocompleteDebounceRef.current = setTimeout(() => {
+          fetchAutocompleteSuggestions(value);
+        }, 300);
+      } else {
+        // 1 char: filter trending chips by input
+        const q = value.trim().toLowerCase();
+        const filtered = trendingChips
+          .filter(c => c.keyword.toLowerCase().includes(q))
+          .map(c => c.keyword);
+        setAutocompleteSuggestions(filtered.length > 0 ? filtered : []);
+      }
+    } else {
+      setShowSuggestions(false);
+      setAutocompleteSuggestions([]);
+    }
+  };
 
   // Rate limiting functions
   const getRateLimitData = (): { timestamps: number[]; cooldownUntil: number | null } => {
@@ -229,21 +358,25 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     return `${interest}:${niches}:${dna}`;
   };
 
-  const isCacheValid = (timestamp: number, cachedNichesHash?: string) => {
-    const currentNichesHash = getNichesHash();
-    // Cache is valid if within expiry AND niches match
-    // Note: Language is no longer checked - topics are universal ideas
-    return Date.now() - timestamp < TOPICS_CACHE_EXPIRY &&
-           cachedNichesHash === currentNichesHash;
+  const isCacheValid = (timestamp: number, cachedNichesHash?: string, cachedKeyword?: string | null) => {
+    if (Date.now() - timestamp >= TOPICS_CACHE_EXPIRY) return false;
+    // Keyword cache: keyword must match current active keyword
+    if (activeKeyword || cachedKeyword) {
+      return cachedKeyword === activeKeyword;
+    }
+    // Default mode: niches must match
+    return cachedNichesHash === getNichesHash();
   };
 
-  const cacheTopics = (topics: Topic[]) => {
+  const cacheTopics = (topics: Topic[], batch: number = 1, keyword?: string | null) => {
     try {
       localStorage.setItem(TOPICS_CACHE_KEY, JSON.stringify({
         topics,
         timestamp: Date.now(),
         language: language,
-        nichesHash: getNichesHash(), // Include niches hash in cache
+        nichesHash: getNichesHash(),
+        batch,
+        keyword: keyword || null,
       }));
     } catch (e) {
       console.error('Error caching topics:', e);
@@ -253,7 +386,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   // Load topics from cache or generate new ones
   const loadTopics = useCallback(async (forceRefresh = false) => {
     if (!user) {
-      setTopics(getFallbackTopics(language));
+      setTopics(getFallbackTopics(scriptLanguage));
       setLoading(false);
       return;
     }
@@ -262,8 +395,13 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     if (!forceRefresh) {
       const cached = getCachedTopics();
       if (cached && cached.topics && cached.topics.length > 0 &&
-          isCacheValid(cached.timestamp, cached.nichesHash)) {
+          isCacheValid(cached.timestamp, cached.nichesHash, cached.keyword)) {
         setTopics(cached.topics);
+        if (cached.batch) setCurrentBatch(cached.batch);
+        if (cached.keyword) {
+          setActiveKeyword(cached.keyword);
+          setSearchKeyword(cached.keyword);
+        }
         setLoading(false);
         return;
       }
@@ -271,70 +409,119 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
     // Generate new topics
     await generateTopics();
-  }, [user, onboardingData]);
+  }, [user, onboardingData, language]);
 
-  const generateTopics = async () => {
-    if (!onboardingData) {
+  const generateTopics = async (batch: number = 1, existingTopics: Topic[] = [], keyword?: string) => {
+    // Keyword mode doesn't require onboarding data
+    if (!keyword && !onboardingData) {
       console.log('[TopicRecommendations] No onboarding data, using fallback');
-      setTopics(getFallbackTopics(language));
+      setTopics(getFallbackTopics(scriptLanguage));
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
       return;
     }
 
     console.log('[TopicRecommendations] Generating topics with:', {
-      interest: onboardingData.interest,
-      niches: onboardingData.selected_niches,
-      dnaStyles: onboardingData.creative_dna,
-      language
+      interest: onboardingData?.interest,
+      niches: onboardingData?.selected_niches,
+      dnaStyles: onboardingData?.creative_dna,
+      language,
+      batch,
+      keyword: keyword || null,
     });
 
     try {
-      // Get country for Google Trends
+      // Get country for trending data
       const savedCountry = localStorage.getItem('sparkfluence_user_country') || 'ID';
 
-      const { data, error } = await supabase.functions.invoke("generate-topic-suggestions", {
+      // Build exclude list from existing topics for dedup
+      const excludeTitles = existingTopics.map(t => t.title);
+
+      // Timeout wrapper: 30s (LLM calls need time, especially with key fallbacks)
+      const timeoutMs = 30000;
+      const invokePromise = supabase.functions.invoke("generate-topic-suggestions", {
         body: {
-          interest: onboardingData.interest,
-          profession: onboardingData.profession,
-          niches: onboardingData.selected_niches,
-          objectives: onboardingData.objectives,
-          dnaStyles: onboardingData.creative_dna,
-          language: language === "id" ? "indonesian" : language === "hi" ? "hindi" : "english",
-          count: 5,
-          country: savedCountry,  // For Google Trends RSS
+          interest: onboardingData?.interest,
+          profession: onboardingData?.profession,
+          niches: onboardingData?.selected_niches,
+          objectives: onboardingData?.objectives,
+          dnaStyles: onboardingData?.creative_dna,
+          language: (() => {
+            const sl = getScriptLanguageFromCountry(onboardingData?.country);
+            return sl === "id" ? "indonesian" : sl === "hi" ? "hindi" : "english";
+          })(),
+          count: batch === 1 ? INITIAL_COUNT : LOAD_MORE_COUNT,
+          country: savedCountry,
+          batch,
+          exclude_titles: excludeTitles,
+          user_id: user?.id,
+          search_keyword: keyword || null,
         },
       });
 
-      console.log('[TopicRecommendations] Edge Function response:', { data, error });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), timeoutMs)
+      );
+
+      const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
 
       if (error) {
-        console.error('[TopicRecommendations] Edge Function error:', error);
-        throw error;
+        let errorMessage = error.message || 'Unknown error';
+        // Extract actual error body from FunctionsHttpError
+        if (error.context) {
+          try {
+            const errorBody = await error.context.json();
+            errorMessage = errorBody?.error?.message || errorBody?.message || errorMessage;
+            console.error('[TopicRecommendations] Edge Function error body:', errorBody);
+          } catch { /* context may not be JSON */ }
+        }
+        console.error('[TopicRecommendations] Edge Function error:', errorMessage);
+        throw new Error(errorMessage);
       }
 
       if (data?.success && data?.data?.topics) {
-        const generatedTopics: Topic[] = data.data.topics.slice(0, 5).map((t: any, idx: number) => ({
-          id: idx + 1,
+        const batchCount = batch === 1 ? INITIAL_COUNT : LOAD_MORE_COUNT;
+        const rawNewTopics: Topic[] = data.data.topics.slice(0, batchCount).map((t: any, idx: number) => ({
+          id: existingTopics.length + idx + 1,
           title: t.title,
           description: t.description,
+          trending_source: t.trending_source || 'ai',
+          trending_keyword: t.trending_keyword || null,
+          hashtags: Array.isArray(t.hashtags) ? t.hashtags.slice(0, 3) : [],
         }));
 
-        console.log('[TopicRecommendations] Generated topics:', generatedTopics);
-        setTopics(generatedTopics);
-        cacheTopics(generatedTopics);
+        // Client-side dedup: filter out topics with titles already shown
+        const existingTitlesLower = new Set(existingTopics.map(t => t.title.toLowerCase()));
+        const uniqueNewTopics = batch > 1
+          ? rawNewTopics.filter(t => !existingTitlesLower.has(t.title.toLowerCase()))
+          : rawNewTopics;
+
+        // Re-assign sequential IDs after dedup
+        const startId = existingTopics.length + 1;
+        uniqueNewTopics.forEach((t, idx) => { t.id = startId + idx; });
+
+        const allTopics = batch > 1 ? [...existingTopics, ...uniqueNewTopics] : uniqueNewTopics;
+        console.log('[TopicRecommendations] Generated topics:', uniqueNewTopics.length, 'total:', allTopics.length);
+        setTopics(allTopics);
+        setCurrentBatch(batch);
+        cacheTopics(allTopics, batch, keyword);
       } else {
         console.log('[TopicRecommendations] Invalid response, using fallback:', data);
-        setTopics(getFallbackTopics(language));
+        if (batch === 1) {
+          setTopics(getFallbackTopics(scriptLanguage));
+        }
       }
     } catch (err: any) {
       console.error("[TopicRecommendations] Error generating topics:", err);
-      setTopics(getFallbackTopics(language));
-      // DON'T cache fallback topics on error - allows retry to fetch fresh from API
-      // Removed: cacheTopics(...) to enable proper refresh
+      if (batch === 1) {
+        setTopics(getFallbackTopics(scriptLanguage));
+      }
+      // For batch > 1: keep existing topics, don't crash
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   };
 
@@ -361,16 +548,79 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
     setRefreshing(true);
     setSelectedId(null);
+    setCurrentBatch(1);
 
     localStorage.removeItem(TOPICS_CACHE_KEY);
 
+    if (activeKeyword) {
+      await generateTopics(1, [], activeKeyword);
+    } else {
+      await loadTopics(true);
+    }
+  };
+
+  // Handle load more topics
+  const handleLoadMore = async () => {
+    if (loadingMore || currentBatch >= MAX_BATCHES || disabled) return;
+    setLoadingMore(true);
+    await generateTopics(currentBatch + 1, topics, activeKeyword || undefined);
+  };
+
+  // Handle keyword search
+  const handleKeywordSearch = async (keyword?: string) => {
+    const kw = (keyword || searchKeyword).trim();
+    if (!kw) return;
+
+    if (!checkRateLimit()) return;
+    recordRefresh();
+
+    setActiveKeyword(kw);
+    setSearchKeyword(kw);
+    setSearchLoading(true);
+    setSelectedId(null);
+    setCurrentBatch(1);
+
+    localStorage.removeItem(TOPICS_CACHE_KEY);
+
+    await generateTopics(1, [], kw);
+    setSearchLoading(false);
+  };
+
+  // Clear keyword search and return to personalized topics
+  const handleClearKeyword = async () => {
+    setActiveKeyword(null);
+    setSearchKeyword('');
+    setSelectedId(null);
+    setCurrentBatch(1);
+
+    localStorage.removeItem(TOPICS_CACHE_KEY);
+
+    setLoading(true);
     await loadTopics(true);
+  };
+
+  // Record topic selection to user_topic_history
+  const recordTopicSelection = async (topic: Topic) => {
+    if (!user?.id) return;
+    try {
+      await supabase.from('user_topic_history').insert({
+        user_id: user.id,
+        topic_title: topic.title,
+        topic_description: topic.description,
+        trending_source: topic.trending_source || 'ai',
+        trending_keyword: topic.trending_keyword || null,
+        action: 'selected',
+      });
+    } catch (err) {
+      console.error('[TopicRecommendations] Error recording selection:', err);
+    }
   };
 
   // Handle topic selection
   const handleSelectTopic = (topic: Topic) => {
     if (disabled) return;
     setSelectedId(topic.id);
+    recordTopicSelection(topic);
     onSelectTopic(topic);
   };
 
@@ -416,13 +666,13 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   // Loading skeleton
   if (loading || onboardingLoading) {
     const loadingText = {
-      title: language === "id" ? "Topik Rekomendasi AI" : language === "hi" ? "AI-जनित विषय" : "AI-Generated Topics",
-      generating: language === "id" ? "Sedang membuat rekomendasi topik..." : language === "hi" ? "विषय अनुशंसाएं बना रहे हैं..." : "Generating topic recommendations...",
+      title: language === "id" ? "Topik Trending" : language === "hi" ? "ट्रेंडिंग विषय" : "Trending Topics",
+      generating: language === "id" ? "Mencari topik trending..." : language === "hi" ? "ट्रेंडिंग विषय खोज रहे हैं..." : "Finding trending topics...",
       pleaseWait: language === "id" ? "Mohon tunggu sebentar" : language === "hi" ? "कृपया प्रतीक्षा करें" : "Please wait a moment",
     };
 
     return (
-      <div className="mb-6 sm:mb-8 w-full max-w-5xl mx-auto">
+      <div className="mb-6 sm:mb-8 w-full">
         <div className="flex items-center justify-between mb-3 sm:mb-4">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
@@ -453,13 +703,13 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
           </div>
         </div>
         {/* Desktop skeleton */}
-        <div className="hidden sm:grid sm:grid-cols-2 xl:grid-cols-5 gap-3">
-          {[1, 2, 3, 4, 5].map((i) => (
+        <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {Array.from({ length: 9 }).map((_, i) => (
             <div
               key={i}
-              className="h-28 bg-card border border-border-default rounded-xl animate-pulse flex items-center justify-center"
+              className="h-20 bg-card border border-border-default rounded-lg animate-pulse flex items-center justify-center"
             >
-              <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+              <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
             </div>
           ))}
         </div>
@@ -469,27 +719,39 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
   // UI text translations
   const uiText = {
-    title: language === "id" ? "Topik Rekomendasi AI" : language === "hi" ? "AI-जनित विषय" : "AI-Generated Topics",
+    title: language === "id" ? "Topik Trending" : language === "hi" ? "ट्रेंडिंग विषय" : "Trending Topics",
     refresh: language === "id" ? "Refresh" : language === "hi" ? "रीफ्रेश" : "Refresh",
     wait: language === "id" ? "Tunggu" : language === "hi" ? "रुकें" : "Wait",
-    basedOn: language === "id" ? "Berdasarkan:" : language === "hi" ? "आधारित:" : "Based on:",
+    basedOn: language === "id" ? "Berdasarkan Niche:" : language === "hi" ? "निच के आधार पर:" : "Based on Niches:",
     orType: language === "id" ? "atau ketik topik sendiri" : language === "hi" ? "या अपना विषय टाइप करें" : "or type your own topic",
-    rateLimitWarning: language === "id" 
+    loadMore: language === "id" ? "Muat Lebih Banyak" : language === "hi" ? "और लोड करें" : "Load More Topics",
+    loadingMore: language === "id" ? "Memuat..." : language === "hi" ? "लोड हो रहा है..." : "Loading...",
+    topicCount: language === "id" ? "topik" : language === "hi" ? "विषय" : "topics",
+    rateLimitWarning: language === "id"
       ? `Terlalu banyak refresh. Tunggu ${cooldownRemaining} detik.`
       : language === "hi"
       ? `बहुत सारे रीफ्रेश। ${cooldownRemaining} सेकंड प्रतीक्षा करें।`
       : `Too many refresh attempts. Please wait ${cooldownRemaining} seconds.`,
+    searchPlaceholder: language === "id" ? "Cari keyword trending..." : language === "hi" ? "ट्रेंडिंग कीवर्ड खोजें..." : "Search trending keyword...",
+    trendingNow: language === "id" ? "Trending:" : language === "hi" ? "ट्रेंडिंग:" : "Trending:",
+    resultsFor: language === "id" ? "Hasil untuk:" : language === "hi" ? "परिणाम:" : "Results for:",
+    searching: language === "id" ? "Mencari topik" : language === "hi" ? "विषय खोज रहे हैं" : "Searching topics for",
   };
 
   return (
-    <div className="mb-6 sm:mb-8 w-full max-w-5xl mx-auto">
+    <div className="mb-6 sm:mb-8 w-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 sm:mb-5">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 sm:w-6 sm:h-6 text-primary" />
+          <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-primary" />
           <h3 className="text-sm sm:text-xl font-semibold text-text-primary">
             {uiText.title}
           </h3>
+          {topics.length > 0 && (
+            <span className="text-text-muted text-xs">
+              {topics.length} {uiText.topicCount}
+            </span>
+          )}
         </div>
 
         {/* Refresh Button with Rate Limit */}
@@ -530,9 +792,9 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         </div>
       )}
 
-      {/* Context Badges - Show user's personalization (hidden on mobile) */}
-      {(onboardingData?.interest || onboardingData?.selected_niches || onboardingData?.creative_dna) && (
-        <div className="hidden sm:flex flex-wrap items-center gap-2 mb-4">
+      {/* Context Badges - Show user's personalization ABOVE search bar */}
+      {!activeKeyword && (onboardingData?.interest || onboardingData?.selected_niches || onboardingData?.creative_dna) && (
+        <div className="flex flex-wrap items-center gap-2 mb-3">
           <span className="text-text-muted text-xs">
             {uiText.basedOn}
           </span>
@@ -566,41 +828,194 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         </div>
       )}
 
-      {/* Mobile Carousel - Show only on mobile */}
+      {/* Search Bar */}
+      <div className="mb-3 sm:mb-4" ref={searchContainerRef}>
+        <div className="relative">
+          {searchLoading ? (
+            <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />
+          ) : (
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+          )}
+          <input
+            type="text"
+            value={searchKeyword}
+            onChange={(e) => handleSearchInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { handleKeywordSearch(); setShowSuggestions(false); }
+              if (e.key === 'Escape') setShowSuggestions(false);
+            }}
+            onFocus={() => { if (searchKeyword.trim().length >= 1) setShowSuggestions(true); }}
+            placeholder={uiText.searchPlaceholder}
+            className="w-full pl-9 pr-9 py-2 sm:py-2.5 bg-card border border-border-default rounded-lg text-sm text-text-primary placeholder-text-muted focus:border-primary focus:outline-none transition-colors"
+            disabled={disabled || searchLoading}
+          />
+          {searchKeyword && !searchLoading && (
+            <button
+              onClick={() => { activeKeyword ? handleClearKeyword() : setSearchKeyword(''); setShowSuggestions(false); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Autocomplete Dropdown - Google-like suggestions */}
+          {showSuggestions && autocompleteSuggestions.length > 0 && (
+            <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-card border border-border-default rounded-lg shadow-lg overflow-hidden max-h-[320px] overflow-y-auto">
+              {autocompleteSuggestions.map((suggestion, i) => {
+                // Highlight the part that matches user input
+                const query = searchKeyword.trim().toLowerCase();
+                const idx = suggestion.toLowerCase().indexOf(query);
+                return (
+                  <button
+                    key={i}
+                    onClick={() => { handleKeywordSearch(suggestion); setShowSuggestions(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-text-secondary hover:bg-surface hover:text-text-primary transition-colors"
+                  >
+                    <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+                    <span className="flex-1 truncate">
+                      {idx >= 0 ? (
+                        <>
+                          {suggestion.slice(0, idx)}
+                          <span className="text-text-muted">{suggestion.slice(idx, idx + query.length)}</span>
+                          <span className="font-medium text-text-primary">{suggestion.slice(idx + query.length)}</span>
+                        </>
+                      ) : (
+                        <span className="font-medium text-text-primary">{suggestion}</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Active keyword indicator */}
+        {activeKeyword && !searchLoading && (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-text-muted text-xs">{uiText.resultsFor}</span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-primary/15 border border-primary/30 rounded-full text-xs text-primary font-medium">
+              #{activeKeyword}
+              <button onClick={handleClearKeyword} className="hover:text-primary-hover">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          </div>
+        )}
+
+        {/* Trending Chips - horizontally scrollable */}
+        {!activeKeyword && trendingChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            <span className="text-text-muted text-xs whitespace-nowrap">{uiText.trendingNow}</span>
+            {trendingChips.map((chip, i) => {
+              const sourceColor = chip.source === 'tiktok' ? 'bg-pink-500' : chip.source === 'google' ? 'bg-blue-500' : chip.source === 'instagram' ? 'bg-purple-500' : 'bg-amber-500';
+              return (
+                <button
+                  key={i}
+                  onClick={() => handleKeywordSearch(chip.keyword)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-card border border-border-default rounded-full text-xs text-text-secondary hover:border-primary/50 hover:text-primary transition-colors whitespace-nowrap"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${sourceColor}`} />
+                  #{chip.keyword}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Search Loading State */}
+      {searchLoading && (
+        <>
+          <div className="flex items-center justify-center gap-3 py-4 mb-3">
+            <Loader2 className="w-5 h-5 text-primary animate-spin" />
+            <p className="text-text-secondary text-sm">
+              {uiText.searching} <span className="text-primary font-medium">"{activeKeyword}"</span>...
+            </p>
+          </div>
+          {/* Mobile skeleton */}
+          <div className="sm:hidden px-8 mb-4">
+            <div className="h-24 bg-card border border-border-default rounded-xl animate-pulse flex items-center justify-center">
+              <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+            </div>
+          </div>
+          {/* Desktop skeleton */}
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-3 gap-2 mb-4">
+            {Array.from({ length: 9 }).map((_, i) => (
+              <div key={`search-skeleton-${i}`} className="h-20 bg-card border border-border-default rounded-lg animate-pulse flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Topic Content - Hidden during search loading */}
+      {!searchLoading && (<>
+
+      {/* Mobile Carousel - Show only on mobile, sorted by source */}
       <div className="sm:hidden relative">
-        <div 
+        <div
           className="relative overflow-hidden"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <div 
+          <div
             ref={carouselRef}
             className="flex transition-transform duration-300 ease-out"
             style={{ transform: `translateX(-${carouselIndex * 100}%)` }}
           >
-            {topics.map((topic) => {
+            {[...topics].sort((a, b) => {
+              const order: Record<string, number> = { google: 0, tiktok: 1, instagram: 2, ai: 3 };
+              return (order[a.trending_source || 'ai'] ?? 3) - (order[b.trending_source || 'ai'] ?? 3);
+            }).map((topic) => {
               const isSelected = selectedId === topic.id;
+              const badge = topic.trending_source ? SOURCE_BADGE_CONFIG[topic.trending_source] : null;
               return (
                 <div key={topic.id} className="w-full flex-shrink-0">
                   <button
                     onClick={() => handleSelectTopic(topic)}
                     disabled={disabled}
                     className={`
-                      w-full text-left p-4 rounded-xl border-2 transition-all duration-200
+                      w-full text-left p-3 rounded-lg border transition-all duration-200
                       ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
                       ${isSelected
-                        ? "bg-primary/20 border-primary shadow-lg shadow-primary/20"
+                        ? "bg-primary/20 border-primary shadow-md shadow-primary/20"
                         : "bg-card border-border-default"
                       }
                     `}
                   >
-                    <h4 className="text-text-primary font-semibold text-base mb-2">
+                    {/* Source badge + check */}
+                    <div className="flex items-center justify-between mb-1.5">
+                      {badge && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${badge.bg} ${badge.border} ${badge.text}`}>
+                          {badge.label}
+                        </span>
+                      )}
+                      {isSelected && (
+                        <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-text-primary font-semibold text-sm mb-1 line-clamp-2 leading-tight">
                       {topic.title}
                     </h4>
-                    <p className="text-text-muted text-sm line-clamp-3">
+                    <p className="text-text-muted text-xs line-clamp-2 leading-tight">
                       {topic.description}
                     </p>
+                    {/* Hashtags */}
+                    {topic.hashtags && topic.hashtags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {topic.hashtags.map((tag, i) => (
+                          <span key={i} className="text-[9px] text-primary/70 bg-primary/10 px-1 py-0.5 rounded flex items-center gap-0.5">
+                            <Hash className="w-2 h-2" />
+                            {tag.replace('#', '')}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </button>
                 </div>
               );
@@ -622,41 +1037,111 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         </div>
       </div>
 
-      {/* Desktop Grid - Hidden on mobile */}
-      <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 lg:gap-4">
-        {topics.map((topic) => {
-          const isSelected = selectedId === topic.id;
+      {/* Desktop Grid - Sorted by source, compact single row */}
+      <div className="hidden sm:block">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+          {[...topics].sort((a, b) => {
+            const order: Record<string, number> = { google: 0, tiktok: 1, instagram: 2, ai: 3 };
+            return (order[a.trending_source || 'ai'] ?? 3) - (order[b.trending_source || 'ai'] ?? 3);
+          }).map((topic) => {
+            const isSelected = selectedId === topic.id;
+            const badge = topic.trending_source ? SOURCE_BADGE_CONFIG[topic.trending_source] : SOURCE_BADGE_CONFIG.ai;
+            return (
+              <button
+                key={topic.id}
+                onClick={() => handleSelectTopic(topic)}
+                disabled={disabled}
+                className={`
+                  text-left p-3 rounded-lg border transition-all duration-200 flex flex-col
+                  hover:scale-[1.01] active:scale-[0.99]
+                  ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                  ${isSelected
+                    ? "bg-primary/20 border-primary shadow-md shadow-primary/20"
+                    : "bg-card border-border-default hover:border-primary/50 hover:bg-card/80"
+                  }
+                `}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${badge.bg} ${badge.border} ${badge.text}`}>
+                    {badge.label}
+                  </span>
+                  {isSelected && (
+                    <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 text-white" />
+                    </span>
+                  )}
+                </div>
+                <h4 className="text-text-primary font-medium text-sm mb-1 line-clamp-2 leading-snug">
+                  {topic.title}
+                </h4>
+                <p className="text-text-muted text-[11px] line-clamp-2 leading-snug flex-1">
+                  {topic.description}
+                </p>
+                {topic.hashtags && topic.hashtags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {topic.hashtags.map((tag, i) => (
+                      <span key={i} className="text-[8px] text-primary/70 bg-primary/10 px-1 py-0.5 rounded flex items-center gap-0.5">
+                        <Hash className="w-2 h-2" />
+                        {tag.replace('#', '')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
 
-          return (
-            <button
-              key={topic.id}
-              onClick={() => handleSelectTopic(topic)}
-              disabled={disabled}
-              className={`
-                text-left p-4 lg:p-5 rounded-xl border-2 transition-all duration-200
-                hover:scale-[1.02] active:scale-[0.98]
-                ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-                ${isSelected
-                  ? "bg-primary/20 border-primary shadow-lg shadow-primary/20"
-                  : "bg-card border-border-default hover:border-primary/50 hover:bg-card/80"
-                }
-              `}
-            >
-              <h4 className="text-text-primary font-medium text-sm lg:text-base mb-2 line-clamp-2">
-                {topic.title}
-              </h4>
-              <p className="text-text-muted text-xs lg:text-sm line-clamp-2">
-                {topic.description}
-              </p>
-            </button>
-          );
-        })}
+        {/* Load More Skeleton Cards */}
+        {loadingMore && (
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mt-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={`skeleton-${i}`} className="p-2.5 rounded-lg border border-border-default bg-card animate-pulse flex flex-col gap-1">
+                <div className="w-12 h-3 bg-surface rounded-full" />
+                <div className="w-full h-3 bg-surface rounded" />
+                <div className="w-3/4 h-3 bg-surface rounded" />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Divider */}
-      <div className="flex items-center gap-2 sm:gap-4 lg:gap-6 mt-4 sm:mt-6 lg:mt-8">
+      {/* Load More Button */}
+      {currentBatch < MAX_BATCHES && topics.length > 0 && !loading && (
+        <div className="flex justify-center mt-4">
+          <button
+            onClick={handleLoadMore}
+            disabled={loadingMore || disabled || rateLimited}
+            className={`
+              flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all
+              ${loadingMore || disabled || rateLimited
+                ? 'bg-surface text-text-muted cursor-not-allowed'
+                : 'bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30'
+              }
+            `}
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {uiText.loadingMore}
+              </>
+            ) : (
+              <>
+                <Plus className="w-4 h-4" />
+                {uiText.loadMore}
+                <span className="text-xs text-text-muted">({currentBatch}/{MAX_BATCHES})</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      </>)}
+
+      {/* Divider - hidden on desktop 2-column layout */}
+      <div className="flex items-center gap-2 sm:gap-4 mt-4 sm:mt-6 lg:hidden">
         <div className="flex-1 h-px bg-border-default" />
-        <span className="text-text-muted text-xs sm:text-sm lg:text-base whitespace-nowrap">
+        <span className="text-text-muted text-xs sm:text-sm whitespace-nowrap">
           {uiText.orType}
         </span>
         <div className="flex-1 h-px bg-border-default" />

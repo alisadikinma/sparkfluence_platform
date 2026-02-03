@@ -105,7 +105,8 @@ Location: `D:\Projects\sparkfluence_platform\docs\knowledge\`
 │  │   ├── generate-images (fal.ai multi-model)              │
 │  │   ├── generate-videos (Kling 2.5 / Wan 2.5)             │
 │  │   ├── generate-tts (Chatterbox Turbo)                   │
-│  │   └── generate-music (Minimax Music v2)                 │
+│  │   ├── generate-music (Minimax Music v2)                 │
+│  │   └── autocomplete-keywords (Google Suggest proxy)      │
 │  ├── PostgreSQL + pgvector (RAG)                           │
 │  └── Storage Buckets                                        │
 │                         │                                   │
@@ -269,6 +270,10 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 // ❌ CANNOT import .md files
 // ✅ Use .ts with exported string template literals
 
+// External API Restrictions (Supabase Deno runtime)
+// ❌ Blocked from data center IPs: Google Trends, TikTok API, Instagram API
+// ✅ Working: Google Suggest API (suggestqueries.google.com/complete/search)
+
 // Required pattern
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -357,6 +362,9 @@ git log --oneline -10
 | B-roll shows faces | Using seedream-v4 or qwen-image (no reference)? |
 | Indonesian wrong pronouns | Using gue/lo, not saya/kamu? |
 | TTS sounds robotic | Temperature 0.7-0.9 for more natural? |
+| LLM forcing irrelevant trends | Say "ONLY if relevant" not "at least N trending" |
+| Tailwind overflow scroll broken | Parent overflow-hidden blocks child - use flex-wrap |
+| localStorage cache stale | Use versioned cache keys (e.g., `_v2` suffix) |
 
 ---
 

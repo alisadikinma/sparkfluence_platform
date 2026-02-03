@@ -58,7 +58,38 @@
       "Bash(if exist \"supabase\\\\config.toml\" echo FOUND: Supabase config)",
       "Bash(if exist \"backend\\\\main.py\" echo FOUND: Python backend)",
       "Bash(test:*)",
-      "Bash(if not exist \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\" mkdir \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\")"
+      "Bash(if not exist \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\" mkdir \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\")",
+      "Bash(gh api:*)",
+      "Bash(echo:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase",
+    "context7"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/block-env-edit.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/type-check-on-edit.js"
+          }
+        ]
+      }
     ]
   }
 }

@@ -1,306 +1,295 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { callGeminiHybrid, callOpenRouterHybrid, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface TopicRequest {
-  interest: string;
-  profession?: string;
-  niches: string[];
-  objectives?: string[];
-  dnaStyles: string[];
-  language?: 'indonesian' | 'english' | 'hindi';
-  count?: number;
-  country?: string; // ISO country code for Google Trends
-}
-
 // ============================================================================
-// Google Trends RSS (FREE - No API Key Required)
+// Direct LLM calls
 // ============================================================================
 
-async function fetchGoogleTrendsRSS(geo: string = 'ID'): Promise<string[]> {
+async function callGemini(prompt: string, apiKey: string, timeoutMs: number): Promise<{ content: string | null; error: string | null }> {
   try {
-    const url = `https://trends.google.com/trending/rss?geo=${geo}`;
-    console.log(`[Trends] Fetching: ${url}`);
-    
-    const response = await fetch(url, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.85, maxOutputTokens: 2500 },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
       }
-    });
-    
-    if (!response.ok) {
-      console.warn(`[Trends] Error: ${response.status}`);
-      return [];
+    );
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      return { content: null, error: `HTTP ${res.status}: ${errBody.slice(0, 150)}` };
     }
-
-    const xml = await response.text();
-    
-    // Parse XML for titles
-    const titleMatches = xml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/g) || [];
-    const trends = titleMatches
-      .map(match => {
-        const inner = match.match(/<!\[CDATA\[(.*?)\]\]>/);
-        return inner ? inner[1] : '';
-      })
-      .filter(t => t && t !== 'Daily Search Trends' && t.length > 2)
-      .slice(0, 15);
-
-    console.log(`[Trends] Found ${trends.length} trending topics`);
-    return trends;
-    
-  } catch (error) {
-    console.error('[Trends] Fetch error:', error);
-    return [];
+    const data = await res.json();
+    return { content: data?.candidates?.[0]?.content?.parts?.[0]?.text || null, error: null };
+  } catch (e: any) {
+    return { content: null, error: e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timeout' : e.message };
   }
 }
+
+async function callOpenRouter(msgs: Array<{ role: string; content: string }>, apiKey: string, model: string, timeoutMs: number): Promise<{ content: string | null; error: string | null }> {
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://sparkfluence.studio',
+        'X-Title': 'Sparkfluence',
+      },
+      body: JSON.stringify({ model, messages: msgs, temperature: 0.85, max_tokens: 2500 }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      return { content: null, error: `HTTP ${res.status}: ${errBody.slice(0, 150)}` };
+    }
+    const data = await res.json();
+    return { content: data?.choices?.[0]?.message?.content || null, error: null };
+  } catch (e: any) {
+    return { content: null, error: e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timeout' : e.message };
+  }
+}
+
+// ============================================================================
+// Main Handler
+// ============================================================================
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  try {
-    const { 
-      interest, 
-      profession,
-      niches, 
-      objectives,
-      dnaStyles,
-      language = 'indonesian',
-      count = 5,
-      country = 'ID'
-    }: TopicRequest = await req.json();
+  const startTime = Date.now();
+  const DEADLINE_MS = 22000; // Must respond within 22s to avoid Supabase killing us
 
-    if (!interest || !niches?.length || !dnaStyles?.length) {
+  try {
+    const {
+      interest, profession, niches, objectives, dnaStyles,
+      language = 'indonesian', count = 6, country = 'ID',
+      batch = 1, exclude_titles = [], user_id,
+      search_keyword,
+    } = await req.json();
+
+    const isKeywordSearch = !!(search_keyword && search_keyword.trim());
+
+    // Default mode requires interest/niches/dna. Keyword search mode doesn't.
+    if (!isKeywordSearch && (!interest || !niches?.length || !dnaStyles?.length)) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: { code: 'MISSING_PARAMS', message: 'Interest, niches, and DNA styles are required' }
-        }),
+        JSON.stringify({ success: false, error: { code: 'MISSING_PARAMS', message: 'Interest, niches, and DNA styles are required' } }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Initialize Supabase client for key rotation
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-    // Get current date for context
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.toLocaleString('en-US', { month: 'long' });
+    // ====================================================================
+    // 1. Fetch EVERYTHING in parallel: trending, history, and ALL API keys
+    // ====================================================================
+    const [trendingResult, historyResult, geminiPoolRows, orPoolRows] = await Promise.all([
+      supabase.from('trending_topics').select('keyword, source, volume_score')
+        .eq('country', country).gt('expires_at', new Date().toISOString())
+        .order('volume_score', { ascending: false }).limit(15)
+        .then(({ data }) => data || []).catch(() => []),
+      user_id
+        ? supabase.from('user_topic_history').select('topic_title')
+            .eq('user_id', user_id).gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString())
+            .limit(20).then(({ data }) => (data || []).map((r: any) => r.topic_title)).catch(() => [])
+        : Promise.resolve([]),
+      // Fetch ALL active keys directly (faster than RPC, gets all keys)
+      supabase.from('api_keys_pool').select('api_key')
+        .eq('provider', 'gemini').eq('is_active', true).eq('is_exhausted', false)
+        .order('priority').order('usage_count')
+        .then(({ data }) => (data || []).map((r: any) => r.api_key)).catch(() => []),
+      supabase.from('api_keys_pool').select('api_key')
+        .eq('provider', 'openrouter').eq('is_active', true).eq('is_exhausted', false)
+        .order('priority').order('usage_count')
+        .then(({ data }) => (data || []).map((r: any) => r.api_key)).catch(() => []),
+    ]);
 
-    // ========================================================================
-    // 1. Fetch Google Trends (Real-time Trending)
-    // ========================================================================
-    console.log('\n' + '='.repeat(60));
-    console.log('🎬 Topic Generation Request');
-    console.log(`Interest: ${interest} | Niches: ${niches.join(', ')}`);
-    console.log('='.repeat(60));
+    // Collect keys: Gemini from pool only (env key is compromised), OpenRouter pool + env
+    const orEnvKey = Deno.env.get('OPENROUTER_API_KEY') || null;
+    const geminiKeys = geminiPoolRows as string[];
+    const orKeys = [...new Set([...orPoolRows, orEnvKey].filter(Boolean))] as string[];
 
-    const trendingTopics = await fetchGoogleTrendsRSS(country);
-    
-    // Filter trends relevant to user's niches
-    const relevantTrends = trendingTopics.filter(trend => {
-      const trendLower = trend.toLowerCase();
-      return niches.some(niche => {
-        const nicheLower = niche.toLowerCase();
-        return nicheLower.split(' ').some(word => 
-          word.length > 3 && trendLower.includes(word)
-        ) || trendLower.split(' ').some(word => 
-          word.length > 3 && nicheLower.includes(word)
-        );
-      }) || interest.toLowerCase().split(' ').some(word => 
-        word.length > 3 && trendLower.includes(word)
-      );
-    });
+    let trendingKeywords = trendingResult as Array<{ keyword: string; source: string; volume_score: number }>;
+    let trendingSource = 'database';
 
-    console.log(`\n📊 Trends Analysis:`);
-    console.log(`  All trends: ${trendingTopics.length}`);
-    console.log(`  Relevant to niche: ${relevantTrends.length}`);
-    if (trendingTopics.length > 0) {
-      console.log(`  Top 5: ${trendingTopics.slice(0, 5).join(', ')}`);
+    // RSS fallback only for batch 1 and only if DB empty (skip for load-more)
+    if (trendingKeywords.length === 0 && batch === 1) {
+      try {
+        const res = await fetch(`https://trends.google.com/trending/rss?geo=${country}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (res.ok) {
+          const xml = await res.text();
+          const titles = (xml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/g) || [])
+            .map(m => (m.match(/<!\[CDATA\[(.*?)\]\]>/) || [])[1] || '')
+            .filter(t => t && t !== 'Daily Search Trends' && t.length > 2)
+            .slice(0, 10);
+          trendingKeywords = titles.map(k => ({ keyword: k, source: 'google', volume_score: 50 }));
+        }
+      } catch { /* ignore */ }
+      trendingSource = 'rss_fallback';
     }
 
-    // Language-specific instructions
-    const languageInstructions: Record<string, string> = {
-      indonesian: 'Generate topics in Bahasa Indonesia. Use local context, trending topics, and relatable language for Indonesian audience.',
-      english: 'Generate topics in English. Use global trends and universally relatable content.',
-      hindi: 'Generate topics in Hindi (Devanagari script). Use local Indian context and Bollywood-style engaging titles.'
-    };
+    const allExclusions = [...new Set([...historyResult, ...exclude_titles])];
 
-    const topicCount = Math.min(Math.max(count, 1), 10); // Clamp between 1-10
+    console.log(`[Topics] Setup done in ${Date.now() - startTime}ms. Keys: gemini=${geminiKeys.length}, or=${orKeys.length}, trends=${trendingKeywords.length}`);
 
-    const systemPrompt = `You are a viral content strategist for short-form video (TikTok, Instagram Reels, YouTube Shorts).
+    // ====================================================================
+    // 2. Build LLM prompt
+    // ====================================================================
+    const topicCount = Math.min(Math.max(count, 1), 10);
+    const langMap: Record<string, string> = { indonesian: 'Bahasa Indonesia', english: 'English', hindi: 'Hindi (Devanagari)', french: 'French' };
 
-CURRENT DATE: ${currentMonth} ${currentYear}
-
-Generate exactly ${topicCount} specific, actionable video topic ideas based on the user's profile.
-
-${trendingTopics.length > 0 ? `
-CURRENT TRENDING TOPICS (${country} - ${new Date().toLocaleDateString()}):
-${trendingTopics.slice(0, 10).map((t, i) => `${i + 1}. ${t}`).join('\n')}
-` : ''}
-
-${relevantTrends.length > 0 ? `
-RELEVANT TRENDS FOR THIS NICHE:
-${relevantTrends.map(t => `• ${t}`).join('\n')}
-` : ''}
-
-IMPORTANT RULES:
-1. Topics MUST be directly related to the user's niches: ${niches.join(', ')}
-2. Each topic should combine their interest (${interest}) with their specific niches
-3. Match the tone to the DNA styles: ${dnaStyles.join(', ')}
-4. Topics should feel specific and actionable, not generic
-5. At least 1-2 topics should incorporate current trending topics (if relevant)
-6. Include a hook angle that makes viewers want to watch
-7. Return ONLY valid JSON
-
-LANGUAGE: ${languageInstructions[language] || languageInstructions.english}
-
-OUTPUT FORMAT:
-{
-  "topics": [
-    {
-      "id": 1,
-      "title": "Catchy, specific video title",
-      "description": "Brief explanation of what the video will cover"
-    }
-  ]
-}`;
-
-    let userPrompt = `Generate ${topicCount} SPECIFIC video topic ideas for a creator with:
-- Main Interest: ${interest}
-- Content Niches: ${niches.join(', ')}
-- Creative Style: ${dnaStyles.join(', ')}`;
-
-    if (profession) {
-      userPrompt += `\n- Profession: ${profession}`;
+    let trendingSection = '';
+    if (trendingKeywords.length > 0) {
+      trendingSection = `\nTRENDING NOW (${country}):\n` + trendingKeywords.slice(0, 10).map(t => `- [${t.source.toUpperCase()}] ${t.keyword}`).join('\n');
     }
 
-    if (objectives && objectives.length > 0) {
-      userPrompt += `\n- Content Goals: ${objectives.join(', ')}`;
+    let exclusionSection = '';
+    if (allExclusions.length > 0) {
+      exclusionSection = `\nDO NOT repeat: ${allExclusions.slice(0, 15).map(t => `"${t}"`).join(', ')}`;
     }
 
-    userPrompt += `
+    let systemPrompt: string;
+    let userPrompt: string;
 
-CRITICAL: Every topic MUST be about their niches (${niches.join(', ')}). Do NOT generate generic topics like "morning habits" unless it relates to their niche.
+    if (isKeywordSearch) {
+      // ── KEYWORD SEARCH MODE: ignore DNA/Niche, focus on keyword ──
+      const kw = search_keyword.trim();
+      systemPrompt = `You are a viral content strategist. Generate ${topicCount} video topics about "${kw}".
+DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+${batch > 1 ? `BATCH ${batch} — generate COMPLETELY DIFFERENT topics.` : ''}${trendingSection}${exclusionSection}
 
-${language === 'indonesian' ? 'Write all titles and descriptions in Bahasa Indonesia.' : ''}
-${language === 'hindi' ? 'Write all titles and descriptions in Hindi using Devanagari script.' : ''}
+RULES:
+1. ALL ${topicCount} topics MUST be about "${kw}" — explore different angles, perspectives, subtopics
+2. Do NOT limit to any specific niche — be creative and broad
+3. If trending keywords relate to "${kw}", incorporate them (tag source)
+4. Each needs hook angle + 2-3 hashtags
+5. Tag source: google/tiktok/instagram/ai
+6. Language: ${langMap[language] || 'English'}
+7. Return ONLY JSON
 
-Return ONLY JSON.`;
+FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|tiktok|instagram|ai","trending_keyword":"...|null","hashtags":["#tag1","#tag2"]}]}`;
 
-    console.log('Generating topics for:', { interest, profession, niches, objectives, dnaStyles, language, count: topicCount });
+      userPrompt = `${topicCount} topics about: "${kw}"`;
+      if (batch > 1) userPrompt += `. Batch ${batch}, different angles.`;
+      userPrompt += ' JSON only.';
+    } else {
+      // ── DEFAULT MODE: use DNA + Niche preferences ──
+      systemPrompt = `You are a viral content strategist. Generate ${topicCount} video topics.
+DATE: ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+${batch > 1 ? `BATCH ${batch} — generate COMPLETELY DIFFERENT topics.` : ''}${trendingSection}${exclusionSection}
 
-    // Try Gemini first (FAST - primary), OpenRouter as fallback
+CRITICAL RULES:
+1. EVERY topic MUST be DIRECTLY relevant to these niches: ${niches.join(', ')}
+2. Interest: ${interest}. Tone: ${dnaStyles.join(', ')}
+3. ONLY use trending keywords if they MATCH the user's niches. IGNORE trending keywords that are unrelated to the niches (e.g. if niche is "Technology", ignore fitness/travel/food trends)
+4. If no trending keyword matches the niches, generate ALL topics as "ai" source — do NOT force irrelevant trends
+5. Each needs hook angle + 2-3 hashtags relevant to the niche
+6. Tag source: google/tiktok/instagram (ONLY if trending keyword is relevant) or ai
+7. Language: ${langMap[language] || 'English'}
+8. Return ONLY JSON
+
+FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|tiktok|instagram|ai","trending_keyword":"...|null","hashtags":["#tag1","#tag2"]}]}`;
+
+      userPrompt = `${topicCount} topics for: ${interest} (${niches.join(', ')}), style: ${dnaStyles.join(', ')}`;
+      if (profession) userPrompt += `, profession: ${profession}`;
+      if (batch > 1) userPrompt += `. Batch ${batch}, different angles.`;
+      userPrompt += ' JSON only.';
+    }
+
+    // ====================================================================
+    // 3. Call LLM with deadline awareness
+    // ====================================================================
     let content: string | null = null;
     let usedProvider = 'unknown';
-    
-    // 1. Try Gemini (primary - fast)
-    console.log('[Topics] Trying Gemini (primary)...');
-    const geminiResult = await callGeminiHybrid(
-      supabase,
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      {
-        model: 'gemini-2.0-flash',
-        temperature: 0.85,
-        maxTokens: 2000
-      }
-    );
+    const errors: string[] = [];
+    const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+    const msgs = [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }];
 
-    if (geminiResult.success && geminiResult.content) {
-      content = geminiResult.content;
-      usedProvider = `gemini-${geminiResult.source}`;
-      console.log(`[Topics] Gemini success (source: ${geminiResult.source})`);
-    } else {
-      // 2. Fallback to OpenRouter
-      console.log('[Topics] Gemini failed:', geminiResult.error);
-      console.log('[Topics] Trying OpenRouter fallback...');
-      
-      const openRouterResult = await callOpenRouterHybrid(
-        supabase,
-        [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        {
-          model: 'meta-llama/llama-3.3-70b-instruct:free',
-          temperature: 0.85,
-          maxTokens: 2000
+    const remainingMs = () => DEADLINE_MS - (Date.now() - startTime);
+
+    // Try Gemini keys (403 errors are instant, real calls ~5-10s)
+    for (const key of geminiKeys) {
+      if (content || remainingMs() < 5000) break;
+      const timeout = Math.min(10000, remainingMs() - 3000);
+      if (timeout < 3000) break;
+      const r = await callGemini(fullPrompt, key, timeout);
+      if (r.content) { content = r.content; usedProvider = 'gemini'; }
+      else errors.push(`Gemini: ${r.error}`);
+    }
+    if (geminiKeys.length === 0) errors.push('Gemini: no keys');
+
+    // Try OpenRouter — use fast model first (8B), fallback to 70B
+    const orModels = ['meta-llama/llama-3.1-8b-instruct', 'meta-llama/llama-3.3-70b-instruct'];
+    if (!content && remainingMs() > 5000) {
+      outer: for (const model of orModels) {
+        for (const key of orKeys) {
+          if (content || remainingMs() < 4000) break outer;
+          const timeout = Math.min(12000, remainingMs() - 2000);
+          if (timeout < 3000) break outer;
+          const r = await callOpenRouter(msgs, key, model, timeout);
+          if (r.content) { content = r.content; usedProvider = `openrouter:${model.split('/')[1]}`; break outer; }
+          else errors.push(`OR(${model.split('/')[1]}): ${r.error}`);
         }
-      );
-
-      if (openRouterResult.data?.choices?.[0]?.message?.content) {
-        content = openRouterResult.data.choices[0].message.content;
-        usedProvider = `openrouter-${openRouterResult.source}`;
-        console.log(`[Topics] OpenRouter success (source: ${openRouterResult.source})`);
       }
+      if (orKeys.length === 0) errors.push('OpenRouter: no keys');
     }
 
     if (!content) {
-      throw new Error('All LLM providers failed or rate limited');
+      throw new Error(`All providers failed (${Date.now() - startTime}ms): ${errors.join(' | ')}`);
     }
 
-    // Parse JSON
-    let jsonContent = content;
-    if (jsonContent.includes('```json')) {
-      jsonContent = jsonContent.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-    } else if (jsonContent.includes('```')) {
-      jsonContent = jsonContent.replace(/```\n?/g, '');
-    }
-    jsonContent = jsonContent.trim();
+    console.log(`[Topics] LLM done in ${Date.now() - startTime}ms via ${usedProvider}`);
 
-    let parsedTopics;
-    try {
-      parsedTopics = JSON.parse(jsonContent);
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError);
-      console.error('Raw content:', content);
-      throw new Error('Failed to parse LLM response');
-    }
+    // ====================================================================
+    // 4. Parse JSON
+    // ====================================================================
+    // Strip markdown fences, then extract the outermost {...} block
+    let jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) throw new Error('No JSON object in response');
+    jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+    const parsed = JSON.parse(jsonStr);
+    if (!parsed.topics || !Array.isArray(parsed.topics)) throw new Error('Invalid response');
 
-    if (!parsedTopics.topics || !Array.isArray(parsedTopics.topics)) {
-      throw new Error('Invalid response structure');
-    }
-
-    console.log(`Generated ${parsedTopics.topics.length} topics successfully via ${usedProvider}`);
+    const validSources = ['google', 'tiktok', 'instagram', 'ai'];
+    const topics = parsed.topics.map((t: any) => ({
+      title: t.title || '',
+      description: t.description || '',
+      trending_source: validSources.includes(t.trending_source) ? t.trending_source : 'ai',
+      trending_keyword: t.trending_keyword || null,
+      hashtags: Array.isArray(t.hashtags) ? t.hashtags.slice(0, 3).map((h: string) => h.startsWith('#') ? h : `#${h}`) : [],
+    }));
 
     return new Response(
       JSON.stringify({
         success: true,
-        data: {
-          topics: parsedTopics.topics,
-          language,
-          provider: usedProvider,
-          generated_at: new Date().toISOString(),
-          trends_used: trendingTopics.slice(0, 5),
-          relevant_trends: relevantTrends.slice(0, 3)
-        }
+        data: { topics, batch, language, provider: usedProvider, generated_at: new Date().toISOString(),
+          trending_source: trendingSource, trending_count: trendingKeywords.length, exclusion_count: allExclusions.length,
+          search_keyword: isKeywordSearch ? search_keyword.trim() : null,
+          timing_ms: Date.now() - startTime },
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('Error:', error);
-    
+    console.error(`Error (${Date.now() - startTime}ms):`, error);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: {
-          code: 'GENERATION_ERROR',
-          message: error.message || 'Failed to generate topics'
-        }
-      }),
+      JSON.stringify({ success: false, error: { code: 'GENERATION_ERROR', message: error.message || 'Failed to generate topics' } }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

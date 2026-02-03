@@ -7,12 +7,9 @@ import { getAvatarWithCache } from "../../../lib/avatarCache";
 import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
 import { Sparkles, ChevronDown, ScrollText, User, Upload, X, Loader2, Trash2, Edit2, Check } from "lucide-react";
 import { Button } from "../../../components/ui/button";
+import { Topic } from "../../../types/topic";
 
-export interface SelectedTopic {
-  id: number;
-  title: string;
-  description: string;
-}
+export type SelectedTopic = Topic;
 
 interface SavedAvatar {
   id: string;
@@ -173,15 +170,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
         
         if (!error && avatars) {
           setSavedAvatars(avatars);
-          
-          // If there's a default saved avatar, use it
-          const defaultAvatar = avatars.find(a => a.is_default);
-          if (defaultAvatar) {
-            setAvatarOption('saved');
-            setSelectedSavedAvatar(defaultAvatar);
-            setCharacterDescription(defaultAvatar.character_description);
-            setUploadedAvatarPreview(defaultAvatar.avatar_url);
-          }
+          // Always keep profile as default — saved avatars only used when explicitly selected
         }
       } catch (err) {
         console.error('Error loading data:', err);
@@ -647,7 +636,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
             onChange={(e) => handlePromptChange(e.target.value)}
             placeholder={currentInputType?.placeholder}
             className={`w-full bg-transparent text-text-primary placeholder:text-text-muted resize-none focus:outline-none text-base sm:text-lg p-2 ${
-              inputType === "transcript" ? "min-h-[160px] sm:min-h-[180px] lg:min-h-[200px]" : "min-h-[120px] sm:min-h-[120px] lg:min-h-[140px] lg:text-xl"
+              inputType === "transcript" ? "min-h-[180px] sm:min-h-[220px] lg:min-h-[260px]" : "min-h-[160px] sm:min-h-[180px] lg:min-h-[220px] lg:text-xl"
             }`}
             disabled={loading}
           />
