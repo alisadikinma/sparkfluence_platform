@@ -1,4 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -29,55 +31,31 @@ serve(async (req) => {
 
     console.log('[RECOMMEND-STYLES] Request:', { interest, profession, platforms, niches })
 
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY')
-    
-    if (!geminiApiKey) {
-      // Fallback to random recommendations if no API key
-      console.log('[RECOMMEND-STYLES] No API key, using fallback')
-      const shuffled = [...AVAILABLE_STYLES].sort(() => 0.5 - Math.random())
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            recommended: shuffled.slice(0, 3),
-            source: 'fallback'
-          }
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    // Create Supabase client for pool-based key rotation
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
 
     // Build prompt for Gemini
     const prompt = buildPrompt({ interest, profession, platforms, objectives, niches, language })
 
-    // Call Gemini 2.0 Flash
-    const response = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': geminiApiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 256
-          }
-        })
-      }
-    )
+    // Call Gemini 2.0 Flash via pool-based key rotation
+    const geminiResult = await callGeminiHybrid(supabase, [
+      { role: 'user', content: prompt }
+    ], {
+      model: 'gemini-2.0-flash',
+      temperature: 0.7,
+      maxTokens: 256
+    })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[RECOMMEND-STYLES] Gemini error:', errorText)
-      throw new Error(`Gemini API error: ${response.status}`)
+    if (!geminiResult.success || !geminiResult.content) {
+      console.error('[RECOMMEND-STYLES] Gemini error:', geminiResult.error)
+      throw new Error(geminiResult.error || 'Gemini API failed')
     }
 
-    const data = await response.json()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-    
+    const text = geminiResult.content
+
     console.log('[RECOMMEND-STYLES] Gemini response:', text)
 
     // Parse recommended style IDs from response

@@ -164,7 +164,7 @@ export const Loading: React.FC = () => {
 
         <div className="max-w-md mx-auto">
           <div className="flex gap-2 mb-6">
-            {[1, 2, 3, 4, 5, 6, 7].map((step) => (
+            {[1, 2, 3, 4, 5, 6].map((step) => (
               <div
                 key={step}
                 className="h-1 flex-1 rounded-full bg-[#7c3aed]"

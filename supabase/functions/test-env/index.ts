@@ -1,4 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { getApiKeyFromPool, getStats, callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,83 +12,63 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  const results = {
+  const results: any = {
     step1_env: {},
-    step2_openrouter: null,
-    step3_gemini_embedding: null,
-    errors: []
+    step2_pool_stats: null,
+    step3_gemini_pool_test: null,
+    errors: [] as string[]
   }
 
-  // Step 1: Check env vars
+  // Step 1: Check required env vars (only infra secrets, not API keys)
   results.step1_env = {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL') ? '✅ SET' : '❌ NOT SET',
     SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? '✅ SET' : '❌ NOT SET',
-    GEMINI_API_KEY: Deno.env.get('GEMINI_API_KEY') ? '✅ SET' : '❌ NOT SET',
-    OPENROUTER_API_KEY: Deno.env.get('OPENROUTER_API_KEY') ? '✅ SET' : '❌ NOT SET',
+    FAL_AI_API_KEY: Deno.env.get('FAL_AI_API_KEY') ? '✅ SET' : '❌ NOT SET',
+    GROQ_API_KEY: Deno.env.get('GROQ_API_KEY') ? '✅ SET' : '❌ NOT SET',
+    // These should NO LONGER be set (migrated to pool):
+    GEMINI_API_KEY_deprecated: Deno.env.get('GEMINI_API_KEY') ? '⚠️ STILL SET (should remove)' : '✅ REMOVED',
+    OPENROUTER_API_KEY_deprecated: Deno.env.get('OPENROUTER_API_KEY') ? '⚠️ STILL SET (should remove)' : '✅ REMOVED',
   }
 
-  // Step 2: Test OpenRouter API
-  const openrouterKey = Deno.env.get('OPENROUTER_API_KEY')
-  if (openrouterKey) {
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openrouterKey}`,
-          'HTTP-Referer': 'https://sparkfluence.com',
-          'X-Title': 'Sparkfluence'
-        },
-        body: JSON.stringify({
-          model: 'meta-llama/llama-3.3-70b-instruct:free',
-          messages: [{ role: 'user', content: 'Say "Hello"' }],
-          max_tokens: 10
-        })
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        results.step2_openrouter = '✅ OpenRouter works: ' + data.choices[0].message.content
-      } else {
-        const errorText = await response.text()
-        results.step2_openrouter = '❌ OpenRouter error: ' + response.status
-        results.errors.push(errorText)
-      }
-    } catch (e) {
-      results.step2_openrouter = '❌ OpenRouter fetch error'
-      results.errors.push(e.message)
-    }
-  } else {
-    results.step2_openrouter = '⏭️ Skipped (no API key)'
+  // Create Supabase client
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+  if (!supabaseUrl || !supabaseKey) {
+    results.errors.push('SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set')
+    return new Response(
+      JSON.stringify(results, null, 2),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
   }
 
-  // Step 3: Test Gemini Embedding
-  const geminiKey = Deno.env.get('GEMINI_API_KEY')
-  if (geminiKey) {
-    try {
-      const response = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
-          body: JSON.stringify({ model: 'models/text-embedding-004', content: { parts: [{ text: 'test' }] } })
-        }
-      )
-      
-      if (response.ok) {
-        const data = await response.json()
-        results.step3_gemini_embedding = '✅ Gemini Embedding works: ' + data.embedding.values.length + ' dimensions'
-      } else {
-        const errorText = await response.text()
-        results.step3_gemini_embedding = '❌ Gemini Embedding error: ' + response.status
-        results.errors.push(errorText)
-      }
-    } catch (e) {
-      results.step3_gemini_embedding = '❌ Gemini Embedding fetch error'
-      results.errors.push(e.message)
+  const supabase = createClient(supabaseUrl, supabaseKey)
+
+  // Step 2: Check api_keys_pool stats
+  try {
+    const stats = await getStats(supabase)
+    results.step2_pool_stats = stats.length > 0
+      ? stats.map(s => `${s.provider}: ${s.activeKeys}/${s.totalKeys} active, ${s.exhaustedKeys} exhausted, usage ${s.usagePercentage}%`)
+      : '❌ No keys in pool'
+  } catch (e: any) {
+    results.step2_pool_stats = '❌ Error checking pool'
+    results.errors.push(e.message)
+  }
+
+  // Step 3: Test Gemini via pool
+  try {
+    const geminiResult = await callGeminiHybrid(supabase, [
+      { role: 'user', content: 'Say "Hello" in one word.' }
+    ], { maxTokens: 10 })
+
+    if (geminiResult.success) {
+      results.step3_gemini_pool_test = `✅ Gemini pool works (source: ${geminiResult.source}): ${geminiResult.content}`
+    } else {
+      results.step3_gemini_pool_test = `❌ Gemini pool error: ${geminiResult.error}`
     }
-  } else {
-    results.step3_gemini_embedding = '⏭️ Skipped (no API key)'
+  } catch (e: any) {
+    results.step3_gemini_pool_test = '❌ Gemini pool test failed'
+    results.errors.push(e.message)
   }
 
   return new Response(

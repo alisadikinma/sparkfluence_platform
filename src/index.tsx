@@ -1,6 +1,6 @@
 import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PlannerProvider } from "./contexts/PlannerContext";
 import { OnboardingProvider } from "./contexts/OnboardingContext";
@@ -15,7 +15,6 @@ import { Login } from "./screens/Login";
 import { Register } from "./screens/Register";
 import { PublicLayout } from "./components/layout";
 import { Welcome } from "./screens/Welcome";
-import { PackageSelection } from "./screens/PackageSelection";
 import { Dashboard } from "./screens/Dashboard";
 import { Settings, PlanBilling, Profile, LinkedAccounts, Notifications } from "./screens/Settings";
 import { Billing } from "./screens/Billing";
@@ -25,7 +24,6 @@ import { CreativeDNA } from "./screens/CreativeDNA";
 import { AvatarUpload } from "./screens/AvatarUpload";
 import { AvatarPreview } from "./screens/AvatarPreview";
 import { ContentCuration } from "./screens/ContentCuration";
-import { TopicSelection } from "./screens/TopicSelection";
 import { ImageGeneration } from "./screens/ImageGeneration";
 import { VideoGeneration } from "./screens/VideoGeneration";
 import { MusicSelector } from "./screens/MusicSelector";
@@ -78,14 +76,14 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/register" element={<Register />} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
                     <Route path="/welcome" element={<Welcome />} />
-                    <Route path="/package-selection" element={<PackageSelection />} />
+                    <Route path="/package-selection" element={<Navigate to="/dashboard" replace />} />
                     <Route path="/onboarding" element={<Onboarding />} />
                     <Route path="/niche-recommendations" element={<NicheRecommendations />} />
                     <Route path="/creative-dna" element={<CreativeDNA />} />
                     <Route path="/avatar-upload" element={<AvatarUpload />} />
                     <Route path="/avatar-preview" element={<AvatarPreview />} />
                     <Route path="/content-curation" element={<ContentCuration />} />
-                    <Route path="/topic-selection" element={<TopicSelection />} />
+                    <Route path="/topic-selection" element={<Navigate to="/script-lab" replace />} />
                     <Route path="/image-generation" element={<ImageGeneration />} />
                     <Route path="/video-generation" element={<VideoGeneration />} />
                     <Route path="/music-selector" element={<MusicSelector />} />

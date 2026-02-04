@@ -1,21 +1,21 @@
 /**
- * API Key Rotation Helper (Hybrid Mode)
- * 
- * Supports both:
- * 1. Pool Table (api_keys_pool) - for rotation across multiple accounts
- * 2. Environment Secrets - as fallback when pool is empty/exhausted
- * 
- * Flow:
- * 1. Try to get key from pool table
- * 2. If pool empty/exhausted → fallback to Deno.env secret
- * 3. If secret also missing → return error
- * 
+ * API Key Rotation Helper
+ *
+ * All API keys come from the `api_keys_pool` table in Supabase.
+ * No environment secret fallback — single source of truth.
+ *
+ * Features:
+ * - Automatic rotation across multiple keys per provider
+ * - 429/402 → mark key as exhausted (daily cron resets)
+ * - 403 leaked/compromised → permanently deactivate key
+ * - Usage tracking per key
+ *
  * Usage:
  * ```typescript
- * import { getApiKeyHybrid, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
- * 
- * // Auto-handles pool → secrets fallback
- * const result = await callTavilyHybrid(supabase, 'AI niche ideas');
+ * import { callGeminiHybrid, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
+ *
+ * const result = await callGeminiHybrid(supabase, messages, { model: 'gemini-2.0-flash' });
+ * const search = await callTavilyHybrid(supabase, 'AI niche ideas');
  * ```
  */
 
@@ -26,12 +26,12 @@ import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // ============================================================================
 
 export interface ApiKeyResult {
-  keyId: string | null;      // null if from secrets
+  keyId: string;
   apiKey: string;
   keyName: string;
   usageCount: number;
   usageLimit: number;
-  source: 'pool' | 'secret'; // Track where key came from
+  source: 'pool';
 }
 
 export interface ApiKeyStats {
@@ -43,20 +43,6 @@ export interface ApiKeyStats {
   totalLimit: number;
   usagePercentage: number;
 }
-
-// ============================================================================
-// Secret name mapping for fallback
-// ============================================================================
-
-const SECRET_NAMES: Record<string, string> = {
-  'tavily': 'TAVILY_API_KEY',
-  'openrouter': 'OPENROUTER_API_KEY',
-  'huggingface': 'HUGGINGFACE_API_KEY',
-  'gemini': 'GEMINI_API_KEY',
-  'openai': 'OPENAI_API_KEY',
-  'pexels': 'PEXELS_API_KEY',
-  'veo': 'VEO_API_KEY',
-};
 
 // ============================================================================
 // Core Functions
@@ -100,66 +86,31 @@ export async function getApiKeyFromPool(
 }
 
 /**
- * Get API key from environment secrets (fallback)
- */
-export function getApiKeyFromSecret(provider: string): ApiKeyResult | null {
-  const secretName = SECRET_NAMES[provider];
-  if (!secretName) {
-    console.warn(`[ApiKeyRotation] No secret name mapping for ${provider}`);
-    return null;
-  }
-
-  const apiKey = Deno.env.get(secretName);
-  if (!apiKey) {
-    console.warn(`[ApiKeyRotation] Secret ${secretName} not found`);
-    return null;
-  }
-
-  console.log(`[ApiKeyRotation] Using ${provider} from secrets (${secretName})`);
-  return {
-    keyId: null,
-    apiKey,
-    keyName: `Secret (${secretName})`,
-    usageCount: 0,
-    usageLimit: 999999, // Unknown limit for secrets
-    source: 'secret'
-  };
-}
-
-/**
- * Get API key with hybrid approach: Pool first, then Secrets fallback
+ * Get API key from pool (alias for getApiKeyFromPool)
+ * All keys come from api_keys_pool table — no secret fallback.
  */
 export async function getApiKeyHybrid(
   supabase: SupabaseClient,
   provider: string
 ): Promise<ApiKeyResult | null> {
-  // 1. Try pool first
   const poolKey = await getApiKeyFromPool(supabase, provider);
   if (poolKey) {
     console.log(`[ApiKeyRotation] Using ${provider} from pool: ${poolKey.keyName} (${poolKey.usageCount}/${poolKey.usageLimit})`);
     return poolKey;
   }
 
-  // 2. Fallback to secrets
-  const secretKey = getApiKeyFromSecret(provider);
-  if (secretKey) {
-    return secretKey;
-  }
-
-  // 3. No key available
-  console.error(`[ApiKeyRotation] No API key available for ${provider} (pool empty, secret missing)`);
+  console.error(`[ApiKeyRotation] No API key available for ${provider} (all pool keys exhausted or none configured)`);
   return null;
 }
 
 /**
- * Increment usage count (only for pool keys)
+ * Increment usage count for a pool key
  */
 export async function incrementUsage(
   supabase: SupabaseClient,
   keyId: string | null,
   increment: number = 1
 ): Promise<boolean> {
-  // Skip if key is from secrets (no tracking)
   if (!keyId) {
     return true;
   }
@@ -183,15 +134,14 @@ export async function incrementUsage(
 }
 
 /**
- * Mark key as exhausted (only for pool keys)
+ * Mark key as exhausted (daily cron resets these)
  */
 export async function markExhausted(
   supabase: SupabaseClient,
   keyId: string | null
 ): Promise<boolean> {
-  // Skip if key is from secrets
   if (!keyId) {
-    console.warn(`[ApiKeyRotation] Cannot mark secret as exhausted`);
+    console.warn(`[ApiKeyRotation] No keyId provided for markExhausted`);
     return false;
   }
 
@@ -209,6 +159,38 @@ export async function markExhausted(
     return true;
   } catch (err) {
     console.error(`[ApiKeyRotation] Exception marking exhausted:`, err);
+    return false;
+  }
+}
+
+/**
+ * Deactivate key permanently (e.g., leaked/revoked keys)
+ * Sets is_active=false so it's never used again
+ */
+export async function deactivateKey(
+  supabase: SupabaseClient,
+  keyId: string | null
+): Promise<boolean> {
+  if (!keyId) {
+    console.warn(`[ApiKeyRotation] No keyId provided for deactivateKey`);
+    return false;
+  }
+
+  try {
+    const { error } = await supabase
+      .from('api_keys_pool')
+      .update({ is_active: false, is_exhausted: true })
+      .eq('id', keyId);
+
+    if (error) {
+      console.error(`[ApiKeyRotation] Error deactivating key:`, error);
+      return false;
+    }
+
+    console.log(`[ApiKeyRotation] Key ${keyId} DEACTIVATED permanently (is_active=false)`);
+    return true;
+  } catch (err) {
+    console.error(`[ApiKeyRotation] Exception deactivating key:`, err);
     return false;
   }
 }
@@ -246,45 +228,29 @@ export async function getStats(
 }
 
 // ============================================================================
-// Call with Rotation (Hybrid)
+// Call with Rotation
 // ============================================================================
 
 /**
- * Make API call with automatic rotation
- * - Tries pool keys first (with rotation on rate limit)
- * - Falls back to secrets if all pool keys exhausted
+ * Make API call with automatic key rotation from pool.
+ * Rotates to next key on rate limit (429), payment required (402), or auth errors.
  */
 export async function callWithRotationHybrid<T>(
   supabase: SupabaseClient,
   provider: string,
   apiCallFn: (apiKey: string) => Promise<{ data: T; status: number }>,
   maxRetries: number = 5
-): Promise<{ data: T | null; error: string | null; keyUsed: string | null; source: 'pool' | 'secret' | null }> {
+): Promise<{ data: T | null; error: string | null; keyUsed: string | null; source: 'pool' | null }> {
   let lastError = '';
-  let triedSecretFallback = false;
-  
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    // Get key (hybrid: pool first, then secret)
-    let keyResult: ApiKeyResult | null;
-    
-    if (!triedSecretFallback) {
-      // Try pool first
-      keyResult = await getApiKeyFromPool(supabase, provider);
-      
-      // If pool empty, switch to secret fallback
-      if (!keyResult) {
-        keyResult = getApiKeyFromSecret(provider);
-        triedSecretFallback = true;
-      }
-    } else {
-      // Already tried secret, no more options
-      break;
-    }
-    
+    // Get key from pool
+    const keyResult = await getApiKeyFromPool(supabase, provider);
+
     if (!keyResult) {
       return {
         data: null,
-        error: `No API keys available for ${provider}`,
+        error: `No API keys available for ${provider} (all pool keys exhausted or none configured)`,
         keyUsed: null,
         source: null
       };
@@ -294,44 +260,39 @@ export async function callWithRotationHybrid<T>(
 
     try {
       const result = await apiCallFn(keyResult.apiKey);
-      
-      // Check for rate limit (429) - ONLY THIS should mark as exhausted
-      if (result.status === 429) {
-        console.warn(`[ApiKeyRotation] ${keyResult.keyName} hit RATE LIMIT (429) - marking exhausted`);
-        
-        if (keyResult.source === 'pool' && keyResult.keyId) {
+
+      // Check for rate limit (429) or payment required (402) - mark as exhausted
+      if (result.status === 429 || result.status === 402) {
+        console.warn(`[ApiKeyRotation] ${keyResult.keyName} hit ${result.status === 429 ? 'RATE LIMIT' : 'PAYMENT REQUIRED'} (${result.status}) - marking exhausted`);
+        if (keyResult.keyId) {
           await markExhausted(supabase, keyResult.keyId);
-        } else {
-          triedSecretFallback = true;
         }
-        
-        lastError = `API rate limited (429)`;
+        lastError = `API ${result.status === 429 ? 'rate limited' : 'payment required'} (${result.status})`;
         continue;
       }
-      
-      // Check for auth errors (401/403) - DON'T mark exhausted, just skip to next key
-      // These are invalid/expired keys, not rate limits
+
+      // Check for auth errors (401/403)
       if (result.status === 401 || result.status === 403) {
-        console.warn(`[ApiKeyRotation] ${keyResult.keyName} returned AUTH ERROR (${result.status}) - skipping, NOT marking exhausted`);
-        
-        // Check if error message indicates expired/invalid key
         const errorMsg = result.data?.error?.message || '';
-        console.warn(`[ApiKeyRotation] Error message: ${errorMsg}`);
-        
-        // For secrets, no more fallback
-        if (keyResult.source === 'secret') {
-          triedSecretFallback = true;
+        console.warn(`[ApiKeyRotation] ${keyResult.keyName} returned AUTH ERROR (${result.status}): ${errorMsg}`);
+
+        // 403 with "leaked" = permanently broken key → deactivate
+        if (result.status === 403 && (errorMsg.toLowerCase().includes('leaked') || errorMsg.toLowerCase().includes('compromised'))) {
+          console.warn(`[ApiKeyRotation] Key ${keyResult.keyName} reported as LEAKED - deactivating permanently`);
+          if (keyResult.keyId) {
+            await deactivateKey(supabase, keyResult.keyId);
+          }
         }
-        
+
         lastError = `API auth error (${result.status}): ${errorMsg}`;
         continue;
       }
 
-      // Success - increment usage (only for pool keys)
-      if (keyResult.source === 'pool' && keyResult.keyId) {
+      // Success - increment usage
+      if (keyResult.keyId) {
         await incrementUsage(supabase, keyResult.keyId);
       }
-      
+
       return {
         data: result.data,
         error: null,
@@ -340,37 +301,38 @@ export async function callWithRotationHybrid<T>(
       };
     } catch (err: any) {
       const errorMessage = err.message || 'Unknown error';
-      
-      // Check if error is RATE LIMIT related - ONLY THEN mark exhausted
-      if (errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit') || errorMessage.toLowerCase().includes('quota exceeded')) {
-        console.warn(`[ApiKeyRotation] Rate limit error on ${keyResult.keyName} - marking exhausted`);
-        
-        if (keyResult.source === 'pool' && keyResult.keyId) {
+
+      // Check if error is RATE LIMIT or PAYMENT related - mark exhausted
+      if (errorMessage.includes('429') || errorMessage.includes('402') || errorMessage.toLowerCase().includes('rate limit') || errorMessage.toLowerCase().includes('quota exceeded') || errorMessage.toLowerCase().includes('payment required')) {
+        console.warn(`[ApiKeyRotation] Rate limit/quota error on ${keyResult.keyName} - marking exhausted`);
+        if (keyResult.keyId) {
           await markExhausted(supabase, keyResult.keyId);
-        } else {
-          triedSecretFallback = true;
         }
-        
         lastError = errorMessage;
         continue;
       }
-      
-      // Check if error is INVALID/EXPIRED key - DON'T mark exhausted
-      if (errorMessage.toLowerCase().includes('expired') || 
+
+      // Check if error indicates LEAKED key - deactivate permanently
+      if (errorMessage.toLowerCase().includes('leaked') || errorMessage.toLowerCase().includes('compromised')) {
+        console.warn(`[ApiKeyRotation] Leaked key error on ${keyResult.keyName} - deactivating permanently`);
+        if (keyResult.keyId) {
+          await deactivateKey(supabase, keyResult.keyId);
+        }
+        lastError = errorMessage;
+        continue;
+      }
+
+      // Check if error is INVALID/EXPIRED key - skip, don't mark exhausted
+      if (errorMessage.toLowerCase().includes('expired') ||
           errorMessage.toLowerCase().includes('invalid') ||
           errorMessage.toLowerCase().includes('api_key_invalid') ||
-          errorMessage.includes('401') || 
+          errorMessage.includes('401') ||
           errorMessage.includes('403')) {
         console.warn(`[ApiKeyRotation] Invalid/expired key error on ${keyResult.keyName} - NOT marking exhausted`);
-        
-        if (keyResult.source === 'secret') {
-          triedSecretFallback = true;
-        }
-        
         lastError = errorMessage;
         continue;
       }
-      
+
       // Other error - don't exhaust, report and stop
       console.error(`[ApiKeyRotation] Unexpected error on ${keyResult.keyName}: ${errorMessage}`);
       lastError = errorMessage;
@@ -387,11 +349,11 @@ export async function callWithRotationHybrid<T>(
 }
 
 // ============================================================================
-// Provider-specific Helpers (Hybrid Mode)
+// Provider-specific Helpers
 // ============================================================================
 
 /**
- * Call Tavily Search API (hybrid: pool → secrets)
+ * Call Tavily Search API (pool-based key rotation)
  */
 export async function callTavilyHybrid(
   supabase: SupabaseClient,
@@ -401,7 +363,7 @@ export async function callTavilyHybrid(
     maxResults?: number;
     includeAnswer?: boolean;
   } = {}
-): Promise<{ data: any; error: string | null; source: 'pool' | 'secret' | null }> {
+): Promise<{ data: any; error: string | null; source: 'pool' | null }> {
   const result = await callWithRotationHybrid(supabase, 'tavily', async (apiKey) => {
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
@@ -431,7 +393,7 @@ export async function callTavilyHybrid(
 }
 
 /**
- * Call OpenRouter Chat API (hybrid: pool → secrets)
+ * Call OpenRouter Chat API (pool-based key rotation)
  */
 export async function callOpenRouterHybrid(
   supabase: SupabaseClient,
@@ -441,7 +403,7 @@ export async function callOpenRouterHybrid(
     temperature?: number;
     maxTokens?: number;
   } = {}
-): Promise<{ data: any; error: string | null; tokensUsed?: number; source: 'pool' | 'secret' | null }> {
+): Promise<{ data: any; error: string | null; tokensUsed?: number; source: 'pool' | null }> {
   const result = await callWithRotationHybrid(supabase, 'openrouter', async (apiKey) => {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -452,7 +414,7 @@ export async function callOpenRouterHybrid(
         'X-Title': 'Sparkfluence'
       },
       body: JSON.stringify({
-        model: options.model || 'meta-llama/llama-3.3-70b-instruct:free',
+        model: options.model || 'google/gemini-2.5-flash-lite',
         messages,
         temperature: options.temperature ?? 0.8,
         max_tokens: options.maxTokens || 2048
@@ -474,7 +436,7 @@ export async function callOpenRouterHybrid(
 }
 
 /**
- * Call Gemini API (hybrid: pool → secrets)
+ * Call Gemini API (pool-based key rotation)
  * Primary for script generation - FAST!
  */
 export async function callGeminiHybrid(
@@ -485,9 +447,9 @@ export async function callGeminiHybrid(
     temperature?: number;
     maxTokens?: number;
   } = {}
-): Promise<{ success: boolean; content: string | null; error: string | null; source: 'pool' | 'secret' | null }> {
+): Promise<{ success: boolean; content: string | null; error: string | null; source: 'pool' | null }> {
   const model = options.model || 'gemini-2.0-flash';
-  
+
   // Combine messages into single prompt for Gemini
   const systemMsg = messages.find(m => m.role === 'system')?.content || '';
   const userMsg = messages.find(m => m.role === 'user')?.content || '';
@@ -515,7 +477,7 @@ export async function callGeminiHybrid(
 
   // Extract content from Gemini response
   const content = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  
+
   // Check for errors in response
   if (result.data?.error) {
     return {

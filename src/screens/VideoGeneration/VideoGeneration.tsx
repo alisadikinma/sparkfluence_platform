@@ -2070,11 +2070,11 @@ export const VideoGeneration = (): JSX.Element => {
             <Logo />
           </div>
           <div className="flex gap-2 mb-6 max-w-md mx-auto">
-            {[1, 2, 3, 4, 5, 6, 7].map((step) => (
+            {[1, 2, 3, 4, 5, 6].map((step) => (
               <div
                 key={step}
                 className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                  step <= 6 ? "bg-[#7c3aed]" : "bg-[#4e5562]"
+                  step <= 5 ? "bg-[#7c3aed]" : "bg-[#4e5562]"
                 }`}
               />
             ))}

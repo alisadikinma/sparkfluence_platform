@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useLanguage } from "../../../contexts/LanguageContext";
 import { useOnboardingStatus } from "../../../hooks/useOnboardingStatus";
+import { useRateLimit } from "../../../hooks/useRateLimit";
 import { supabase } from "../../../lib/supabase";
 import { useAuth } from "../../../contexts/AuthContext";
 import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
 import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle, Hash, TrendingUp, Check, Plus, Search, X } from "lucide-react";
 import { Topic, SOURCE_BADGE_CONFIG } from "../../../types/topic";
+import { getFallbackTopics } from "../../../constants/fallbackTopics";
 
 interface TopicRecommendationsProps {
   onSelectTopic: (topic: Topic) => void;
@@ -15,54 +17,6 @@ interface TopicRecommendationsProps {
 // Cache settings - v2: invalidated to support 9 initial topics
 const TOPICS_CACHE_KEY = 'sparkfluence_scriptlab_topics_v2';
 const TOPICS_CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
-
-// Rate limiting constants
-const REFRESH_RATE_LIMIT_KEY = 'sparkfluence_scriptlab_refresh_rate';
-const MAX_REFRESHES_PER_WINDOW = 3;
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const COOLDOWN_MS = 30 * 1000;
-
-// Language-aware fallback topics (9 per language to match INITIAL_COUNT)
-const fallbackTopicsByLang: Record<string, Topic[]> = {
-  id: [
-    { id: 1, title: "5 Kebiasaan Pagi yang Mengubah Hidupku", description: "Bagikan tips produktivitas personal yang relate dengan audience", trending_source: 'ai', hashtags: ['#morningroutine', '#produktivitas', '#tips'] },
-    { id: 2, title: "Rahasia yang Tidak Pernah Dibahas Orang", description: "Ungkap pengetahuan insider yang membangun kepercayaan", trending_source: 'ai', hashtags: ['#rahasia', '#insider', '#fakta'] },
-    { id: 3, title: "Dari Nol hingga Mahir dalam 30 Hari", description: "Dokumentasikan perjalananmu dan inspirasi orang lain", trending_source: 'ai', hashtags: ['#challenge', '#30hari', '#growth'] },
-    { id: 4, title: "Berhenti Melakukan Kesalahan Ini", description: "Bahas masalah umum yang sering dihadapi audience", trending_source: 'ai', hashtags: ['#tips', '#mistake', '#belajar'] },
-    { id: 5, title: "Cara Cepat Menguasai Skill Baru", description: "Tutorial praktis yang langsung bisa diterapkan", trending_source: 'ai', hashtags: ['#tutorial', '#skillup', '#belajar'] },
-    { id: 6, title: "Fakta Mengejutkan yang Jarang Orang Tahu", description: "Konten edukatif yang bikin audience penasaran", trending_source: 'ai', hashtags: ['#fakta', '#edukasi', '#viral'] },
-    { id: 7, title: "Review Jujur: Produk yang Lagi Hype", description: "Ulasan produk trending yang lagi banyak dibicarakan", trending_source: 'ai', hashtags: ['#review', '#honest', '#produk'] },
-    { id: 8, title: "Day in My Life sebagai Content Creator", description: "Behind the scenes kehidupan sehari-hari yang relatable", trending_source: 'ai', hashtags: ['#dayinmylife', '#creator', '#behindthescenes'] },
-    { id: 9, title: "Hal yang Gue Sesali Tidak Lakukan Lebih Awal", description: "Berbagi pengalaman hidup yang bisa jadi pelajaran", trending_source: 'ai', hashtags: ['#lifelesson', '#motivasi', '#sharing'] },
-  ],
-  en: [
-    { id: 1, title: "5 Morning Habits That Changed My Life", description: "Share personal productivity tips that resonate with your audience", trending_source: 'ai', hashtags: ['#morningroutine', '#productivity', '#habits'] },
-    { id: 2, title: "The Truth About [Your Niche] Nobody Talks About", description: "Reveal insider knowledge that builds trust and authority", trending_source: 'ai', hashtags: ['#truth', '#insider', '#exposed'] },
-    { id: 3, title: "How I Went From Beginner to Pro in 30 Days", description: "Document your journey and inspire others to take action", trending_source: 'ai', hashtags: ['#journey', '#30daychallenge', '#growth'] },
-    { id: 4, title: "Stop Making This Common Mistake", description: "Address pain points your audience faces daily", trending_source: 'ai', hashtags: ['#mistakes', '#tips', '#learning'] },
-    { id: 5, title: "The Fastest Way to Learn Any New Skill", description: "Practical tutorial that can be applied immediately", trending_source: 'ai', hashtags: ['#tutorial', '#skillup', '#learning'] },
-    { id: 6, title: "Things I Wish I Knew Before Starting", description: "Share hard-earned lessons to help beginners avoid pitfalls", trending_source: 'ai', hashtags: ['#beginner', '#advice', '#lessons'] },
-    { id: 7, title: "Honest Review: Is This Worth the Hype?", description: "Give your audience an authentic take on trending products", trending_source: 'ai', hashtags: ['#review', '#honest', '#trending'] },
-    { id: 8, title: "A Day in My Life as a Creator", description: "Behind the scenes content that builds authentic connection", trending_source: 'ai', hashtags: ['#dayinmylife', '#creator', '#behindthescenes'] },
-    { id: 9, title: "Unpopular Opinions That Changed My Perspective", description: "Challenge conventional thinking and spark engagement", trending_source: 'ai', hashtags: ['#unpopularopinion', '#perspective', '#debate'] },
-  ],
-  hi: [
-    { id: 1, title: "5 सुबह की आदतें जिन्होंने मेरी ज़िंदगी बदल दी", description: "व्यक्तिगत उत्पादकता टिप्स साझा करें जो आपके दर्शकों से जुड़ें", trending_source: 'ai', hashtags: ['#morningroutine', '#productivity', '#habits'] },
-    { id: 2, title: "वो सच जो कोई नहीं बताता", description: "अंदरूनी जानकारी प्रकट करें जो विश्वास और अधिकार बनाती है", trending_source: 'ai', hashtags: ['#truth', '#insider', '#facts'] },
-    { id: 3, title: "30 दिनों में शुरुआत से प्रो तक", description: "अपनी यात्रा का दस्तावेज़ीकरण करें और दूसरों को प्रेरित करें", trending_source: 'ai', hashtags: ['#challenge', '#30days', '#growth'] },
-    { id: 4, title: "यह गलती करना बंद करें", description: "आम समस्याओं को संबोधित करें जो आपके दर्शक रोज़ाना झेलते हैं", trending_source: 'ai', hashtags: ['#mistakes', '#tips', '#learning'] },
-    { id: 5, title: "कोई भी नया स्किल सीखने का सबसे तेज़ तरीका", description: "व्यावहारिक ट्यूटोरियल जो तुरंत लागू किया जा सके", trending_source: 'ai', hashtags: ['#tutorial', '#skillup', '#learning'] },
-    { id: 6, title: "काश मुझे यह पहले पता होता", description: "कड़ी मेहनत से सीखे गए सबक नए लोगों की मदद के लिए", trending_source: 'ai', hashtags: ['#advice', '#lessons', '#beginner'] },
-    { id: 7, title: "ईमानदार रिव्यू: क्या यह इतना अच्छा है?", description: "ट्रेंडिंग प्रोडक्ट्स पर अपनी सच्ची राय दें", trending_source: 'ai', hashtags: ['#review', '#honest', '#trending'] },
-    { id: 8, title: "एक क्रिएटर के रूप में मेरा पूरा दिन", description: "बिहाइंड द सीन्स कंटेंट जो प्रामाणिक कनेक्शन बनाता है", trending_source: 'ai', hashtags: ['#dayinmylife', '#creator', '#behindthescenes'] },
-    { id: 9, title: "अनपॉपुलर ओपिनियन जो आपकी सोच बदल दे", description: "पारंपरिक सोच को चुनौती दें और जुड़ाव बढ़ाएं", trending_source: 'ai', hashtags: ['#unpopularopinion', '#perspective', '#debate'] },
-  ],
-};
-
-// Get fallback topics based on language
-const getFallbackTopics = (lang: string): Topic[] => {
-  return fallbackTopicsByLang[lang] || fallbackTopicsByLang.en;
-};
 
 export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   onSelectTopic,
@@ -138,26 +92,16 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     }, 3000);
   };
 
-  // Rate limiting state
-  const [rateLimited, setRateLimited] = useState(false);
-  const [cooldownRemaining, setCooldownRemaining] = useState(0);
-  const cooldownIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Rate limiting (extracted hook)
+  const { rateLimited, cooldownRemaining, checkRateLimit, recordRefresh } = useRateLimit();
 
-  // Cleanup cooldown interval and autocomplete debounce on unmount
+  // Cleanup autocomplete debounce on unmount
   useEffect(() => {
     return () => {
-      if (cooldownIntervalRef.current) {
-        clearInterval(cooldownIntervalRef.current);
-      }
       if (autocompleteDebounceRef.current) {
         clearTimeout(autocompleteDebounceRef.current);
       }
     };
-  }, []);
-
-  // Check rate limit status on mount
-  useEffect(() => {
-    checkRateLimit();
   }, []);
 
   // Fetch trending chips on mount
@@ -256,86 +200,6 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       setShowSuggestions(false);
       setAutocompleteSuggestions([]);
     }
-  };
-
-  // Rate limiting functions
-  const getRateLimitData = (): { timestamps: number[]; cooldownUntil: number | null } => {
-    try {
-      const data = localStorage.getItem(REFRESH_RATE_LIMIT_KEY);
-      if (data) {
-        return JSON.parse(data);
-      }
-    } catch (e) {
-      console.error('Error reading rate limit data:', e);
-    }
-    return { timestamps: [], cooldownUntil: null };
-  };
-
-  const setRateLimitData = (data: { timestamps: number[]; cooldownUntil: number | null }) => {
-    try {
-      localStorage.setItem(REFRESH_RATE_LIMIT_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.error('Error saving rate limit data:', e);
-    }
-  };
-
-  const checkRateLimit = (): boolean => {
-    const now = Date.now();
-    const data = getRateLimitData();
-
-    if (data.cooldownUntil && now < data.cooldownUntil) {
-      const remaining = Math.ceil((data.cooldownUntil - now) / 1000);
-      setRateLimited(true);
-      setCooldownRemaining(remaining);
-      startCooldownTimer(data.cooldownUntil);
-      return false;
-    }
-
-    const recentTimestamps = data.timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-    
-    if (recentTimestamps.length >= MAX_REFRESHES_PER_WINDOW) {
-      const cooldownUntil = now + COOLDOWN_MS;
-      setRateLimitData({ timestamps: recentTimestamps, cooldownUntil });
-      setRateLimited(true);
-      setCooldownRemaining(Math.ceil(COOLDOWN_MS / 1000));
-      startCooldownTimer(cooldownUntil);
-      return false;
-    }
-
-    setRateLimitData({ timestamps: recentTimestamps, cooldownUntil: null });
-    setRateLimited(false);
-    return true;
-  };
-
-  const recordRefresh = () => {
-    const now = Date.now();
-    const data = getRateLimitData();
-    const recentTimestamps = data.timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-    recentTimestamps.push(now);
-    setRateLimitData({ timestamps: recentTimestamps, cooldownUntil: data.cooldownUntil });
-  };
-
-  const startCooldownTimer = (cooldownUntil: number) => {
-    if (cooldownIntervalRef.current) {
-      clearInterval(cooldownIntervalRef.current);
-    }
-
-    cooldownIntervalRef.current = setInterval(() => {
-      const now = Date.now();
-      const remaining = Math.ceil((cooldownUntil - now) / 1000);
-      
-      if (remaining <= 0) {
-        setRateLimited(false);
-        setCooldownRemaining(0);
-        const data = getRateLimitData();
-        setRateLimitData({ timestamps: data.timestamps, cooldownUntil: null });
-        if (cooldownIntervalRef.current) {
-          clearInterval(cooldownIntervalRef.current);
-        }
-      } else {
-        setCooldownRemaining(remaining);
-      }
-    }, 1000);
   };
 
   // Cache helper functions - NOW INCLUDES LANGUAGE AND NICHES HASH

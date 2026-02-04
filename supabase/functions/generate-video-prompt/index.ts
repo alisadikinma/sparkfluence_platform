@@ -1,4 +1,6 @@
 import { corsHeaders } from '../_shared/cors.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { callGeminiHybrid } from '../_shared/apiKeyRotation.ts';
 
 /**
  * Generate optimized video prompts from image analysis
@@ -84,11 +86,11 @@ function selectCameraMovement(segmentType: string, analysis: ImageAnalysis): str
 
 // Generate video prompt using Gemini
 async function generatePromptWithGemini(
+  supabase: any,
   analysis: ImageAnalysis,
   segmentType: string,
   scriptText: string,
-  durationSeconds: number,
-  geminiApiKey: string
+  durationSeconds: number
 ): Promise<string> {
   const cameraMovement = selectCameraMovement(segmentType, analysis);
 
@@ -120,36 +122,19 @@ REQUIREMENTS:
 
 Generate a single-paragraph video prompt that brings this image to life as ${durationSeconds}-second video clip:`;
 
-  const geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
-
-  const response = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: promptGeneration }]
-      }],
-      generationConfig: {
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 300,
-      }
-    })
+  const result = await callGeminiHybrid(supabase, [
+    { role: 'user', content: promptGeneration }
+  ], {
+    model: 'gemini-2.0-flash',
+    temperature: 0.7,
+    maxTokens: 300
   });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status}`);
+  if (!result.success || !result.content) {
+    throw new Error(result.error || 'No prompt generated from Gemini');
   }
 
-  const data = await response.json();
-  const generatedPrompt = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!generatedPrompt) {
-    throw new Error('No prompt generated from Gemini');
-  }
-
-  return generatedPrompt.trim();
+  return result.content.trim();
 }
 
 Deno.serve(async (req) => {
@@ -180,18 +165,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
-    if (!geminiApiKey) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
+    // Create Supabase client for pool-based key rotation
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
 
-    // Generate video prompt using Gemini
+    // Generate video prompt using Gemini (pool-based keys)
     const videoPrompt = await generatePromptWithGemini(
+      supabase,
       image_analysis,
       segment_type,
       script_text || '',
-      duration_seconds,
-      geminiApiKey
+      duration_seconds
     );
 
     // Select camera movement

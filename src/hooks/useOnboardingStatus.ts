@@ -73,7 +73,7 @@ export const useOnboardingStatus = () => {
 /**
  * Hook to navigate to the correct page based on onboarding status
  * - If onboarding not complete: go to /welcome -> /onboarding flow
- * - If onboarding complete: go directly to /topic-selection
+ * - If onboarding complete: go directly to /script-lab
  */
 export const useCreateVideoFlow = () => {
   const navigate = useNavigate();
@@ -95,8 +95,8 @@ export const useCreateVideoFlow = () => {
       };
       localStorage.setItem('onboarding_data', JSON.stringify(onboardingData));
       
-      // Go directly to topic selection
-      navigate('/topic-selection');
+      // Go directly to script lab
+      navigate('/script-lab');
     } else {
       // First time user - go through onboarding
       navigate('/welcome');

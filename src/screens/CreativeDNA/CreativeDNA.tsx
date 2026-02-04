@@ -237,8 +237,8 @@ export const CreativeDNA = (): JSX.Element => {
         });
       }
 
-      // Navigate to topic selection
-      navigate("/topic-selection");
+      // Navigate to avatar upload (topic selection removed from onboarding)
+      navigate("/avatar-upload");
     } catch (err: any) {
       console.error("Error saving onboarding:", err);
       setError(language === 'id' 
@@ -272,7 +272,7 @@ export const CreativeDNA = (): JSX.Element => {
             <Logo />
           </div>
           <div className="flex gap-2 mb-8 justify-center max-w-md mx-auto">
-            {[1, 2, 3, 4, 5, 6, 7].map((step) => (
+            {[1, 2, 3, 4, 5].map((step) => (
               <div
                 key={step}
                 className={`h-1 flex-1 rounded-full transition-all duration-300 ${

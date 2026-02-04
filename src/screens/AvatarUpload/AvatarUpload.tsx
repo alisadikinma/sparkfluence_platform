@@ -172,7 +172,6 @@ export const AvatarUpload = (): JSX.Element => {
             <div className="h-1 w-12 sm:w-16 bg-[#7c3aed] rounded-full" />
             <div className="h-1 w-12 sm:w-16 bg-[#7c3aed] rounded-full" />
             <div className="h-1 w-12 sm:w-16 bg-white/20 rounded-full" />
-            <div className="h-1 w-12 sm:w-16 bg-white/20 rounded-full" />
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-bold text-white text-center mb-3">

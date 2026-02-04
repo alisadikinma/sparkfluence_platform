@@ -1,4 +1,6 @@
 import { corsHeaders } from '../_shared/cors.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { callWithRotationHybrid } from '../_shared/apiKeyRotation.ts';
 
 interface ImageAnalysisResult {
   objects: string[];              // Main objects/subjects in image
@@ -31,10 +33,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
-    if (!geminiApiKey) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
+    // Create Supabase client for pool-based key rotation
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
 
     // Fetch image as base64
     let imageBase64: string;
@@ -76,40 +79,45 @@ ${script_text ? `- Script: ${script_text}` : ''}
 
 Focus on cinematic and professional video production terminology. Be specific and technical.`;
 
-    // Call Gemini Vision API
-    const geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
-
-    const geminiResponse = await fetch(`${geminiUrl}?key=${geminiApiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: analysisPrompt },
-            {
-              inline_data: {
-                mime_type: 'image/jpeg',
-                data: imageBase64
-              }
+    // Call Gemini Vision API using pool-based key rotation
+    const geminiResult = await callWithRotationHybrid(supabase, 'gemini', async (apiKey) => {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: analysisPrompt },
+                {
+                  inline_data: {
+                    mime_type: 'image/jpeg',
+                    data: imageBase64
+                  }
+                }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.4,
+              topK: 32,
+              topP: 1,
+              maxOutputTokens: 1024,
             }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.4,
-          topK: 32,
-          topP: 1,
-          maxOutputTokens: 1024,
+          })
         }
-      })
+      );
+
+      const data = await response.json();
+      return { data, status: response.status };
     });
 
-    if (!geminiResponse.ok) {
-      const errorText = await geminiResponse.text();
-      console.error('[ANALYZE_IMAGE] Gemini API error:', geminiResponse.status, errorText);
-      throw new Error(`Gemini API error: ${geminiResponse.status}`);
+    if (geminiResult.error) {
+      console.error('[ANALYZE_IMAGE] Gemini API error:', geminiResult.error);
+      throw new Error(`Gemini API error: ${geminiResult.error}`);
     }
 
-    const geminiData = await geminiResponse.json();
+    const geminiData = geminiResult.data;
 
     // Extract text response
     const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;

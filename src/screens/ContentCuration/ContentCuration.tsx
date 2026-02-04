@@ -32,7 +32,7 @@ export const ContentCuration = (): JSX.Element => {
         if (!session) {
           console.error("No session found");
           clearInterval(stepInterval);
-          navigate("/topic-selection");
+          navigate("/script-lab");
           return;
         }
 
@@ -61,7 +61,7 @@ export const ContentCuration = (): JSX.Element => {
 
         setTimeout(() => {
           clearInterval(stepInterval);
-          navigate("/topic-selection", {
+          navigate("/script-lab", {
             state: {
               ...location.state,
               topics: data.topics
@@ -71,7 +71,7 @@ export const ContentCuration = (): JSX.Element => {
       } catch (error) {
         console.error("Error generating topics:", error);
         setTimeout(() => {
-          navigate("/topic-selection", {
+          navigate("/script-lab", {
             state: location.state
           });
         }, 10000);

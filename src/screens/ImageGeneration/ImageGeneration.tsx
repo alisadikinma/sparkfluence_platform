@@ -1368,7 +1368,7 @@ export const ImageGeneration = (): JSX.Element => {
           // Save to localStorage for future loads
           saveProgress(formattedSegments, 'Your Video', null);
         } else {
-          navigate('/topic-selection');
+          navigate('/script-lab');
         }
       } else {
         const activeSessionId = localStorage.getItem('sparkfluence_active_session');
@@ -1396,10 +1396,10 @@ export const ImageGeneration = (): JSX.Element => {
             setVideoSettings(savedProgress.videoSettings || null);
             setIsLoaded(true);
           } else {
-            navigate('/topic-selection');
+            navigate('/script-lab');
           }
         } else {
-          navigate('/topic-selection');
+          navigate('/script-lab');
         }
       }
     };
@@ -2316,7 +2316,7 @@ export const ImageGeneration = (): JSX.Element => {
     } else if (fromAdStudio) {
       navigate("/ad-studio");
     } else {
-      navigate("/topic-selection", { state: { returning: true } });
+      navigate("/script-lab", { state: { returning: true } });
     }
   };
 
@@ -2548,11 +2548,11 @@ export const ImageGeneration = (): JSX.Element => {
             <Logo />
           </div>
           <div className="flex gap-2 mb-6 max-w-md mx-auto">
-            {[1, 2, 3, 4, 5, 6, 7].map((step) => (
+            {[1, 2, 3, 4, 5, 6].map((step) => (
               <div
                 key={step}
                 className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                  step <= 5 ? "bg-primary" : "bg-surface"
+                  step <= 4 ? "bg-primary" : "bg-surface"
                 }`}
               />
             ))}
@@ -2567,7 +2567,7 @@ export const ImageGeneration = (): JSX.Element => {
                 {currentTopic}
               </h1>
               <p className="text-text-muted text-sm">
-                {uiText.step} 5/7 • {uiText.duration}: {totalDuration}s 
+                {uiText.step} 4/6 • {uiText.duration}: {totalDuration}s 
                 {videoSettings && ` • ${videoSettings.aspectRatio}`}
               </p>
             </div>
