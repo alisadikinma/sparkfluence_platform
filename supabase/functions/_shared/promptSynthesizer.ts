@@ -579,6 +579,7 @@ export interface CreatorPromptInput {
   hasReferenceImage: boolean
   contextualOutfit?: string
   refinementNotes?: string
+  layout?: string  // 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center'
 }
 
 export interface CreatorPromptResult {
@@ -611,12 +612,13 @@ export async function buildCreatorPromptAsync(
     hope: { expression: 'warm smile, bright optimistic eyes', body: 'open posture, slight upward gaze' },
   }
   
-  // CHECK FOR CTA OVERRIDE
+  // CHECK FOR SEGMENT-SPECIFIC OVERRIDES
   const segmentUpper = input.segmentType.toUpperCase()
   const isCTA = segmentUpper === 'CTA' || segmentUpper === 'ENDING_CTA'
-  
+  const isHOOK = segmentUpper === 'HOOK'
+
   let emotionSpecs: { expression: string; body: string }
-  
+
   if (isCTA) {
     // CTA ALWAYS gets friendly/smile expression
     emotionSpecs = {
@@ -624,6 +626,14 @@ export async function buildCreatorPromptAsync(
       body: CTA_EMOTION_OVERRIDE.body
     }
     console.log(`[buildCreatorPromptAsync] 😊 CTA emotion override applied: friendly smile`)
+  } else if (isHOOK) {
+    // HOOK gets INTENSIFIED expression — must stop the scroll in 1.5 seconds
+    const baseEmotion = emotionMap[input.emotion.toLowerCase()] || emotionMap.curiosity
+    emotionSpecs = {
+      expression: `${baseEmotion.expression}, EXAGGERATED intensity — eyebrows raised high, eyes wide open, mouth slightly open as if about to reveal a secret`,
+      body: `${baseEmotion.body}, one hand raised pointing at viewer or gesturing dramatically, dynamic energy, leaning toward camera`
+    }
+    console.log(`[buildCreatorPromptAsync] 🎯 HOOK intensified emotion applied: ${input.emotion}`)
   } else {
     emotionSpecs = emotionMap[input.emotion.toLowerCase()] || emotionMap.authority
   }
@@ -636,7 +646,19 @@ export async function buildCreatorPromptAsync(
     'BODY': 'Medium close-up (MCU), 50mm f/2.8, eye-level',
   }
   const cameraSpecs = cameraMap[segmentUpper] || cameraMap['BODY']
-  
+
+  // Layout-aware framing hints
+  const layout = input.layout || 'full'
+  let layoutFraming = ''
+  if (layout === 'split-60-40' || layout === 'split-50-50') {
+    layoutFraming = 'Frame subject from waist up (medium shot), leave clean edges for split-screen compositing. Subject centered in frame.'
+  } else if (layout === 'pip') {
+    layoutFraming = 'Frame subject as close-up portrait from chest up, clean simple background for picture-in-picture overlay.'
+  } else if (layout === 'creator-center') {
+    layoutFraming = 'Subject centered in frame with generous transparent/clean background around them for overlay compositing.'
+  }
+  // 'full' = no extra framing instruction (default full-screen)
+
   // Build prompt
   let prompt: string
   
@@ -653,15 +675,15 @@ Pose: ${emotionSpecs.body}
 ${outfitInstruction}
 
 Camera: ${cameraSpecs}
-Composition: Rule of thirds, subject positioned for visual balance
+Composition: ${isHOOK ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens' : 'Rule of thirds, subject positioned for visual balance'}
 
-Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : '4:1'} ratio
-Color: Cinematic warm tones, Vision3 500T film stock look
-Background: Contextual for ${input.topic || 'content creation'}, moderate depth blur
+Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : isHOOK ? 'dramatic Rembrandt' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : isHOOK ? '5:1 high contrast' : '4:1'} ratio
+Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for attention' : ''}
+Background: ${isHOOK ? 'Slightly blurred contextual background with subtle visual element related to ' + (input.topic || 'content creation') + ' to create curiosity' : 'Contextual for ' + (input.topic || 'content creation') + ', moderate depth blur'}
 
 Preserve ONLY: exact facial features, face shape, and skin tone from reference image.
-Do NOT preserve: clothing, accessories, or background from reference.
-Style: Cinematic photorealistic, natural skin texture, high quality.
+Do NOT preserve: clothing, accessories, or background from reference.${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}
+Style: Cinematic photorealistic, natural skin texture, high quality.${isHOOK ? ' Maximum visual impact, scroll-stopping energy.' : ''}
 Clean frame, no text overlays, no watermarks.`
     
   } else {
@@ -673,16 +695,16 @@ Pose: ${emotionSpecs.body}
 Outfit: ${outfitLine}
 
 Camera: ${cameraSpecs}
-Composition: Rule of thirds, subject positioned for visual balance
+Composition: ${isHOOK ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens' : 'Rule of thirds, subject positioned for visual balance'}
 
-Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : '4:1'} ratio
-Color: Cinematic warm tones, Vision3 500T film stock look
-Background: Modern setting appropriate for ${input.topic || 'content creation'}
+Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : isHOOK ? 'dramatic Rembrandt' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : isHOOK ? '5:1 high contrast' : '4:1'} ratio
+Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for attention' : ''}
+Background: ${isHOOK ? 'Slightly blurred contextual background with subtle visual element related to ' + (input.topic || 'content creation') + ' to create curiosity' : 'Modern setting appropriate for ' + (input.topic || 'content creation')}
 
-Style: Cinematic photorealistic, natural skin texture, high quality.
+Style: Cinematic photorealistic, natural skin texture, high quality.${isHOOK ? ' Maximum visual impact, scroll-stopping energy.' : ''}${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}
 Clean frame, no text overlays, no watermarks.`
   }
-  
+
   if (input.refinementNotes?.trim()) {
     prompt += `\n\nAdditional requirements: ${input.refinementNotes.trim()}`
   }

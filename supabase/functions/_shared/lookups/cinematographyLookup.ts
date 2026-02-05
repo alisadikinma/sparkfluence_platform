@@ -1011,6 +1011,7 @@ export interface FullPromptParams {
   costume?: string;         // Override costume
   visualReference?: string; // Film reference (Blade Runner, etc.)
   useCharacterBible?: boolean; // Force use of default character bible
+  layout?: string;          // full, split-60-40, split-50-50, pip, creator-center
 }
 
 /**
@@ -1074,6 +1075,17 @@ export function buildFullCinematographyPrompt(params: FullPromptParams): string 
       ? 'Landscape 1792×1024'
       : 'Square 1024×1024';
   
+  // Layout-aware framing hints for split-screen / PiP compositing
+  const layout = params.layout || 'full';
+  let layoutFraming = '';
+  if (layout === 'split-60-40' || layout === 'split-50-50') {
+    layoutFraming = '\nFraming: Subject framed from waist up (medium shot), clean edges for split-screen compositing. Subject centered in frame.';
+  } else if (layout === 'pip') {
+    layoutFraming = '\nFraming: Close-up portrait from chest up, clean simple background for picture-in-picture overlay.';
+  } else if (layout === 'creator-center') {
+    layoutFraming = '\nFraming: Subject centered in frame with generous clean background around them for overlay compositing.';
+  }
+
   // Build the FULL prompt (target 400+ chars)
   // NOTE: Costume instruction is emphasized for image-to-image models (Nano Banana /edit)
   // to override the original clothing from reference image
@@ -1098,7 +1110,7 @@ Background: Moderate depth bokeh, subtle contextual elements
 
 Style: Cinematic photorealistic, natural skin texture, Hollywood production quality.
 Technical: ${resolution}, HD quality.
-Clean frame, no text overlays, no watermarks, no UI elements.${visualReference ? `\nVisual reference: ${visualReference} inspired lighting and color palette.` : ''}`;
+Clean frame, no text overlays, no watermarks, no UI elements.${layoutFraming}${visualReference ? `\nVisual reference: ${visualReference} inspired lighting and color palette.` : ''}`;
 
   return prompt;
 }

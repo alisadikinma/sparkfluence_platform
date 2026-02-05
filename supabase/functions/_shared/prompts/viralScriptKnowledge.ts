@@ -760,7 +760,7 @@ const WORD_LIMITS_ID: Record<number, number> = {
   15: 26, // 15s → 26 words
 };
 
-export function getStructureByDuration(duration: string, videoModel?: string, language: string = 'indonesian'): string {
+export function getStructureByDuration(duration: string, videoModel?: string, language: string = 'indonesian', enableLoopEnd: boolean = false): string {
   /**
    * Determine max segment duration based on video model.
    *
@@ -856,7 +856,7 @@ CRITICAL: Max 8s per segment. Total = 45s exactly.`,
 
 CRITICAL: Max 8s per segment. Total = 60s exactly.`,
     
-    '90s': `
+    '90s': enableLoopEnd ? `
 12 segments for 90s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
@@ -877,6 +877,29 @@ CRITICAL: Max 8s per segment. Total = 60s exactly.`,
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
 - BODY-X (SPLITTABLE): Write naturally, auto-split if over
 - FORE, PEAK, CTA, LOOP-END (STRICT ⛔): NO expansion!
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
+
+CRITICAL: Max 8s per segment. Total = 90s exactly.` : `
+12 segments for 90s video (VEO 3.1 - max 8s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
+| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-5 | 45-53s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-6 | 53-61s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-7 | 61-69s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-8 | 69-77s | 8s | B-ROLL | ${w8} words | Can split |
+| PEAK | 77-85s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
+| CTA | 85-90s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
+
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): Write naturally, auto-split if over
+- FORE, PEAK, CTA (STRICT ⛔): NO expansion!
 
 CRITICAL: Max 8s per segment. Total = 90s exactly.`
   };
@@ -934,7 +957,28 @@ CRITICAL: Max 10s per segment. Total = 45s exactly.`,
 
 CRITICAL: Max 10s per segment. Total = 60s exactly.`,
 
-    '90s': `
+    '90s': enableLoopEnd ? `
+10 segments for 90s video (WAN 2.5 - max 10s per segment):
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-3 | 35-45s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-4 | 45-55s | 10s | B-ROLL | ${w10} words | Can split |
+| BODY-5 | 55-65s | 10s | B-ROLL | ${w10} words | Can split |
+| PEAK | 65-75s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| CTA | 75-85s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
+| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
+
+⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
+- BODY-X (SPLITTABLE): 10s=${w10}w - auto-split if over
+- FORE, PEAK, CTA, LOOP-END (STRICT ⛔): NO expansion!
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
+
+CRITICAL: Max 10s per segment. Total = 90s exactly.` : `
 9 segments for 90s video (WAN 2.5 - max 10s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
@@ -967,7 +1011,23 @@ CRITICAL: Max 10s per segment. Total = 90s exactly.`
   }
 
   // Log which model structure is being used
-  console.log(`[StructureGuide] Using ${modelName} structure for ${duration} video (max ${maxSegment}s/segment)`);
+  console.log(`[StructureGuide] Using ${modelName} structure for ${duration} video (max ${maxSegment}s/segment)${enableLoopEnd ? ' [LOOP-END ON]' : ''}`);
 
-  return structures[duration] || structures['60s'];
+  let result = structures[duration] || structures['60s'];
+
+  // For 60s with LOOP-END: append instruction to add LOOP-END segment
+  if (enableLoopEnd && duration === '60s') {
+    result += `
+
+⚠️ LOOP-END ENABLED FOR THIS VIDEO:
+After the CTA segment, add one final LOOP-END segment:
+- Duration: 5s | Shot Type: CREATOR | MAX WORDS: ${getMaxWordsForDuration(5, language)} words | ⛔ STRICT
+- Reduce CTA duration to 5s to make room (total must still = 60s exactly)
+- LOOP-END is NOT a CTA! It's a seamless loop trick.
+- LOOP-END script must create a curiosity gap that connects back to HOOK's opening.
+- LOOP-END visual direction must mirror HOOK (same pose, angle, energy, background).
+- Example: HOOK="Lo tau ga..." → LOOP-END="Tapi yang paling gila sih..."`;
+  }
+
+  return result;
 }

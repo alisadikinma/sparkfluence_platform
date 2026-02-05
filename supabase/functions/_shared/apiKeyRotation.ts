@@ -242,12 +242,28 @@ export async function callWithRotationHybrid<T>(
   maxRetries: number = 5
 ): Promise<{ data: T | null; error: string | null; keyUsed: string | null; source: 'pool' | null }> {
   let lastError = '';
+  // Track keys temporarily exhausted due to 429 — we'll restore them at the end
+  const rateLimitedKeyIds: string[] = [];
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     // Get key from pool
     const keyResult = await getApiKeyFromPool(supabase, provider);
 
     if (!keyResult) {
+      // No keys available — if we rate-limited some, wait and un-exhaust for one final attempt
+      if (rateLimitedKeyIds.length > 0 && attempt < maxRetries - 1) {
+        console.log(`[ApiKeyRotation] All ${provider} keys rate-limited — waiting 5s then restoring...`);
+        await new Promise(r => setTimeout(r, 5000));
+        for (const kid of rateLimitedKeyIds) {
+          await supabase.from('api_keys_pool').update({ is_exhausted: false }).eq('id', kid);
+        }
+        rateLimitedKeyIds.length = 0;
+        continue;
+      }
+      // Truly no keys — restore any we temporarily exhausted before returning
+      for (const kid of rateLimitedKeyIds) {
+        await supabase.from('api_keys_pool').update({ is_exhausted: false }).eq('id', kid);
+      }
       return {
         data: null,
         error: `No API keys available for ${provider} (all pool keys exhausted or none configured)`,
@@ -261,19 +277,30 @@ export async function callWithRotationHybrid<T>(
     try {
       const result = await apiCallFn(keyResult.apiKey);
 
-      // Check for rate limit (429) or payment required (402) - mark as exhausted
-      if (result.status === 429 || result.status === 402) {
-        console.warn(`[ApiKeyRotation] ${keyResult.keyName} hit ${result.status === 429 ? 'RATE LIMIT' : 'PAYMENT REQUIRED'} (${result.status}) - marking exhausted`);
+      // 429 = temporary rate limit → mark exhausted to rotate, but track for restoration
+      if (result.status === 429) {
+        console.warn(`[ApiKeyRotation] ${keyResult.keyName} hit RATE LIMIT (429) - rotating to next key`);
+        if (keyResult.keyId) {
+          await markExhausted(supabase, keyResult.keyId);
+          rateLimitedKeyIds.push(keyResult.keyId);
+        }
+        lastError = `API rate limited (429)`;
+        continue;
+      }
+
+      // 402 = quota/payment exhausted → mark exhausted permanently (daily reset)
+      if (result.status === 402) {
+        console.warn(`[ApiKeyRotation] ${keyResult.keyName} hit PAYMENT REQUIRED (402) - marking exhausted`);
         if (keyResult.keyId) {
           await markExhausted(supabase, keyResult.keyId);
         }
-        lastError = `API ${result.status === 429 ? 'rate limited' : 'payment required'} (${result.status})`;
+        lastError = `API payment required (402)`;
         continue;
       }
 
       // Check for auth errors (401/403)
       if (result.status === 401 || result.status === 403) {
-        const errorMsg = result.data?.error?.message || '';
+        const errorMsg = (result.data as any)?.error?.message || '';
         console.warn(`[ApiKeyRotation] ${keyResult.keyName} returned AUTH ERROR (${result.status}): ${errorMsg}`);
 
         // 403 with "leaked" = permanently broken key → deactivate
@@ -288,9 +315,13 @@ export async function callWithRotationHybrid<T>(
         continue;
       }
 
-      // Success - increment usage
+      // Success - increment usage and restore any rate-limited keys
       if (keyResult.keyId) {
         await incrementUsage(supabase, keyResult.keyId);
+      }
+      // Restore rate-limited keys so they're available for future requests
+      for (const kid of rateLimitedKeyIds) {
+        await supabase.from('api_keys_pool').update({ is_exhausted: false }).eq('id', kid);
       }
 
       return {
@@ -302,9 +333,20 @@ export async function callWithRotationHybrid<T>(
     } catch (err: any) {
       const errorMessage = err.message || 'Unknown error';
 
-      // Check if error is RATE LIMIT or PAYMENT related - mark exhausted
-      if (errorMessage.includes('429') || errorMessage.includes('402') || errorMessage.toLowerCase().includes('rate limit') || errorMessage.toLowerCase().includes('quota exceeded') || errorMessage.toLowerCase().includes('payment required')) {
-        console.warn(`[ApiKeyRotation] Rate limit/quota error on ${keyResult.keyName} - marking exhausted`);
+      // 429 / rate limit = temporary → mark exhausted to rotate, track for restoration
+      if (errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit')) {
+        console.warn(`[ApiKeyRotation] Rate limit error on ${keyResult.keyName} - rotating to next key`);
+        if (keyResult.keyId) {
+          await markExhausted(supabase, keyResult.keyId);
+          rateLimitedKeyIds.push(keyResult.keyId);
+        }
+        lastError = errorMessage;
+        continue;
+      }
+
+      // 402 / quota / payment = exhausted → mark exhausted permanently
+      if (errorMessage.includes('402') || errorMessage.toLowerCase().includes('quota exceeded') || errorMessage.toLowerCase().includes('payment required')) {
+        console.warn(`[ApiKeyRotation] Quota/payment error on ${keyResult.keyName} - marking exhausted`);
         if (keyResult.keyId) {
           await markExhausted(supabase, keyResult.keyId);
         }
@@ -338,6 +380,11 @@ export async function callWithRotationHybrid<T>(
       lastError = errorMessage;
       break;
     }
+  }
+
+  // Restore any rate-limited keys before returning failure
+  for (const kid of rateLimitedKeyIds) {
+    await supabase.from('api_keys_pool').update({ is_exhausted: false }).eq('id', kid);
   }
 
   return {
@@ -476,7 +523,9 @@ export async function callGeminiHybrid(
   });
 
   // Extract content from Gemini response
-  const content = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  const candidate = result.data?.candidates?.[0];
+  const content = candidate?.content?.parts?.[0]?.text || null;
+  const finishReason = candidate?.finishReason || null;
 
   // Check for errors in response
   if (result.data?.error) {
@@ -484,15 +533,22 @@ export async function callGeminiHybrid(
       success: false,
       content: null,
       error: result.data.error.message || 'Gemini API error',
-      source: result.source
+      source: result.source,
+      finishReason
     };
+  }
+
+  // Detect truncation — finishReason should be 'STOP' for complete responses
+  if (finishReason && finishReason !== 'STOP') {
+    console.warn(`[Gemini] Response truncated: finishReason=${finishReason}`)
   }
 
   return {
     success: !!content,
     content,
     error: result.error || (content ? null : 'No content in response'),
-    source: result.source
+    source: result.source,
+    finishReason
   };
 }
 

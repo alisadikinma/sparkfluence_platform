@@ -8,12 +8,14 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segmentDuration";
 import { getWordLimitStatus, getMaxWords, type LanguageCode } from "../../lib/wordLimits";
 import { getSuggestedKeywords } from "../../lib/keywordExtractor";  // Only need fallback function
-import { VisualPreviewGallery, GenerateBRollModal } from "./components";
+import { VisualPreviewGallery, GenerateBRollModal, type BRollOptions } from "./components";
 import {
   RefreshCw, ImageIcon, Loader2,
   Sparkles, X, Maximize2, AlertCircle,
   CloudOff, Cloud, CheckCircle2, Download,
-  ChevronDown, Upload, Search, Camera
+  ChevronDown, ChevronUp, Upload, Search, Camera,
+  Scissors, Undo2, Merge,
+  LayoutList, List, LayoutGrid, Settings2, Columns2
 } from "lucide-react";
 
 interface SegmentImage {
@@ -44,6 +46,9 @@ interface Segment {
   visualDirection: string;
   creatorCostume?: string;                 // Topic-appropriate outfit for CREATOR shots (from LLM)
   creatorAppearance?: string;              // Generic face description fallback (from LLM)
+  layout: 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center'; // Creator layout for compositing
+  loopEndEnabled: boolean;                 // LOOP-END segment ON/OFF toggle (default true) — deprecated, use isEnabled
+  isEnabled: boolean;                      // Universal segment ON/OFF toggle (default true)
   imageUrl: string | null;                 // Keep for backward compatibility (selected image)
   images: SegmentImage[];                  // NEW: Array of all images for this segment
   isGeneratingImage: boolean;
@@ -52,6 +57,25 @@ interface Segment {
   referenceImageUrl?: string;              // B-ROLL reference image (stock/uploaded)
   referenceImageSource?: 'unsplash' | 'pexels' | 'upload';
   includeCreatorFace?: boolean;            // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
+  // Structured Visual Direction (parsed from VD text)
+  structuredVD?: {
+    scene: string;
+    camera: string;
+    lighting: string;
+    color: string;
+    mood: string;
+    fx: string;
+  };
+  // Options modal state
+  additionalNotes?: string;                // User notes from options modal
+  optionsApplied?: boolean;                // Whether options have been applied
+  // Script undo
+  previousScript?: string;                 // Previous script version for undo
+  shortenedByAI?: boolean;                 // True only when AI Shorten was used (controls undo visibility)
+  // Split tracking
+  splitFromType?: string;                  // Original type before split (e.g., "FORE")
+  splitGroupId?: string;                   // Unique ID linking split sub-segments together
+  splitOriginalDuration?: number;          // Original duration before split
 }
 
 interface VideoSettings {
@@ -122,6 +146,295 @@ function snapToSupportedDuration(duration: number): number {
 
   return nearest;
 }
+
+// ============================================================================
+// Layout Popover — thumbnail grid for selecting creator layout
+// ============================================================================
+
+const LAYOUT_OPTIONS: { value: Segment['layout']; label: string; image: string }[] = [
+  { value: 'full', label: 'Full', image: '/layout-previews/full.png' },
+  { value: 'split-60-40', label: 'Split 60/40', image: '/layout-previews/split-60-40.png' },
+  { value: 'split-50-50', label: 'Split 50/50', image: '/layout-previews/split-50-50.png' },
+  { value: 'pip', label: 'PiP', image: '/layout-previews/pip.png' },
+  { value: 'creator-center', label: 'Center', image: '/layout-previews/creator-center.png' },
+];
+
+const LayoutPopover: React.FC<{
+  value: Segment['layout'];
+  onChange: (layout: Segment['layout']) => void;
+}> = ({ value, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  const currentLabel = LAYOUT_OPTIONS.find(o => o.value === value)?.label || 'Full';
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-text-muted text-xs bg-transparent border border-border-default rounded px-1.5 py-0.5 hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer flex items-center gap-1"
+        title="Creator layout"
+      >
+        <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <rect x="1" y="1" width="10" height="10" rx="1" />
+          <line x1="6" y1="1" x2="6" y2="11" />
+        </svg>
+        {currentLabel}
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-card border border-border-default rounded-lg shadow-xl p-2 min-w-[280px]">
+          <div className="grid grid-cols-5 gap-1.5">
+            {LAYOUT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => { onChange(opt.value); setOpen(false); }}
+                className={`flex flex-col items-center gap-1 p-1 rounded-md transition-colors cursor-pointer ${
+                  value === opt.value
+                    ? 'ring-2 ring-purple-500 bg-purple-500/10'
+                    : 'hover:bg-white/5'
+                }`}
+              >
+                <img
+                  src={opt.image}
+                  alt={opt.label}
+                  className="w-[42px] h-[63px] object-cover rounded-sm"
+                  loading="lazy"
+                />
+                <span className="text-[9px] text-text-muted leading-tight">{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================================
+// VISUAL DIRECTION PARSER
+// Parses free-text visual_direction into 6 structured categories
+// Scene | Camera | Lighting | Color | Mood | FX
+// ============================================================================
+
+const VD_CATEGORIES = ['Scene', 'Camera', 'Lighting', 'Color', 'Mood', 'FX'] as const;
+type VDCategory = typeof VD_CATEGORIES[number];
+
+function parseVisualDirection(vdText: string): Segment['structuredVD'] {
+  if (!vdText || vdText.trim().length === 0) return undefined;
+
+  const text = vdText.trim();
+  const result = { scene: '', camera: '', lighting: '', color: '', mood: '', fx: '' };
+
+  // Strategy 1: Try to find labeled sections (e.g. "Scene: ..., Camera: ...")
+  const labelPattern = /\b(scene|camera|lighting|color|mood|atmosphere|fx|effects?)\s*[:–—-]\s*/gi;
+  const matches = [...text.matchAll(labelPattern)];
+
+  if (matches.length >= 3) {
+    for (let i = 0; i < matches.length; i++) {
+      let key = matches[i][1].toLowerCase();
+      // Normalize aliases
+      if (key === 'atmosphere') key = 'mood';
+      if (key === 'effects' || key === 'effect') key = 'fx';
+      if (key in result) {
+        const start = matches[i].index! + matches[i][0].length;
+        const end = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+        (result as Record<string, string>)[key] = text.slice(start, end).replace(/[,;|]\s*$/, '').trim();
+      }
+    }
+    return result;
+  }
+
+  // Strategy 2: Heuristic extraction from free-text
+  const sentences = text.split(/[.;|]+/).map(s => s.trim()).filter(Boolean);
+
+  const cameraKeywords = /\b(MCU|CU|MS|WS|EWS|OTS|POV|dolly|pan|tilt|zoom|track|crane|handheld|steadicam|push-in|pull-out|f\/\d|mm\b|lens|angle|shot|frame|composition|shallow|depth|aperture|close-up|medium|wide|low[- ]?angle|high[- ]?angle|bird|worm|orbit|whip)/i;
+  const lightingKeywords = /\b(light|lighting|rim|key[- ]?light|fill[- ]?light|backlight|high[- ]?key|low[- ]?key|shadow|softbox|daylight|golden[- ]?hour|sunset|sunrise|Rembrandt|butterfly|\d{4}K|kelvin|exposure|silhouette|three[- ]?point|chiaroscuro|ratio)/i;
+  const colorKeywords = /\b(color|colour|grade|teal|orange|palette|monochrome|desaturated|saturated|vibrant|muted|pastel|hue|LUT|cinematic[- ]?grade|warm[- ]?tone|cool[- ]?tone|high[- ]?contrast|cross[- ]?process)/i;
+  const moodKeywords = /\b(mood|vibe|energy|feel|clean|minimal|gritty|dreamy|ethereal|intense|calm|chaotic|eerie|nostalgic|futuristic|retro|vintage|modern|elegant|raw|polished|cinematic|epic|intimate|playful|dynamic|serene|urgent|suspense|authoritative|scroll[- ]?stopping)/i;
+  const fxKeywords = /\b(lens[- ]?flare|bokeh|particle|smoke|haze|fog|dust|glow|neon|spark|overlay|text|BOLD[- ]?TEXT|motion[- ]?graphic|vfx|sfx|blur|grain|glitch|anamorphic|streak|orb|prism|light[- ]?leak|chromatic)/i;
+
+  const used = new Set<number>();
+
+  // Extract FX first (most specific keywords)
+  sentences.forEach((s, i) => {
+    if (fxKeywords.test(s) && !result.fx) { result.fx = s; used.add(i); }
+  });
+  sentences.forEach((s, i) => {
+    if (used.has(i)) return;
+    if (cameraKeywords.test(s) && !result.camera) { result.camera = s; used.add(i); }
+  });
+  sentences.forEach((s, i) => {
+    if (used.has(i)) return;
+    if (lightingKeywords.test(s) && !result.lighting) { result.lighting = s; used.add(i); }
+  });
+  sentences.forEach((s, i) => {
+    if (used.has(i)) return;
+    if (colorKeywords.test(s) && !result.color) { result.color = s; used.add(i); }
+  });
+  sentences.forEach((s, i) => {
+    if (used.has(i)) return;
+    if (moodKeywords.test(s) && !result.mood) { result.mood = s; used.add(i); }
+  });
+
+  // Remaining → scene
+  const sceneparts = sentences.filter((_, i) => !used.has(i));
+  result.scene = sceneparts.join('. ').trim();
+
+  // Fallback: if nothing parsed, put everything in scene
+  if (!result.scene && !result.camera && !result.lighting && !result.color && !result.mood && !result.fx) {
+    result.scene = text;
+  }
+
+  return result;
+}
+
+// Structured VD Component — vertical per-line layout, 6 categories
+const StructuredVDChips: React.FC<{
+  structuredVD: NonNullable<Segment['structuredVD']>;
+}> = ({ structuredVD }) => {
+  const rows: { label: VDCategory; value: string; labelColor: string; dotColor: string }[] = [
+    { label: 'Scene', value: structuredVD.scene, labelColor: 'text-blue-400', dotColor: 'bg-blue-400' },
+    { label: 'Camera', value: structuredVD.camera, labelColor: 'text-purple-400', dotColor: 'bg-purple-400' },
+    { label: 'Lighting', value: structuredVD.lighting, labelColor: 'text-amber-400', dotColor: 'bg-amber-400' },
+    { label: 'Color', value: structuredVD.color, labelColor: 'text-teal-400', dotColor: 'bg-teal-400' },
+    { label: 'Mood', value: structuredVD.mood, labelColor: 'text-pink-400', dotColor: 'bg-pink-400' },
+    { label: 'FX', value: structuredVD.fx, labelColor: 'text-orange-400', dotColor: 'bg-orange-400' },
+  ].filter(r => r.value.length > 0);
+
+  return (
+    <div className="bg-surface border border-border-default rounded-lg p-2.5 space-y-1">
+      {rows.map(row => (
+        <div key={row.label} className="flex items-start gap-2 text-[11px] leading-relaxed">
+          <div className="flex items-center gap-1.5 flex-shrink-0 w-[72px] pt-0.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${row.dotColor} flex-shrink-0`} />
+            <span className={`font-medium ${row.labelColor}`}>{row.label}</span>
+          </div>
+          <span className="text-text-secondary">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Creator Options Modal — simplified, Additional Notes only
+const CreatorOptionsModal: React.FC<{
+  isOpen: boolean;
+  segment: Segment | null;
+  onApply: (notes: string) => void;
+  onClose: () => void;
+  language?: string;
+}> = ({ isOpen, segment, onApply, onClose, language = 'en' }) => {
+  const [notes, setNotes] = useState('');
+  const modalContentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen && segment) {
+      setNotes(segment.additionalNotes || '');
+    }
+  }, [isOpen, segment?.id]);
+
+  // Lock body scroll
+  useEffect(() => {
+    if (isOpen) {
+      const scrollY = window.scrollY;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = '0';
+      document.body.style.right = '0';
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [isOpen]);
+
+  if (!isOpen || !segment) return null;
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4"
+      onClick={(e) => {
+        if (modalContentRef.current && !modalContentRef.current.contains(e.target as Node)) onClose();
+      }}
+    >
+      <div
+        ref={modalContentRef}
+        className="bg-card border border-border-default rounded-2xl w-full max-w-lg flex flex-col"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-border-default">
+          <div>
+            <h3 className="text-lg font-bold text-text-primary">
+              Configure {segment.type} (CREATOR)
+            </h3>
+            {segment.script && (
+              <p className="text-sm text-text-secondary mt-1 line-clamp-2 italic">
+                &quot;{segment.script}&quot;
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-surface rounded-lg">
+            <X className="w-5 h-5 text-text-secondary" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="text-sm font-medium text-text-primary block mb-2">
+              {language === 'id' ? 'Catatan Tambahan (opsional)' : 'Additional Notes (optional)'}
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder={language === 'id'
+                ? 'Contoh: Environment outdoor cafe, golden hour, pencahayaan lebih hangat...'
+                : 'e.g., Outdoor cafe environment, golden hour, warmer lighting...'}
+              className="w-full bg-surface border border-border-default rounded-lg p-3 text-text-primary resize-none h-28 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            <p className="text-[10px] text-text-muted mt-1">
+              {language === 'id'
+                ? 'Deskripsi environment, pencahayaan, atau instruksi khusus untuk creator shot'
+                : 'Describe environment, lighting, or special instructions for creator shot'}
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 p-4 border-t border-border-default">
+          <Button onClick={onClose} variant="outline" className="flex-1">
+            {language === 'id' ? 'Batal' : 'Cancel'}
+          </Button>
+          <Button
+            onClick={() => onApply(notes.trim())}
+            className="flex-1 bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {language === 'id' ? 'Terapkan Opsi' : 'Apply Options'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ImageGallery Component - displays multiple images per segment
 interface ImageGalleryProps {
@@ -531,6 +844,7 @@ interface ReferenceImageModalProps {
   onClose: () => void;
   segment: Segment | null;
   initialKeywords: string;
+  topic?: string;
   onSelect: (imageUrl: string, source: 'unsplash' | 'pexels' | 'upload') => void;
 }
 
@@ -539,6 +853,7 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
   onClose,
   segment,
   initialKeywords,
+  topic,
   onSelect
 }) => {
   const [searchQuery, setSearchQuery] = useState(initialKeywords);
@@ -611,6 +926,7 @@ const ReferenceImageModal: React.FC<ReferenceImageModalProps> = ({
         body: {
           visualDirection: segment.visualDirection || '',
           script: segment.script || '',
+          topic: topic || '',
           enableSmartExtraction: true,
           orientation: 'portrait',
           per_page: 20,
@@ -916,29 +1232,19 @@ export const ImageGeneration = (): JSX.Element => {
   // NEW: Image model selection state
   const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
+
   const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
   const [bRollModal, setBRollModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
-
-  // Language options for script output
-  const LANGUAGE_OPTIONS = [
-    { value: 'id', label: 'Indonesia', flag: '🇮🇩' },
-    { value: 'en', label: 'English', flag: '🇺🇸' },
-    { value: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
-    { value: 'fr', label: 'Français', flag: '🇫🇷' },
-  ] as const;
+  const [optionsModal, setOptionsModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
 
   // Detect language from script text (for initial sync)
   const detectScriptLanguage = (scripts: string[]): string => {
     const combinedText = scripts.join(' ');
-    // Hindi: Devanagari Unicode range \u0900-\u097F
     const hindiPattern = /[\u0900-\u097F]/;
-    // Indonesian markers: common words/particles
     const indonesianPattern = /\b(gue|lo|banget|sih|dong|nih|tuh|gitu|aja|udah|nggak|kan)\b/i;
-
     if (hindiPattern.test(combinedText)) return 'hi';
     if (indonesianPattern.test(combinedText)) return 'id';
-    return 'en'; // default to English
+    return 'en';
   };
 
   // Avatar info for voice prompt retrieval in VideoGeneration
@@ -949,11 +1255,26 @@ export const ImageGeneration = (): JSX.Element => {
   // Saved avatars for B-ROLL modal picker
   const [savedAvatars, setSavedAvatars] = useState<{ id: string; name: string; url: string }[]>([]);
 
+  // Draft persistence state
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle');
+  const saveStatusTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // View mode state (full / compact / grid)
+  const [viewMode, setViewMode] = useState<'full' | 'compact' | 'grid'>(() => {
+    try { return (localStorage.getItem('sparkfluence_view_mode') as any) || 'full'; } catch { return 'full'; }
+  });
+  const [expandedSegmentId, setExpandedSegmentId] = useState<string | null>(null);
+  const [fullViewColumns, setFullViewColumns] = useState<1 | 2>(() => {
+    try { return localStorage.getItem('sparkfluence_full_view_cols') === '2' ? 2 : 1; } catch { return 1; }
+  });
+
   // AI Script Shortener state
   const [shorteningSegmentId, setShorteningSegmentId] = useState<string | null>(null);
+  // VD rewriting indicator (triggered by inline layout change)
+  const [rewritingVDSegmentId, setRewritingVDSegmentId] = useState<string | null>(null);
+  // Merge picker popover state
+  const [mergePickerSegmentId, setMergePickerSegmentId] = useState<string | null>(null);
 
-  // Script Translation state
-  const [isTranslating, setIsTranslating] = useState(false);
 
   const fromScriptLab = location.state?.fromScriptLab === true;
   const fromAdStudio = location.state?.fromAdStudio === true;
@@ -988,19 +1309,11 @@ export const ImageGeneration = (): JSX.Element => {
       if (processingIntervalRef.current) {
         clearInterval(processingIntervalRef.current);
       }
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
+      }
     };
   }, []);
-
-  useEffect(() => {
-    // Only save progress if we have a valid topic (not the default "Your Video")
-    // This prevents overwriting the topic with default value on initial load
-    if (sessionId && segments.length > 0 && currentTopic && currentTopic !== "Your Video") {
-      const timeoutId = setTimeout(() => {
-        saveProgress(segments, currentTopic, videoSettings);
-      }, 1000);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [segments, sessionId, currentTopic, videoSettings]);
 
   const saveProgress = (updatedSegments: Segment[], topic: string, settings: VideoSettings | null) => {
     if (!sessionId) return;
@@ -1018,12 +1331,139 @@ export const ImageGeneration = (): JSX.Element => {
   const loadProgress = (sid: string): any | null => {
     try {
       const saved = localStorage.getItem(`sparkfluence_video_progress_${sid}`);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Migrate old drafts: ensure isEnabled field exists
+        if (parsed?.segments) {
+          parsed.segments = parsed.segments.map((seg: any) => ({
+            ...seg,
+            isEnabled: seg.isEnabled ?? seg.loopEndEnabled ?? true,
+          }));
+        }
+        return parsed;
+      }
     } catch (err) {
       console.error('Error loading progress:', err);
     }
     return null;
   };
+
+  // Draft Persistence: Save to Supabase DB (background, silent)
+  const saveDraftToDB = useCallback(async (
+    updatedSegments: Segment[],
+    topic: string,
+    settings: VideoSettings | null
+  ) => {
+    if (!sessionId || !user) return;
+
+    setSaveStatus('saving');
+
+    try {
+      // Strip transient fields before saving
+      const cleanSegments = updatedSegments.map(seg => ({
+        ...seg,
+        isGeneratingImage: false,
+        imageError: null,
+        images: [],        // Images stored separately in image_generation_jobs
+        imageUrl: null,    // Reconstructed on load from image_generation_jobs
+      }));
+
+      const scriptData = {
+        version: 2,
+        segments: cleanSegments,
+        topic,
+        videoSettings: settings,
+        viewMode,
+        savedAt: new Date().toISOString(),
+      };
+
+      // Map language to allowed DB values (constraint: id, en, hi)
+      const dbLanguage = ['id', 'en', 'hi'].includes(settings?.language || '')
+        ? settings!.language
+        : 'en';
+
+      const { error } = await supabase
+        .from('generation_sessions')
+        .upsert({
+          id: crypto.randomUUID(),  // Only used for new rows; ignored on conflict
+          session_id: sessionId,
+          user_id: user.id,
+          topic: topic,
+          script_data: scriptData,
+          segments_count: updatedSegments.length,
+          status: 'script_ready',
+          language: dbLanguage,
+          duration: settings?.duration || '60s',
+          aspect_ratio: settings?.aspectRatio || '9:16',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'session_id' });
+
+      if (error) {
+        console.warn('[DraftSave] DB save failed:', error.message);
+        setSaveStatus('offline');
+      } else {
+        setSaveStatus('saved');
+        // Auto-hide "Saved" after 2s
+        if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
+        saveStatusTimeoutRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
+      }
+    } catch (err) {
+      console.warn('[DraftSave] DB save error:', err);
+      setSaveStatus('offline');
+    }
+  }, [sessionId, user, viewMode]);
+
+  // Draft Persistence: Load from Supabase DB
+  const loadDraftFromDB = useCallback(async (sid: string): Promise<{
+    segments: Segment[];
+    topic: string;
+    videoSettings: VideoSettings | null;
+    viewMode?: 'full' | 'compact' | 'grid';
+  } | null> => {
+    if (!user) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from('generation_sessions')
+        .select('script_data, topic, status')
+        .eq('session_id', sid)
+        .single();
+
+      if (error || !data?.script_data?.version || data.script_data.version < 2) {
+        return null;
+      }
+
+      console.log('[DraftLoad] Loaded from DB, version:', data.script_data.version,
+        'segments:', data.script_data.segments?.length);
+
+      // Migrate old drafts: ensure isEnabled field exists (backward compat)
+      const migratedSegments = (data.script_data.segments || []).map((seg: any) => ({
+        ...seg,
+        isEnabled: seg.isEnabled ?? seg.loopEndEnabled ?? true,
+      }));
+
+      return {
+        segments: migratedSegments,
+        topic: data.script_data.topic || data.topic || 'Your Video',
+        videoSettings: data.script_data.videoSettings || null,
+        viewMode: data.script_data.viewMode,
+      };
+    } catch (err) {
+      console.warn('[DraftLoad] DB load error:', err);
+      return null;
+    }
+  }, [user]);
+
+  // Auto-save: localStorage + DB with 2s debounce
+  useEffect(() => {
+    if (sessionId && segments.length > 0 && currentTopic && currentTopic !== "Your Video") {
+      const timeoutId = setTimeout(() => {
+        saveProgress(segments, currentTopic, videoSettings);   // localStorage (instant)
+        saveDraftToDB(segments, currentTopic, videoSettings);   // DB (background)
+      }, 2000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [segments, sessionId, currentTopic, videoSettings, saveDraftToDB]);
 
   const checkExistingJobs = async (sid: string): Promise<ImageJob[] | null> => {
     if (!user) return null;
@@ -1215,12 +1655,17 @@ export const ImageGeneration = (): JSX.Element => {
               transition: seg.transition || 'Cut',
               script: seg.script_text || seg.script || '',
               visualDirection: seg.visual_direction || '',
+              structuredVD: parseVisualDirection(seg.visual_direction || ''),
               creatorCostume: seg.creator_costume || '',  // Topic-appropriate outfit for CREATOR shots
               creatorAppearance: seg.creator_appearance || '',  // Generic face description fallback
+              layout: 'full' as const,             // Default: full screen, user can change per segment
+              loopEndEnabled: true,
+              isEnabled: true,
               imageUrl: null,
               images: [],                        // Initialize empty images array
               isGeneratingImage: false,
               imageError: null,
+              optionsApplied: false,
             };
           });
 
@@ -1255,6 +1700,34 @@ export const ImageGeneration = (): JSX.Element => {
           }
         }
 
+        // Inject synthetic LOOP-END for 60s/90s videos if not present
+        const initDuration = stateData.videoSettings?.duration || '60s';
+        const hasLoopEnd = formattedSegments.some(s => s.type.toUpperCase() === 'LOOP-END');
+        if (!hasLoopEnd && (initDuration === '60s' || initDuration === '90s')) {
+          const nextId = String(formattedSegments.length + 1);
+          formattedSegments.push({
+            id: nextId,
+            segmentId: `VIDEO-${nextId.padStart(3, '0')}`,
+            type: 'LOOP-END',
+            timing: '',
+            durationSeconds: 5,
+            shotType: 'CREATOR',
+            emotion: '',
+            transition: 'Cut',
+            script: '',
+            visualDirection: '',
+            layout: 'full',
+            loopEndEnabled: false,
+            isEnabled: false,  // OFF by default (user chose OFF in ScriptForm)
+            imageUrl: null,
+            images: [],
+            isGeneratingImage: false,
+            imageError: null,
+            optionsApplied: false,
+          });
+          console.log('[Init] Injected synthetic LOOP-END (OFF by default)');
+        }
+
         setSegments(formattedSegments);
         setIsLoaded(true);
 
@@ -1287,11 +1760,19 @@ export const ImageGeneration = (): JSX.Element => {
 
       } else if (sid) {
         const existingJobs = await checkExistingJobs(sid);
-        const savedProgress = loadProgress(sid);
+
+        // Priority: DB draft (cross-device) → localStorage (device-local) → rebuild from jobs
+        const dbDraft = await loadDraftFromDB(sid);
+        const savedProgress = dbDraft || loadProgress(sid);
 
         if (savedProgress && savedProgress.segments?.length > 0) {
           setSessionId(sid);
           let formattedSegments = savedProgress.segments;
+
+          // Restore viewMode from DB draft if available
+          if (dbDraft?.viewMode) {
+            setViewMode(dbDraft.viewMode);
+          }
 
           if (existingJobs && existingJobs.length > 0) {
             formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
@@ -1318,6 +1799,7 @@ export const ImageGeneration = (): JSX.Element => {
             setVideoSettings(savedProgress.videoSettings || null);
           }
           setIsLoaded(true);
+          console.log('[Init] Loaded from', dbDraft ? 'DB' : 'localStorage');
         } else if (existingJobs && existingJobs.length > 0) {
           // ✅ FIX: Rebuild segments from database when localStorage is empty (new browser/computer)
           // This ensures images are not lost when switching devices
@@ -1340,6 +1822,9 @@ export const ImageGeneration = (): JSX.Element => {
               transition: 'Cut',
               script: '',
               visualDirection: '',
+              layout: 'full' as const,
+              loopEndEnabled: true,
+              isEnabled: true,
               imageUrl: job?.image_url || null,
               images: [],
               isGeneratingImage: job?.status === JOB_STATUS.PROCESSING,
@@ -1373,16 +1858,20 @@ export const ImageGeneration = (): JSX.Element => {
       } else {
         const activeSessionId = localStorage.getItem('sparkfluence_active_session');
         if (activeSessionId) {
-          const savedProgress = loadProgress(activeSessionId);
           const existingJobs = await checkExistingJobs(activeSessionId);
-          
+          // Priority: DB draft → localStorage
+          const dbDraft = await loadDraftFromDB(activeSessionId);
+          const savedProgress = dbDraft || loadProgress(activeSessionId);
+
           if (savedProgress && savedProgress.segments?.length > 0) {
             setSessionId(activeSessionId);
             let formattedSegments = savedProgress.segments;
-            
+
+            if (dbDraft?.viewMode) setViewMode(dbDraft.viewMode);
+
             if (existingJobs && existingJobs.length > 0) {
               formattedSegments = syncJobsWithSegments(existingJobs, formattedSegments);
-              
+
               const hasPending = existingJobs.some(j => j.status === JOB_STATUS.PENDING || j.status === JOB_STATUS.PROCESSING);
               if (hasPending) {
                 setIsBackgroundMode(true);
@@ -1390,11 +1879,12 @@ export const ImageGeneration = (): JSX.Element => {
                 startBackgroundProcessing(activeSessionId);
               }
             }
-            
+
             setSegments(formattedSegments);
             setCurrentTopic(savedProgress.topic?.split('\n')[0].trim() || 'Your Video');
             setVideoSettings(savedProgress.videoSettings || null);
             setIsLoaded(true);
+            console.log('[Init] Loaded active session from', dbDraft ? 'DB' : 'localStorage');
           } else {
             navigate('/script-lab');
           }
@@ -1593,7 +2083,10 @@ export const ImageGeneration = (): JSX.Element => {
   const handleGenerateAllBackground = async () => {
     if (!user || !sessionId) return;
     
-    const segmentsToGenerate = segments.filter(s => !s.imageUrl && !s.isGeneratingImage);
+    const segmentsToGenerate = segments.filter(s =>
+      !s.imageUrl && !s.isGeneratingImage &&
+      s.isEnabled !== false // Skip disabled segments
+    );
     if (segmentsToGenerate.length === 0) return;
 
     setIsGeneratingAll(true);
@@ -1681,9 +2174,10 @@ export const ImageGeneration = (): JSX.Element => {
     if (!user || !sessionId) return;
     
     // Confirm before regenerating
-    const confirmMsg = language === 'id' 
-      ? `Regenerate semua ${segments.length} gambar? Gambar lama akan diganti.`
-      : `Regenerate all ${segments.length} images? Existing images will be replaced.`;
+    const enabledCount = segments.filter(s => s.isEnabled !== false).length;
+    const confirmMsg = language === 'id'
+      ? `Regenerate semua ${enabledCount} gambar? Gambar lama akan diganti.`
+      : `Regenerate all ${enabledCount} images? Existing images will be replaced.`;
     
     if (!window.confirm(confirmMsg)) return;
 
@@ -1707,17 +2201,20 @@ export const ImageGeneration = (): JSX.Element => {
       console.error('Error deleting old jobs:', err);
     }
 
+    const activeSegments = segments.filter(s =>
+      s.isEnabled !== false // Skip disabled segments
+    );
+
     setIsGeneratingAll(true);
     setIsBackgroundMode(true);
     setShowBackgroundToast(true);
-    setGenerationProgress({ current: 0, total: segments.length, completed: 0, failed: 0 });
+    setGenerationProgress({ current: 0, total: activeSegments.length, completed: 0, failed: 0 });
 
     try {
       // Use character_ref_png if available, otherwise fallback to avatar_url
       // Priority: character_ref_png > navigation state (newly uploaded) > database profile
       const referenceImage = characterRefPng || avatarUrl || userAvatarUrl || '';
-      
-      const segmentsData = segments.map((seg, index) => {
+      const segmentsData = activeSegments.map((seg, index) => {
         const isCreatorShot = seg.shotType === 'CREATOR'; // Only shot_type matters
         return {
           segment_id: seg.segmentId,
@@ -1815,7 +2312,7 @@ export const ImageGeneration = (): JSX.Element => {
 
       if (data?.shortened_script) {
         setSegments(prev => prev.map(seg =>
-          seg.id === segmentId ? { ...seg, script: data.shortened_script } : seg
+          seg.id === segmentId ? { ...seg, script: data.shortened_script, previousScript: currentScript, shortenedByAI: true } : seg
         ));
       } else if (data?.error) {
         console.error('[Shorten] API error:', data.error);
@@ -1826,6 +2323,217 @@ export const ImageGeneration = (): JSX.Element => {
       setShorteningSegmentId(null);
     }
   }, [videoSettings?.language, language]);
+
+  // Undo script — restore previous version (only available after AI Shorten)
+  const handleUndoScript = useCallback((segmentId: string) => {
+    setSegments(prev => prev.map(seg => {
+      if (seg.id !== segmentId || !seg.previousScript) return seg;
+      return { ...seg, script: seg.previousScript, previousScript: undefined, shortenedByAI: false };
+    }));
+  }, []);
+
+  // Split segment into 2 sub-segments at natural break point
+  const handleSplitSegment = useCallback((segmentId: string) => {
+    setSegments(prev => {
+      const idx = prev.findIndex(s => s.id === segmentId);
+      if (idx === -1) return prev;
+      const segment = prev[idx];
+
+      // Don't split HOOK, CTA, LOOP-END
+      const protectedTypes = ['HOOK', 'CTA', 'LOOP-END'];
+      const baseType = segment.splitFromType || segment.type;
+      if (protectedTypes.includes(baseType.toUpperCase())) return prev;
+
+      const script = segment.script.trim();
+      const words = script.split(/\s+/);
+      if (words.length < 4) return prev; // Too short to split
+
+      // Find best split point near midpoint — prefer clause boundaries
+      const midpoint = Math.floor(script.length / 2);
+      const breakPatterns = /[,!?;.—–]\s*/g;
+      let bestBreak = -1;
+      let bestDist = Infinity;
+      let match;
+
+      while ((match = breakPatterns.exec(script)) !== null) {
+        const pos = match.index + match[0].length;
+        const dist = Math.abs(pos - midpoint);
+        if (dist < bestDist && pos > 10 && pos < script.length - 10) {
+          bestDist = dist;
+          bestBreak = pos;
+        }
+      }
+
+      // If no good clause boundary, split at word boundary near midpoint
+      if (bestBreak === -1) {
+        const midWord = Math.floor(words.length / 2);
+        let charCount = 0;
+        for (let i = 0; i < midWord; i++) {
+          charCount += words[i].length + 1;
+        }
+        bestBreak = charCount;
+      }
+
+      const scriptA = script.slice(0, bestBreak).trim();
+      const scriptB = script.slice(bestBreak).trim();
+
+      if (!scriptA || !scriptB) return prev;
+
+      // Calculate proportional durations (min 5s each, max 8s)
+      const wordsA = scriptA.split(/\s+/).length;
+      const wordsB = scriptB.split(/\s+/).length;
+      const totalWords = wordsA + wordsB;
+      const totalDur = segment.durationSeconds;
+      const durA = Math.max(5, Math.min(8, Math.round(totalDur * wordsA / totalWords)));
+      const durB = Math.max(5, Math.min(8, Math.round(totalDur * wordsB / totalWords)));
+
+      // Generate unique split group ID
+      const groupId = segment.splitGroupId || `split_${Date.now()}`;
+
+      // Create 2 new segments with proper naming (FORE → FORE-1, FORE-2)
+      const segmentA: Segment = {
+        ...segment,
+        id: `${segment.id}`,
+        type: `${baseType}-1`,
+        script: scriptA,
+        durationSeconds: durA,
+        previousScript: segment.script, // Save original for merge back
+        splitFromType: baseType,
+        splitGroupId: groupId,
+        splitOriginalDuration: segment.splitOriginalDuration || segment.durationSeconds,
+        shortenedByAI: false,
+        images: [],
+        imageUrl: null,
+        isGeneratingImage: false,
+        imageError: null,
+        optionsApplied: false,
+      };
+
+      const segmentB: Segment = {
+        ...segment,
+        id: `${parseInt(segment.id) + 0.5}`, // Fractional ID to insert between
+        segmentId: `${segment.segmentId}-2`,
+        type: `${baseType}-2`,
+        script: scriptB,
+        durationSeconds: durB,
+        structuredVD: segment.structuredVD ? { ...segment.structuredVD } : undefined,
+        previousScript: segment.script,
+        splitFromType: baseType,
+        splitGroupId: groupId,
+        splitOriginalDuration: segment.splitOriginalDuration || segment.durationSeconds,
+        shortenedByAI: false,
+        images: [],
+        imageUrl: null,
+        isGeneratingImage: false,
+        imageError: null,
+        optionsApplied: false,
+      };
+
+      // Replace original with the 2 halves
+      const newSegments = [...prev];
+      newSegments.splice(idx, 1, segmentA, segmentB);
+
+      // Renumber IDs sequentially
+      return newSegments.map((seg, i) => ({
+        ...seg,
+        id: String(i + 1),
+        originalIndex: i,
+      }));
+    });
+  }, []);
+
+  // Merge split sub-segments back into original segment
+  const handleMergeSegments = useCallback((splitGroupId: string) => {
+    setSegments(prev => {
+      const splitIndices = prev.reduce<number[]>((acc, seg, i) => {
+        if (seg.splitGroupId === splitGroupId) acc.push(i);
+        return acc;
+      }, []);
+
+      if (splitIndices.length < 2) return prev;
+
+      const firstSplit = prev[splitIndices[0]];
+      const originalScript = firstSplit.previousScript || prev.filter(s => s.splitGroupId === splitGroupId).map(s => s.script).join(' ');
+      const originalType = firstSplit.splitFromType || firstSplit.type.replace(/-\d+$/, '');
+      const originalDuration = firstSplit.splitOriginalDuration || prev.filter(s => s.splitGroupId === splitGroupId).reduce((sum, s) => sum + s.durationSeconds, 0);
+
+      // Create merged segment from first split
+      const mergedSegment: Segment = {
+        ...firstSplit,
+        type: originalType,
+        script: originalScript,
+        durationSeconds: originalDuration,
+        previousScript: undefined,
+        shortenedByAI: false,
+        splitFromType: undefined,
+        splitGroupId: undefined,
+        splitOriginalDuration: undefined,
+        images: [],
+        imageUrl: null,
+        isGeneratingImage: false,
+        imageError: null,
+        optionsApplied: false,
+      };
+
+      // Remove all split segments and insert merged one at the first position
+      const newSegments = [...prev];
+      // Remove from end to start to maintain indices
+      for (let i = splitIndices.length - 1; i >= 1; i--) {
+        newSegments.splice(splitIndices[i], 1);
+      }
+      newSegments[splitIndices[0]] = mergedSegment;
+
+      // Renumber IDs sequentially
+      return newSegments.map((seg, i) => ({
+        ...seg,
+        id: String(i + 1),
+        originalIndex: i,
+      }));
+    });
+  }, []);
+
+  // Merge any two sibling segments (same base type, for non-split indexed segments)
+  const handleMergeWithSibling = useCallback((segmentId: string, siblingId: string) => {
+    setSegments(prev => {
+      const idx = prev.findIndex(s => s.id === segmentId);
+      const sibIdx = prev.findIndex(s => s.id === siblingId);
+      if (idx === -1 || sibIdx === -1) return prev;
+
+      const segA = prev[Math.min(idx, sibIdx)];
+      const segB = prev[Math.max(idx, sibIdx)];
+
+      const mergedScript = [segA.script, segB.script].filter(Boolean).join('\n');
+      const mergedDuration = snapToSupportedDuration(segA.durationSeconds + segB.durationSeconds);
+      const baseType = segA.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
+
+      const mergedSegment: Segment = {
+        ...segA,
+        type: baseType,
+        script: mergedScript,
+        durationSeconds: mergedDuration,
+        images: [],
+        imageUrl: null,
+        isGeneratingImage: false,
+        imageError: null,
+        optionsApplied: false,
+        splitFromType: undefined,
+        splitGroupId: undefined,
+        splitOriginalDuration: undefined,
+        previousScript: undefined,
+        shortenedByAI: false,
+      };
+
+      const newSegments = prev.filter(s => s.id !== segmentId && s.id !== siblingId);
+      newSegments.splice(Math.min(idx, sibIdx), 0, mergedSegment);
+
+      return newSegments.map((seg, i) => ({
+        ...seg,
+        id: String(i + 1),
+        originalIndex: i,
+      }));
+    });
+    setMergePickerSegmentId(null);
+  }, []);
 
   const handleGenerateImage = useCallback(async (segmentId: string): Promise<boolean> => {
     const segment = segments.find(s => s.id === segmentId);
@@ -1867,7 +2575,9 @@ export const ImageGeneration = (): JSX.Element => {
           // NEW: Include creator face in B-ROLL (uses flux-kontext-multi)
           include_creator_face: !isCreatorShot ? (segment.includeCreatorFace || false) : false,
           // Pass creator ref for B-ROLL with include_creator_face
-          creator_ref_for_broll: (!isCreatorShot && segment.includeCreatorFace) ? (characterRefPng || effectiveAvatarUrl) : null
+          creator_ref_for_broll: (!isCreatorShot && segment.includeCreatorFace) ? (characterRefPng || effectiveAvatarUrl) : null,
+          // Layout for image composition hints
+          layout: segment.layout || 'full'
         }],
         style: 'cinematic',
         aspect_ratio: videoSettings?.aspectRatio || '9:16',
@@ -2178,7 +2888,99 @@ export const ImageGeneration = (): JSX.Element => {
     setReferenceImageModal({ isOpen: false, segment: null, initialKeywords: '' });
   }, [referenceImageModal.segment]);
 
+  // Rewrite visual direction via edge function when user applies options
+  const rewriteVisualDirection = useCallback(async (
+    segment: Segment,
+    additionalNotes: string,
+    includeCreatorFace: boolean,
+    layout: string,
+  ) => {
+    const segmentId = segment.id;
+    try {
+      console.log(`[VD Rewrite] Rewriting VD for segment ${segmentId}...`);
+      const { data, error } = await supabase.functions.invoke('rewrite-visual-direction', {
+        body: {
+          visual_direction: segment.visualDirection,
+          script_text: segment.script,
+          shot_type: segment.shotType,
+          topic: currentTopic,
+          additional_notes: additionalNotes,
+          include_creator_face: includeCreatorFace,
+          layout: layout,
+          reference_image_description: '', // Could describe the ref image in future
+          language: language || 'id',
+        },
+      });
+
+      if (error) {
+        console.error('[VD Rewrite] Edge function error:', error);
+        return;
+      }
+
+      if (data?.success && data.data) {
+        const { visual_direction: newVD, structured } = data.data;
+        console.log(`[VD Rewrite] Success for segment ${segmentId}`);
+        setSegments(prev => prev.map(seg => {
+          if (seg.id !== segmentId) return seg;
+          return {
+            ...seg,
+            visualDirection: newVD,
+            structuredVD: structured,
+          };
+        }));
+      }
+    } catch (err) {
+      console.error('[VD Rewrite] Exception:', err);
+    }
+  }, [currentTopic, language]);
+
   // Handle B-ROLL modal generation
+  // Apply options from modal (B-ROLL or CREATOR) — saves to segment, triggers VD rewrite
+  const handleApplyBRollOptions = useCallback((options: BRollOptions) => {
+    if (!optionsModal.segment) return;
+    const segment = optionsModal.segment;
+    const segmentId = segment.id;
+
+    setSegments(prev => prev.map(seg => {
+      if (seg.id !== segmentId) return seg;
+      return {
+        ...seg,
+        additionalNotes: options.additionalNotes,
+        includeCreatorFace: options.includeCreatorFace,
+        referenceImageUrl: options.referenceImages[0]?.url || seg.referenceImageUrl,
+        referenceImageSource: options.referenceImages[0]?.source || seg.referenceImageSource,
+        layout: options.layout,
+        optionsApplied: true,
+      };
+    }));
+
+    setOptionsModal({ isOpen: false, segment: null });
+
+    // Trigger VD rewrite in background
+    rewriteVisualDirection(segment, options.additionalNotes, options.includeCreatorFace, options.layout);
+  }, [optionsModal.segment, rewriteVisualDirection]);
+
+  // Apply CREATOR options (simplified — notes only)
+  const handleApplyCreatorOptions = useCallback((notes: string) => {
+    if (!optionsModal.segment) return;
+    const segment = optionsModal.segment;
+    const segmentId = segment.id;
+
+    setSegments(prev => prev.map(seg => {
+      if (seg.id !== segmentId) return seg;
+      return {
+        ...seg,
+        additionalNotes: notes,
+        optionsApplied: true,
+      };
+    }));
+
+    setOptionsModal({ isOpen: false, segment: null });
+
+    // Trigger VD rewrite in background
+    rewriteVisualDirection(segment, notes, false, segment.layout);
+  }, [optionsModal.segment, rewriteVisualDirection]);
+
   const handleBRollGenerate = useCallback(async (options: {
     additionalNotes: string;
     includeCreatorFace: boolean;
@@ -2321,7 +3123,8 @@ export const ImageGeneration = (): JSX.Element => {
   };
 
   const handleNext = () => {
-    const allHaveImages = segments.every(seg => seg.imageUrl);
+    const enabledSegs = segments.filter(s => s.isEnabled !== false);
+    const allHaveImages = enabledSegs.every(seg => seg.imageUrl);
     if (!allHaveImages) {
       alert(uiText.imagesRequired);
       return;
@@ -2330,7 +3133,7 @@ export const ImageGeneration = (): JSX.Element => {
     navigate("/video-generation", {
       state: {
         sessionId,
-        segments,
+        segments: enabledSegs,
         topic: currentTopic,
         videoSettings,
         // Avatar info for voice prompt retrieval
@@ -2341,86 +3144,11 @@ export const ImageGeneration = (): JSX.Element => {
     });
   };
 
-  const totalDuration = segments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
-  const allHaveImages = segments.every(seg => seg.imageUrl);
-  const imagesGenerated = segments.filter(s => s.imageUrl).length;
+  const enabledSegments = segments.filter(s => s.isEnabled !== false);
+  const totalDuration = enabledSegments.reduce((sum, seg) => sum + seg.durationSeconds, 0);
+  const allHaveImages = enabledSegments.every(seg => seg.imageUrl);
+  const imagesGenerated = enabledSegments.filter(s => s.imageUrl).length;
 
-  // Handle language change - translate all scripts to new language
-  const handleLanguageChange = async (newLang: string) => {
-    const currentLang = videoSettings?.language || detectScriptLanguage(segments.map(s => s.script).filter(Boolean));
-
-    // If same language, just close dropdown
-    if (newLang === currentLang) {
-      setShowLanguageDropdown(false);
-      return;
-    }
-
-    // Map short code to full name for API
-    const langMap: Record<string, string> = {
-      'id': 'indonesian',
-      'en': 'english',
-      'hi': 'hindi',
-      'fr': 'french',
-    };
-
-    setShowLanguageDropdown(false);
-    setIsTranslating(true);
-
-    try {
-      // Prepare scripts for translation with word limits
-      const scriptsToTranslate = segments.map(seg => ({
-        segmentId: seg.id,
-        script: seg.script,
-        targetWords: getMaxWords(seg.durationSeconds, newLang as LanguageCode)
-      }));
-
-      console.log('[Translate] Translating', scriptsToTranslate.length, 'scripts to', newLang);
-
-      const { data, error } = await supabase.functions.invoke('generate-script', {
-        body: {
-          mode: 'translate',
-          scripts: scriptsToTranslate,
-          language: langMap[newLang] || 'english'
-        }
-      });
-
-      if (error) throw error;
-
-      if (data?.success && data?.translations) {
-        // Update segments with translated scripts
-        setSegments(prev => prev.map(seg => {
-          const translation = data.translations.find((t: any) => t.id === seg.id);
-          if (translation) {
-            return { ...seg, script: translation.script };
-          }
-          return seg;
-        }));
-
-        // Update videoSettings with new language
-        setVideoSettings(prev => prev
-          ? { ...prev, language: newLang }
-          : { duration: '60s', aspectRatio: '9:16', resolution: '720p', language: newLang }
-        );
-
-        console.log('[Translate] Successfully translated to', newLang);
-      } else {
-        console.error('[Translate] API error:', data?.error);
-        alert(language === 'id' ? 'Gagal menerjemahkan script. Coba lagi.' : 'Failed to translate scripts. Please try again.');
-      }
-    } catch (err) {
-      console.error('[Translate] Error:', err);
-      alert(language === 'id' ? 'Gagal menerjemahkan script. Coba lagi.' : 'Failed to translate scripts. Please try again.');
-    } finally {
-      setIsTranslating(false);
-    }
-  };
-
-  // Get current language label for display
-  const getCurrentLanguageLabel = () => {
-    const currentLang = videoSettings?.language || language || 'id';
-    const option = LANGUAGE_OPTIONS.find(opt => opt.value === currentLang);
-    return option ? `${option.flag} ${option.label}` : '🇮🇩 Indonesia';
-  };
 
   // Download helper function
   const handleDownloadImage = async (imageUrl: string, segmentType: string, segmentId: string) => {
@@ -2468,22 +3196,36 @@ export const ImageGeneration = (): JSX.Element => {
     }
   };
 
-  const groupedSegments = segments.reduce((acc, segment, index) => {
+  // Helper: find sibling segments with the same base type (for merge picker)
+  const getSiblingSegments = (segment: Segment): Segment[] => {
     const baseType = segment.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
-    const isBody = baseType === 'BODY' || segment.type.startsWith('BODY');
-    
-    if (isBody) {
-      const lastGroup = acc[acc.length - 1];
-      if (lastGroup && lastGroup.isBodyGroup) {
-        lastGroup.segments.push({ ...segment, originalIndex: index });
-      } else {
-        acc.push({ isBodyGroup: true, segments: [{ ...segment, originalIndex: index }] });
-      }
-    } else {
-      acc.push({ isBodyGroup: false, segments: [{ ...segment, originalIndex: index }] });
-    }
-    return acc;
-  }, [] as { isBodyGroup: boolean; segments: (Segment & { originalIndex: number })[] }[]);
+    return segments.filter(s => {
+      if (s.id === segment.id) return false;
+      const sBase = s.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
+      return sBase === baseType;
+    });
+  };
+
+  const groupedSegments = fullViewColumns === 2
+    // 2-column mode: each segment is its own cell (no BODY grouping)
+    ? segments.map((seg, i) => ({ isBodyGroup: false, segments: [{ ...seg, originalIndex: i }] }))
+    // 1-column mode: group consecutive BODY segments together
+    : segments.reduce((acc, segment, index) => {
+        const baseType = segment.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
+        const isBody = baseType === 'BODY' || segment.type.startsWith('BODY');
+
+        if (isBody) {
+          const lastGroup = acc[acc.length - 1];
+          if (lastGroup && lastGroup.isBodyGroup) {
+            lastGroup.segments.push({ ...segment, originalIndex: index });
+          } else {
+            acc.push({ isBodyGroup: true, segments: [{ ...segment, originalIndex: index }] });
+          }
+        } else {
+          acc.push({ isBodyGroup: false, segments: [{ ...segment, originalIndex: index }] });
+        }
+        return acc;
+      }, [] as { isBodyGroup: boolean; segments: (Segment & { originalIndex: number })[] }[]);
 
   if (!isLoaded) {
     return (
@@ -2498,7 +3240,7 @@ export const ImageGeneration = (): JSX.Element => {
 
   return (
     <div className="min-h-screen bg-page p-4 sm:p-6">
-      <div className="max-w-5xl mx-auto">
+      <div className={`mx-auto ${viewMode === 'full' && fullViewColumns === 2 ? 'max-w-screen-2xl' : 'max-w-5xl'}`}>
         {/* Background Processing Toast */}
         {showBackgroundToast && (
           <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4">
@@ -2566,69 +3308,84 @@ export const ImageGeneration = (): JSX.Element => {
               <h1 className="text-xl sm:text-2xl font-bold text-text-primary mb-1 line-clamp-2">
                 {currentTopic}
               </h1>
-              <p className="text-text-muted text-sm">
-                {uiText.step} 4/6 • {uiText.duration}: {totalDuration}s 
-                {videoSettings && ` • ${videoSettings.aspectRatio}`}
-              </p>
-            </div>
-            
-            {/* Generate All Images Button + Language + Model Dropdown */}
-            <div className="flex gap-2">
-              {/* Language Selection Dropdown */}
-              <div className="relative">
-                <Button
-                  onClick={() => {
-                    if (!isTranslating) {
-                      setShowLanguageDropdown(!showLanguageDropdown);
-                      setShowModelDropdown(false);
-                    }
-                  }}
-                  variant="outline"
-                  disabled={isTranslating}
-                  className="h-12 px-4 flex items-center gap-2"
-                >
-                  {isTranslating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="hidden sm:inline text-sm">{language === 'id' ? 'Menerjemahkan...' : 'Translating...'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-base">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'en'))?.flag || '🇺🇸'}</span>
-                      <span className="hidden sm:inline text-sm">{LANGUAGE_OPTIONS.find(opt => opt.value === (videoSettings?.language || language || 'en'))?.label || 'English'}</span>
-                      <ChevronDown className={`w-4 h-4 transition-transform ${showLanguageDropdown ? 'rotate-180' : ''}`} />
-                    </>
-                  )}
-                </Button>
-
-                {showLanguageDropdown && !isTranslating && (
-                  <div className="absolute right-0 top-full mt-2 w-48 bg-card border border-border-default rounded-xl shadow-lg z-50 py-2">
-                    <p className="px-4 py-1 text-xs text-text-muted">{language === 'id' ? 'Bahasa Script' : language === 'hi' ? 'स्क्रिप्ट भाषा' : 'Script Language'}</p>
-                    {LANGUAGE_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => handleLanguageChange(opt.value)}
-                        className={`w-full px-4 py-2 text-left flex items-center gap-3 hover:bg-surface transition-colors ${
-                          (videoSettings?.language || language || 'id') === opt.value ? 'bg-primary/10 text-primary' : 'text-text-primary'
-                        }`}
-                      >
-                        <span className="text-lg">{opt.flag}</span>
-                        <span className="text-sm">{opt.label}</span>
-                        {(videoSettings?.language || language || 'id') === opt.value && (
-                          <CheckCircle2 className="w-4 h-4 ml-auto text-primary" />
-                        )}
-                      </button>
-                    ))}
+              <div className="flex items-center gap-3">
+                <p className="text-text-muted text-sm">
+                  {uiText.step} 4/6 • {uiText.duration}: {totalDuration}s
+                  {videoSettings && ` • ${videoSettings.aspectRatio}`}
+                </p>
+                {/* Save Indicator */}
+                {saveStatus === 'saving' && (
+                  <span className="flex items-center gap-1 text-[10px] text-text-muted">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {language === 'id' ? 'Menyimpan...' : 'Saving...'}
+                  </span>
+                )}
+                {saveStatus === 'saved' && (
+                  <span className="flex items-center gap-1 text-[10px] text-green-500">
+                    <CheckCircle2 className="w-3 h-3" />
+                    {language === 'id' ? 'Tersimpan' : 'Saved'}
+                  </span>
+                )}
+                {saveStatus === 'offline' && (
+                  <span className="flex items-center gap-1 text-[10px] text-amber-500">
+                    <CloudOff className="w-3 h-3" />
+                    Offline
+                  </span>
+                )}
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-0.5 border border-border-default rounded-lg p-0.5 ml-auto sm:ml-0">
+                  <button
+                    onClick={() => { setViewMode('full'); localStorage.setItem('sparkfluence_view_mode', 'full'); setExpandedSegmentId(null); }}
+                    className={`p-1 rounded transition-colors ${viewMode === 'full' ? 'bg-primary text-white' : 'text-text-muted hover:text-text-primary'}`}
+                    title="Full View"
+                  >
+                    <LayoutList className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => { setViewMode('compact'); localStorage.setItem('sparkfluence_view_mode', 'compact'); setExpandedSegmentId(null); }}
+                    className={`p-1 rounded transition-colors ${viewMode === 'compact' ? 'bg-primary text-white' : 'text-text-muted hover:text-text-primary'}`}
+                    title="Compact View"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => { setViewMode('grid'); localStorage.setItem('sparkfluence_view_mode', 'grid'); setExpandedSegmentId(null); }}
+                    className={`p-1 rounded transition-colors ${viewMode === 'grid' ? 'bg-primary text-white' : 'text-text-muted hover:text-text-primary'}`}
+                    title="Grid View"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {/* Full View Column Toggle (1-col / 2-col) */}
+                {viewMode === 'full' && (
+                  <div className="flex items-center gap-0.5 border-l border-border-default pl-1 ml-0.5">
+                    <button
+                      onClick={() => { setFullViewColumns(1); localStorage.setItem('sparkfluence_full_view_cols', '1'); }}
+                      className={`p-1 rounded transition-colors ${fullViewColumns === 1 ? 'bg-primary text-white' : 'text-text-muted hover:text-text-primary'}`}
+                      title="1 Column"
+                    >
+                      <LayoutList className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => { setFullViewColumns(2); localStorage.setItem('sparkfluence_full_view_cols', '2'); }}
+                      className={`p-1 rounded transition-colors ${fullViewColumns === 2 ? 'bg-primary text-white' : 'text-text-muted hover:text-text-primary'}`}
+                      title="2 Columns"
+                    >
+                      <Columns2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Generate All Images Button + Model Dropdown */}
+            <div className="flex gap-2">
 
               {/* Model Selection Dropdown */}
               <div className="relative">
                 <Button
                   onClick={() => {
                     setShowModelDropdown(!showModelDropdown);
-                    setShowLanguageDropdown(false);
                   }}
                   variant="outline"
                   className="h-12 px-4 flex items-center gap-2"
@@ -2692,12 +3449,12 @@ export const ImageGeneration = (): JSX.Element => {
                 ) : allHaveImages ? (
                   <>
                     <RefreshCw className="w-5 h-5" />
-                    <span>{language === 'id' ? 'Regenerate Semua' : 'Regenerate All'} ({segments.length})</span>
+                    <span>{language === 'id' ? 'Regenerate Semua' : 'Regenerate All'} ({enabledSegments.length})</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-5 h-5" />
-                    <span>{uiText.generateAll} ({segments.length - imagesGenerated})</span>
+                    <span>{uiText.generateAll} ({enabledSegments.length - imagesGenerated})</span>
                   </>
                 )}
               </Button>
@@ -2705,10 +3462,263 @@ export const ImageGeneration = (): JSX.Element => {
           </div>
         </div>
 
-        {/* Segments */}
-        <div className="space-y-4">
+        {/* Segments — Compact View */}
+        {viewMode === 'compact' && (
+          <div className="space-y-1.5">
+            {segments.map((segment, index) => {
+              const isExpanded = expandedSegmentId === segment.id;
+              const isCreatorShot = segment.shotType === 'CREATOR';
+              const isDisabled = !segment.isEnabled;
+              const wordStatus = getWordLimitStatus(
+                segment.script,
+                segment.durationSeconds,
+                (videoSettings?.language || language || 'id') as LanguageCode
+              );
+
+              if (isExpanded) {
+                // Render full card for expanded segment
+                return (
+                  <div key={segment.id} className="relative">
+                    <button
+                      onClick={() => setExpandedSegmentId(null)}
+                      className="absolute top-2 right-2 z-10 p-1 bg-surface border border-border-default rounded hover:bg-muted/50"
+                      title="Collapse"
+                    >
+                      <ChevronUp className="w-4 h-4 text-text-muted" />
+                    </button>
+                    {/* Reuse full card — rendered inline below via groupedSegments */}
+                    <div className="bg-card border rounded-xl shadow-theme border-border-default">
+                      <div className="p-3 sm:p-4 border-b border-border-default">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-7 h-7 rounded flex items-center justify-center text-white text-xs font-bold ${segment.imageUrl ? 'bg-green-600' : 'bg-primary'}`}>
+                            {segment.imageUrl ? <CheckCircle2 className="w-4 h-4" /> : index + 1}
+                          </div>
+                          <span className="text-text-primary font-semibold text-sm">{segment.type}</span>
+                          <button
+                            onClick={() => setSegments(prev => prev.map(seg => seg.id === segment.id ? { ...seg, isEnabled: !seg.isEnabled, loopEndEnabled: !seg.isEnabled } : seg))}
+                            className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${segment.isEnabled ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-gray-500/20 text-gray-500 border-gray-500/40'}`}
+                            title={segment.isEnabled
+                              ? (language === 'id' ? 'Klik untuk nonaktifkan segment' : 'Click to disable segment')
+                              : (language === 'id' ? 'Klik untuk aktifkan segment' : 'Click to enable segment')
+                            }
+                          >
+                            {segment.isEnabled ? 'ON' : 'OFF'}
+                          </button>
+                          <span className="text-text-muted text-xs">{segment.durationSeconds}s</span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${isCreatorShot ? 'bg-pink-500/20 text-pink-400' : 'bg-blue-500/20 text-blue-400'}`}>{segment.shotType}</span>
+                        </div>
+                      </div>
+                      <div className={`p-3 sm:p-4 ${isDisabled ? 'opacity-40 pointer-events-none' : ''}`}>
+                        <div className="flex flex-col sm:flex-row gap-4">
+                          <div className="flex-1 space-y-3">
+                            <textarea
+                              value={segment.script}
+                              onChange={(e) => setSegments(prev => prev.map(seg => seg.id === segment.id ? { ...seg, script: e.target.value } : seg))}
+                              className="w-full bg-surface border border-border-default rounded-lg p-3 text-text-primary text-sm min-h-[80px] resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                            />
+                            {segment.visualDirection && segment.structuredVD && (
+                              <StructuredVDChips structuredVD={segment.structuredVD} />
+                            )}
+                          </div>
+                          <div className="w-full sm:w-52 flex-shrink-0">
+                            <VisualPreviewGallery
+                              images={segment.images || []}
+                              segmentId={segment.id}
+                              segmentType={segment.type}
+                              isCreatorShot={isCreatorShot}
+                              isGenerating={segment.isGeneratingImage}
+                              imageError={segment.imageError || null}
+                              selectedImageUrl={segment.imageUrl}
+                              onGenerate={() => handleGenerateImage(segment.id)}
+                              onRegenerate={() => isCreatorShot ? setRegenerateModal({ isOpen: true, segment }) : handleGenerateImage(segment.id)}
+                              onSelectImage={(imageId) => handleSelectImage(imageId, parseInt(segment.id))}
+                              onDeleteImage={handleDeleteImage}
+                              onPreview={setPreviewImage}
+                              onDownload={(imageUrl) => handleDownloadImage(imageUrl, segment.type, segment.id)}
+                              disabled={isBackgroundMode || isGeneratingAll}
+                              language={language}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Compact row
+              return (
+                <div
+                  key={segment.id}
+                  onClick={() => setExpandedSegmentId(segment.id)}
+                  className={`flex items-center gap-3 px-3 py-2.5 border rounded-lg cursor-pointer transition-colors hover:bg-muted/50 ${
+                    segment.imageUrl ? 'border-green-500/30' : 'border-border-default'
+                  } ${isDisabled ? 'opacity-40' : ''}`}
+                >
+                  <span className="text-xs text-text-muted w-5 text-center">{index + 1}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                    isCreatorShot ? 'bg-pink-500/20 text-pink-400' : 'bg-blue-500/20 text-blue-400'
+                  }`}>{segment.type}</span>
+                  <span className="text-[10px] text-text-muted">{segment.durationSeconds}s</span>
+                  <p className="flex-1 text-sm text-text-primary truncate">{segment.script || '(no script)'}</p>
+                  {wordStatus.status === 'error' && (
+                    <span className="text-[9px] text-red-500 bg-red-500/10 px-1 rounded">+{wordStatus.overBy}</span>
+                  )}
+                  {segment.optionsApplied && <Settings2 className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />}
+                  {segment.imageUrl ? (
+                    <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                  ) : segment.isGeneratingImage ? (
+                    <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
+                  ) : (
+                    <ImageIcon className="w-4 h-4 text-text-muted flex-shrink-0" />
+                  )}
+                  <ChevronDown className="w-4 h-4 text-text-muted flex-shrink-0" />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Segments — Grid View */}
+        {viewMode === 'grid' && (
+          <div>
+            <div className="grid grid-cols-2 gap-3">
+              {segments.map((segment, index) => {
+                const isCreatorShot = segment.shotType === 'CREATOR';
+                const isDisabled = !segment.isEnabled;
+
+                return (
+                  <div
+                    key={segment.id}
+                    onClick={() => { setExpandedSegmentId(segment.id); setViewMode('compact'); localStorage.setItem('sparkfluence_view_mode', 'compact'); }}
+                    className={`border rounded-lg overflow-hidden cursor-pointer transition-all hover:ring-2 hover:ring-primary/50 group/gridcard relative ${
+                      segment.imageUrl ? 'border-green-500/30' : 'border-border-default'
+                    } ${isDisabled ? 'opacity-40' : ''}`}
+                  >
+                    {/* Image thumbnail or placeholder */}
+                    <div className="aspect-video bg-muted relative">
+                      {segment.imageUrl ? (
+                        <img src={segment.imageUrl} alt="" className="w-full h-full object-cover" />
+                      ) : segment.isGeneratingImage ? (
+                        <div className="flex items-center justify-center h-full">
+                          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-text-muted">
+                          <ImageIcon className="w-8 h-8" />
+                        </div>
+                      )}
+                      <span className={`absolute top-1 left-1 text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        isCreatorShot ? 'bg-pink-500/80 text-white' : 'bg-blue-500/80 text-white'
+                      }`}>{segment.type}</span>
+                      <span className="absolute top-1 right-1 text-[10px] bg-black/60 text-white px-1.5 py-0.5 rounded">
+                        {segment.durationSeconds}s
+                      </span>
+                      {segment.imageUrl && (
+                        <div className="absolute bottom-1 right-1 bg-green-500 rounded-full p-0.5">
+                          <CheckCircle2 className="w-3 h-3 text-white" />
+                        </div>
+                      )}
+                    </div>
+                    {/* Info */}
+                    <div className="p-2 bg-card">
+                      <p className="text-xs text-text-primary line-clamp-2 leading-relaxed">{segment.script || '(no script)'}</p>
+                      <div className="flex items-center gap-1 mt-1">
+                        {segment.optionsApplied && (
+                          <span className="text-[9px] text-blue-400 bg-blue-500/10 px-1 py-0.5 rounded">Options</span>
+                        )}
+                        {!segment.isEnabled && (
+                          <span className="text-[9px] px-1 py-0.5 rounded text-gray-500 bg-gray-500/10">OFF</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Hover overlay with VD details + Generate button */}
+                    <div className="absolute inset-0 bg-black/85 opacity-0 group-hover/gridcard:opacity-100 transition-opacity duration-200 flex flex-col p-3 overflow-hidden z-10">
+                      {/* Type + Duration header */}
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          isCreatorShot ? 'bg-pink-500/80 text-white' : 'bg-blue-500/80 text-white'
+                        }`}>{segment.type}</span>
+                        <span className="text-[10px] text-white/80">{segment.durationSeconds}s | {segment.shotType}</span>
+                      </div>
+
+                      {/* Structured VD */}
+                      <div className="flex-1 min-h-0 overflow-y-auto mb-1.5">
+                        {(() => {
+                          const svd = segment.structuredVD || parseVisualDirection(segment.visualDirection);
+                          if (!svd || (!svd.scene && !svd.camera)) {
+                            return <p className="text-[10px] text-white/60 leading-relaxed">{segment.visualDirection?.slice(0, 150) || '(no VD)'}</p>;
+                          }
+                          return (
+                            <div className="space-y-0.5">
+                              {[
+                                { label: 'Scene', value: svd.scene, color: 'text-blue-300' },
+                                { label: 'Camera', value: svd.camera, color: 'text-purple-300' },
+                                { label: 'Light', value: svd.lighting, color: 'text-amber-300' },
+                                { label: 'Color', value: svd.color, color: 'text-teal-300' },
+                                { label: 'Mood', value: svd.mood, color: 'text-pink-300' },
+                                { label: 'FX', value: svd.fx, color: 'text-orange-300' },
+                              ].filter(r => r.value).map(r => (
+                                <div key={r.label} className="flex gap-1.5 text-[9px] leading-relaxed">
+                                  <span className={`font-medium ${r.color} w-[38px] flex-shrink-0`}>{r.label}</span>
+                                  <span className="text-white/70">{r.value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Status badges */}
+                      <div className="flex items-center gap-1 mb-1.5">
+                        {segment.optionsApplied && (
+                          <span className="text-[8px] text-blue-300 bg-blue-500/20 px-1 py-0.5 rounded">Options</span>
+                        )}
+                        {segment.imageUrl && (
+                          <span className="text-[8px] text-green-300 bg-green-500/20 px-1 py-0.5 rounded">Image OK</span>
+                        )}
+                        {segment.layout && segment.layout !== 'full' && (
+                          <span className="text-[8px] text-violet-300 bg-violet-500/20 px-1 py-0.5 rounded">{segment.layout}</span>
+                        )}
+                      </div>
+
+                      {/* Generate button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedSegmentId(segment.id);
+                          setViewMode('compact');
+                          localStorage.setItem('sparkfluence_view_mode', 'compact');
+                          setTimeout(() => handleGenerateImage(segment.id), 100);
+                        }}
+                        disabled={segment.isGeneratingImage || isBackgroundMode || isGeneratingAll}
+                        className="mt-auto w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-primary hover:bg-primary/80 text-white text-xs font-medium transition-colors disabled:opacity-50"
+                      >
+                        {segment.isGeneratingImage ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : segment.imageUrl ? (
+                          <RefreshCw className="w-3 h-3" />
+                        ) : (
+                          <Sparkles className="w-3 h-3" />
+                        )}
+                        {segment.imageUrl
+                          ? (language === 'id' ? 'Regenerate' : 'Regenerate')
+                          : (language === 'id' ? 'Generate' : 'Generate')
+                        }
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Segments — Full View (default) */}
+        {viewMode === 'full' && <div className={fullViewColumns === 2 ? "grid grid-cols-1 md:grid-cols-2 gap-4" : "space-y-4"}>
           {groupedSegments.map((group, groupIndex) => (
-            <div 
+            <div
               key={groupIndex}
               className={group.isBodyGroup && group.segments.length > 1 
                 ? "bg-surface border border-border-default rounded-2xl p-3 space-y-3" 
@@ -2727,10 +3737,11 @@ export const ImageGeneration = (): JSX.Element => {
               {group.segments.map((segment, segIndex) => {
                 const displayIndex = segment.originalIndex + 1;
                 const isCreatorShot = segment.shotType === 'CREATOR';
-                
+                const isDisabled = !segment.isEnabled;
+
                 return (
-                  <div 
-                    key={segment.id} 
+                  <div
+                    key={segment.id}
                     className={`bg-card border rounded-xl shadow-theme ${
                       segment.imageUrl ? 'border-green-500/30' : 'border-border-default'
                     }`}
@@ -2745,11 +3756,30 @@ export const ImageGeneration = (): JSX.Element => {
                             {segment.imageUrl ? <CheckCircle2 className="w-4 h-4" /> : displayIndex}
                           </div>
                           <span className="text-text-primary font-semibold text-sm sm:text-base">
-                            {group.isBodyGroup && group.segments.length > 1 
-                              ? `BODY-${segIndex + 1}` 
+                            {group.isBodyGroup && group.segments.length > 1
+                              ? `BODY-${segIndex + 1}`
                               : segment.type
                             }
                           </span>
+                          {/* Segment ON/OFF toggle */}
+                          <button
+                            onClick={() => {
+                              setSegments(prev => prev.map(seg =>
+                                seg.id === segment.id ? { ...seg, isEnabled: !seg.isEnabled, loopEndEnabled: !seg.isEnabled } : seg
+                              ));
+                            }}
+                            className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                              segment.isEnabled
+                                ? 'bg-green-500/20 text-green-400 border-green-500/40 hover:bg-green-500/30'
+                                : 'bg-gray-500/20 text-gray-500 border-gray-500/40 hover:bg-gray-500/30'
+                            }`}
+                            title={segment.isEnabled
+                              ? (language === 'id' ? 'Klik untuk nonaktifkan segment' : 'Click to disable segment')
+                              : (language === 'id' ? 'Klik untuk aktifkan segment' : 'Click to enable segment')
+                            }
+                          >
+                            {segment.isEnabled ? 'ON' : 'OFF'}
+                          </button>
                           <span className="text-text-muted text-xs sm:text-sm">{segment.timing}</span>
                           <select
                             value={segment.durationSeconds}
@@ -2767,13 +3797,37 @@ export const ImageGeneration = (): JSX.Element => {
                               <option key={d} value={d}>{d}s</option>
                             ))}
                           </select>
+                          {/* Layout selector — popover with thumbnail previews, only for segments with creator face */}
+                          {(isCreatorShot || segment.includeCreatorFace) && !isDisabled && (
+                            <>
+                              <LayoutPopover
+                                value={segment.layout}
+                                onChange={(layout) => {
+                                  setSegments(prev => prev.map(seg =>
+                                    seg.id === segment.id ? { ...seg, layout } : seg
+                                  ));
+                                  // Trigger VD rewrite with updated layout
+                                  setRewritingVDSegmentId(segment.id);
+                                  rewriteVisualDirection(
+                                    segment,
+                                    segment.additionalNotes || '',
+                                    segment.includeCreatorFace || isCreatorShot,
+                                    layout
+                                  ).finally(() => setRewritingVDSegmentId(null));
+                                }}
+                              />
+                              {rewritingVDSegmentId === segment.id && (
+                                <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                              )}
+                            </>
+                          )}
                         </div>
                         
-                        {/* Tags */}
+                        {/* Tags + Actions */}
                         <div className="flex items-center gap-2">
                           <span className={`text-xs px-2 py-1 rounded ${
-                            isCreatorShot 
-                              ? 'bg-pink-500/20 text-pink-600 dark:text-pink-400' 
+                            isCreatorShot
+                              ? 'bg-pink-500/20 text-pink-600 dark:text-pink-400'
                               : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
                           }`}>
                             {segment.shotType}
@@ -2792,8 +3846,8 @@ export const ImageGeneration = (): JSX.Element => {
                       </div>
                     </div>
 
-                    {/* Content */}
-                    <div className="p-3 sm:p-4">
+                    {/* Content — grayed out when LOOP-END is disabled */}
+                    <div className={`p-3 sm:p-4 ${isDisabled ? 'opacity-40 pointer-events-none select-none' : ''}`}>
                       <div className="flex flex-col sm:flex-row gap-4">
                         {/* Script + Visual Direction */}
                         <div className="flex-1 space-y-3">
@@ -2809,8 +3863,72 @@ export const ImageGeneration = (): JSX.Element => {
                               return (
                                 <>
                                   <div className="flex items-center justify-between mb-1.5">
-                                    <label className="text-text-secondary text-xs">{uiText.script}</label>
                                     <div className="flex items-center gap-1.5">
+                                      <label className="text-text-secondary text-xs">{uiText.script}</label>
+                                      {/* Merge button — split segments or sibling indexed segments */}
+                                      {(() => {
+                                        // Path 1: Split segments — merge all back to original
+                                        if (segment.splitGroupId && !segment.type.endsWith('-1')) {
+                                          return (
+                                            <button
+                                              onClick={() => handleMergeSegments(segment.splitGroupId!)}
+                                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-500/15 hover:bg-violet-500/25 text-violet-400 text-[10px] font-medium transition-colors border border-violet-500/20"
+                                              title={language === 'id' ? 'Gabungkan kembali ke segment asli' : 'Merge back to original'}
+                                            >
+                                              <Merge className="w-3 h-3" />
+                                              {language === 'id' ? 'Gabung' : 'Merge'}
+                                            </button>
+                                          );
+                                        }
+                                        // Path 2: Sibling segments of the same base type (e.g., multiple BODY segments)
+                                        if (segment.splitGroupId) return null;
+                                        const siblings = getSiblingSegments(segment);
+                                        if (siblings.length === 0) return null;
+
+                                        // Compute display labels (e.g., BODY-1, BODY-2)
+                                        const baseType = segment.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
+                                        const allOfType = segments.filter(s => {
+                                          const bt = s.type.replace(/-\d+$/, '').replace(/_\d+$/, '');
+                                          return bt === baseType;
+                                        });
+
+                                        return (
+                                          <div className="relative">
+                                            <button
+                                              onClick={() => setMergePickerSegmentId(mergePickerSegmentId === segment.id ? null : segment.id)}
+                                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-500/15 hover:bg-violet-500/25 text-violet-400 text-[10px] font-medium transition-colors border border-violet-500/20"
+                                              title={language === 'id' ? 'Gabungkan dengan segment lain' : 'Merge with another segment'}
+                                            >
+                                              <Merge className="w-3 h-3" />
+                                              {language === 'id' ? 'Gabung' : 'Merge'}
+                                              <ChevronDown className="w-2.5 h-2.5" />
+                                            </button>
+                                            {mergePickerSegmentId === segment.id && (
+                                              <div className="absolute top-full left-0 mt-1 z-50 bg-card border border-border-default rounded-lg shadow-lg py-1 min-w-[180px]">
+                                                <p className="px-3 py-1 text-[10px] text-text-muted">
+                                                  {language === 'id' ? 'Gabung dengan:' : 'Merge with:'}
+                                                </p>
+                                                {siblings.map(sib => {
+                                                  const sibIdx = allOfType.findIndex(s => s.id === sib.id);
+                                                  const displayName = allOfType.length > 1 ? `${baseType}-${sibIdx + 1}` : sib.type;
+                                                  return (
+                                                    <button
+                                                      key={sib.id}
+                                                      onClick={() => handleMergeWithSibling(segment.id, sib.id)}
+                                                      className="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface transition-colors flex items-center gap-2"
+                                                    >
+                                                      <span className="font-medium text-violet-400">{displayName}</span>
+                                                      <span className="text-text-muted truncate max-w-[100px]">{sib.script?.slice(0, 35)}...</span>
+                                                    </button>
+                                                  );
+                                                })}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+                                    <div className="flex items-center gap-1">
                                       <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
                                         wordStatus.status === 'error'
                                           ? 'bg-red-500/20 text-red-500'
@@ -2821,20 +3939,38 @@ export const ImageGeneration = (): JSX.Element => {
                                         {wordStatus.count}/{wordStatus.max} {language === 'id' ? 'kata' : 'words'}
                                         {wordStatus.status === 'error' && ` (+${wordStatus.overBy})`}
                                       </span>
-                                      {/* AI Shorten Button - only show when script is too long */}
+                                      {/* Inline action buttons when over word limit */}
                                       {wordStatus.status === 'error' && (
-                                        <button
-                                          onClick={() => handleShortenScript(segment.id, segment.script, wordStatus.max)}
-                                          disabled={isShortening}
-                                          className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/20 hover:bg-primary/30 text-primary text-[10px] font-medium transition-colors disabled:opacity-50"
-                                          title={language === 'id' ? 'Perpendek dengan AI' : 'Shorten with AI'}
-                                        >
-                                          {isShortening ? (
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                          ) : (
-                                            <Sparkles className="w-3 h-3" />
+                                        <>
+                                          <button
+                                            onClick={() => handleShortenScript(segment.id, segment.script, wordStatus.max)}
+                                            disabled={isShortening}
+                                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/15 hover:bg-primary/25 text-primary text-[10px] font-medium transition-colors disabled:opacity-50"
+                                            title={language === 'id' ? 'Perpendek dengan AI' : 'AI Shorten'}
+                                          >
+                                            {isShortening ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                            <span className="hidden sm:inline">{language === 'id' ? 'Perpendek' : 'Shorten'}</span>
+                                          </button>
+                                          {!['HOOK', 'CTA', 'LOOP-END'].includes((segment.splitFromType || segment.type).toUpperCase()) && wordStatus.count >= 4 && (
+                                            <button
+                                              onClick={() => handleSplitSegment(segment.id)}
+                                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-500/15 hover:bg-violet-500/25 text-violet-400 text-[10px] font-medium transition-colors"
+                                              title={language === 'id' ? 'Bagi jadi 2 segment' : 'Split into 2'}
+                                            >
+                                              <Scissors className="w-3 h-3" />
+                                              <span className="hidden sm:inline">Split</span>
+                                            </button>
                                           )}
-                                          <span className="hidden sm:inline">AI</span>
+                                        </>
+                                      )}
+                                      {/* Undo Script Button - show only after AI Shorten */}
+                                      {segment.shortenedByAI && segment.previousScript && (
+                                        <button
+                                          onClick={() => handleUndoScript(segment.id)}
+                                          className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-500/20 hover:bg-gray-500/30 text-gray-400 text-[10px] font-medium transition-colors"
+                                          title={language === 'id' ? 'Kembalikan script sebelumnya' : 'Undo to previous script'}
+                                        >
+                                          <Undo2 className="w-3 h-3" />
                                         </button>
                                       )}
                                     </div>
@@ -2856,32 +3992,27 @@ export const ImageGeneration = (): JSX.Element => {
                                     }`}
                                     placeholder={language === 'id' ? 'Tulis script...' : 'Write script...'}
                                   />
-                                  {wordStatus.status === 'error' && (
-                                    <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1">
-                                      <span>
-                                        {language === 'id'
-                                          ? `⚠️ Script terlalu panjang! Kurangi ${wordStatus.overBy} kata agar sesuai durasi ${segment.durationSeconds}s`
-                                          : `⚠️ Script too long! Remove ${wordStatus.overBy} words to fit ${segment.durationSeconds}s duration`
-                                        }
-                                      </span>
-                                    </p>
-                                  )}
                                 </>
                               );
                             })()}
                           </div>
 
-                          {/* Visual Direction - smaller height when no image */}
-                          {segment.visualDirection && (
-                            <div>
-                              <label className="text-text-secondary text-xs mb-1.5 block">{uiText.visualDirection}</label>
-                              <div className={`bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs overflow-y-auto ${
-                                segment.imageUrl ? 'min-h-[190px] max-h-72' : 'min-h-[100px] max-h-40'
-                              }`}>
-                                {segment.visualDirection}
+                          {/* Visual Direction — structured chips */}
+                          {segment.visualDirection && (() => {
+                            const svd = segment.structuredVD || parseVisualDirection(segment.visualDirection);
+                            return (
+                              <div>
+                                <label className="text-text-secondary text-xs mb-1.5 block">{uiText.visualDirection}</label>
+                                {svd ? (
+                                  <StructuredVDChips structuredVD={svd} />
+                                ) : (
+                                  <div className="bg-surface border border-border-default rounded-lg p-3 text-text-secondary text-xs">
+                                    {segment.visualDirection}
+                                  </div>
+                                )}
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
 
                         {/* Visual Preview */}
@@ -2902,19 +4033,15 @@ export const ImageGeneration = (): JSX.Element => {
                             imageError={segment.imageError || null}
                             selectedImageUrl={segment.imageUrl}
                             onGenerate={() => {
-                              // CREATOR: Generate langsung, B-ROLL: Buka modal
-                              if (isCreatorShot) {
-                                handleGenerateImage(segment.id);
-                              } else {
-                                setBRollModal({ isOpen: true, segment });
-                              }
+                              // Both CREATOR and B-ROLL: generate directly using saved options
+                              handleGenerateImage(segment.id);
                             }}
                             onRegenerate={() => {
-                              // CREATOR: Regenerate modal, B-ROLL: Buka B-ROLL modal
                               if (isCreatorShot) {
                                 setRegenerateModal({ isOpen: true, segment });
                               } else {
-                                setBRollModal({ isOpen: true, segment });
+                                // B-ROLL regenerate: generate directly (options already saved)
+                                handleGenerateImage(segment.id);
                               }
                             }}
                             onSelectImage={(imageId) => handleSelectImage(imageId, parseInt(segment.id))}
@@ -2925,19 +4052,84 @@ export const ImageGeneration = (): JSX.Element => {
                             language={language}
                           />
 
-                          {/* B-ROLL Status Badges Only (no duplicate button - generation via VisualPreviewGallery) */}
-                          {!isCreatorShot && (segment.includeCreatorFace || segment.referenceImageUrl) && (
-                            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                              {segment.includeCreatorFace && (
-                                <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
-                                  + Face
-                                </span>
-                              )}
-                              {segment.referenceImageUrl && (
-                                <span className="text-[10px] text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded">
-                                  + Ref
-                                </span>
-                              )}
+                          {/* Set Options Button */}
+                          {!isDisabled && (
+                            <button
+                              onClick={() => setOptionsModal({ isOpen: true, segment })}
+                              className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-default bg-surface hover:bg-white/5 hover:border-primary/50 text-text-secondary text-xs font-medium transition-colors"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                              {language === 'id' ? 'Atur Opsi' : 'Set Options'}
+                            </button>
+                          )}
+
+                          {/* Applied Options Badges — with hover preview */}
+                          {segment.optionsApplied && (
+                            <div className="mt-1.5 relative group/opts">
+                              <div className="flex items-center gap-1.5 flex-wrap cursor-default">
+                                {segment.referenceImageUrl && (
+                                  <span className="text-[10px] text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                                    + Ref
+                                  </span>
+                                )}
+                                {segment.additionalNotes && (
+                                  <span className="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded truncate max-w-[100px]">
+                                    &quot;{segment.additionalNotes.slice(0, 20)}{segment.additionalNotes.length > 20 ? '...' : ''}&quot;
+                                  </span>
+                                )}
+                                {!isCreatorShot && segment.includeCreatorFace && (
+                                  <span className="text-[10px] text-pink-500 bg-pink-500/10 px-1.5 py-0.5 rounded">
+                                    + Face
+                                  </span>
+                                )}
+                                {(isCreatorShot || segment.includeCreatorFace) && (
+                                  <span className="text-[10px] text-purple-500 bg-purple-500/10 px-1.5 py-0.5 rounded">
+                                    {LAYOUT_OPTIONS.find(o => o.value === segment.layout)?.label || 'Full'}
+                                  </span>
+                                )}
+                              </div>
+                              {/* Hover Preview Popover */}
+                              <div className="absolute bottom-full left-0 mb-2 hidden group-hover/opts:block z-50 pointer-events-none">
+                                <div className="bg-card border border-border-default rounded-lg shadow-xl p-3 min-w-[200px] max-w-[260px]">
+                                  {segment.referenceImageUrl && (
+                                    <div className="mb-2">
+                                      <p className="text-[10px] text-text-muted mb-1">Reference Image</p>
+                                      <img
+                                        src={segment.referenceImageUrl}
+                                        alt="Reference"
+                                        className="w-full h-24 object-cover rounded"
+                                      />
+                                    </div>
+                                  )}
+                                  {segment.additionalNotes && (
+                                    <div className="mb-2">
+                                      <p className="text-[10px] text-text-muted mb-0.5">Notes</p>
+                                      <p className="text-xs text-text-primary">{segment.additionalNotes}</p>
+                                    </div>
+                                  )}
+                                  {!isCreatorShot && (
+                                    <div className="mb-2">
+                                      <p className="text-[10px] text-text-muted mb-0.5">Creator Face</p>
+                                      <p className="text-xs text-text-primary">{segment.includeCreatorFace ? 'Yes' : 'No'}</p>
+                                    </div>
+                                  )}
+                                  {(isCreatorShot || segment.includeCreatorFace) && (
+                                    <div>
+                                      <p className="text-[10px] text-text-muted mb-1">Layout</p>
+                                      <div className="flex items-center gap-2">
+                                        <img
+                                          src={LAYOUT_OPTIONS.find(o => o.value === segment.layout)?.image || '/layout-previews/full.png'}
+                                          alt="Layout"
+                                          className="w-[28px] h-[42px] object-cover rounded-sm border border-border-default"
+                                        />
+                                        <span className="text-xs text-text-primary font-medium">
+                                          {LAYOUT_OPTIONS.find(o => o.value === segment.layout)?.label || 'Full'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           )}
 
@@ -2950,7 +4142,7 @@ export const ImageGeneration = (): JSX.Element => {
               })}
             </div>
           ))}
-        </div>
+        </div>}
 
         {/* Navigation */}
         <div className="flex items-center justify-between mt-8">
@@ -2970,7 +4162,7 @@ export const ImageGeneration = (): JSX.Element => {
                 : "bg-primary/50 text-white/50 cursor-not-allowed"
             }`}
           >
-            {allHaveImages ? uiText.next : `${imagesGenerated}/${segments.length} images`}
+            {allHaveImages ? uiText.next : `${imagesGenerated}/${enabledSegments.length} images`}
           </Button>
         </div>
       </div>
@@ -3022,19 +4214,59 @@ export const ImageGeneration = (): JSX.Element => {
         onClose={() => setReferenceImageModal({ isOpen: false, segment: null })}
         segment={referenceImageModal.segment}
         initialKeywords=""  // Not used anymore - smart extraction in backend
+        topic={currentTopic}
         onSelect={handleReferenceImageSelect}
       />
 
-      {/* B-ROLL Generation Modal - Consolidated Controls */}
+      {/* B-ROLL Options Modal (options picker — no Generate) */}
+      {optionsModal.isOpen && optionsModal.segment && optionsModal.segment.shotType !== 'CREATOR' && (
+        <GenerateBRollModal
+          isOpen={true}
+          onClose={() => setOptionsModal({ isOpen: false, segment: null })}
+          segment={optionsModal.segment}
+          onApplyOptions={handleApplyBRollOptions}
+          language={language}
+          topic={currentTopic}
+          maxReferenceImages={3}
+          initialLayout={optionsModal.segment.layout}
+          sessionAvatarUrl={
+            optionsModal.segment.creatorAvatarUrl ||
+            avatarUrl ||
+            (avatarId ? savedAvatars.find(a => a.id === avatarId)?.url : null) ||
+            null
+          }
+          profileAvatarUrl={userAvatarUrl}
+          availableAvatars={savedAvatars.map(a => ({ ...a, source: 'saved' as const }))}
+        />
+      )}
+
+      {/* CREATOR Options Modal (simplified — notes only) */}
+      <CreatorOptionsModal
+        isOpen={optionsModal.isOpen && optionsModal.segment?.shotType === 'CREATOR'}
+        segment={optionsModal.segment}
+        onApply={handleApplyCreatorOptions}
+        onClose={() => setOptionsModal({ isOpen: false, segment: null })}
+        language={language}
+      />
+
+      {/* Legacy B-ROLL Generation Modal (kept for handleBRollGenerate backward compat) */}
       <GenerateBRollModal
         isOpen={bRollModal.isOpen}
         onClose={() => setBRollModal({ isOpen: false, segment: null })}
         segment={bRollModal.segment}
-        onGenerate={handleBRollGenerate}
+        onApplyOptions={(options) => {
+          // Legacy path: apply options then generate
+          if (bRollModal.segment) {
+            handleBRollGenerate({
+              additionalNotes: options.additionalNotes,
+              includeCreatorFace: options.includeCreatorFace,
+              referenceImages: options.referenceImages,
+              selectedAvatarUrl: options.selectedAvatarUrl,
+            });
+          }
+        }}
         language={language}
         maxReferenceImages={3}
-        // Avatar props for picker
-        // Priority: segment's DB avatar > navigation state avatar > lookup by avatarId > null
         sessionAvatarUrl={
           bRollModal.segment?.creatorAvatarUrl ||
           avatarUrl ||

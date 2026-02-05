@@ -188,16 +188,17 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { 
+    const {
       query,                      // Direct query (simple mode)
       visualDirection,            // For smart extraction (smart mode)
       script,                     // For smart extraction (smart mode)
+      topic,                      // Video topic for contextual keyword extraction
       enableSmartExtraction,      // Enable LLM extraction (default: true if visualDirection/script provided)
       enableTavilyEnrichment,     // Enable Tavily enrichment (default: false)
-      provider = 'both', 
-      page = 1, 
-      per_page = 20, 
-      orientation = 'portrait' 
+      provider = 'both',
+      page = 1,
+      per_page = 20,
+      orientation = 'portrait'
     } = body;
 
     // Determine mode
@@ -223,12 +224,13 @@ Deno.serve(async (req) => {
 
           console.log(`[SMART_SEARCH] Extracting keywords from visualDirection + script...`);
 
-          // Use shared extraction function (same as generate-images)
+          // Use shared extraction function (same as generate-images) — pass topic for context
           const keywordResult = await extractKeywordsStructuredAsync(
             visualDirection || '',
             script || '',
             supabase,
-            enableTavilyEnrichment || false
+            enableTavilyEnrichment || false,
+            topic || ''
           );
 
           console.log(`[SMART_SEARCH] Extraction complete: location="${keywordResult.location?.full || 'none'}", venue="${keywordResult.venue || 'none'}", source=${keywordResult.source}, time=${keywordResult.processingTimeMs}ms`);

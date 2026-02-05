@@ -59,13 +59,14 @@ export interface EnrichmentResult {
 // LLM EXTRACTION PROMPT
 // ============================================================================
 
-const LOCATION_EXTRACTION_PROMPT = `You are a location extraction AI. Extract location information from the given text.
+const KEYWORD_EXTRACTION_PROMPT = `You are a visual keyword extraction AI for stock image search. Extract the BEST search keywords from the given text.
 
 RULES:
-1. Extract the MOST SPECIFIC location mentioned
-2. If multiple locations, pick the PRIMARY one being discussed
-3. Return valid JSON only, no markdown
-4. If no location found, return {"found": false}
+1. Extract the MOST SPECIFIC location mentioned (if any)
+2. Extract scene objects, props, activities that would make good stock image searches
+3. Use the TOPIC for context — keywords should be relevant to the video's subject
+4. Return valid JSON only, no markdown
+5. If no location found, set "found": false but still return searchKeywords
 
 OUTPUT FORMAT:
 {
@@ -76,13 +77,14 @@ OUTPUT FORMAT:
   "type": "natural",
   "confidence": "high",
   "activities": ["boating", "sightseeing"],
-  "atmosphere": ["peaceful", "scenic"]
+  "atmosphere": ["peaceful", "scenic"],
+  "searchKeywords": ["Danau Toba scenic view", "lake toba boat ride"]
 }
 
 TYPE OPTIONS: natural, city, landmark, attraction, area, unknown
 CONFIDENCE: high (explicitly named), medium (implied), low (uncertain)
+searchKeywords: 2-4 short English phrases ideal for stock image search (always English, even if text is Indonesian/Hindi)
 
-TEXT TO ANALYZE:
 `
 
 // ============================================================================
@@ -95,17 +97,20 @@ TEXT TO ANALYZE:
  */
 export async function extractWithLLM(
   text: string,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  topic?: string
 ): Promise<{
   location: LocationResult | null
   activities: string[]
   atmosphere: string[]
+  searchKeywords: string[]
 } | null> {
   if (!text || text.length < 10) {
     return null
   }
 
-  const prompt = LOCATION_EXTRACTION_PROMPT + `"${text.substring(0, 800)}"\n\nJSON only:`
+  const topicLine = topic ? `TOPIC/CONTEXT: "${topic}"\n\n` : ''
+  const prompt = KEYWORD_EXTRACTION_PROMPT + topicLine + `TEXT TO ANALYZE:\n"${text.substring(0, 800)}"\n\nJSON only:`
 
   try {
     const result = await callGeminiHybrid(
@@ -132,6 +137,15 @@ export async function extractWithLLM(
 
     if (!parsed.found || !parsed.location) {
       console.log(`[LLM Extract] No location found in text`)
+      // Still return searchKeywords if available (even without location)
+      if (parsed.searchKeywords?.length > 0) {
+        return {
+          location: null,
+          activities: parsed.activities || [],
+          atmosphere: parsed.atmosphere || [],
+          searchKeywords: parsed.searchKeywords
+        }
+      }
       return null
     }
 
@@ -152,7 +166,8 @@ export async function extractWithLLM(
         confidence: parsed.confidence || 'medium'
       },
       activities: parsed.activities || [],
-      atmosphere: parsed.atmosphere || []
+      atmosphere: parsed.atmosphere || [],
+      searchKeywords: parsed.searchKeywords || []
     }
   } catch (error) {
     console.warn(`[LLM Extract] Parse error: ${error}`)
@@ -265,17 +280,19 @@ function extractQuotedEntities(text: string): string[] {
 
 /**
  * Main extraction function - ASYNC with LLM
- * 
+ *
  * @param visualDirection - The visual_direction from script generation
  * @param script - The script/voiceover text
  * @param supabase - Supabase client for API key rotation
  * @param enableTavilyEnrichment - Whether to enrich with Tavily (slower but richer)
+ * @param topic - Video topic for contextual keyword extraction
  */
 export async function extractKeywordsStructuredAsync(
   visualDirection: string,
   script: string,
   supabase: SupabaseClient,
-  enableTavilyEnrichment: boolean = false
+  enableTavilyEnrichment: boolean = false,
+  topic?: string
 ): Promise<KeywordExtractionResult> {
   const startTime = Date.now()
   const combinedText = `${visualDirection} ${script}`.trim()
@@ -300,14 +317,14 @@ export async function extractKeywordsStructuredAsync(
   const quotedEntities = extractQuotedEntities(combinedText)
   const venue = quotedEntities.length > 0 ? quotedEntities[0] : null
 
-  // 2. LLM extraction (primary)
-  const llmResult = await extractWithLLM(combinedText, supabase)
+  // 2. LLM extraction (primary) — pass topic for context
+  const llmResult = await extractWithLLM(combinedText, supabase, topic)
 
-  if (!llmResult || !llmResult.location) {
-    // No location found - return minimal result
+  if (!llmResult) {
+    // Total failure - return minimal result
     const parts: string[] = []
     if (venue) parts.push(venue)
-    
+
     return {
       location: null,
       venue,
@@ -315,6 +332,26 @@ export async function extractKeywordsStructuredAsync(
       atmosphere: [],
       fullKeywords: parts.join(' '),
       source: 'fallback',
+      processingTimeMs: Date.now() - startTime
+    }
+  }
+
+  // LLM returned searchKeywords but no location — use those
+  if (!llmResult.location) {
+    const parts: string[] = []
+    if (venue) parts.push(venue)
+    // Use LLM-generated search keywords
+    if (llmResult.searchKeywords.length > 0) {
+      parts.push(...llmResult.searchKeywords.slice(0, 3))
+    }
+
+    return {
+      location: null,
+      venue,
+      activities: llmResult.activities,
+      atmosphere: llmResult.atmosphere,
+      fullKeywords: [...new Set(parts)].slice(0, 5).join(' | '),
+      source: 'llm',
       processingTimeMs: Date.now() - startTime
     }
   }

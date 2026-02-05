@@ -36,6 +36,7 @@ import { History } from "./screens/History/History";
 import { AuthCallback } from "./screens/AuthCallback/AuthCallback";
 import { ScriptLab } from "./screens/ScriptLab";
 import { AdStudio } from "./screens/AdStudio";
+import { SparkfluenceStudio } from "./screens/SparkfluenceStudio/SparkfluenceStudio";
 import { SparkfluenceEngineTest } from "./screens/EngineTest";
 import { Privacy, Terms } from "./screens/Legal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -95,6 +96,7 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/script-lab" element={<ScriptLab />} />
                     <Route path="/ad-studio" element={<AdStudio />} />
+                    <Route path="/studio" element={<SparkfluenceStudio />} />
                     <Route path="/planner" element={<Planner />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/settings/plan-billing" element={<PlanBilling />} />

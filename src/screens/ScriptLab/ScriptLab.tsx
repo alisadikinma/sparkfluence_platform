@@ -107,14 +107,16 @@ export const ScriptLab = (): JSX.Element => {
           use_dna_tone: formData.useDnaTone,
           creative_dna: formData.creativeDna,
           // Video model for segment duration constraints: veo31 (max 8s) vs sora2 (max 15s)
-          video_model: formData.model === 'auto' ? 'veo31' : formData.model
+          video_model: formData.model === 'auto' ? 'veo31' : formData.model,
+          // LOOP-END: seamless video loop trick (default off)
+          enable_loop_end: formData.enableLoopEnd || false
         }
       });
 
       if (scriptError) throw new Error(scriptError.message);
 
-      if (!scriptData?.success || !scriptData?.data?.segments) {
-        throw new Error(scriptData?.error?.message || 'Failed to generate script');
+      if (!scriptData?.success || !scriptData?.data?.segments || scriptData.data.segments.length === 0) {
+        throw new Error(scriptData?.error?.message || 'Failed to generate script. Please try again.');
       }
 
       setGeneratingStep(currentPhases[3].step);

@@ -60,7 +60,9 @@
       "Bash(test:*)",
       "Bash(if not exist \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\" mkdir \"d:\\\\Projects\\\\sparkfluence_platform\\\\docs\\\\plans\")",
       "Bash(gh api:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "WebFetch(domain:www.remotion.dev)",
+      "mcp__supabase__execute_sql"
     ]
   },
   "enableAllProjectMcpServers": true,

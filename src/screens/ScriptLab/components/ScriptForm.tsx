@@ -58,6 +58,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("60s");
   const [useDnaTone, setUseDnaTone] = useState(true);
+  const [enableLoopEnd, setEnableLoopEnd] = useState(false);
   // Script language based on user's country (not UI language)
   const [scriptLang, setScriptLang] = useState("en");
   const [scriptLangInitialized, setScriptLangInitialized] = useState(false);
@@ -481,6 +482,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       avatarOption,
       avatarId: avatarOption === 'saved' && selectedSavedAvatar ? selectedSavedAvatar.id : null,
       avatarUrl: finalAvatarUrl,
+      enableLoopEnd,
     });
   };
 
@@ -854,25 +856,44 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
             {/* Bottom Row */}
             <div className="flex items-center justify-between gap-3 mt-3 sm:mt-4">
-              {hasDnaTone ? (
-                <label className="flex items-center gap-2 sm:gap-3 cursor-pointer">
-                  <div className="relative">
-                    <input
-                      type="checkbox"
-                      checked={useDnaTone}
-                      onChange={(e) => setUseDnaTone(e.target.checked)}
-                      disabled={loading}
-                      className="sr-only"
-                    />
-                    <div className={`w-9 h-5 sm:w-11 sm:h-6 rounded-full transition-colors ${useDnaTone ? "bg-primary" : "bg-surface"}`}>
-                      <div className={`absolute top-0.5 sm:top-1 w-4 h-4 rounded-full bg-white transition-transform ${useDnaTone ? "translate-x-4 sm:translate-x-5" : "translate-x-0.5 sm:translate-x-1"}`} />
+              <div className="flex items-center gap-3 sm:gap-4">
+                {hasDnaTone && (
+                  <label className="flex items-center gap-2 sm:gap-3 cursor-pointer">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={useDnaTone}
+                        onChange={(e) => setUseDnaTone(e.target.checked)}
+                        disabled={loading}
+                        className="sr-only"
+                      />
+                      <div className={`w-9 h-5 sm:w-11 sm:h-6 rounded-full transition-colors ${useDnaTone ? "bg-primary" : "bg-surface"}`}>
+                        <div className={`absolute top-0.5 sm:top-1 w-4 h-4 rounded-full bg-white transition-transform ${useDnaTone ? "translate-x-4 sm:translate-x-5" : "translate-x-0.5 sm:translate-x-1"}`} />
+                      </div>
                     </div>
-                  </div>
-                  <span className="text-text-primary text-xs sm:text-sm lg:text-base">DNA</span>
-                </label>
-              ) : (
-                <div />
-              )}
+                    <span className="text-text-primary text-xs sm:text-sm lg:text-base">DNA</span>
+                  </label>
+                )}
+
+                {/* LOOP-END toggle — seamless video loop trick */}
+                {(duration === '60s' || duration === '90s') && (
+                  <label className="flex items-center gap-2 sm:gap-3 cursor-pointer" title={uiLang === 'id' ? 'Tambahkan segment LOOP-END agar video terlihat seamless loop' : 'Add LOOP-END segment for seamless video looping'}>
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={enableLoopEnd}
+                        onChange={(e) => setEnableLoopEnd(e.target.checked)}
+                        disabled={loading}
+                        className="sr-only"
+                      />
+                      <div className={`w-9 h-5 sm:w-11 sm:h-6 rounded-full transition-colors ${enableLoopEnd ? "bg-primary" : "bg-surface"}`}>
+                        <div className={`absolute top-0.5 sm:top-1 w-4 h-4 rounded-full bg-white transition-transform ${enableLoopEnd ? "translate-x-4 sm:translate-x-5" : "translate-x-0.5 sm:translate-x-1"}`} />
+                      </div>
+                    </div>
+                    <span className="text-text-primary text-xs sm:text-sm lg:text-base">Loop</span>
+                  </label>
+                )}
+              </div>
 
               <Button
                 type="submit"

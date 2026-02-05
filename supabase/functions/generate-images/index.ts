@@ -737,7 +737,8 @@ async function handleProcessSingle(
         aspectRatio: aspectRatio,
         hasReferenceImage: hasRefImage,
         contextualOutfit: outfitResult.outfit,
-        refinementNotes: regenerationNotes
+        refinementNotes: regenerationNotes,
+        layout: job.layout || 'full'
       }
       
       const creatorResult = await buildCreatorPromptAsync(creatorInput, supabase)
@@ -1616,7 +1617,8 @@ async function handleLegacyMode(
       costume,
       characterDescription: segment.character_description || characterDescription,
       emotion,
-      language  // NEW 2026-01-15: For B-ROLL ethnicity injection
+      language,  // NEW 2026-01-15: For B-ROLL ethnicity injection
+      layout: segment.layout || 'full'
     })
 
     console.log(`[LEGACY] ${i + 1}/${segments.length}: ${segmentType} (${shotType}) → ${primaryProvider} (ref: ${hasReferenceImage}, fallback: ${fallbackProvider})`)
@@ -1811,6 +1813,7 @@ interface PromptParams {
   characterDescription: string
   emotion: string
   language?: string  // NEW 2026-01-15: For B-ROLL ethnicity injection
+  layout?: string    // full, split-60-40, split-50-50, pip, creator-center
 }
 
 // ============================================================================
@@ -1819,13 +1822,13 @@ interface PromptParams {
 // ============================================================================
 
 function buildCinematicPrompt(params: PromptParams): string {
-  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, language } = params
+  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, language, layout } = params
 
   const shotType = segment.shot_type || 'B-ROLL'
   const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
   const visualDirection = segment.visual_prompt || segment.visual_direction || ''
   const scriptText = segment.script_text || segment.voiceover || segment.text || ''
-  
+
   // Get segment defaults from new lookup module
   const segmentDefaults = getSegmentDefaults(segmentType) || getSegmentDefaults('BODY')
   const defaultShot = ['HOOK', 'CTA', 'LOOP-END'].includes(segmentType) ? 'CU' : 'MS'
@@ -1861,7 +1864,8 @@ function buildCinematicPrompt(params: PromptParams): string {
       segmentType: segmentType,
       aspectRatio: aspectRatio,
       costume: creatorCostume, // LLM-generated or contextual fallback
-      visualReference: undefined // Can add film reference if needed
+      visualReference: undefined, // Can add film reference if needed
+      layout: layout || segment.layout || 'full'
     })
     
     console.log(`[buildCinematicPrompt] CREATOR shot prompt length: ${fullPrompt.length} chars`)
@@ -2024,8 +2028,8 @@ interface AsyncPromptParams extends PromptParams {
 }
 
 async function buildCinematicPromptAsync(params: AsyncPromptParams): Promise<string> {
-  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, supabase } = params
-  
+  const { segment, style, aspectRatio, topic, costume, characterDescription, emotion, supabase, layout } = params
+
   const shotType = segment.shot_type || 'B-ROLL'
   const segmentType = (segment.segment_type || segment.type || '').toUpperCase()
   const visualDirection = segment.visual_prompt || segment.visual_direction || ''
@@ -2049,7 +2053,8 @@ async function buildCinematicPromptAsync(params: AsyncPromptParams): Promise<str
       segmentType: segmentType,
       aspectRatio: aspectRatio,
       costume: contextualCostume,
-      visualReference: undefined
+      visualReference: undefined,
+      layout: layout || segment.layout || 'full'
     })
     
     return fullPrompt

@@ -41,25 +41,38 @@ interface AvatarOption {
   source: 'profile' | 'saved' | 'session';
 }
 
+type LayoutType = 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center';
+
+const LAYOUT_OPTIONS: { value: LayoutType; label: string; image: string }[] = [
+  { value: 'full', label: 'Full', image: '/layout-previews/full.png' },
+  { value: 'split-60-40', label: 'Split 60/40', image: '/layout-previews/split-60-40.png' },
+  { value: 'split-50-50', label: 'Split 50/50', image: '/layout-previews/split-50-50.png' },
+  { value: 'pip', label: 'PiP', image: '/layout-previews/pip.png' },
+  { value: 'creator-center', label: 'Center', image: '/layout-previews/creator-center.png' },
+];
+
 interface GenerateBRollModalProps {
   isOpen: boolean;
   onClose: () => void;
   segment: SegmentForModal | null;
-  onGenerate: (options: GenerateOptions) => void;
+  onApplyOptions: (options: BRollOptions) => void;
   language?: string;
+  topic?: string;
   maxReferenceImages?: number;
+  initialLayout?: LayoutType;
   // Avatar-related props
   availableAvatars?: AvatarOption[];
-  sessionAvatarUrl?: string | null;  // Avatar selected for this session/script
-  profileAvatarUrl?: string | null;  // User's profile avatar
+  sessionAvatarUrl?: string | null;
+  profileAvatarUrl?: string | null;
   onAvatarSelect?: (avatarUrl: string) => void;
 }
 
-interface GenerateOptions {
+export interface BRollOptions {
   additionalNotes: string;
   includeCreatorFace: boolean;
   referenceImages: SelectedReference[];
-  selectedAvatarUrl?: string;  // NEW: Selected avatar for B-ROLL
+  selectedAvatarUrl?: string;
+  layout: LayoutType;
 }
 
 interface SelectedReference {
@@ -114,9 +127,11 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   isOpen,
   onClose,
   segment,
-  onGenerate,
+  onApplyOptions,
   language = 'en',
+  topic = '',
   maxReferenceImages = 3,
+  initialLayout = 'full',
   availableAvatars = [],
   sessionAvatarUrl = null,
   profileAvatarUrl = null,
@@ -128,6 +143,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
   const [selectedReferences, setSelectedReferences] = useState<SelectedReference[]>([]);
   const [selectedAvatarUrl, setSelectedAvatarUrl] = useState<string | null>(null);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [selectedLayout, setSelectedLayout] = useState<LayoutType>(initialLayout);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -177,7 +193,8 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
     selected: language === 'id' ? 'Terpilih' : 'Selected',
     maxReached: language === 'id' ? `Maksimal ${maxReferenceImages} gambar` : `Max ${maxReferenceImages} images`,
     cancel: language === 'id' ? 'Batal' : 'Cancel',
-    generate: language === 'id' ? 'Generate' : 'Generate',
+    applyOptions: language === 'id' ? 'Terapkan Opsi' : 'Apply Options',
+    layout: language === 'id' ? 'Layout Creator' : 'Creator Layout',
     noResults: language === 'id' ? 'Tidak ada hasil. Coba kata kunci lain.' : 'No results. Try different keywords.',
     searchHint: language === 'id' ? 'Cari reference image dari Unsplash & Pexels' : 'Search reference images from Unsplash & Pexels',
   };
@@ -212,7 +229,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
     if (isOpen && segment) {
       // Reset form
       setAdditionalNotes('');
-      setIncludeCreatorFace(false);
+      setIncludeCreatorFace(segment.includeCreatorFace || false);
       setSelectedReferences([]);
       setSearchQuery('');
       setSearchResults([]);
@@ -220,6 +237,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
       setPasteUrl('');
       setSmartSuggestions([]);
       setShowAvatarPicker(false);
+      setSelectedLayout(initialLayout);
       // Default to session avatar if available
       setSelectedAvatarUrl(sessionAvatarUrl || profileAvatarUrl || null);
 
@@ -261,6 +279,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
         body: {
           visualDirection: '', // Don't use visual direction
           script: scriptText,
+          topic: topic || '',
           enableSmartExtraction: true,
           orientation: 'portrait',
           per_page: 20,
@@ -525,13 +544,14 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
     onAvatarSelect?.(url);
   };
 
-  // Submit
+  // Submit — apply options only (no generation)
   const handleSubmit = () => {
-    onGenerate({
+    onApplyOptions({
       additionalNotes: additionalNotes.trim(),
       includeCreatorFace,
       referenceImages: selectedReferences,
       selectedAvatarUrl: includeCreatorFace ? currentAvatarUrl || undefined : undefined,
+      layout: includeCreatorFace ? selectedLayout : 'full',
     });
     onClose();
   };
@@ -608,7 +628,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
           )}
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-bold text-text-primary">
-              Generate {segment.type} (B-ROLL) Image
+              Configure {segment.type} (B-ROLL)
             </h3>
             {/* Script inline below title */}
             {segment.script && (
@@ -781,29 +801,35 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
               </div>
             )}
 
-            {/* URL Paste */}
-            <div>
-              <label className="text-sm font-medium text-text-primary block mb-2">
-                {uiText.orPasteUrl}
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={pasteUrl}
-                  onChange={(e) => setPasteUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                <Button
-                  onClick={handleUsePasteUrl}
-                  disabled={!pasteUrl.trim() || !canSelectMore}
-                  variant="outline"
-                  size="sm"
-                >
-                  <Upload className="w-4 h-4" />
-                </Button>
+            {/* Layout Selector — visible when Include Creator Face is checked */}
+            {includeCreatorFace && (
+              <div>
+                <label className="text-sm font-medium text-text-primary block mb-2">
+                  {uiText.layout}
+                </label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {LAYOUT_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setSelectedLayout(opt.value)}
+                      className={`flex flex-col items-center gap-1 p-1.5 rounded-md transition-colors cursor-pointer ${
+                        selectedLayout === opt.value
+                          ? 'ring-2 ring-purple-500 bg-purple-500/10'
+                          : 'hover:bg-white/5 border border-border-default'
+                      }`}
+                    >
+                      <img
+                        src={opt.image}
+                        alt={opt.label}
+                        className="w-[38px] h-[57px] object-cover rounded-sm"
+                        loading="lazy"
+                      />
+                      <span className="text-[9px] text-text-muted leading-tight">{opt.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* RIGHT COLUMN: Reference Image Picker */}
@@ -925,6 +951,25 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Paste URL — under reference image search */}
+            <div className="flex gap-2 mt-2">
+              <input
+                type="text"
+                value={pasteUrl}
+                onChange={(e) => setPasteUrl(e.target.value)}
+                placeholder={uiText.orPasteUrl}
+                className="flex-1 px-3 py-2 bg-surface border border-border-default rounded-lg text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <Button
+                onClick={handleUsePasteUrl}
+                disabled={!pasteUrl.trim() || !canSelectMore}
+                variant="outline"
+                size="sm"
+              >
+                <Upload className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -935,11 +980,10 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={includeCreatorFace && !hasAnyAvatar}
-            className="flex-1 bg-gradient-to-r from-primary to-accent-pink hover:opacity-90 disabled:opacity-50"
+            className="flex-1 bg-gradient-to-r from-primary to-accent-pink hover:opacity-90"
           >
-            <Sparkles className="w-4 h-4 mr-2" />
-            {uiText.generate}
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {uiText.applyOptions}
           </Button>
         </div>
       </div>

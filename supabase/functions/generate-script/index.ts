@@ -133,6 +133,8 @@ serve(async (req) => {
       creative_dna,
       // Video model for segment duration constraints
       video_model,
+      // LOOP-END toggle (seamless video loop trick)
+      enable_loop_end,
       // Shorten mode parameters
       mode,
       script,
@@ -272,7 +274,7 @@ New script (EXACTLY ${target_words} words):`
           const geminiRetryResult = await callGeminiHybrid(
             supabase,
             [{ role: 'user', content: shortenPrompt }],
-            { model: 'gemini-1.5-flash', temperature: 0.7, maxTokens: 500 }
+            { model: 'gemini-2.0-flash-lite', temperature: 0.7, maxTokens: 500 }
           )
 
           if (geminiRetryResult.success && geminiRetryResult.content) {
@@ -445,7 +447,7 @@ Return ONLY valid JSON, no explanations.`
           const geminiRetryResult = await callGeminiHybrid(
             supabase,
             [{ role: 'user', content: translatePrompt }],
-            { model: 'gemini-1.5-flash', temperature: 0.7, maxTokens: 4000 }
+            { model: 'gemini-2.0-flash-lite', temperature: 0.7, maxTokens: 4000 }
           )
 
           if (geminiRetryResult.success && geminiRetryResult.content) {
@@ -528,7 +530,9 @@ Return ONLY valid JSON, no explanations.`
     const dnaStyles = use_dna_tone && creative_dna && Array.isArray(creative_dna) ? creative_dna : null
     console.log(`[Script] DNA Tone: ${use_dna_tone ? 'ENABLED' : 'disabled'}${dnaStyles ? ` (${dnaStyles.length} styles)` : ''}`)
 
-    const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles, selectedVideoModel)
+    const enableLoopEnd = enable_loop_end === true
+    console.log(`[Script] LOOP-END: ${enableLoopEnd ? 'ENABLED' : 'disabled'}`)
+    const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles, selectedVideoModel, enableLoopEnd)
     // P0: Inject product naming rule for tech topics
     const systemPrompt = injectProductNamingRule(baseSystemPrompt)
     const userPrompt = buildUserPrompt(
@@ -542,60 +546,60 @@ Return ONLY valid JSON, no explanations.`
     )
 
     // ============================================================
-    // CALL LLM (Gemini PRIMARY, OpenRouter FALLBACK, Gemini RETRY)
+    // CALL LLM (OpenRouter PRIMARY, Gemini FALLBACK, Gemini-lite RETRY)
     // ============================================================
 
     let generatedText: string = ''
     let llmSource = 'unknown'
     let lastError = ''
 
-    // Try Gemini first (FAST - ~3-8 seconds)
-    console.log('[LLM] Trying Gemini 2.0 Flash (primary)...')
-    const geminiResult = await callGeminiHybrid(
+    // Try OpenRouter first (paid model — reliable, no free-tier rate limits)
+    console.log('[LLM] Trying OpenRouter gemini-2.5-flash-lite (primary)...')
+    const openRouterResult = await callOpenRouterHybrid(
       supabase,
       [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
       {
-        model: 'gemini-2.0-flash',
+        model: 'google/gemini-2.5-flash-lite',
         temperature: 0.6,
-        maxTokens: 4096
+        maxTokens: 8192
       }
     )
 
-    if (geminiResult.success && geminiResult.content) {
-      console.log(`[LLM] Gemini success (source: ${geminiResult.source})`)
-      generatedText = geminiResult.content
-      llmSource = `gemini-${geminiResult.source}`
+    if (openRouterResult.data?.choices?.[0]?.message?.content) {
+      console.log(`[LLM] OpenRouter success (source: ${openRouterResult.source})`)
+      generatedText = openRouterResult.data.choices[0].message.content
+      llmSource = `openrouter-${openRouterResult.source}`
     } else {
-      // Fallback to OpenRouter if Gemini fails
-      console.log('[LLM] Gemini failed:', geminiResult.error)
-      lastError = geminiResult.error || 'Gemini failed'
-      console.log('[LLM] Trying OpenRouter fallback...')
+      // Fallback to Gemini direct if OpenRouter fails
+      console.log('[LLM] OpenRouter failed:', openRouterResult.error)
+      lastError = openRouterResult.error || 'OpenRouter failed'
+      console.log('[LLM] Trying Gemini 2.0 Flash (fallback)...')
 
-      const openRouterResult = await callOpenRouterHybrid(
+      const geminiResult = await callGeminiHybrid(
         supabase,
         [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         {
-          model: 'meta-llama/llama-3.3-70b-instruct:free',
+          model: 'gemini-2.0-flash',
           temperature: 0.6,
-          maxTokens: 4096
+          maxTokens: 8192
         }
       )
 
-      if (openRouterResult.data?.choices?.[0]?.message?.content) {
-        console.log(`[LLM] OpenRouter success (source: ${openRouterResult.source})`)
-        generatedText = openRouterResult.data.choices[0].message.content
-        llmSource = `openrouter-${openRouterResult.source}`
+      if (geminiResult.success && geminiResult.content) {
+        console.log(`[LLM] Gemini success (source: ${geminiResult.source})`)
+        generatedText = geminiResult.content
+        llmSource = `gemini-${geminiResult.source}`
       } else {
-        // OpenRouter also failed - try Gemini one more time with different model
-        console.log('[LLM] OpenRouter failed:', openRouterResult.error)
-        lastError = openRouterResult.error || 'OpenRouter failed'
-        console.log('[LLM] Retrying with Gemini 1.5 Flash...')
+        // Gemini also failed - try Gemini lite one more time
+        console.log('[LLM] Gemini failed:', geminiResult.error)
+        lastError = geminiResult.error || 'Gemini failed'
+        console.log('[LLM] Retrying with Gemini 2.0 Flash Lite...')
 
         const geminiRetry = await callGeminiHybrid(
           supabase,
@@ -604,22 +608,22 @@ Return ONLY valid JSON, no explanations.`
             { role: 'user', content: userPrompt }
           ],
           {
-            model: 'gemini-1.5-flash',  // Try different model
+            model: 'gemini-2.0-flash-lite',
             temperature: 0.6,
-            maxTokens: 4096
+            maxTokens: 8192
           }
         )
 
         if (geminiRetry.success && geminiRetry.content) {
-          console.log(`[LLM] Gemini retry success (source: ${geminiRetry.source})`)
+          console.log(`[LLM] Gemini lite retry success (source: ${geminiRetry.source})`)
           generatedText = geminiRetry.content
-          llmSource = `gemini-retry-${geminiRetry.source}`
+          llmSource = `gemini-lite-${geminiRetry.source}`
         } else {
           // All providers failed
           console.error('[LLM] All providers failed')
-          console.error('[LLM] Gemini error:', geminiResult.error)
           console.error('[LLM] OpenRouter error:', openRouterResult.error)
-          console.error('[LLM] Gemini retry error:', geminiRetry.error)
+          console.error('[LLM] Gemini error:', geminiResult.error)
+          console.error('[LLM] Gemini lite error:', geminiRetry.error)
           throw new Error(`All LLM providers failed. Last error: ${lastError}`)
         }
       }
@@ -658,7 +662,49 @@ Return ONLY valid JSON, no explanations.`
     // ============================================================
     
     let scriptData = parseScriptOutput(generatedText, selectedDuration, content, selectedLanguage)
-    
+
+    // Check for parse failure — retry once before giving up
+    if (!scriptData.segments || scriptData.segments.length === 0) {
+      console.warn('[Script] Parse resulted in empty segments — retrying LLM call...')
+
+      // Retry with Gemini (potentially different key from rotation)
+      const retryResult = await callGeminiHybrid(
+        supabase,
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        {
+          model: 'gemini-2.0-flash',
+          temperature: 0.5,  // Slightly lower temperature for more deterministic output
+          maxTokens: 8192
+        }
+      )
+
+      if (retryResult.success && retryResult.content) {
+        console.log(`[Script] Retry LLM success (finishReason: ${retryResult.finishReason})`)
+        generatedText = retryResult.content
+        llmSource = `gemini-retry-parse-${retryResult.source}`
+        scriptData = parseScriptOutput(generatedText, selectedDuration, content, selectedLanguage)
+      }
+
+      // Still empty after retry — return error
+      if (!scriptData.segments || scriptData.segments.length === 0) {
+        console.error('[Script] Parse still empty after retry — returning error to client')
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: 'PARSE_ERROR',
+              message: 'AI output was truncated or malformed. Please try again.',
+              raw_preview: generatedText.substring(0, 500)
+            }
+          }),
+          { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
+
     // Add entity check metadata
     if (entityCheckResult.wasFixed && scriptData.metadata) {
       scriptData.metadata.entity_fixes = entityCheckResult.issuesFixed
@@ -677,7 +723,7 @@ Return ONLY valid JSON, no explanations.`
     if (scriptData.segments && scriptData.segments.length > 0) {
       console.log('[PostProcess] Running word limit auto-fix...')
 
-      const postProcessResult = postProcessWordLimits(scriptData.segments, selectedLanguage)
+      const postProcessResult = await postProcessWordLimits(scriptData.segments, selectedLanguage, supabase)
 
       // Replace segments with post-processed version
       scriptData.segments = postProcessResult.segments
@@ -842,7 +888,7 @@ Return ONLY valid JSON, no explanations.`
 // PROMPT BUILDERS (Using Static Knowledge)
 // ============================================================================
 
-function buildSystemPrompt(language: string, duration: string, dnaStyles: string[] | null = null, videoModel: string = 'sora-2'): string {
+function buildSystemPrompt(language: string, duration: string, dnaStyles: string[] | null = null, videoModel: string = 'sora-2', enableLoopEnd: boolean = false): string {
   const langConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG['indonesian']
   
   // VIDEO MODEL AWARE: Adjust segment count based on model constraints
@@ -855,11 +901,17 @@ function buildSystemPrompt(language: string, duration: string, dnaStyles: string
     // VEO 3.1: More segments with shorter durations (max 8s/segment)
     segmentCount = duration === '30s' ? 5 : duration === '60s' ? 8 : 12
   } else {
-    // Sora 2.0: Fewer segments with longer durations (max 15s/segment)
-    segmentCount = duration === '30s' ? 4 : duration === '60s' ? 5 : 7
+    // WAN/Kling: Fewer segments with longer durations (max 10s/segment)
+    segmentCount = duration === '30s' ? 4 : duration === '60s' ? 6 : 9
+  }
+
+  // LOOP-END adds 1 segment for 60s, and for WAN 90s
+  if (enableLoopEnd && (duration === '60s' || duration === '90s')) {
+    if (duration === '60s') segmentCount += 1
+    if (duration === '90s' && !isVEO) segmentCount += 1 // WAN 90s: 9→10 (VEO 90s stays 12)
   }
   
-  const structureGuide = getStructureByDuration(duration, videoModel, language)
+  const structureGuide = getStructureByDuration(duration, videoModel, language, enableLoopEnd)
   
   // Get slang knowledge for language
   const slangGuide = getSlangKnowledge(language)
@@ -914,19 +966,21 @@ function buildSystemPrompt(language: string, duration: string, dnaStyles: string
 ${structureGuide}
 
 3. SHOT TYPES:
-   - CREATOR: HOOK, CTA, LOOP-END (creator talking to camera)
+   - CREATOR: HOOK, CTA${enableLoopEnd ? ', LOOP-END' : ''} (creator talking to camera)
    - B-ROLL: FORE, BODY-1, BODY-2, BODY-3, PEAK (illustrative visuals)
 
 4. EACH SEGMENT MUST HAVE:
    - segment_id: "VIDEO-001", "VIDEO-002", etc.
-   - type: HOOK/FORE/BODY-1/BODY-2/BODY-3/PEAK/CTA
+   - type: HOOK/FORE/BODY-1/BODY-2/BODY-3/PEAK/CTA${enableLoopEnd ? '/LOOP-END' : ''}
    - timing: "0-5s", "5-10s", etc.
    - duration_seconds: integer
    - shot_type: "CREATOR" or "B-ROLL"
    - emotion: Curiosity/Shock/Intrigue/Awe/Tension/Resolution/Urgency
    - transition: Cut/Jump-Cut/Zoom-In/Zoom-Out/Flash-Cut/Whip-Pan
    - script_text: The actual spoken script
-   - visual_direction: 50-80 words describing the visual (MANDATORY LENGTH!)
+   - visual_direction: Structured visual direction using EXACTLY this pipe-separated format:
+     "Scene: [setting/location/props/subject] | Camera: [shot type, lens, angle, movement] | Lighting: [key/fill/rim, color temp, contrast] | Color: [grade, palette, saturation] | Mood: [atmosphere, energy, style] | FX: [text overlay, lens flare, particles, bokeh, etc.]"
+     Each category 8-15 words. Total 50-80 words. ALL 6 categories MANDATORY.
    - creator_costume: (ONLY FOR CREATOR SHOTS) Outfit/clothing that matches the topic theme
    - creator_appearance: (ONLY FOR CREATOR SHOTS) Generic face description matching country + topic profession
 
@@ -935,9 +989,28 @@ ${structureGuide}
    Example tone: "${langConfig.example}"
 
 6. HOOK REQUIREMENTS (MOST IMPORTANT):
+   **A. SCRIPT HOOK:**
    - Must stop the scroll in first 3 seconds
    - Use pattern interrupt, curiosity gap, or shocking statement
    - Include contrast (before/after, problem/solution)
+
+   **B. VISUAL HOOK (CRITICAL — visual_direction for HOOK must include at least 2 of these):**
+   - 🎬 UNEXPECTED MOVEMENT: Creator performs attention-grabbing gesture (lean into camera, hand wave,
+     point at viewer, throw/catch object, sudden head turn). NOT just standing still!
+   - 😱 EXTREME EXPRESSION: Exaggerated facial expression that creates curiosity (wide eyes + raised
+     eyebrows for shock, leaning in with squinted eyes for intrigue, jaw drop, excited pointing)
+   - 📱 TEXT OVERLAY CUE: Include a bold text overlay concept in visual_direction (e.g., "BOLD TEXT:
+     'Jangan beli ini!' in red/yellow"). Text must tease the content.
+   - 🔥 VISUAL ODDITY: Something unusual/unexpected in frame (unusual prop, contrasting background,
+     dramatic lighting shift, holding product/item that triggers curiosity)
+   - 🎯 RESULT FIRST: If topic is a tutorial/recipe/transformation, show the result preview in the
+     background while creator reacts to it
+
+   **HOOK visual_direction EXAMPLE (GOOD — structured format):**
+   "Scene: Creator leans in suddenly with wide shocked eyes, left hand pointing at viewer, blurred topic preview in background | Camera: MCU low-angle 35mm f/2.0, slight push-in dolly | Lighting: Dramatic Rembrandt 4:1 ratio, warm key 3200K, blue rim separation | Color: High-contrast teal-orange grade, crushed blacks | Mood: Scroll-stopping intensity, authoritative energy, urgent | FX: BOLD TEXT 'Lo WAJIB tau ini!' bright yellow top-center, subtle lens flare"
+
+   **HOOK visual_direction EXAMPLE (BAD — missing categories, no structure):**
+   "Creator standing in front of camera talking about the topic. Normal expression. Clean background."
 
 7. FORESHADOW (FORE) REQUIREMENTS:
    - MUST tease the ending: "${langConfig.foreshadow.tease}"
@@ -959,11 +1032,26 @@ ${structureGuide}
    ❌ WRONG (24 words): "Share pengalaman serupa di comment below, dan jangan lupa follow buat rekomendasi travel lainnya!"
    ✅ RIGHT (12 words): "Share di comment, follow gue buat rekomendasi travel seru lainnya!"
 
-9. VISUAL DIRECTION REQUIREMENTS (50-80 WORDS EACH):
+9. ⚠️ MINIMUM CONTENT PER SEGMENT (NO FILLER SEGMENTS!):
+   - EVERY BODY segment MUST carry substantive content (new info, argument, or storytelling)
+   - MINIMUM 5 words for 5s segments, MINIMUM 8 words for 8s segments, MINIMUM 10 words for 10s segments
+   - ❌ NEVER create reaction-only segments like "Gila, anjay!" or "Wow banget!" as standalone BODY segments
+   - ❌ NEVER waste an entire segment on just an exclamation or filler phrase
+   - ✅ Merge short reactions INTO the preceding or following segment's script
+   - ✅ Each BODY segment should advance the narrative with real content
+
+   Example (BAD — filler segment wastes 5s):
+   BODY-5: "Gila, anjay!" (2 words, 5s = WASTE!)
+   BODY-6: "Kolaborasi jadi lebih efektif, semua orang on the same page." (10 words, 8s)
+
+   Example (GOOD — merged into one richer segment):
+   BODY-5: "Gila anjay, kolaborasi jadi lebih efektif semua orang on the same page!" (12 words, 8s)
+
+10. VISUAL DIRECTION REQUIREMENTS (50-80 WORDS EACH):
    - For CREATOR: facial expression, gesture, energy level, eye contact, background
    - For B-ROLL: main subject, composition, lighting mood, motion, text overlays
 
-10. CREATOR COSTUME REQUIREMENTS (MANDATORY FOR CREATOR SHOTS):
+11. CREATOR COSTUME REQUIREMENTS (MANDATORY FOR CREATOR SHOTS):
    - For HOOK/CTA segments, add "creator_costume" field with topic-appropriate outfit
    - Examples by topic:
      * Agriculture/Farming → "farmer outfit with straw hat, plaid shirt, denim overalls"
@@ -976,7 +1064,7 @@ ${structureGuide}
    - Costume should enhance credibility and match topic theme
    - Keep description concise: 10-20 words max
 
-11. CREATOR APPEARANCE (FALLBACK FOR NO-AVATAR USERS):
+12. CREATOR APPEARANCE (FALLBACK FOR NO-AVATAR USERS):
    - For CREATOR shots, ALWAYS add "creator_appearance" field
    - This describes a GENERIC FACE matching the target audience country + topic profession
    - Format: "[ethnicity] [gender], [age], [profession-related appearance]"
@@ -994,7 +1082,48 @@ ${structureGuide}
    - Example for Indonesian farming topic:
      "Southeast Asian Indonesian male, late 30s, experienced farmer with friendly weathered face, warm smile"
    - Keep description 15-25 words, focus on FACE characteristics only
+${enableLoopEnd ? `
+═══════════════════════════════════════════════════════════════
+🔄 LOOP-END RULES (SEAMLESS VIDEO LOOP TRICK)
+═══════════════════════════════════════════════════════════════
 
+**WHAT IS LOOP-END?**
+LOOP-END is the LAST segment of the video. Its purpose is to make viewers
+UNKNOWINGLY loop back to the HOOK. The video appears to never end — viewers
+get tricked into re-watching without realizing it.
+
+**LOOP-END IS NOT A CTA!**
+- ❌ WRONG: "Follow gue buat part 2!" (this is CTA, not LOOP-END)
+- ❌ WRONG: "Share ke temen lo!" (this is CTA, not LOOP-END)
+- ✅ RIGHT: "Tapi yang paling gila sih..." (creates curiosity → loops to HOOK)
+- ✅ RIGHT: "Eh bentar, lo tau ga..." (mirrors HOOK opening → seamless loop)
+
+**LOOP-END RULES:**
+1. MUST visually mirror the HOOK — same pose, same angle, same energy
+2. Script MUST create a curiosity gap that connects to the HOOK opening line
+3. The viewer should NOT realize the video has ended
+4. LOOP-END is a CREATOR shot (talking head), same as HOOK
+5. Duration: 5s max
+6. Emotion should match HOOK (usually Curiosity)
+
+**LOOP-END EXAMPLES (Indonesian):**
+- HOOK: "Lo tau ga, ada 5 makanan yang..." → LOOP-END: "Oh iya, lo tau ga sih ada yang lebih gila..."
+- HOOK: "Ini rahasia yang..." → LOOP-END: "Eh tapi ada satu rahasia lagi yang..."
+- HOOK: "Jangan pernah..." → LOOP-END: "Tapi yang paling bahaya tuh sebenernya..."
+
+**LOOP-END EXAMPLES (English):**
+- HOOK: "Did you know that..." → LOOP-END: "But wait, there's actually something crazier..."
+- HOOK: "Nobody talks about..." → LOOP-END: "Oh and one more thing nobody mentions..."
+
+**VISUAL DIRECTION FOR LOOP-END (use structured format):**
+- Scene: Same background as HOOK, creator leans in with curious/teasing expression
+- Camera: Same angle as HOOK (mirror exact framing)
+- Lighting: Same setup as HOOK
+- Color: Same grade as HOOK
+- Mood: Mirrors HOOK energy, creates seamless loop feeling
+- FX: Subtle curiosity cue (e.g., text tease or visual callback to HOOK)
+- Transition: use "Whip-Pan" or "Flash-Cut" that flows into HOOK start
+` : ''}
 ═══════════════════════════════════════════════════════════════
 📚 KNOWLEDGE BASE (Apply these principles)
 ═══════════════════════════════════════════════════════════════
@@ -1141,7 +1270,7 @@ ${numberedTopicInstructions}
 CRITICAL REMINDERS:
 1. HOOK must stop scroll with curiosity/shock pattern. Example: "${langConfig.hook.example}"
 2. FORE must tease ending: "${langConfig.foreshadow.example}"
-3. Each visual_direction MUST be 50-80 words
+3. Each visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
 4. ALL script_text MUST be in ${langConfig.name} ONLY - NO mixing languages!
 5. Return ONLY valid JSON, no other text
 ${itemCount ? `6. ⚠️ COVER ALL ${itemCount} ITEMS - Do NOT skip any! Each item gets its own BODY segment.
@@ -1166,39 +1295,83 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
       jsonStr = jsonStr.replace(/^```\n?/, '').replace(/\n?```$/, '')
     }
     
-    // Find JSON object
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
-    
+    // Find JSON — try object first, then array
+    const jsonObjMatch = jsonStr.match(/\{[\s\S]*\}/)
+    const jsonArrMatch = jsonStr.match(/\[[\s\S]*\]/)
+    // Prefer whichever starts earlier in the string (array format: [...], object format: {...})
+    let jsonMatch: string | null = null
+    if (jsonObjMatch && jsonArrMatch) {
+      jsonMatch = (jsonStr.indexOf(jsonArrMatch[0]) < jsonStr.indexOf(jsonObjMatch[0]))
+        ? jsonArrMatch[0] : jsonObjMatch[0]
+    } else {
+      jsonMatch = jsonObjMatch?.[0] || jsonArrMatch?.[0] || null
+    }
+
+    // If no complete JSON found, try to find start of truncated JSON
+    if (!jsonMatch) {
+      const arrStart = jsonStr.indexOf('[')
+      const objStart = jsonStr.indexOf('{')
+      if (arrStart >= 0 || objStart >= 0) {
+        const start = (arrStart >= 0 && objStart >= 0) ? Math.min(arrStart, objStart)
+          : arrStart >= 0 ? arrStart : objStart
+        jsonMatch = jsonStr.substring(start)
+      }
+    }
+
     if (jsonMatch) {
       let parsed: any
-      
+
       try {
-        parsed = JSON.parse(jsonMatch[0])
+        parsed = JSON.parse(jsonMatch)
       } catch (jsonError) {
         // JSON might be truncated - try to fix it
         console.log('[Parser] JSON parse failed, attempting to fix truncated JSON...')
-        let fixedJson = jsonMatch[0]
-        
-        // Count open/close braces and brackets
-        const openBraces = (fixedJson.match(/\{/g) || []).length
-        const closeBraces = (fixedJson.match(/\}/g) || []).length
+
+        // Strategy: find the last complete segment object and close the structure
+        // A complete segment ends with "}" followed by "," or "]" or end-of-string
+        let fixedJson = jsonMatch
+
+        // Step 1: Trim trailing incomplete key-value pair
+        // Remove trailing content after the last complete property
+        // Look for last `}` that closes a segment object
+        const lastClosingBrace = fixedJson.lastIndexOf('}')
+        if (lastClosingBrace > 0) {
+          fixedJson = fixedJson.substring(0, lastClosingBrace + 1)
+        }
+
+        // Step 2: Close any remaining open brackets/braces
         const openBrackets = (fixedJson.match(/\[/g) || []).length
         const closeBrackets = (fixedJson.match(/\]/g) || []).length
-        
-        // Add missing closing brackets/braces
-        fixedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets))
+        const openBraces = (fixedJson.match(/\{/g) || []).length
+        const closeBraces = (fixedJson.match(/\}/g) || []).length
+
+        // Remove trailing comma before closing
+        fixedJson = fixedJson.replace(/,\s*$/, '')
+
         fixedJson += '}'.repeat(Math.max(0, openBraces - closeBraces))
-        
-        // Try parsing again
+        fixedJson += ']'.repeat(Math.max(0, openBrackets - closeBrackets))
+
+        // Try parsing
         try {
           parsed = JSON.parse(fixedJson)
+          console.log('[Parser] Successfully repaired truncated JSON')
         } catch {
-          // Still failing - try more aggressive fix
-          // Find last complete segment and close the JSON
-          const lastCompleteSegment = fixedJson.lastIndexOf('},"VIDEO-')
-          if (lastCompleteSegment > 0) {
-            fixedJson = fixedJson.substring(0, lastCompleteSegment + 1) + '}'
-            parsed = JSON.parse(fixedJson)
+          // Step 3: More aggressive — find last complete segment by looking for pattern
+          // Array format: }, { "segment_id" — find last complete object
+          const lastSegmentEnd = fixedJson.lastIndexOf('},')
+          if (lastSegmentEnd > 0) {
+            let truncated = fixedJson.substring(0, lastSegmentEnd + 1)
+            // Close array/object structure
+            const ob = (truncated.match(/\[/g) || []).length - (truncated.match(/\]/g) || []).length
+            const oc = (truncated.match(/\{/g) || []).length - (truncated.match(/\}/g) || []).length
+            truncated += '}'.repeat(Math.max(0, oc))
+            truncated += ']'.repeat(Math.max(0, ob))
+            try {
+              parsed = JSON.parse(truncated)
+              console.log(`[Parser] Repaired by truncating to last complete segment`)
+            } catch {
+              throw jsonError
+            }
           } else {
             throw jsonError
           }
@@ -1409,8 +1582,8 @@ SEGMENT TYPE: ${segmentType || 'BODY'}
 SHOT TYPE: ${isCreatorShot ? 'CREATOR' : 'B-ROLL'}
 LANGUAGE: ${langConfig.name} - ${langConfig.style}
 
-CRITICAL: 
-- visual_direction MUST be 50-80 words
+CRITICAL:
+- visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
 - script_text in ${langConfig.name} Gen-Z style
 - Output ONLY valid JSON`
 
@@ -1429,7 +1602,7 @@ Return JSON:
     "emotion": "...",
     "transition": "Cut",
     "script_text": "... (${langConfig.name} Gen-Z style)",
-    "visual_direction": "50-80 words describing the visual scene in detail..."
+    "visual_direction": "Scene: [setting/subject] | Camera: [shot/lens/movement] | Lighting: [setup/temp/contrast] | Color: [grade/palette] | Mood: [atmosphere/energy] | FX: [overlays/effects]"
   }
 }`
 
@@ -1465,7 +1638,7 @@ Return JSON:
         { role: 'user', content: userPrompt }
       ],
       {
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: 'google/gemini-2.5-flash-lite',
         temperature: 0.7,
         maxTokens: 1024
       }
@@ -1837,9 +2010,134 @@ function normalizeDurations(segments: any[]): any[] {
 }
 
 /**
+ * Auto-shorten over-limit segments using Gemini (single batch call)
+ * Rewrites all segments that exceed their word limit to fit exactly.
+ */
+async function autoShortenOverlimitSegments(
+  segments: any[],
+  language: string,
+  supabase: any
+): Promise<{ segments: any[]; shortened_count: number }> {
+  // Collect all over-limit segments
+  const overLimit: { index: number; segment: any; maxWords: number; actualWords: number }[] = []
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const scriptText = seg.script_text || ''
+    if (!scriptText.trim()) continue
+    const duration = seg.duration_seconds || 8
+    const maxWords = getMaxWordsForDuration(duration, language)
+    const actualWords = countWords(scriptText)
+    if (actualWords > maxWords) {
+      overLimit.push({ index: i, segment: seg, maxWords, actualWords })
+    }
+  }
+
+  if (overLimit.length === 0) {
+    return { segments, shortened_count: 0 }
+  }
+
+  console.log(`[AutoShorten] ${overLimit.length} segments over limit, calling Gemini to shorten...`)
+
+  // Build a batch prompt for all over-limit segments
+  const langInstructions: Record<string, string> = {
+    indonesian: 'Gunakan gaya bahasa casual Gen-Z Indonesia (gue/lo, BUKAN saya/kamu). Padat dan impactful.',
+    hindi: 'Casual Hinglish style (tum/yaar). Concise and impactful.',
+    english: 'Casual, punchy English. Concise and impactful.',
+    french: 'Style décontracté, percutant. Concis et impactant.',
+  }
+  const langInstruction = langInstructions[language] || langInstructions.english
+
+  const batchItems = overLimit.map((item, idx) => (
+    `[${idx + 1}] Segment ${item.segment.type || 'UNKNOWN'} (${item.segment.duration_seconds}s):
+Current (${item.actualWords} words): "${item.segment.script_text}"
+Target: MAX ${item.maxWords} words`
+  )).join('\n\n')
+
+  const prompt = `Rewrite each script below to fit within its word limit. Keep the original meaning and tone.
+${langInstruction}
+
+Rules:
+- Output ONLY the rewritten scripts, numbered [1], [2], etc.
+- Each MUST be AT or UNDER its MAX word count
+- Do NOT add any explanations, just the rewritten text
+- Maintain the same emotional tone and key message
+
+${batchItems}`
+
+  try {
+    const result = await callGeminiHybrid(supabase, [
+      { role: 'user', content: prompt }
+    ], { temperature: 0.5, maxTokens: 2048 })
+
+    if (!result.success || !result.content) {
+      console.warn(`[AutoShorten] ⚠️ Gemini call failed: ${result.error}`)
+      return { segments, shortened_count: 0 }
+    }
+
+    // Parse response — expect numbered lines like [1] text here
+    const responseLines = result.content.trim().split('\n')
+    const shortened: Record<number, string> = {}
+
+    let currentNum = -1
+    let currentText = ''
+
+    for (const line of responseLines) {
+      const match = line.match(/^\[(\d+)\]\s*(.*)/)
+      if (match) {
+        // Save previous if any
+        if (currentNum >= 0 && currentText.trim()) {
+          shortened[currentNum] = currentText.trim()
+        }
+        currentNum = parseInt(match[1])
+        currentText = match[2] || ''
+      } else if (currentNum >= 0) {
+        // Continuation line
+        currentText += ' ' + line.trim()
+      }
+    }
+    // Save last one
+    if (currentNum >= 0 && currentText.trim()) {
+      shortened[currentNum] = currentText.trim()
+    }
+
+    // Apply shortened scripts
+    const updatedSegments = [...segments]
+    let appliedCount = 0
+
+    for (let idx = 0; idx < overLimit.length; idx++) {
+      const shortenedText = shortened[idx + 1]
+      if (!shortenedText) continue
+
+      const newWordCount = countWords(shortenedText)
+      const item = overLimit[idx]
+
+      // Only apply if actually shorter or within limit
+      if (newWordCount <= item.maxWords) {
+        updatedSegments[item.index] = {
+          ...updatedSegments[item.index],
+          script_text: shortenedText
+        }
+        appliedCount++
+        console.log(`[AutoShorten] ✅ ${item.segment.type}: ${item.actualWords} → ${newWordCount} words (max ${item.maxWords})`)
+      } else {
+        console.warn(`[AutoShorten] ⚠️ ${item.segment.type}: Gemini returned ${newWordCount} words (max ${item.maxWords}), skipping`)
+      }
+    }
+
+    console.log(`[AutoShorten] Applied ${appliedCount}/${overLimit.length} shortenings`)
+    return { segments: updatedSegments, shortened_count: appliedCount }
+
+  } catch (err) {
+    console.error(`[AutoShorten] Error: ${err}`)
+    return { segments, shortened_count: 0 }
+  }
+}
+
+/**
  * Main post-processing function that applies all word limit fixes
  */
-function postProcessWordLimits(segments: any[], language: string): PostProcessingResult {
+async function postProcessWordLimits(segments: any[], language: string, supabase?: any): Promise<PostProcessingResult> {
   console.log('[PostProcess] Starting word limit post-processing...')
 
   // Step 0: Normalize all durations to supported values first
@@ -1848,6 +2146,51 @@ function postProcessWordLimits(segments: any[], language: string): PostProcessin
   // Step 1: Adjust HOOK duration if needed (will use 5s or 8s only)
   const hookResult = adjustHookDuration(processedSegments, language)
   processedSegments = hookResult.segments
+
+  // Step 1.5: Merge thin BODY segments (< 5 words) into adjacent segments
+  let mergedCount = 0
+  const MIN_WORDS_PER_SEGMENT = 5
+  let mergedSegments: any[] = []
+  for (let i = 0; i < processedSegments.length; i++) {
+    const seg = processedSegments[i]
+    const segType = (seg.type || '').toUpperCase()
+    const wordCount = countWords(seg.script_text || '')
+    const isBodySegment = segType.startsWith('BODY') || segType === 'FORE' || segType === 'PEAK'
+
+    // Only merge thin BODY/FORE/PEAK segments, never merge HOOK/CTA/LOOP-END
+    if (isBodySegment && wordCount < MIN_WORDS_PER_SEGMENT && wordCount > 0) {
+      // Try to merge into the NEXT body segment, or PREVIOUS if no next
+      const nextIdx = processedSegments.findIndex((s, j) => j > i && ['BODY', 'FORE', 'PEAK'].some(t => (s.type || '').toUpperCase().startsWith(t)))
+      const prevBodyIdx = [...mergedSegments].reverse().findIndex(s => ['BODY', 'FORE', 'PEAK'].some(t => (s.type || '').toUpperCase().startsWith(t)))
+      const prevIdx = prevBodyIdx >= 0 ? mergedSegments.length - 1 - prevBodyIdx : -1
+
+      if (nextIdx >= 0) {
+        // Prepend thin segment's script to next segment
+        const nextSeg = processedSegments[nextIdx]
+        nextSeg.script_text = `${seg.script_text} ${nextSeg.script_text}`.trim()
+        // Add thin segment's duration to next segment (cap at 10s)
+        nextSeg.duration_seconds = Math.min(10, (nextSeg.duration_seconds || 5) + (seg.duration_seconds || 5))
+        console.log(`[PostProcess] Merged thin segment ${seg.segment_id} (${wordCount}w) → next ${nextSeg.segment_id}`)
+        mergedCount++
+        continue // Skip adding this segment
+      } else if (prevIdx >= 0) {
+        // Append thin segment's script to previous body segment
+        const prevSeg = mergedSegments[prevIdx]
+        prevSeg.script_text = `${prevSeg.script_text} ${seg.script_text}`.trim()
+        prevSeg.duration_seconds = Math.min(10, (prevSeg.duration_seconds || 5) + (seg.duration_seconds || 5))
+        console.log(`[PostProcess] Merged thin segment ${seg.segment_id} (${wordCount}w) → prev ${prevSeg.segment_id}`)
+        mergedCount++
+        continue // Skip adding this segment
+      }
+    }
+    mergedSegments.push(seg)
+  }
+  if (mergedCount > 0) {
+    processedSegments = mergedSegments
+    // Renumber segment IDs after merge
+    processedSegments = recalculateTimings(processedSegments)
+    console.log(`[PostProcess] Merged ${mergedCount} thin segments (< ${MIN_WORDS_PER_SEGMENT} words)`)
+  }
 
   // Step 2: Auto-split over-limit BODY segments (will use 5s or 8s per split)
   const splitResult = autoSplitOverlimitSegments(processedSegments, language)
@@ -1859,13 +2202,52 @@ function postProcessWordLimits(segments: any[], language: string): PostProcessin
   // Step 4: Final normalization to ensure all durations are valid
   processedSegments = normalizeDurations(processedSegments)
 
-  // Step 5: Check for remaining strict violations
+  // Step 5: Auto-shorten remaining over-limit segments via Gemini
+  let shortenedCount = 0
+  if (supabase) {
+    const shortenResult = await autoShortenOverlimitSegments(processedSegments, language, supabase)
+    processedSegments = shortenResult.segments
+    shortenedCount = shortenResult.shortened_count
+  }
+
+  // Step 6: Deterministic hard-trim — guaranteed enforcement (no LLM needed)
+  let hardTrimCount = 0
+  processedSegments = processedSegments.map((segment: any) => {
+    const scriptText = segment.script_text || ''
+    const duration = segment.duration_seconds || 5
+    const maxWords = getMaxWordsForDuration(duration, language)
+    const wordCount = countWords(scriptText)
+
+    if (wordCount > maxWords && scriptText.length > 0) {
+      // Split into words (preserving original spacing/punctuation)
+      const words = scriptText.trim().split(/\s+/)
+      // Keep only maxWords words
+      let trimmed = words.slice(0, maxWords).join(' ')
+      // Clean trailing punctuation fragments
+      trimmed = trimmed.replace(/[,;:\-–—]\s*$/, '').trim()
+      // Ensure ends with proper punctuation
+      if (!/[.!?]$/.test(trimmed)) {
+        trimmed += '!'
+      }
+      console.log(`[PostProcess] Hard-trim ${segment.segment_id}: ${wordCount} → ${countWords(trimmed)} words (max ${maxWords})`)
+      segment.script_text = trimmed
+      hardTrimCount++
+    }
+    return segment
+  })
+  if (hardTrimCount > 0) {
+    console.log(`[PostProcess] Hard-trimmed ${hardTrimCount} segments to enforce word limits`)
+  }
+
+  // Step 7: Check for remaining strict violations
   const strictViolations = checkStrictViolations(processedSegments, language)
 
   // Log summary
   console.log(`[PostProcess] Summary:`)
+  console.log(`  - Thin segments merged: ${mergedCount}`)
   console.log(`  - HOOK adjusted: ${hookResult.adjusted}`)
   console.log(`  - BODY splits: ${splitResult.splits_applied}`)
+  console.log(`  - Auto-shortened: ${shortenedCount}`)
   console.log(`  - Strict violations: ${strictViolations.length}`)
   if (strictViolations.length > 0) {
     console.warn(`[PostProcess] ⚠️ Strict limit violations (need manual fix):`)
