@@ -1,15 +1,18 @@
 /**
- * SCRIPT VALIDATOR - P0 #2
+ * SCRIPT VALIDATOR - P0 #2 + Seefluencer/Beast-Mozi Upgrades
  * Validates script output and auto-fixes common issues
- * 
+ *
  * Checks:
  * 1. ≥2 virality factors present
  * 2. Visual direction ≥50 words
  * 3. Foreshadow has urgency phrase
  * 4. Shot types correct (HOOK/CTA = CREATOR)
  * 5. Slang usage (via slangValidator)
- * 
+ * 6. Triple Hook: hook_options has all 3 options (safe/negative/visual)
+ * 7. Editing Cues: ≥2 per visual_direction ([Camera:], [SFX:], etc.)
+ *
  * Created: 2026-01-13
+ * Updated: 2026-02-06 (Triple Hook + Editing Cues)
  */
 
 import { validateSlangUsage, SlangValidationResult } from './slangValidator.ts';
@@ -320,6 +323,106 @@ function getCorrectShotType(segmentType: string): 'CREATOR' | 'B-ROLL' {
 }
 
 // ============================================================================
+// TRIPLE HOOK VALIDATION (Seefluencer Feb 2026)
+// ============================================================================
+
+export interface TripleHookValidationResult {
+  valid: boolean;
+  options_found: string[];
+  missing_options: string[];
+  issues: ValidationIssue[];
+}
+
+const REQUIRED_HOOK_OPTIONS = ['option_a_safe', 'option_b_negative', 'option_c_visual'];
+const REQUIRED_HOOK_FIELDS = ['script_text', 'visual_direction', 'hook_type'];
+
+/**
+ * Validate that scriptData contains all 3 hook options with required fields.
+ * Call this on the full scriptData object (not just segments).
+ */
+export function validateTripleHook(scriptData: any): TripleHookValidationResult {
+  const issues: ValidationIssue[] = [];
+  const optionsFound: string[] = [];
+  const missingOptions: string[] = [];
+
+  const hookOptions = scriptData?.hook_options;
+
+  if (!hookOptions || typeof hookOptions !== 'object') {
+    REQUIRED_HOOK_OPTIONS.forEach(opt => missingOptions.push(opt));
+    issues.push({
+      segment_id: 'GLOBAL',
+      field: 'hook_options',
+      severity: 'warning',
+      message: 'Missing hook_options field — Triple Hook not generated. LLM may have used old format.',
+      auto_fixed: false,
+    });
+    return { valid: false, options_found: [], missing_options: missingOptions, issues };
+  }
+
+  for (const optionKey of REQUIRED_HOOK_OPTIONS) {
+    const option = hookOptions[optionKey];
+    if (!option || typeof option !== 'object') {
+      missingOptions.push(optionKey);
+      issues.push({
+        segment_id: 'HOOK',
+        field: `hook_options.${optionKey}`,
+        severity: 'warning',
+        message: `Missing hook option: ${optionKey}`,
+        auto_fixed: false,
+      });
+      continue;
+    }
+
+    optionsFound.push(optionKey);
+
+    // Check required sub-fields
+    for (const field of REQUIRED_HOOK_FIELDS) {
+      if (!option[field] || typeof option[field] !== 'string' || option[field].trim().length === 0) {
+        issues.push({
+          segment_id: 'HOOK',
+          field: `hook_options.${optionKey}.${field}`,
+          severity: 'warning',
+          message: `Hook option ${optionKey} missing or empty field: ${field}`,
+          auto_fixed: false,
+        });
+      }
+    }
+  }
+
+  return {
+    valid: missingOptions.length === 0,
+    options_found: optionsFound,
+    missing_options: missingOptions,
+    issues,
+  };
+}
+
+// ============================================================================
+// EDITING CUE VALIDATION (Beast-Mozi Feb 2026)
+// ============================================================================
+
+const EDITING_CUE_PATTERNS: RegExp[] = [
+  /\[Camera:/i,
+  /\[CUT TO:/i,
+  /\[TEXT POP:/i,
+  /\[ZOOM:/i,
+  /\[SFX:/i,
+  /\[MUSIC CUE:/i,
+  /\[ACTION:/i,
+  /\[Visual:/i,
+  /\[SPEED:/i,
+];
+
+/**
+ * Count editing cues in a visual_direction string.
+ * Returns the number of distinct cue types found.
+ */
+function countEditingCues(visualDirection: string): number {
+  if (!visualDirection) return 0;
+  return EDITING_CUE_PATTERNS.filter(p => p.test(visualDirection)).length;
+}
+
+// ============================================================================
 // MAIN VALIDATION FUNCTION
 // ============================================================================
 
@@ -400,7 +503,20 @@ export function validateAndFixScript(
       score -= 5;
     }
 
-    // ----- 2c. Foreshadow Urgency Check -----
+    // ----- 2c. Editing Cue Check (≥2 per visual_direction) -----
+    const cueCount = countEditingCues(segment.visual_direction);
+    if (cueCount < 2) {
+      issues.push({
+        segment_id: segmentId,
+        field: 'visual_direction',
+        severity: 'warning',
+        message: `Only ${cueCount} editing cue(s) found (need ≥2). Add [Camera:], [SFX:], [TEXT POP:], [CUT TO:], [ACTION:], etc.`,
+        auto_fixed: false,
+      });
+      score -= 3;
+    }
+
+    // ----- 2d. Foreshadow Urgency Check (renumbered from 2c) -----
     if (segmentType === 'FORE' || segmentType === 'FORESHADOW') {
       const scriptText = segment.script_text || '';
       if (!hasForeshadowUrgency(scriptText, language)) {
@@ -419,7 +535,7 @@ export function validateAndFixScript(
       }
     }
 
-    // ----- 2d. Missing Required Fields -----
+    // ----- 2e. Missing Required Fields -----
     if (!segment.emotion) {
       segment.emotion = i === 0 ? 'Curiosity' : 'Intrigue';
       issues.push({

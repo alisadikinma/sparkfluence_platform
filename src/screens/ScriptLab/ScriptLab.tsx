@@ -107,9 +107,7 @@ export const ScriptLab = (): JSX.Element => {
           use_dna_tone: formData.useDnaTone,
           creative_dna: formData.creativeDna,
           // Video model for segment duration constraints: veo31 (max 8s) vs sora2 (max 15s)
-          video_model: formData.model === 'auto' ? 'veo31' : formData.model,
-          // LOOP-END: seamless video loop trick (default off)
-          enable_loop_end: formData.enableLoopEnd || false
+          video_model: formData.model === 'auto' ? 'veo31' : formData.model
         }
       });
 

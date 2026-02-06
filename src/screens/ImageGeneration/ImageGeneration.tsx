@@ -1659,8 +1659,8 @@ export const ImageGeneration = (): JSX.Element => {
               creatorCostume: seg.creator_costume || '',  // Topic-appropriate outfit for CREATOR shots
               creatorAppearance: seg.creator_appearance || '',  // Generic face description fallback
               layout: 'full' as const,             // Default: full screen, user can change per segment
-              loopEndEnabled: true,
-              isEnabled: true,
+              loopEndEnabled: segmentType.toUpperCase() !== 'LOOP-END',
+              isEnabled: segmentType.toUpperCase() !== 'LOOP-END',  // LOOP-END off by default
               imageUrl: null,
               images: [],                        // Initialize empty images array
               isGeneratingImage: false,
@@ -1698,34 +1698,6 @@ export const ImageGeneration = (): JSX.Element => {
             setShowBackgroundToast(true);
             startBackgroundProcessing(sid);
           }
-        }
-
-        // Inject synthetic LOOP-END for 60s/90s videos if not present
-        const initDuration = stateData.videoSettings?.duration || '60s';
-        const hasLoopEnd = formattedSegments.some(s => s.type.toUpperCase() === 'LOOP-END');
-        if (!hasLoopEnd && (initDuration === '60s' || initDuration === '90s')) {
-          const nextId = String(formattedSegments.length + 1);
-          formattedSegments.push({
-            id: nextId,
-            segmentId: `VIDEO-${nextId.padStart(3, '0')}`,
-            type: 'LOOP-END',
-            timing: '',
-            durationSeconds: 5,
-            shotType: 'CREATOR',
-            emotion: '',
-            transition: 'Cut',
-            script: '',
-            visualDirection: '',
-            layout: 'full',
-            loopEndEnabled: false,
-            isEnabled: false,  // OFF by default (user chose OFF in ScriptForm)
-            imageUrl: null,
-            images: [],
-            isGeneratingImage: false,
-            imageError: null,
-            optionsApplied: false,
-          });
-          console.log('[Init] Injected synthetic LOOP-END (OFF by default)');
         }
 
         setSegments(formattedSegments);

@@ -3,7 +3,15 @@
  * Helper functions for validating and scoring slang usage in scripts
  */
 
-import { SLANG_DICTIONARY } from './viralScriptKnowledge.ts';
+import INDONESIAN_SLANG_RAW from '../knowledge/08-indonesian-slang-2026.ts'
+import HINDI_SLANG_RAW from '../knowledge/09-hindi-slang-2026.ts'
+import ENGLISH_SLANG_RAW from '../knowledge/10-global-english-slang-2026.ts'
+
+const SLANG_DICTIONARY = {
+  indonesian: INDONESIAN_SLANG_RAW,
+  hindi: HINDI_SLANG_RAW,
+  english: ENGLISH_SLANG_RAW
+};
 
 // ============================================================================
 // SLANG TERM DATABASES

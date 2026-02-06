@@ -1,56 +1,45 @@
 /**
- * VIRAL SCRIPT KNOWLEDGE BASE
- * Static knowledge for script generation - NO DATABASE QUERIES NEEDED
- * 
- * This file contains all the knowledge required for generating viral scripts:
- * - Project Instruction (output format, structure rules)
- * - Core Frameworks (Seefluencer, Killer Script, Psychology)
- * - Hook Library (250+ templates)
- * - Slang Dictionaries (Indonesian, Hindi, English 2026)
- * - Supporting Knowledge (Case Studies, Editing, Platform, Branding)
- * 
- * Last Updated: 2026-01-09
+ * VIRAL SCRIPT KNOWLEDGE BASE — Structural & Mechanical Knowledge
+ *
+ * This file contains ONLY structural/mechanical knowledge:
+ * - PROJECT_INSTRUCTION (identity, output format with hook_options, word limits)
+ * - CINEMATIC_VISUAL_GUIDE (shot types, angles, lighting, composition)
+ * - getStructureByDuration() (segment tables per duration × video model)
+ * - getMaxWordsForDuration() (word limit calculator per language)
+ *
+ * All "viral DNA" (hooks, foreshadow, body frameworks, CTA strategies,
+ * pacing, density) has been moved to:
+ * - seefluencerFramework.ts (Smart Localization Engine + strategy functions)
+ * - beastMoziLayer.ts (MrBeast pacing + Hormozi density + A-Roll + Gold Standard)
+ * - knowledge/11-hook-library-2026.ts (100 hooks, 5 categories)
+ *
+ * Last Updated: 2026-02-06
  */
 
 // ============================================================================
-// SLANG DICTIONARY IMPORTS (2026 Updated)
-// ============================================================================
-
-import INDONESIAN_SLANG_RAW from '../knowledge/08-indonesian-slang-2026.ts'
-import HINDI_SLANG_RAW from '../knowledge/09-hindi-slang-2026.ts'
-import ENGLISH_SLANG_RAW from '../knowledge/10-global-english-slang-2026.ts'
-
-// Export slang dictionaries
-export const SLANG_DICTIONARY = {
-  indonesian: INDONESIAN_SLANG_RAW,
-  hindi: HINDI_SLANG_RAW,
-  english: ENGLISH_SLANG_RAW
-}
-
-// ============================================================================
-// PROJECT INSTRUCTION (Output Format & Rules)
+// PROJECT INSTRUCTION (Identity + Output Format + Rules)
 // ============================================================================
 
 export const PROJECT_INSTRUCTION = `
-# 🎯 VIRAL SCRIPT ENGINE — PROJECT INSTRUCTION
+# VIRAL SCRIPT ENGINE — PROJECT INSTRUCTION
 
 ## 1. IDENTITY
 You are a **Viral Script Engineer** transforming any input into **viral-ready short-form video scripts**.
 
 You are NOT a writer. You are an engineer applying:
-- Hook psychology
-- Retention science
-- Platform algorithms
-- Cultural linguistics
-- Proven viral patterns
+- Hook psychology (5 categories: visual shock, negative bias, curiosity gap, relatability, speed & value)
+- Retention science (stakes escalation, micro-cliffhangers, pacing)
+- Platform algorithms (TikTok, Reels, Shorts optimization)
+- Cultural linguistics (transcreation, not translation)
+- Proven viral patterns (MrBeast pacing, Hormozi density)
 
 ## 2. DURATION-BASED STRUCTURE RULES
 
-⚠️ IMPORTANT: The exact segment structure will be provided dynamically based on:
-- Video duration (30s, 60s, 90s)
+The exact segment structure will be provided dynamically based on:
+- Video duration (30s, 45s, 60s, 90s)
 - Video model (VEO 3.1 max 8s/segment, WAN 2.5 max 10s/segment)
 
-**Follow the structure table provided in the user prompt EXACTLY.**
+**Follow the structure table provided EXACTLY.**
 
 ### General Rules:
 - HOOK: 5-8s (flexible, can extend if more words needed)
@@ -58,7 +47,7 @@ You are NOT a writer. You are an engineer applying:
 - B-ROLL segments: Max 8s for VEO 3.1, Max 10s for WAN 2.5
 - Total duration must match exactly (30s, 45s, 60s, or 90s)
 
-## 2.5. ⚠️ WORD LIMIT ENFORCEMENT (CRITICAL - NON-NEGOTIABLE)
+## 3. WORD LIMIT ENFORCEMENT (CRITICAL - NON-NEGOTIABLE)
 
 **EVERY segment has a MAX WORDS limit in the structure table. This is a HARD CONSTRAINT.**
 
@@ -69,7 +58,7 @@ You are NOT a writer. You are an engineer applying:
 4. **Shorter = Punchier** - constraints breed creativity
 
 ### Why This Matters:
-- Video AI generates ~130 WPM (Indonesian)
+- Video AI generates ~130 WPM (Indonesian), ~150 WPM (English), ~120 WPM (Hindi)
 - Exceeding word limits = rushed/robotic speech
 - Viewers disengage when delivery feels unnatural
 
@@ -83,16 +72,9 @@ You are NOT a writer. You are an engineer applying:
 | 10s | 17 | 20 | 16 | 19 |
 | 15s | 26 | 30 | 24 | 28 |
 
-### Example Transformation:
-❌ BAD (24 words - over limit for 7s CTA):
-"Jadi, lo sudah siap untuk menjelajahi kota tersembunyi di Indonesia? Share pengalaman serupa di comment below, dan jangan lupa follow buat rekomendasi travel lainnya!"
+## 4. SHOT TYPE ALLOCATION
 
-✅ GOOD (11 words - within 12 word limit):
-"Share kota hidden gem favorit lo di comment! Follow buat part 2."
-
-## 3. SHOT TYPE ALLOCATION
-
-### CREATOR Shots (Talking Head)
+### CREATOR Shots (Talking Head — Camera On Speaker)
 | Segment | Why |
 |---------|-----|
 | HOOK | Direct connection, stop scroll |
@@ -103,31 +85,67 @@ You are NOT a writer. You are an engineer applying:
 | Segment | Why |
 |---------|-----|
 | FORE | Tease content visually |
-| BODY-1, 2, 3 | Illustrate points |
+| BODY-1, 2, 3... | Illustrate points |
 | PEAK | Show proof/evidence |
 
-## 4. FORESHADOW RULES (CRITICAL)
+## 5. OUTPUT FORMAT — JSON with hook_options
 
-**Purpose:** Create UNFINISHED LOOP that forces viewer to watch until END.
+Return ONLY a valid JSON object. NO markdown, NO explanations, NO text before/after JSON.
 
-**Mandatory Pattern:**
-"[Preview apa yang akan dibahas] + **[Teaser item terakhir sebagai payoff terbesar]** + [Urgency command]"
+### Required Top-Level Fields:
+\`\`\`json
+{
+  "title": "Video title",
+  "hook_options": {
+    "option_a_safe": {
+      "script_text": "Safe/relatable hook text",
+      "visual_direction": "Scene: ... | Camera: ... | ...",
+      "hook_type": "safe_relatable"
+    },
+    "option_b_negative": {
+      "script_text": "Negative/controversial hook text",
+      "visual_direction": "Scene: ... | Camera: ... | ...",
+      "hook_type": "negative_controversial"
+    },
+    "option_c_visual": {
+      "script_text": "Visual/action-first hook text",
+      "visual_direction": "Scene: ... | Camera: ... | ...",
+      "hook_type": "visual_action"
+    }
+  },
+  "segments": [ ... ]
+}
+\`\`\`
 
-**Formula:**
-[Content preview] + "...dan yang [terakhir/ketiga/dst] ini yang paling [gila/shocking/penting]" + "Pastikan lo tonton sampai habis."
+### Required Per-Segment Fields:
+- segment_id: "VIDEO-001", "VIDEO-002", etc.
+- type: HOOK/FORE/BODY-1/BODY-2/.../PEAK/CTA/LOOP-END
+- timing: "0-5s", "5-10s", etc.
+- duration_seconds: integer
+- shot_type: "CREATOR" or "B-ROLL"
+- emotion: Curiosity/Shock/Intrigue/Awe/Tension/Resolution/Urgency
+- transition: Cut/Jump-Cut/Zoom-In/Zoom-Out/Flash-Cut/Whip-Pan
+- script_text: The actual spoken script
+- visual_direction: Structured pipe-separated format (see below)
+- creator_costume: (ONLY FOR CREATOR SHOTS) Outfit matching topic theme
+- creator_appearance: (ONLY FOR CREATOR SHOTS) Generic face description
 
-**Validation:**
-- Foreshadow SPESIFIK menjanjikan payoff di AKHIR
-- Ada kata "sampai habis / sampai akhir / stay"
-- Menciptakan FOMO jika skip
+### HOOK Segment Rule:
+The HOOK segment in "segments" array uses Option A (safe/relatable) by default.
+All 3 hook options are provided in "hook_options" for user selection.
 
-## 5. VISUAL DIRECTION GUIDELINES (50-80 WORDS EACH)
+## 6. VISUAL DIRECTION FORMAT (50-80 WORDS EACH)
+
+Use EXACTLY this pipe-separated format:
+"Scene: [setting/location/props/subject] | Camera: [shot type, lens, angle, movement] | Lighting: [key/fill/rim, color temp, contrast] | Color: [grade, palette, saturation] | Mood: [atmosphere, energy, style] | FX: [text overlay, lens flare, particles, bokeh, etc.]"
+
+Each category 8-15 words. Total 50-80 words. ALL 6 categories MANDATORY.
 
 ### For CREATOR Shots:
 - Facial expression matching emotion
 - Body language / gesture
 - Energy level (calm, energetic, intense)
-- Background context
+- Background context + Pope-in-Pool activity (if applicable)
 - Eye contact direction (direct to camera)
 
 ### For B-ROLL Shots:
@@ -137,7 +155,7 @@ You are NOT a writer. You are an engineer applying:
 - Relevant contextual elements
 - Motion potential
 
-## 6. EMOTION LABELS
+## 7. EMOTION LABELS
 
 | Emotion | Use For | Creator Expression |
 |---------|---------|-------------------|
@@ -148,403 +166,10 @@ You are NOT a writer. You are an engineer applying:
 | Tension | Problems, warnings | Furrowed brow, serious |
 | Resolution | Solutions, relief | Relaxed smile, open gesture |
 | Urgency | CTAs, time-sensitive | Intense gaze, forward lean |
-
-## 7. ENDING STRATEGIES
-
-| Strategy | Use When |
-|----------|----------|
-| Seamless Loop | Maximize rewatch, algorithm boost |
-| CTA | Drive comments/follows/saves |
-| Hybrid | Loop + subtle text CTA |
-
-## 8. SELF-VERIFICATION CHECKLIST
-
-- [ ] Duration-based structure followed?
-- [ ] **WORD COUNT: Each segment ≤ MAX WORDS limit?** ⚠️ CRITICAL
-- [ ] Foreshadow explicitly teases FINAL point/ending?
-- [ ] Foreshadow contains "sampai habis/akhir"?
-- [ ] SHOT_TYPE correct per segment (CREATOR vs B-ROLL)?
-- [ ] EMOTION label included per segment?
-- [ ] VISUAL_DIRECTION is 50-80 words (not too short)?
-
-### Word Count Verification Process:
-1. Count words in each script_text
-2. Compare against MAX WORDS in structure table
-3. If ANY segment exceeds limit → REWRITE before submitting
-4. Prioritize impact over length
 `;
 
 // ============================================================================
-// CORE FRAMEWORKS (Seefluencer + Killer Script + Psychology)
-// ============================================================================
-
-export const CORE_FRAMEWORKS = `
-# CORE VIRAL FRAMEWORKS
-
-## THE 7 FACTORS OF VIRALITY
-To increase viral potential, a video should include one or more:
-1. **Pro/Contra:** Topics that invite debate/disagreement
-2. **Relatability:** Content that makes audience say "That's me"
-3. **Celebrity Association:** Leveraging famous names
-4. **Trending Topics:** Riding current waves or news
-5. **Emotion:** Triggering sadness, happiness, or anger
-6. **Shock Value:** Surprising facts or unique objects
-7. **Comedy:** Humor appropriate to the niche
-
-## THE KILLER SCRIPT 4-STEP STRUCTURE
-HOOK (0-3s) → FORESHADOW (3-8s) → BODY (main) → ENDING (final 5-10s)
-
-### PART 1: THE HOOK (0-3 Seconds)
-**Purpose:** Stop the scroll immediately.
-
-**The 3 Golden Rules:**
-1. Create Maximum Intrigue (While Delivering)
-2. Clearly Represent the Content
-3. Use a Strong Visual
-
-**5 PRIMARY HOOK TYPES:**
-| Type | Description | Example |
-|------|-------------|---------|
-| Negative Hook | Focuses on mistakes/warnings | "Stop doing cardio if you want to lose weight" |
-| Proof Hook | Shows results immediately | Showing revenue dashboard |
-| Promise Hook | Tells viewer exactly what they get | "How to get 10k followers in 30 days" |
-| Pain Point Hook | Addresses specific struggle | "Struggling with acne that won't go away?" |
-| Transformation Hook | Before & After | "From 0 to 100K followers in 3 months" |
-
-### PART 2: THE FORESHADOW
-**Purpose:** Give viewers a specific reason to watch until the very end.
-
-**4 Foreshadow Strategies:**
-| Strategy | Example |
-|----------|---------|
-| Steps | "Follow these 5 easy steps. Even a 5-year-old could do this." |
-| Fear/Urgency | "If you skip this video, you will seriously lose out!" |
-| Quiz/Question | "Can you guess what car I bought?" |
-| Visual Tease | Using emojis/blurred images to hint at result |
-
-### PART 3: THE BODY
-**Purpose:** Deliver the core value promised in hook/foreshadow.
-
-**2 Body Structure Options:**
-1. **Problem-Agitate-Solution (PAS):** Problem → Agitate → Solution
-2. **Points System:** 3-5 numbered steps, tips, or facts
-
-### PART 4: THE ENDING
-**3 Ending Types:**
-1. **THE LOOP:** Seamlessly connects end to start
-2. **CTA:** Explicitly asks viewer to do something
-3. **RESULT/PAYOFF:** Final answer promised by foreshadow
-
-## THE 4 PSYCHOLOGICAL PILLARS
-
-### PILLAR 1: THE CURIOSITY GAP
-The space between what we know and what we WANT to know.
-- **Forbidden Knowledge:** "I probably shouldn't be telling you this, but..."
-- **Hidden Truths:** "Why doesn't anyone talk about [X]?"
-
-### PILLAR 2: FOMO (FEAR OF MISSING OUT)
-- **Scarcity/Exclusivity:** "If you haven't tried [X] yet, you're missing out"
-- **Common Mistakes:** "[Number]% of [audience] are doing this wrong..."
-
-### PILLAR 3: THE PATTERN INTERRUPT
-- **Urgent Command:** "Stop doing [X] right now!"
-- **Contrarian Take:** "[Popular thing] is dead, here's why..."
-
-### PILLAR 4: SOCIAL PROOF
-- **Identity Triggers:** "POV: You're the only single friend in the group chat"
-- **Universal Experience:** "Is it just me, or do you also rehearse conversations in your head?"
-
-## TOP 15 HOOK FRAMEWORKS
-1. Pattern Interrupt - Breaks autopilot scrolling
-2. Curiosity Gap - Opens a loop that must be closed
-3. FOMO - Activates herd mentality
-4. Hook/Rehook - 2-stage system
-5. Value-First - Immediately promises specific takeaway
-6. Social Proof - Uses numbers/testimonials
-7. PAS - Problem-Agitate-Solution
-8. Three-Part Hook - Visual + Text + Audio simultaneously
-9. Identity Trigger - Speaks to specific persona
-10. Confession - Opens with vulnerability
-11. Novelty Bias - Highlights the "new" or "strange"
-12. Cliffhanger - Setup without immediate payoff
-13. Before-After - Visual contrast
-14. ROMO - Relief of Missing Out
-15. But & So - Continuous contrast structure
-`;
-
-// ============================================================================
-// INDONESIAN GEN-Z PLAYBOOK
-// ============================================================================
-
-export const INDONESIAN_GENZ_PLAYBOOK = `
-# INDONESIAN GEN-Z EDUTAINMENT PLAYBOOK
-
-## THE FORMULA
-Casual authority delivered through chaotic energy, code-mixed language, and relentless value density.
-
-## VOICE CHARACTERISTICS
-- Casual, chaotic-but-controlled energy
-- Code-mixed Indonesian-English
-- Current slang (2024-2025)
-- Hyperbolic reactions
-- Direct address ("lo/gue", "bro", "guys")
-
-## CURRENTLY VIRAL TERMS
-- "menyala abangku" - admiration for someone impressive
-- "delulu" - delusional
-- "gaskeun" - let's go!
-- "sekut" - cool
-- "apotik tutup" - something so good there's no remedy
-- "skibidi," "sigma," "rizz," "mewing," "gyatt," "aura points"
-
-## TECH/AI SPECIFIC TERMINOLOGY
-- "FYP" (For You Page)
-- "ngegas" (speaking aggressively online)
-- "spill/spill the tea" (share info)
-- "ratio'd" (when reply gets more engagement)
-- "clout" (online influence)
-- "vibe coding" (AI-assisted programming)
-
-## FILLER WORDS AS TRIBAL MARKERS
-English words directly mixed: "literally," "basically," "lowkey/highkey"
-Indonesian softeners: "sih," "tuh," "gitu," "gak sih?"
-
-## TONE CHARACTERISTICS
-- **Hyperbolic:** Everything is "banget," reactions exaggerated
-- **Ironic/self-deprecating:** "Nolep" used self-mockingly
-- **Chaotic energy:** Random capitalization, multiple punctuation
-- **Emoji-heavy:** 😭 means laughing, 💀 means dead/hilarious
-
-## CRITICALLY OUTDATED (AVOID!)
-- "alay," "lebay," "woles," "kids jaman now"
-- Early-era uses of "lit" and "slay"
-
-## 5 HOOK CATEGORIES FOR INDONESIAN AUDIENCE
-1. **Pattern-interrupt:** "STOP! Jangan scroll dulu, kamu bakal nyesel kalau lewatin ini!"
-2. **Question-based:** "Pernah nggak sih kamu ngalamin ini?"
-3. **Fear/FOMO:** "Jangan lakukan ini kalau nggak mau rugi besar!"
-4. **Controversial:** "Sebenarnya, kerja keras itu nggak selalu bikin sukses!"
-5. **Numbers/statistics:** "80% orang nggak sadar mereka sering melakukan kesalahan ini!"
-
-## SCRIPT-WRITING FRAMEWORK
-**Structure:** Follow the exact segment structure provided in the prompt.
-**Key principles:**
-- HOOK (0-5s): Numbers, controversy, or pattern-interrupt
-- FORE: Problem amplification, tease ending ("Pernah gak sih...")
-- BODY segments: Dense value, quick cuts, solution/tutorial
-- PEAK: Results demonstration, payoff from foreshadow
-- CTA: Natural, question-based or continuation promise
-
-**Language mixing formula:**
-Indonesian sentence structure + English tech terms + Gen-Z slang markers ("literally," "lowkey," "vibes-nya") + reaction words ("anjir," "bengek," "sheesh")
-`;
-
-// ============================================================================
-// TOP HOOK TEMPLATES (Curated from 250 Library)
-// ============================================================================
-
-export const TOP_HOOK_TEMPLATES = `
-# TOP 50 HOOK TEMPLATES
-
-## CURIOSITY HOOKS
-1. "I probably shouldn't be telling you this, but..." - Forbidden Knowledge
-2. "Why doesn't anyone talk about [X]?" - Hidden Truth
-3. "Only 1% of people know this about [Y]..." - Ego/Exclusivity
-4. "Here's what [famous person] does that you never knew about..." - Celebrity Secret
-5. "This hack will change the way you [X]..." - Game Changer
-6. "Tahukah kamu? [Surprising fact]..." - Indonesian curiosity
-7. "Watch what happens when I [X]..." - Visual demonstration
-8. "I was today years old when I learned this..." - Self-deprecating
-9. "This [X] seems illegal to know..." - Forbidden + practical
-10. "Nyesel banget baru tau [X] sekarang!" - Indonesian regret
-
-## CONTROVERSY HOOKS
-11. "This may be controversial, but [X]..." - Bold opinion
-12. "You're going to hate me for saying this, but..." - Pre-framed criticism
-13. "[Popular thing] is dead, here's why..." - Contrarian
-14. "Stop doing [X] right now!" - Urgent command
-15. "Everything you knew about [X] is 100% wrong!" - Challenge knowledge
-16. "[Number]% of [audience] are doing this wrong..." - Statistics + fear
-17. "Ini bakal jadi kontroversial, tapi [X]..." - Indonesian controversial
-18. "Other [professionals] are lying to you!" - Distrust competition
-
-## RELATABLE/PERSONAL HOOKS
-19. "POV: You're [X relatable situation]" - Immediate identification
-20. "Is it just me, or [X common behavior]?" - Shared experience
-21. "This is for my [X type of person]" - Exclusivity + belonging
-22. "If you've ever [X], this is for you" - Filter audience
-23. "We've all been [X]—here's [what I learned]" - Solidarity
-24. "I know I'm not the only one who [X]" - Normalize behavior
-25. "Siapa yang relate sama [X situation]?" - Indonesian relatable
-
-## QUESTION HOOKS
-26. "Have you ever wondered why [X]?" - Natural curiosity
-27. "What if I told you [surprising claim]?" - Insider knowledge
-28. "Are you making this mistake with [X]?" - Fear of missing info
-29. "Struggling with [X]? Here's [solution teaser]" - Pain point
-30. "Kenapa banyak orang [X] tapi tetap [Y]?" - Indonesian question
-31. "Pernah nggak sih kamu [X]?" - Casual Indonesian question
-
-## TRANSFORMATION HOOKS
-32. "Watch me transform [X] in [Y time]" - Visual promise
-33. "How I went from [before] to [after]" - Achievable progression
-34. "I did [X] every day for [Y] and here's what happened" - Commitment
-35. "This is my [X time period] glow up 🔥" - Personal transformation
-36. "[Before] → [After] - Here's how" - Visual contrast
-37. "Transformasi [X] dari [sebelum] ke [sesudah] - No Edit!" - Indonesian
-
-## CHALLENGE HOOKS
-38. "I challenged myself to [X], and here's what happened" - Narrative tension
-39. "I tried [X] for [time]—here's the honest result" - Vicarious experience
-40. "Can I [complete task] in [limited time]? Let's find out" - Real stakes
-41. "I tested every [X] so you don't have to" - Value through experimentation
-42. "Day [X] of [challenge]—[update]" - Serialized content
-43. "Gue coba [X] selama [time]—hasilnya..." - Indonesian challenge
-
-## TRENDING/URGENT HOOKS
-44. "This will change the way you [X] forever" - Bold promise
-45. "If you're a [target], stop scrolling!" - Direct call-out
-46. "You've been doing [X] wrong this whole time" - Urgency to correct
-47. "The [X] that completely changed my [Y]" - Significant impact
-48. "Jangan scroll kalau kamu pengen tahu [X]" - Indonesian urgency
-49. "If you haven't tried [X] yet, you're missing out" - FOMO
-50. "Wait... did you know [surprising fact]?" - Pattern interrupt
-`;
-
-// ============================================================================
-// RETENTION EDITING & PLATFORM MASTERY
-// ============================================================================
-
-export const RETENTION_AND_PLATFORM = `
-# RETENTION EDITING & PLATFORM MASTERY
-
-## THE 5 PILLARS OF RETENTION EDITING
-
-### A. The Visual Hook (0-3 Seconds)
-- The visual must explain context instantly without audio
-- Use high-movement footage or shocking image in first frame
-
-### B. Pacing & Frame Changes
-- **Golden Rule:** Change frame/angle every 1-3 seconds
-- If only one camera, use Zoom-In/Zoom-Out to create artificial cuts
-
-### C. Contextual B-Roll
-- Footage must strictly match spoken audio
-- Self-Shot footage > Stock footage
-
-### D. Dynamic Text
-- Font: Montserrat (Bold), Size: 15-18
-- Use Shadow effect for readability
-- Text pops up word-by-word or phrase-by-phrase
-- Placement: Center "Safe Zone"
-
-### E. Audio Engineering
-- Audio quality > Visual quality
-- BGM must match mood (Sad, Hype, Tense)
-- SFX to emphasize movement/text appearances
-
-## RETENTION CHECKLIST
-- [ ] Hook Check: First second has strong visual/movement?
-- [ ] Pacing Check: No static shots longer than 3 seconds?
-- [ ] Text Check: Font Montserrat (Bold), centered?
-- [ ] Context Check: Every B-roll matches words spoken?
-- [ ] Audio Check: BGM volume low enough to hear voice?
-
-## PLATFORM ALGORITHM SCIENCE
-
-### Core Ranking Signals
-- **Retention Rate:** Average View Duration / Total Video Duration
-- **Completion Rate:** % who watched start to finish
-- **The 3-Second Rule:** 65% who watch first 3s continue for 10+ seconds
-
-### Ideal Analytics Benchmarks (TikTok)
-- Watched Full Video: >20%
-- Average Watch Time: >50% of total duration
-
-### Platform-Specific Signals
-| Platform | Primary Signal | Key Focus |
-|----------|---------------|-----------|
-| TikTok | Watch time + Rewatches | Fast-paced, high impact |
-| Instagram Reels | Swipe-through + Saves | Aesthetic + Value |
-| YouTube Shorts | Search + Retention | Information density |
-
-## THE WINNING CONTENT CYCLE
-1. **Experiment:** Try various formats, niches, concepts
-2. **Identify:** Find the outlier that gets 100K+ views
-3. **Replicate:** Do NOT change. Repeat exact format immediately
-4. **Improve:** Only after validating, upgrade quality
-
-## HASHTAG STRATEGY (3-Tier)
-1. 1-2 Macro Hashtags (100K-1M usage)
-2. 1-2 Micro Hashtags (10K-100K usage)
-3. 1 Unique Hashtag (your brand)
-
-## COMMON MISTAKES TO AVOID
-- ❌ "Hi Guys" Intro - Start directly with Hook
-- ❌ "Tele-Tele" (Fluff) - Every sentence must add value
-- ❌ Deceptive Clickbait - Be "Clickbait but Honest"
-- ❌ Inconsistent Visuals - B-Roll must match audio context
-`;
-
-// ============================================================================
-// CASE STUDIES & SUCCESS PATTERNS
-// ============================================================================
-
-export const CASE_STUDIES = `
-# CASE STUDIES & PROVEN PATTERNS
-
-## SUCCESS CASE STUDIES
-
-| Creator | Niche | Winning Content Discovery | Result |
-|---------|-------|---------------------------|--------|
-| Samuel Christ | Finance | "Seberapa Kaya" (How Rich Is...) format | 7M+ Followers, replicated 1000+ times |
-| Josephine | Career | Workplace Skits (Multiple Characters) | +600K Followers, replicated 67 times |
-| Dr. Farhan | Health | Dandruff Video (50% population topic) | 23M Views on one video |
-| Merry | Edutainment | High-Effort visual storytelling | +7M Followers |
-
-## THE WINNING CONTENT PATTERN
-
-### Phase 1: The Quantity Experiment
-- Upload 50+ videos that are "bad" or average
-- "Quantity leads to Creativity"
-
-### Phase 2: Ruthless Replication
-- Once ONE video pops, stop everything else
-- Do ONLY that format
-- Samuel Christ: Found "How Rich Is..." worked, made 1,000 variations
-
-### Phase 3: The "Pope in the Pool" Upgrade
-- Add distraction/unique activity to boring topics
-- Cutting hair while giving business advice
-- Applying makeup while telling a story
-
-## PATTERN RECOGNITION SIGNALS
-
-| Signal | What It Means | Action |
-|--------|--------------|--------|
-| Views 10x average | Strong hook/topic | Replicate immediately |
-| Watch time >50% | Good retention | Keep the format |
-| Comment ratio high | Triggering engagement | Note what triggered debate |
-| Save ratio high | High value perception | Create follow-up content |
-| Share ratio high | Emotional resonance | Double down on emotion |
-
-## COMMON FAILURE PATTERNS
-
-### The Boredom Trap
-- Finding winning content but getting "bored" and switching
-- Fix: Discipline over creativity
-
-### The Perfectionism Trap
-- Spending days perfecting one video instead of testing
-- Fix: "Good enough" beats "perfect but late"
-
-### The Platform Loyalty Trap
-- Only posting to one platform
-- Fix: Same content to TikTok, Reels, Shorts
-`;
-
-// ============================================================================
-// CINEMATIC VISUAL DIRECTION (From DALL-E & SORA Best Practices)
+// CINEMATIC VISUAL DIRECTION (Camera, Lighting, Composition Vocabulary)
 // ============================================================================
 
 export const CINEMATIC_VISUAL_GUIDE = `
@@ -634,7 +259,7 @@ Use camera/photography terminology for realistic, film-like results.
 [Shot type] + [Main subject] + [Action/state] + [Environment details] + [Lighting] + [Text overlay suggestion] + [Motion description]
 
 **Example:**
-"Close-up of smartphone screen showing AI plant scanner interface, finger tapping 'Analyze' button. Notification popup reveals 'Early Blight Detected - 97% confidence'. Soft indoor lighting with green plant reflection on screen edge. Text overlay: '97% AKURASI' with glow effect. Slow zoom into result."
+"Close-up of smartphone screen showing AI interface, finger tapping 'Analyze' button. Notification popup reveals result. Soft indoor lighting with green plant reflection on screen edge. Text overlay: '97% AKURASI' with glow effect. Slow zoom into result."
 
 ## CINEMATIC DETAILS THAT ELEVATE QUALITY
 
@@ -688,39 +313,7 @@ Use camera/photography terminology for realistic, film-like results.
 `;
 
 // ============================================================================
-// COMBINED KNOWLEDGE (For LLM Context)
-// ============================================================================
-
-export const FULL_KNOWLEDGE_BASE = `
-${PROJECT_INSTRUCTION}
-
----
-
-${CORE_FRAMEWORKS}
-
----
-
-${INDONESIAN_GENZ_PLAYBOOK}
-
----
-
-${TOP_HOOK_TEMPLATES}
-
----
-
-${CINEMATIC_VISUAL_GUIDE}
-
----
-
-${RETENTION_AND_PLATFORM}
-
----
-
-${CASE_STUDIES}
-`;
-
-// ============================================================================
-// Helper: Get knowledge by duration AND video model
+// Helper: Word limit calculator (language-aware)
 // ============================================================================
 
 /**
@@ -735,11 +328,10 @@ ${CASE_STUDIES}
  * - English: 150 WPM → ~2.0 words/second
  */
 
-// Word limit calculator based on language and duration
 export function getMaxWordsForDuration(durationSeconds: number, language: string = 'indonesian'): number {
   const speechRates: Record<string, number> = {
     indonesian: 130, // WPM
-    hindi: 120,      // WPM (updated)
+    hindi: 120,      // WPM
     english: 150,    // WPM
     french: 140,     // WPM
     spanish: 145,    // WPM
@@ -750,30 +342,11 @@ export function getMaxWordsForDuration(durationSeconds: number, language: string
   return Math.floor(durationSeconds * wordsPerSecond * safetyMargin);
 }
 
-// Pre-calculated word limits for common durations (Indonesian)
-const WORD_LIMITS_ID: Record<number, number> = {
-  4: 7,   // 4s → 7 words
-  5: 9,   // 5s → 9 words
-  7: 12,  // 7s → 12 words
-  8: 14,  // 8s → 14 words
-  10: 17, // 10s → 17 words
-  15: 26, // 15s → 26 words
-};
+// ============================================================================
+// Helper: Duration-based segment structure tables
+// ============================================================================
 
-export function getStructureByDuration(duration: string, videoModel?: string, language: string = 'indonesian', enableLoopEnd: boolean = false): string {
-  /**
-   * Determine max segment duration based on video model.
-   *
-   * Supported models (from aiModels.ts):
-   * - VEO 3.1 (HD/Fast): supportedDurations [8], max 8s per segment
-   * - WAN 2.5: supportedDurations [5, 10], max 10s per segment
-   * - Kling 2.5: supportedDurations [5, 10], max 10s per segment (backup for WAN)
-   *
-   * Detection logic:
-   * - "veo" or "3.1" → VEO 3.1 (8s max)
-   * - "wan" or "kling" → 10s max
-   * - Default: 10s max (WAN 2.5 structure)
-   */
+export function getStructureByDuration(duration: string, videoModel?: string, language: string = 'indonesian'): string {
   const modelLower = (videoModel || '').toLowerCase();
   const isVEO = modelLower.includes('veo') || (modelLower.includes('3.1') && !modelLower.includes('wan'));
 
@@ -781,16 +354,14 @@ export function getStructureByDuration(duration: string, videoModel?: string, la
   let modelName: string;
 
   if (isVEO) {
-    // VEO 3.1 HD/Fast: max 8s per segment (best for lip-sync)
     maxSegment = 8;
     modelName = 'VEO 3.1';
   } else {
-    // WAN 2.5 / Kling 2.5 / Default: max 10s per segment
     maxSegment = 10;
     modelName = modelLower.includes('wan') ? 'WAN 2.5' :
                 modelLower.includes('kling') ? 'Kling 2.5' : 'WAN 2.5 (default)';
   }
-  
+
   // Get word limits based on language
   const w4 = getMaxWordsForDuration(4, language);
   const w5 = getMaxWordsForDuration(5, language);
@@ -798,93 +369,75 @@ export function getStructureByDuration(duration: string, videoModel?: string, la
   const w8 = getMaxWordsForDuration(8, language);
   const w10 = getMaxWordsForDuration(10, language);
   const w15 = getMaxWordsForDuration(15, language);
-  
+
   // VEO 3.1 OPTIMIZED structures (max 8s per segment)
   const veoStructures: Record<string, string> = {
     '30s': `
 5 segments for 30s video (VEO 3.1 - max 8s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS |
-|---------|--------|----------|----------|------------|
-| HOOK | 0-5s | 5s | CREATOR | ${w5} words |
-| BODY-1 | 5-13s | 8s | B-ROLL | ${w8} words |
-| BODY-2 | 13-21s | 8s | B-ROLL | ${w8} words |
-| BODY-3 | 21-25s | 4s | B-ROLL | ${w4} words |
-| CTA | 25-30s | 5s | CREATOR | ${w5} words |
+| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
+|---------|--------|----------|-----------|-----------|------------|
+| HOOK | 0-5s | 5s | CREATOR | ${w5} words | FLEXIBLE |
+| BODY-1 | 5-13s | 8s | B-ROLL | ${w8} words | Can split |
+| BODY-2 | 13-21s | 8s | B-ROLL | ${w8} words | Can split |
+| CTA | 21-26s | 5s | CREATOR | ${w5} words | STRICT |
+| LOOP-END | 26-30s | 4s | CREATOR | ${w4} words | STRICT |
 
-⚠️ WORD LIMIT RULES:
+WORD LIMIT RULES:
 - Each script_text MUST NOT exceed the MAX WORDS column
 - If script is too long, make it SHORTER and PUNCHIER
 - Better to be impactful in fewer words than rushed
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
 CRITICAL: Max 8s per segment for VEO 3.1. Total = 30s exactly. No FORE for 30s videos.`,
 
     '45s': `
-6 segments for 45s video (VEO 3.1 - max 8s per segment):
+7 segments for 45s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE - can extend to 8s |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | STRICT - must be concise |
 | BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split if over |
 | BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split if over |
-| PEAK | 29-37s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
-| CTA | 37-45s | 8s | CREATOR | ${w8} words | ⛔ STRICT - ultra concise |
+| PEAK | 29-35s | 6s | B-ROLL | ${w5} words | STRICT - must be concise |
+| CTA | 35-40s | 5s | CREATOR | ${w5} words | STRICT - ultra concise |
+| LOOP-END | 40-45s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): If you need more words, use up to 8s. 5s=${w5}w, 8s=${w8}w
 - BODY-X (SPLITTABLE): Write naturally, system will auto-split if over limit
-- FORE, PEAK, CTA (STRICT ⛔): CANNOT be expanded. YOU MUST write within ${w8} words!
+- FORE, PEAK, CTA, LOOP-END (STRICT): CANNOT be expanded. YOU MUST write within word limit!
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
 CRITICAL: Max 8s per segment. Total = 45s exactly.`,
 
     '60s': `
-8 segments for 60s video (VEO 3.1 - max 8s per segment):
+9 segments for 60s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE - can extend to 8s |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | STRICT - must be concise |
 | BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split if over |
 | BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split if over |
 | BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words | Can split if over |
 | BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words | Can split if over |
-| PEAK | 45-53s | 8s | B-ROLL | ${w8} words | ⛔ STRICT - must be concise |
-| CTA | 53-60s | 7s | CREATOR | ${w7} words | ⛔ STRICT - ultra concise |
+| PEAK | 45-50s | 5s | B-ROLL | ${w5} words | STRICT - must be concise |
+| CTA | 50-55s | 5s | CREATOR | ${w5} words | STRICT - ultra concise |
+| LOOP-END | 55-60s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w - extend if needed
 - BODY-X (SPLITTABLE): Write naturally, system will auto-split if over
-- FORE, PEAK, CTA (STRICT ⛔): NO expansion. MUST be within word limit!
-
-CRITICAL: Max 8s per segment. Total = 60s exactly.`,
-    
-    '90s': enableLoopEnd ? `
-12 segments for 90s video (VEO 3.1 - max 8s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
-|---------|--------|----------|-----------|-----------|------------|
-| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
-| BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-4 | 37-45s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-5 | 45-53s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-6 | 53-61s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-7 | 61-69s | 8s | B-ROLL | ${w8} words | Can split |
-| PEAK | 69-77s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
-| CTA | 77-85s | 8s | CREATOR | ${w8} words | ⛔ STRICT |
-| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
-
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
-- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
-- BODY-X (SPLITTABLE): Write naturally, auto-split if over
-- FORE, PEAK, CTA, LOOP-END (STRICT ⛔): NO expansion!
+- FORE, PEAK, CTA, LOOP-END (STRICT): NO expansion. MUST be within word limit!
 - LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
-CRITICAL: Max 8s per segment. Total = 90s exactly.` : `
+CRITICAL: Max 8s per segment. Total = 60s exactly.`,
+
+    '90s': `
 12 segments for 90s video (VEO 3.1 - max 8s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
-| FORE | 5-13s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
+| FORE | 5-13s | 8s | B-ROLL | ${w8} words | STRICT |
 | BODY-1 | 13-21s | 8s | B-ROLL | ${w8} words | Can split |
 | BODY-2 | 21-29s | 8s | B-ROLL | ${w8} words | Can split |
 | BODY-3 | 29-37s | 8s | B-ROLL | ${w8} words | Can split |
@@ -892,14 +445,15 @@ CRITICAL: Max 8s per segment. Total = 90s exactly.` : `
 | BODY-5 | 45-53s | 8s | B-ROLL | ${w8} words | Can split |
 | BODY-6 | 53-61s | 8s | B-ROLL | ${w8} words | Can split |
 | BODY-7 | 61-69s | 8s | B-ROLL | ${w8} words | Can split |
-| BODY-8 | 69-77s | 8s | B-ROLL | ${w8} words | Can split |
-| PEAK | 77-85s | 8s | B-ROLL | ${w8} words | ⛔ STRICT |
-| CTA | 85-90s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
+| PEAK | 69-77s | 8s | B-ROLL | ${w8} words | STRICT |
+| CTA | 77-85s | 8s | CREATOR | ${w8} words | STRICT |
+| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
 - BODY-X (SPLITTABLE): Write naturally, auto-split if over
-- FORE, PEAK, CTA (STRICT ⛔): NO expansion!
+- FORE, PEAK, CTA, LOOP-END (STRICT): NO expansion!
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
 CRITICAL: Max 8s per segment. Total = 90s exactly.`
   };
@@ -907,127 +461,95 @@ CRITICAL: Max 8s per segment. Total = 90s exactly.`
   // WAN 2.5 OPTIMIZED structures (max 10s per segment)
   const wanStructures: Record<string, string> = {
     '30s': `
-4 segments for 30s video (WAN 2.5 - max 10s per segment):
+5 segments for 30s video (WAN 2.5 - max 10s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
 | BODY-1 | 5-15s | 10s | B-ROLL | ${w10} words | Can split |
-| BODY-2 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
-| CTA | 25-30s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
+| BODY-2 | 15-20s | 5s | B-ROLL | ${w5} words | Can split |
+| CTA | 20-25s | 5s | CREATOR | ${w5} words | STRICT |
+| LOOP-END | 25-30s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
-- BODY-X (SPLITTABLE): 10s=${w10}w, can auto-split
-- CTA (STRICT ⛔): 5s=${w5}w - ultra concise
+- BODY-X (SPLITTABLE): can auto-split
+- CTA, LOOP-END (STRICT): 5s=${w5}w - ultra concise
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
 CRITICAL: Max 10s per segment. Total = 30s exactly.`,
 
     '45s': `
-5 segments for 45s video (WAN 2.5 - max 10s per segment):
+6 segments for 45s video (WAN 2.5 - max 10s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
-| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | STRICT |
 | BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
 | BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
-| CTA | 35-45s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
+| CTA | 35-40s | 5s | CREATOR | ${w5} words | STRICT |
+| LOOP-END | 40-45s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w - extend if needed
 - BODY-X (SPLITTABLE): 10s=${w10}w - auto-split if over
-- FORE, CTA (STRICT ⛔): 10s=${w10}w - NO expansion!
+- FORE, CTA, LOOP-END (STRICT): NO expansion!
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
 CRITICAL: Max 10s per segment. Total = 45s exactly.`,
 
     '60s': `
-6 segments for 60s video (WAN 2.5 - max 10s per segment):
+7 segments for 60s video (WAN 2.5 - max 10s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
-| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | STRICT |
 | BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
 | BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
-| PEAK | 35-50s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
-| CTA | 50-60s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
+| PEAK | 35-45s | 10s | B-ROLL | ${w10} words | STRICT |
+| CTA | 45-55s | 10s | CREATOR | ${w10} words | STRICT |
+| LOOP-END | 55-60s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
 - BODY-X (SPLITTABLE): 10s=${w10}w
-- FORE, PEAK, CTA (STRICT ⛔): 10s=${w10}w - NO expansion!
+- FORE, PEAK, CTA, LOOP-END (STRICT): NO expansion!
+- LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
 
 CRITICAL: Max 10s per segment. Total = 60s exactly.`,
 
-    '90s': enableLoopEnd ? `
+    '90s': `
 10 segments for 90s video (WAN 2.5 - max 10s per segment):
 | Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
 |---------|--------|----------|-----------|-----------|------------|
 | HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
-| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
+| FORE | 5-15s | 10s | B-ROLL | ${w10} words | STRICT |
 | BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
 | BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
 | BODY-3 | 35-45s | 10s | B-ROLL | ${w10} words | Can split |
 | BODY-4 | 45-55s | 10s | B-ROLL | ${w10} words | Can split |
 | BODY-5 | 55-65s | 10s | B-ROLL | ${w10} words | Can split |
-| PEAK | 65-75s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
-| CTA | 75-85s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
-| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words | ⛔ STRICT |
+| PEAK | 65-75s | 10s | B-ROLL | ${w10} words | STRICT |
+| CTA | 75-85s | 10s | CREATOR | ${w10} words | STRICT |
+| LOOP-END | 85-90s | 5s | CREATOR | ${w5} words | STRICT |
 
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
+SEGMENT-SPECIFIC WORD LIMITS:
 - HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
 - BODY-X (SPLITTABLE): 10s=${w10}w - auto-split if over
-- FORE, PEAK, CTA, LOOP-END (STRICT ⛔): NO expansion!
+- FORE, PEAK, CTA, LOOP-END (STRICT): NO expansion!
 - LOOP-END: Must visually mirror HOOK for seamless loop trick. NOT a CTA!
-
-CRITICAL: Max 10s per segment. Total = 90s exactly.` : `
-9 segments for 90s video (WAN 2.5 - max 10s per segment):
-| Segment | Timing | Duration | Shot Type | MAX WORDS | Limit Type |
-|---------|--------|----------|-----------|-----------|------------|
-| HOOK | 0-5s (flex 8s) | 5-8s | CREATOR | ${w8} words | FLEXIBLE |
-| FORE | 5-15s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
-| BODY-1 | 15-25s | 10s | B-ROLL | ${w10} words | Can split |
-| BODY-2 | 25-35s | 10s | B-ROLL | ${w10} words | Can split |
-| BODY-3 | 35-45s | 10s | B-ROLL | ${w10} words | Can split |
-| BODY-4 | 45-55s | 10s | B-ROLL | ${w10} words | Can split |
-| BODY-5 | 55-65s | 10s | B-ROLL | ${w10} words | Can split |
-| PEAK | 65-80s | 10s | B-ROLL | ${w10} words | ⛔ STRICT |
-| CTA | 80-90s | 10s | CREATOR | ${w10} words | ⛔ STRICT |
-
-⚠️ SEGMENT-SPECIFIC WORD LIMITS:
-- HOOK (FLEXIBLE): 5s=${w5}w, 8s=${w8}w
-- BODY-X (SPLITTABLE): 10s=${w10}w - auto-split if over
-- FORE, PEAK, CTA (STRICT ⛔): 10s=${w10}w - NO expansion!
 
 CRITICAL: Max 10s per segment. Total = 90s exactly.`
   };
 
   // Select appropriate structure based on model
-  // VEO 3.1 = max 8s, WAN 2.5 = max 10s
   let structures: Record<string, string>;
   if (isVEO) {
     structures = veoStructures;
   } else {
-    // WAN 2.5 or default
     structures = wanStructures;
   }
 
-  // Log which model structure is being used
-  console.log(`[StructureGuide] Using ${modelName} structure for ${duration} video (max ${maxSegment}s/segment)${enableLoopEnd ? ' [LOOP-END ON]' : ''}`);
+  console.log(`[StructureGuide] Using ${modelName} structure for ${duration} video (max ${maxSegment}s/segment) [LOOP-END always included]`);
 
-  let result = structures[duration] || structures['60s'];
-
-  // For 60s with LOOP-END: append instruction to add LOOP-END segment
-  if (enableLoopEnd && duration === '60s') {
-    result += `
-
-⚠️ LOOP-END ENABLED FOR THIS VIDEO:
-After the CTA segment, add one final LOOP-END segment:
-- Duration: 5s | Shot Type: CREATOR | MAX WORDS: ${getMaxWordsForDuration(5, language)} words | ⛔ STRICT
-- Reduce CTA duration to 5s to make room (total must still = 60s exactly)
-- LOOP-END is NOT a CTA! It's a seamless loop trick.
-- LOOP-END script must create a curiosity gap that connects back to HOOK's opening.
-- LOOP-END visual direction must mirror HOOK (same pose, angle, energy, background).
-- Example: HOOK="Lo tau ga..." → LOOP-END="Tapi yang paling gila sih..."`;
-  }
-
-  return result;
+  return structures[duration] || structures['60s'];
 }

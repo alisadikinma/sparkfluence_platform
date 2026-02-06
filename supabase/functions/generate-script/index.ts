@@ -1,30 +1,42 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { callGeminiHybrid, callOpenRouterHybrid, getApiKeyFromPool, incrementUsage } from '../_shared/apiKeyRotation.ts'
-import { 
-  PROJECT_INSTRUCTION, 
-  CORE_FRAMEWORKS, 
-  INDONESIAN_GENZ_PLAYBOOK, 
-  TOP_HOOK_TEMPLATES,
+import {
+  PROJECT_INSTRUCTION,
   CINEMATIC_VISUAL_GUIDE,
   getStructureByDuration,
-  getMaxWordsForDuration 
+  getMaxWordsForDuration
 } from '../_shared/prompts/viralScriptKnowledge.ts'
-import { 
-  validateSlangUsage, 
-  getSlangKnowledge 
+import {
+  validateSlangUsage,
+  getSlangKnowledge
 } from '../_shared/prompts/slangValidator.ts'
 // P0 Improvements (Jan 2026)
 import {
   detectContentType,
-  getFilteredHooksForPrompt,
-  validateItemCoverage,
-  ContentTypeResult
+  type ContentType
 } from '../_shared/prompts/contentTypeDetector.ts'
+// Seefluencer Framework (Feb 2026) — Smart Localization + Strategy Functions
+import {
+  getLocalizedHookStrategy,
+  getForeshadowStrategy,
+  getBodyFramework,
+  PEAK_PAYOFF_RULES,
+  getCTAStrategy,
+  getPopeInPoolSuggestion
+} from '../_shared/prompts/seefluencerFramework.ts'
+// Beast-Mozi Layer (Feb 2026) — Pacing + Density + A-Roll + Gold Standard
+import {
+  PACING_RULES,
+  VALUE_DENSITY_RULES,
+  EDITING_CUES_GUIDE,
+  A_ROLL_PRIORITY_RULES,
+  getStakesEscalation,
+  GOLD_STANDARD_EXAMPLE
+} from '../_shared/prompts/beastMoziLayer.ts'
 import {
   validateAndFixScript,
-  checkViralityFactors,
-  ScriptValidationResult
+  validateTripleHook
 } from '../_shared/prompts/scriptValidator.ts'
 import {
   enhanceAllVisuals,
@@ -530,19 +542,28 @@ Return ONLY valid JSON, no explanations.`
     const dnaStyles = use_dna_tone && creative_dna && Array.isArray(creative_dna) ? creative_dna : null
     console.log(`[Script] DNA Tone: ${use_dna_tone ? 'ENABLED' : 'disabled'}${dnaStyles ? ` (${dnaStyles.length} styles)` : ''}`)
 
-    const enableLoopEnd = enable_loop_end === true
-    console.log(`[Script] LOOP-END: ${enableLoopEnd ? 'ENABLED' : 'disabled'}`)
-    const baseSystemPrompt = buildSystemPrompt(selectedLanguage, selectedDuration, dnaStyles, selectedVideoModel, enableLoopEnd)
+    // P0 #1: Content type detection (moved from buildUserPrompt for system prompt usage)
+    const contentTypeResult = detectContentType(sanitizedContent, selectedLanguage)
+    const detectedItemCount = extractTopicItemCount(sanitizedContent) || contentTypeResult.item_count || null
+    console.log(`[ContentType] Detected: ${contentTypeResult.primary_type} (${contentTypeResult.confidence}%), items: ${detectedItemCount ?? 'none'}`)
+
+    // LOOP-END is always included in all durations (disabled by default in frontend)
+    const baseSystemPrompt = buildSystemPrompt(
+      selectedLanguage, selectedDuration,
+      contentTypeResult.primary_type, detectedItemCount,
+      sanitizedContent, dnaStyles, selectedVideoModel
+    )
     // P0: Inject product naming rule for tech topics
     const systemPrompt = injectProductNamingRule(baseSystemPrompt)
     const userPrompt = buildUserPrompt(
       input_type,
-      sanitizedContent, // Use sanitized content
+      sanitizedContent,
       selectedDuration,
       selectedAspectRatio,
       selectedResolution,
       selectedPlatform,
-      selectedLanguage
+      selectedLanguage,
+      detectedItemCount
     )
 
     // ============================================================
@@ -736,6 +757,8 @@ Return ONLY valid JSON, no explanations.`
           body_splits: postProcessResult.body_splits,
           strict_violations: postProcessResult.strict_violations,
           strict_violations_count: postProcessResult.strict_violations.length,
+          word_limit_warnings: postProcessResult.word_limit_warnings,
+          word_limit_warnings_count: postProcessResult.word_limit_warnings.length,
         },
       }
 
@@ -773,12 +796,28 @@ Return ONLY valid JSON, no explanations.`
       
       console.log(`[Validation] Score: ${validationResult.score}/100, Fixes: ${validationResult.auto_fixes_applied}`)
       console.log(`[Validation] Virality: ${validationResult.virality_check.factors_count}/2 factors (${validationResult.virality_check.passed ? 'PASS' : 'WARN'})`)
-      
+
       if (validationResult.issues.length > 0) {
         console.log(`[Validation] Issues found: ${validationResult.issues.length}`)
         validationResult.issues.forEach(issue => {
           console.log(`  - [${issue.severity}] ${issue.segment_id}/${issue.field}: ${issue.message}`)
         })
+      }
+
+      // Triple Hook validation (Seefluencer Feb 2026)
+      const tripleHookResult = validateTripleHook(scriptData)
+      scriptData.quality_report = {
+        ...scriptData.quality_report,
+        triple_hook: {
+          valid: tripleHookResult.valid,
+          options_found: tripleHookResult.options_found,
+          missing_options: tripleHookResult.missing_options,
+        },
+      }
+      if (tripleHookResult.valid) {
+        console.log(`[TripleHook] ✅ All 3 hook options present`)
+      } else {
+        console.warn(`[TripleHook] ⚠️ Missing: ${tripleHookResult.missing_options.join(', ')}`)
       }
     }
 
@@ -888,254 +927,134 @@ Return ONLY valid JSON, no explanations.`
 // PROMPT BUILDERS (Using Static Knowledge)
 // ============================================================================
 
-function buildSystemPrompt(language: string, duration: string, dnaStyles: string[] | null = null, videoModel: string = 'sora-2', enableLoopEnd: boolean = false): string {
+function buildSystemPrompt(
+  language: string,
+  duration: string,
+  contentType: ContentType,
+  itemCount: number | null,
+  topic: string,
+  dnaStyles: string[] | null = null,
+  videoModel: string = 'wan-2.5'
+): string {
   const langConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG['indonesian']
-  
+
   // VIDEO MODEL AWARE: Adjust segment count based on model constraints
-  // VEO 3.1: max 8s/segment → more segments needed
-  // Sora 2.0: max 15s/segment → fewer segments
   const isVEO = videoModel?.toLowerCase()?.includes('veo') || videoModel?.toLowerCase()?.includes('3.1')
-  
+
   let segmentCount: number
+  let bodySegmentCount: number
   if (isVEO) {
-    // VEO 3.1: More segments with shorter durations (max 8s/segment)
-    segmentCount = duration === '30s' ? 5 : duration === '60s' ? 8 : 12
+    segmentCount = duration === '30s' ? 5 : duration === '45s' ? 7 : duration === '60s' ? 9 : 12
+    bodySegmentCount = duration === '30s' ? 2 : duration === '45s' ? 2 : duration === '60s' ? 4 : 7
   } else {
-    // WAN/Kling: Fewer segments with longer durations (max 10s/segment)
-    segmentCount = duration === '30s' ? 4 : duration === '60s' ? 6 : 9
+    segmentCount = duration === '30s' ? 5 : duration === '45s' ? 6 : duration === '60s' ? 7 : 10
+    bodySegmentCount = duration === '30s' ? 2 : duration === '45s' ? 2 : duration === '60s' ? 2 : 5
   }
 
-  // LOOP-END adds 1 segment for 60s, and for WAN 90s
-  if (enableLoopEnd && (duration === '60s' || duration === '90s')) {
-    if (duration === '60s') segmentCount += 1
-    if (duration === '90s' && !isVEO) segmentCount += 1 // WAN 90s: 9→10 (VEO 90s stays 12)
-  }
-  
-  const structureGuide = getStructureByDuration(duration, videoModel, language, enableLoopEnd)
-  
-  // Get slang knowledge for language
+  // ================================================================
+  // 1. IDENTITY + OUTPUT RULES (from viralScriptKnowledge.ts)
+  // ================================================================
+  const structureGuide = getStructureByDuration(duration, videoModel, language)
   const slangGuide = getSlangKnowledge(language)
-  
-  return `You are an elite Viral Script Engineer specializing in short-form video content that gets millions of views.
+
+  // ================================================================
+  // 3. TRIPLE HOOK STRATEGY (Smart Localization Engine)
+  // ================================================================
+  const hookStrategy = getLocalizedHookStrategy(contentType, language)
+
+  // ================================================================
+  // 4. FORESHADOW STRATEGY
+  // ================================================================
+  const foreshadowStrategy = getForeshadowStrategy(contentType, language)
+
+  // ================================================================
+  // 5. BODY FRAMEWORK
+  // ================================================================
+  const bodyFramework = getBodyFramework(contentType, itemCount)
+
+  // ================================================================
+  // 6. STAKES ESCALATION
+  // ================================================================
+  const stakesEscalation = getStakesEscalation(bodySegmentCount)
+
+  // ================================================================
+  // 9. POPE IN THE POOL
+  // ================================================================
+  const popeInPool = getPopeInPoolSuggestion(topic, language)
+
+  // ================================================================
+  // 8. CTA STRATEGY
+  // ================================================================
+  const ctaStrategy = getCTAStrategy(contentType, language)
+
+  // ================================================================
+  // ASSEMBLE SYSTEM PROMPT (17 components per plan)
+  // ================================================================
+  return `${PROJECT_INSTRUCTION}
 
 ═══════════════════════════════════════════════════════════════
-🚨 CONTENT COMPLETENESS RULES (ABSOLUTELY CRITICAL)
+📐 SEGMENT STRUCTURE (Component 2)
 ═══════════════════════════════════════════════════════════════
 
-**IF THE TOPIC CONTAINS A NUMBER (e.g., "5 masakan", "3 tips", "7 cara"), YOU MUST:**
-
-1. **COVER ALL ITEMS** - If topic says "5 masakan Italy", script MUST explain ALL 5 dishes
-2. **ONE BODY SEGMENT PER ITEM** - Each numbered item gets its own BODY segment
-3. **NO SKIPPING** - Never skip items to rush to CTA
-4. **COMPLETE STORYLINE** - Each item must have:
-   - Name/title of the item
-   - Why it's relevant/viral/important
-   - Key details or tips
-
-**CONTENT DISTRIBUTION FOR NUMBERED TOPICS:**
-
-| Topic Items | Video Duration | Distribution |
-|-------------|----------------|---------------|
-| 3 items | 30s | BODY-1, BODY-2, BODY-3 (1 item each) |
-| 5 items | 60s | BODY-1 to BODY-4 + PEAK (distribute 5 items) |
-| 7 items | 90s | BODY-1 to BODY-7 (1 item each) |
-
-**EXAMPLE - "5 Masakan Italy yang VIRAL":**
-- HOOK: "Lo wajib coba 5 masakan Italy ini sebelum mati!"
-- FORE: "Gue bakal kasih tau 5 masakan, dan yang kelima ini literally game changer. Stay sampai akhir!"
-- BODY-1: Masakan #1 (Carbonara) - kenapa viral, tips
-- BODY-2: Masakan #2 (Cacio e Pepe) - kenapa viral, tips  
-- BODY-3: Masakan #3 (Amatriciana) - kenapa viral, tips
-- BODY-4: Masakan #4 (Risotto) - kenapa viral, tips
-- PEAK: Masakan #5 (Tiramisu) - THE BEST ONE, payoff dari foreshadow
-- CTA: "Follow buat rekomendasi kuliner lainnya!"
-
-**VALIDATION BEFORE OUTPUT:**
-- [ ] Count items mentioned in topic
-- [ ] Verify ALL items are covered in BODY segments
-- [ ] Ensure PEAK contains the "best" item (teased in FORE)
-- [ ] Storyline flows logically from #1 to #N
-
-═══════════════════════════════════════════════════════════════
-🚨 CRITICAL OUTPUT RULES (MUST FOLLOW EXACTLY)
-═══════════════════════════════════════════════════════════════
-
-1. OUTPUT FORMAT: Return ONLY a valid JSON object. NO markdown, NO explanations, NO text before/after JSON.
-
-2. SEGMENT STRUCTURE: Generate exactly ${segmentCount} segments for ${duration} video:
+Generate exactly ${segmentCount} segments for ${duration} video:
 ${structureGuide}
 
-3. SHOT TYPES:
-   - CREATOR: HOOK, CTA${enableLoopEnd ? ', LOOP-END' : ''} (creator talking to camera)
-   - B-ROLL: FORE, BODY-1, BODY-2, BODY-3, PEAK (illustrative visuals)
+SCRIPT LANGUAGE: ${langConfig.name}
+Style: ${langConfig.style}
+Example tone: "${langConfig.example}"
 
-4. EACH SEGMENT MUST HAVE:
-   - segment_id: "VIDEO-001", "VIDEO-002", etc.
-   - type: HOOK/FORE/BODY-1/BODY-2/BODY-3/PEAK/CTA${enableLoopEnd ? '/LOOP-END' : ''}
-   - timing: "0-5s", "5-10s", etc.
-   - duration_seconds: integer
-   - shot_type: "CREATOR" or "B-ROLL"
-   - emotion: Curiosity/Shock/Intrigue/Awe/Tension/Resolution/Urgency
-   - transition: Cut/Jump-Cut/Zoom-In/Zoom-Out/Flash-Cut/Whip-Pan
-   - script_text: The actual spoken script
-   - visual_direction: Structured visual direction using EXACTLY this pipe-separated format:
-     "Scene: [setting/location/props/subject] | Camera: [shot type, lens, angle, movement] | Lighting: [key/fill/rim, color temp, contrast] | Color: [grade, palette, saturation] | Mood: [atmosphere, energy, style] | FX: [text overlay, lens flare, particles, bokeh, etc.]"
-     Each category 8-15 words. Total 50-80 words. ALL 6 categories MANDATORY.
-   - creator_costume: (ONLY FOR CREATOR SHOTS) Outfit/clothing that matches the topic theme
-   - creator_appearance: (ONLY FOR CREATOR SHOTS) Generic face description matching country + topic profession
+${hookStrategy}
 
-5. SCRIPT LANGUAGE: ${langConfig.name}
-   Style: ${langConfig.style}
-   Example tone: "${langConfig.example}"
+${foreshadowStrategy}
 
-6. HOOK REQUIREMENTS (MOST IMPORTANT):
-   **A. SCRIPT HOOK:**
-   - Must stop the scroll in first 3 seconds
-   - Use pattern interrupt, curiosity gap, or shocking statement
-   - Include contrast (before/after, problem/solution)
+${bodyFramework}
 
-   **B. VISUAL HOOK (CRITICAL — visual_direction for HOOK must include at least 2 of these):**
-   - 🎬 UNEXPECTED MOVEMENT: Creator performs attention-grabbing gesture (lean into camera, hand wave,
-     point at viewer, throw/catch object, sudden head turn). NOT just standing still!
-   - 😱 EXTREME EXPRESSION: Exaggerated facial expression that creates curiosity (wide eyes + raised
-     eyebrows for shock, leaning in with squinted eyes for intrigue, jaw drop, excited pointing)
-   - 📱 TEXT OVERLAY CUE: Include a bold text overlay concept in visual_direction (e.g., "BOLD TEXT:
-     'Jangan beli ini!' in red/yellow"). Text must tease the content.
-   - 🔥 VISUAL ODDITY: Something unusual/unexpected in frame (unusual prop, contrasting background,
-     dramatic lighting shift, holding product/item that triggers curiosity)
-   - 🎯 RESULT FIRST: If topic is a tutorial/recipe/transformation, show the result preview in the
-     background while creator reacts to it
-
-   **HOOK visual_direction EXAMPLE (GOOD — structured format):**
-   "Scene: Creator leans in suddenly with wide shocked eyes, left hand pointing at viewer, blurred topic preview in background | Camera: MCU low-angle 35mm f/2.0, slight push-in dolly | Lighting: Dramatic Rembrandt 4:1 ratio, warm key 3200K, blue rim separation | Color: High-contrast teal-orange grade, crushed blacks | Mood: Scroll-stopping intensity, authoritative energy, urgent | FX: BOLD TEXT 'Lo WAJIB tau ini!' bright yellow top-center, subtle lens flare"
-
-   **HOOK visual_direction EXAMPLE (BAD — missing categories, no structure):**
-   "Creator standing in front of camera talking about the topic. Normal expression. Clean background."
-
-7. FORESHADOW (FORE) REQUIREMENTS:
-   - MUST tease the ending: "${langConfig.foreshadow.tease}"
-   - MUST include urgency: "${langConfig.foreshadow.urgency}"
-   - Creates FOMO if viewer skips
-   - Example in ${langConfig.name}: "${langConfig.foreshadow.example}"
-
-8. ⚠️ SCRIPT WORD LIMIT (CRITICAL - COUNT YOUR WORDS!):
-   - Each script_text MUST stay UNDER the MAX WORDS in structure table above
-   - COUNT words BEFORE finalizing - if over limit, REWRITE SHORTER
-   - Short + impactful > Long + rushed
-   - Video generation will FAIL if script exceeds word limit!
-   
-   Example for 5s segment (max 9 words):
-   ❌ WRONG (15 words): "Jadi, lo sudah siap untuk menjelajahi kota tersembunyi di Indonesia yang viral ini?"
-   ✅ RIGHT (8 words): "Lo wajib tau kota tersembunyi viral ini!"
-   
-   Example for 8s segment (max 14 words):
-   ❌ WRONG (24 words): "Share pengalaman serupa di comment below, dan jangan lupa follow buat rekomendasi travel lainnya!"
-   ✅ RIGHT (12 words): "Share di comment, follow gue buat rekomendasi travel seru lainnya!"
-
-9. ⚠️ MINIMUM CONTENT PER SEGMENT (NO FILLER SEGMENTS!):
-   - EVERY BODY segment MUST carry substantive content (new info, argument, or storytelling)
-   - MINIMUM 5 words for 5s segments, MINIMUM 8 words for 8s segments, MINIMUM 10 words for 10s segments
-   - ❌ NEVER create reaction-only segments like "Gila, anjay!" or "Wow banget!" as standalone BODY segments
-   - ❌ NEVER waste an entire segment on just an exclamation or filler phrase
-   - ✅ Merge short reactions INTO the preceding or following segment's script
-   - ✅ Each BODY segment should advance the narrative with real content
-
-   Example (BAD — filler segment wastes 5s):
-   BODY-5: "Gila, anjay!" (2 words, 5s = WASTE!)
-   BODY-6: "Kolaborasi jadi lebih efektif, semua orang on the same page." (10 words, 8s)
-
-   Example (GOOD — merged into one richer segment):
-   BODY-5: "Gila anjay, kolaborasi jadi lebih efektif semua orang on the same page!" (12 words, 8s)
-
-10. VISUAL DIRECTION REQUIREMENTS (50-80 WORDS EACH):
-   - For CREATOR: facial expression, gesture, energy level, eye contact, background
-   - For B-ROLL: main subject, composition, lighting mood, motion, text overlays
-
-11. CREATOR COSTUME REQUIREMENTS (MANDATORY FOR CREATOR SHOTS):
-   - For HOOK/CTA segments, add "creator_costume" field with topic-appropriate outfit
-   - Examples by topic:
-     * Agriculture/Farming → "farmer outfit with straw hat, plaid shirt, denim overalls"
-     * Technology/Coding → "casual tech hoodie, modern minimalist style"
-     * Fitness/Health → "athletic wear, sports jersey, gym outfit"
-     * Business/Finance → "professional blazer, smart casual business attire"
-     * Cooking/Food → "chef apron, kitchen attire, food blogger casual"
-     * Travel → "explorer outfit, casual travel wear with backpack"
-     * Fashion/Beauty → "trendy fashionable outfit matching current season"
-   - Costume should enhance credibility and match topic theme
-   - Keep description concise: 10-20 words max
-
-12. CREATOR APPEARANCE (FALLBACK FOR NO-AVATAR USERS):
-   - For CREATOR shots, ALWAYS add "creator_appearance" field
-   - This describes a GENERIC FACE matching the target audience country + topic profession
-   - Format: "[ethnicity] [gender], [age], [profession-related appearance]"
-   - Country/ethnicity based on script language:
-     * Indonesian → "Southeast Asian Indonesian"
-     * Hindi → "South Asian Indian"
-     * English → "diverse/mixed ethnicity" (neutral)
-   - Profession based on topic:
-     * Agriculture → "farmer with weathered friendly face"
-     * Medical/Health → "doctor/nurse with caring professional look"
-     * Technology → "tech professional with modern casual look"
-     * Fitness → "athletic trainer with energetic expression"
-     * Business → "business professional with confident demeanor"
-     * Cooking → "chef with warm approachable smile"
-   - Example for Indonesian farming topic:
-     "Southeast Asian Indonesian male, late 30s, experienced farmer with friendly weathered face, warm smile"
-   - Keep description 15-25 words, focus on FACE characteristics only
-${enableLoopEnd ? `
-═══════════════════════════════════════════════════════════════
-🔄 LOOP-END RULES (SEAMLESS VIDEO LOOP TRICK)
-═══════════════════════════════════════════════════════════════
-
-**WHAT IS LOOP-END?**
-LOOP-END is the LAST segment of the video. Its purpose is to make viewers
-UNKNOWINGLY loop back to the HOOK. The video appears to never end — viewers
-get tricked into re-watching without realizing it.
-
-**LOOP-END IS NOT A CTA!**
-- ❌ WRONG: "Follow gue buat part 2!" (this is CTA, not LOOP-END)
-- ❌ WRONG: "Share ke temen lo!" (this is CTA, not LOOP-END)
-- ✅ RIGHT: "Tapi yang paling gila sih..." (creates curiosity → loops to HOOK)
-- ✅ RIGHT: "Eh bentar, lo tau ga..." (mirrors HOOK opening → seamless loop)
-
-**LOOP-END RULES:**
-1. MUST visually mirror the HOOK — same pose, same angle, same energy
-2. Script MUST create a curiosity gap that connects to the HOOK opening line
-3. The viewer should NOT realize the video has ended
-4. LOOP-END is a CREATOR shot (talking head), same as HOOK
-5. Duration: 5s max
-6. Emotion should match HOOK (usually Curiosity)
-
-**LOOP-END EXAMPLES (Indonesian):**
-- HOOK: "Lo tau ga, ada 5 makanan yang..." → LOOP-END: "Oh iya, lo tau ga sih ada yang lebih gila..."
-- HOOK: "Ini rahasia yang..." → LOOP-END: "Eh tapi ada satu rahasia lagi yang..."
-- HOOK: "Jangan pernah..." → LOOP-END: "Tapi yang paling bahaya tuh sebenernya..."
-
-**LOOP-END EXAMPLES (English):**
-- HOOK: "Did you know that..." → LOOP-END: "But wait, there's actually something crazier..."
-- HOOK: "Nobody talks about..." → LOOP-END: "Oh and one more thing nobody mentions..."
-
-**VISUAL DIRECTION FOR LOOP-END (use structured format):**
-- Scene: Same background as HOOK, creator leans in with curious/teasing expression
-- Camera: Same angle as HOOK (mirror exact framing)
-- Lighting: Same setup as HOOK
-- Color: Same grade as HOOK
-- Mood: Mirrors HOOK energy, creates seamless loop feeling
-- FX: Subtle curiosity cue (e.g., text tease or visual callback to HOOK)
-- Transition: use "Whip-Pan" or "Flash-Cut" that flows into HOOK start
-` : ''}
-═══════════════════════════════════════════════════════════════
-📚 KNOWLEDGE BASE (Apply these principles)
-═══════════════════════════════════════════════════════════════
-
-${CORE_FRAMEWORKS}
-
-${language === 'indonesian' ? INDONESIAN_GENZ_PLAYBOOK : ''}
-
-${TOP_HOOK_TEMPLATES}
+${stakesEscalation}
 
 ═══════════════════════════════════════════════════════════════
-🗣️ SLANG & LANGUAGE AUTHENTICITY (2026 UPDATED)
+🏔️ PEAK PAYOFF (Component 7)
+═══════════════════════════════════════════════════════════════
+
+${PEAK_PAYOFF_RULES}
+
+${ctaStrategy}
+
+${popeInPool || ''}
+
+═══════════════════════════════════════════════════════════════
+🎬 A-ROLL PRIORITY (Component 10)
+═══════════════════════════════════════════════════════════════
+
+${A_ROLL_PRIORITY_RULES}
+
+═══════════════════════════════════════════════════════════════
+⚡ PACING + EDITING CUES (Component 11)
+═══════════════════════════════════════════════════════════════
+
+${PACING_RULES}
+
+${EDITING_CUES_GUIDE}
+
+═══════════════════════════════════════════════════════════════
+📏 VALUE DENSITY (Component 12)
+═══════════════════════════════════════════════════════════════
+
+${VALUE_DENSITY_RULES}
+
+═══════════════════════════════════════════════════════════════
+🏆 GOLD STANDARD EXAMPLE (Component 13)
+═══════════════════════════════════════════════════════════════
+
+${GOLD_STANDARD_EXAMPLE}
+
+═══════════════════════════════════════════════════════════════
+🎬 CINEMATIC VISUAL DIRECTION (Component 14)
+═══════════════════════════════════════════════════════════════
+
+${CINEMATIC_VISUAL_GUIDE}
+
+═══════════════════════════════════════════════════════════════
+🗣️ SLANG & LANGUAGE AUTHENTICITY (Component 15)
 ═══════════════════════════════════════════════════════════════
 
 ${slangGuide}
@@ -1144,34 +1063,48 @@ ${slangGuide}
 1. Use ≥2 current slang terms from Top 20 list (virality score 8-10/10)
 2. AVOID all outdated terms listed in the guide
 3. Include filler words/particles for natural flow
-${language === 'indonesian' ? '4. Use gue/lo pronouns (NEVER saya/kamu - sounds corporate)' : ''}
-${language === 'indonesian' ? '5. Include particles: sih, tuh, gitu, dong (≥2 per script)' : ''}
-${language === 'hindi' ? '4. Use tum pronouns (avoid excessive aap/ji - sounds too formal)' : ''}
-${language === 'hindi' ? '5. Include fillers: yaar, na, matlab, arre (≥2 per script)' : ''}
-${language === 'english' ? '4. Use UNIVERSAL slang only (no regional: "no cap", "innit", "finna")' : ''}
-${language === 'english' ? '5. Avoid outdated emoji: 😂 is CRINGE (use 💀 or 😭 for laughing)' : ''}
+${language === 'indonesian' ? '4. Use gue/lo pronouns (NEVER saya/kamu - sounds corporate)\n5. Include particles: sih, tuh, gitu, dong (≥2 per script)' : ''}
+${language === 'hindi' ? '4. Use tum pronouns (avoid excessive aap/ji - sounds too formal)\n5. Include fillers: yaar, na, matlab, arre (≥2 per script)' : ''}
+${language === 'english' ? '4. Use UNIVERSAL slang only (no regional: "no cap", "innit", "finna")\n5. Avoid outdated emoji: 😂 is CRINGE (use 💀 or 😭 for laughing)' : ''}
 
 ${dnaStyles && dnaStyles.length > 0 ? `
 ═══════════════════════════════════════════════════════════════
-🧬 CREATOR DNA STYLE (APPLY TO ALL SCRIPTS)
+🧬 CREATOR DNA STYLE (Component 16)
 ═══════════════════════════════════════════════════════════════
 
 The creator has defined their unique voice/style. APPLY these characteristics:
 
-${dnaStyles.map((style, i) => `${i + 1}. **${style}**`).join('\n')}
+${dnaStyles.map((style: string, i: number) => `${i + 1}. **${style}**`).join('\n')}
 
 **HOW TO APPLY DNA:**
 - Hook should reflect these style traits
 - Script tone should match the DNA personality
 - Visual direction should complement the DNA vibe
 - CTA should feel authentic to this creator's style
-
 ` : ''}
+
 ═══════════════════════════════════════════════════════════════
-🎬 CINEMATIC VISUAL DIRECTION (CRITICAL FOR QUALITY)
+✅ SELF-VERIFICATION CHECKLIST (Component 17)
 ═══════════════════════════════════════════════════════════════
 
-${CINEMATIC_VISUAL_GUIDE}
+BEFORE OUTPUTTING, VERIFY ALL:
+□ HOOK OPTIONS: Generated all 3 (safe/negative/visual) in hook_options field?
+□ HOOK: Uses specific psychological trigger? Clickbait-but-Honest?
+□ HOOK: visual_direction has ≥2 editing cues + A-Roll camera manipulation?
+□ FORE: Uses matched foreshadow strategy? Creates unfinished loop?
+□ FORE: Contains urgency phrase ("sampai habis/akhir" / "watch till end")?
+□ BODY: Each segment introduces NEW information (deletion test)?
+□ BODY: Stakes escalate (each segment more intense than previous)?
+□ BODY: HOOK/FORE/CTA sentences ≤12 words, BODY sentences ≤15 words?
+□ PEAK: Delivers EXACT promise from FORE? Has plot twist or surprise?
+□ PEAK: Is the HIGHEST-ENERGY moment in entire script?
+□ CTA: Uses engagement strategy (polarize/question/identity/reward)? NOT generic?
+□ POPE IN POOL: Applied if topic is high-friction? (finance/law/coding/medical)
+□ A-ROLL: CREATOR shots use camera manipulation on speaker, not static talking head?
+□ EDITING CUES: Every visual_direction has ≥2 of [SFX/CUT TO/ZOOM/TEXT POP/ACTION/Camera/Visual]?
+□ WORD COUNT: Every segment ≤ MAX WORDS from structure table?
+□ LOOP-END: Mirrors HOOK visually + creates curiosity loop?
+□ [Placeholder] REPLACED: ALL template placeholders replaced with actual topic content?
 
 DO NOT deviate from this structure. Output ONLY the JSON.`;
 }
@@ -1209,20 +1142,15 @@ function buildUserPrompt(
   aspectRatio: string,
   resolution: string,
   platform: string,
-  language: string
+  language: string,
+  itemCount: number | null = null
 ): string {
   const langConfig = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG['indonesian']
-  const compositionGuide = aspectRatio === '16:9' 
+  const compositionGuide = aspectRatio === '16:9'
     ? 'LANDSCAPE - wide shots, horizontal framing'
     : 'VERTICAL 9:16 - tight framing, center-focused, mobile-optimized'
-  
-  // P0 #1: Content Type Detection - filter hooks to reduce context
-  const contentTypeDetection = detectContentType(content, language)
-  const filteredHooks = getFilteredHooksForPrompt(content, language)
-  console.log(`[ContentType] Detected: ${contentTypeDetection.primary_type} (${contentTypeDetection.confidence}%)`)
-  
-  // Detect if topic has numbered items
-  const itemCount = extractTopicItemCount(content) || contentTypeDetection.item_count
+
+  // Numbered topic instructions (itemCount detected at call site)
   const numberedTopicInstructions = itemCount ? `
 ═══════════════════════════════════════════════════════════════
 ⚠️ NUMBERED TOPIC DETECTED: ${itemCount} ITEMS
@@ -1258,23 +1186,20 @@ VIDEO SPECS:
 - Platform: ${platform}
 - Language: ${langConfig.name} (${langConfig.style})
 
-═══════════════════════════════════════════════════════════════
-🎣 CONTENT-SPECIFIC HOOKS (Filtered for this topic)
-═══════════════════════════════════════════════════════════════
-${filteredHooks}
 ${numberedTopicInstructions}
 ═══════════════════════════════════════════════════════════════
 ⚡ GENERATE NOW - OUTPUT JSON ONLY
 ═══════════════════════════════════════════════════════════════
 
 CRITICAL REMINDERS:
-1. HOOK must stop scroll with curiosity/shock pattern. Example: "${langConfig.hook.example}"
-2. FORE must tease ending: "${langConfig.foreshadow.example}"
+1. Generate ALL 3 hook options in "hook_options" field (safe/negative/visual)
+2. HOOK segment in "segments" uses Option A (safe) by default
 3. Each visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
-4. ALL script_text MUST be in ${langConfig.name} ONLY - NO mixing languages!
-5. Return ONLY valid JSON, no other text
-${itemCount ? `6. ⚠️ COVER ALL ${itemCount} ITEMS - Do NOT skip any! Each item gets its own BODY segment.
-7. PEAK segment = Item #${itemCount} (the BEST one, teased in FORE)` : ''}
+4. CREATOR shots: include editing cues [Camera:], [ACTION:], [SFX:], [TEXT POP:]
+5. ALL script_text MUST be in ${langConfig.name} ONLY - NO mixing languages!
+6. Return ONLY valid JSON, no other text
+${itemCount ? `7. ⚠️ COVER ALL ${itemCount} ITEMS - Do NOT skip any! Each item gets its own BODY segment.
+8. PEAK segment = Item #${itemCount} (the BEST one, teased in FORE)` : ''}
 
 Generate the complete viral script JSON now:`;
 }
@@ -1765,6 +1690,7 @@ interface PostProcessingResult {
   hook_adjusted: boolean
   body_splits: number
   strict_violations: string[]
+  word_limit_warnings: string[]
 }
 
 /**
@@ -2066,17 +1992,34 @@ Rules:
 ${batchItems}`
 
   try {
-    const result = await callGeminiHybrid(supabase, [
+    // Primary: OpenRouter (google/gemini-2.5-flash-lite)
+    let responseContent: string | null = null
+    console.log('[AutoShorten] Trying OpenRouter gemini-2.5-flash-lite (primary)...')
+    const orResult = await callOpenRouterHybrid(supabase, [
       { role: 'user', content: prompt }
-    ], { temperature: 0.5, maxTokens: 2048 })
+    ], { model: 'google/gemini-2.5-flash-lite', temperature: 0.5, maxTokens: 2048 })
 
-    if (!result.success || !result.content) {
-      console.warn(`[AutoShorten] ⚠️ Gemini call failed: ${result.error}`)
-      return { segments, shortened_count: 0 }
+    if (orResult.data?.choices?.[0]?.message?.content) {
+      responseContent = orResult.data.choices[0].message.content
+      console.log(`[AutoShorten] OpenRouter success (source: ${orResult.source})`)
+    } else {
+      // Fallback: Gemini direct (gemini-2.0-flash)
+      console.warn(`[AutoShorten] OpenRouter failed: ${orResult.error}, trying Gemini direct...`)
+      const geminiResult = await callGeminiHybrid(supabase, [
+        { role: 'user', content: prompt }
+      ], { temperature: 0.5, maxTokens: 2048 })
+
+      if (geminiResult.success && geminiResult.content) {
+        responseContent = geminiResult.content
+        console.log('[AutoShorten] Gemini direct success')
+      } else {
+        console.warn(`[AutoShorten] ⚠️ Both OpenRouter and Gemini failed: ${geminiResult.error}`)
+        return { segments, shortened_count: 0 }
+      }
     }
 
     // Parse response — expect numbered lines like [1] text here
-    const responseLines = result.content.trim().split('\n')
+    const responseLines = responseContent.trim().split('\n')
     const shortened: Record<number, string> = {}
 
     let currentNum = -1
@@ -2121,7 +2064,7 @@ ${batchItems}`
         appliedCount++
         console.log(`[AutoShorten] ✅ ${item.segment.type}: ${item.actualWords} → ${newWordCount} words (max ${item.maxWords})`)
       } else {
-        console.warn(`[AutoShorten] ⚠️ ${item.segment.type}: Gemini returned ${newWordCount} words (max ${item.maxWords}), skipping`)
+        console.warn(`[AutoShorten] ⚠️ ${item.segment.type}: LLM returned ${newWordCount} words (max ${item.maxWords}), skipping`)
       }
     }
 
@@ -2202,41 +2145,47 @@ async function postProcessWordLimits(segments: any[], language: string, supabase
   // Step 4: Final normalization to ensure all durations are valid
   processedSegments = normalizeDurations(processedSegments)
 
-  // Step 5: Auto-shorten remaining over-limit segments via Gemini
+  // Step 5: Auto-shorten remaining over-limit segments via Gemini (with retry)
   let shortenedCount = 0
   if (supabase) {
+    // First attempt
     const shortenResult = await autoShortenOverlimitSegments(processedSegments, language, supabase)
     processedSegments = shortenResult.segments
     shortenedCount = shortenResult.shortened_count
+
+    // Check if any segments are still over-limit after first attempt
+    const stillOverLimit = processedSegments.filter((seg: any) => {
+      const scriptText = seg.script_text || ''
+      if (!scriptText.trim()) return false
+      const duration = seg.duration_seconds || 8
+      const maxWords = getMaxWordsForDuration(duration, language)
+      return countWords(scriptText) > maxWords
+    })
+
+    if (stillOverLimit.length > 0) {
+      console.log(`[PostProcess] ${stillOverLimit.length} segments still over limit, retrying Gemini...`)
+      const retryResult = await autoShortenOverlimitSegments(processedSegments, language, supabase)
+      processedSegments = retryResult.segments
+      shortenedCount += retryResult.shortened_count
+    }
   }
 
-  // Step 6: Deterministic hard-trim — guaranteed enforcement (no LLM needed)
-  let hardTrimCount = 0
-  processedSegments = processedSegments.map((segment: any) => {
+  // Step 6: Collect word limit warnings (NO hard-trim — let user edit manually in frontend)
+  const wordLimitWarnings: string[] = []
+  processedSegments.forEach((segment: any) => {
     const scriptText = segment.script_text || ''
+    if (!scriptText.trim()) return
     const duration = segment.duration_seconds || 5
     const maxWords = getMaxWordsForDuration(duration, language)
     const wordCount = countWords(scriptText)
-
-    if (wordCount > maxWords && scriptText.length > 0) {
-      // Split into words (preserving original spacing/punctuation)
-      const words = scriptText.trim().split(/\s+/)
-      // Keep only maxWords words
-      let trimmed = words.slice(0, maxWords).join(' ')
-      // Clean trailing punctuation fragments
-      trimmed = trimmed.replace(/[,;:\-–—]\s*$/, '').trim()
-      // Ensure ends with proper punctuation
-      if (!/[.!?]$/.test(trimmed)) {
-        trimmed += '!'
-      }
-      console.log(`[PostProcess] Hard-trim ${segment.segment_id}: ${wordCount} → ${countWords(trimmed)} words (max ${maxWords})`)
-      segment.script_text = trimmed
-      hardTrimCount++
+    if (wordCount > maxWords) {
+      const warning = `${segment.segment_id} (${segment.type}): ${wordCount}/${maxWords} words`
+      wordLimitWarnings.push(warning)
+      console.warn(`[PostProcess] ⚠️ Over-limit: ${warning}`)
     }
-    return segment
   })
-  if (hardTrimCount > 0) {
-    console.log(`[PostProcess] Hard-trimmed ${hardTrimCount} segments to enforce word limits`)
+  if (wordLimitWarnings.length > 0) {
+    console.warn(`[PostProcess] ${wordLimitWarnings.length} segments still over word limit (user can edit in frontend)`)
   }
 
   // Step 7: Check for remaining strict violations
@@ -2248,6 +2197,7 @@ async function postProcessWordLimits(segments: any[], language: string, supabase
   console.log(`  - HOOK adjusted: ${hookResult.adjusted}`)
   console.log(`  - BODY splits: ${splitResult.splits_applied}`)
   console.log(`  - Auto-shortened: ${shortenedCount}`)
+  console.log(`  - Word limit warnings: ${wordLimitWarnings.length}`)
   console.log(`  - Strict violations: ${strictViolations.length}`)
   if (strictViolations.length > 0) {
     console.warn(`[PostProcess] ⚠️ Strict limit violations (need manual fix):`)
@@ -2258,6 +2208,7 @@ async function postProcessWordLimits(segments: any[], language: string, supabase
     segments: processedSegments,
     hook_adjusted: hookResult.adjusted,
     body_splits: splitResult.splits_applied,
-    strict_violations: strictViolations
+    strict_violations: strictViolations,
+    word_limit_warnings: wordLimitWarnings
   }
 }

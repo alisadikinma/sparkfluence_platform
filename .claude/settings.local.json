@@ -62,7 +62,8 @@
       "Bash(gh api:*)",
       "Bash(echo:*)",
       "WebFetch(domain:www.remotion.dev)",
-      "mcp__supabase__execute_sql"
+      "mcp__supabase__execute_sql",
+      "Bash(npx supabase@2.75.5 functions deploy:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
