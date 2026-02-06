@@ -1,3 +1,10 @@
 export { VisualPreviewGallery } from './VisualPreviewGallery';
 export { GenerateBRollModal } from './GenerateBRollModal';
 export type { BRollOptions } from './GenerateBRollModal';
+export { LayoutPopover } from './LayoutPopover';
+export { parseVisualDirection, StructuredVDChips } from './VisualDirectionDisplay';
+export { CreatorOptionsModal } from './CreatorOptionsModal';
+export { ImageGallery } from './ImageGallery';
+export { StockImageModal } from './StockImageModal';
+export { RegenerateModal } from './RegenerateModal';
+export { ReferenceImageModal } from './ReferenceImageModal';

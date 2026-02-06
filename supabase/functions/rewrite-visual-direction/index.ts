@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { callOpenRouterHybrid, callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
 import { handleCors, successResponse, errorResponse } from '../_shared/cors.ts'
+import { requireAuth } from '../_shared/auth.ts'
 import { sanitizePromptInput } from '../_shared/inputSanitizer.ts'
 
 /**
@@ -98,6 +99,10 @@ serve(async (req: Request) => {
   // Handle CORS preflight
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // Auth check
+  const authResult = await requireAuth(req);
+  if (authResult.error) return authResult.error;
 
   try {
     // Parse request body

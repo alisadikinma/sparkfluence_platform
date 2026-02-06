@@ -1,15 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getApiKeyFromPool, getStats, callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { handleCors, getCorsHeaders, errorResponse } from '../_shared/cors.ts'
+import { requireAuth } from '../_shared/auth.ts'
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
+
+  // Auth check — require authenticated user
+  const authResult = await requireAuth(req);
+  if (authResult.error) return authResult.error;
+
+  // Block in production — this endpoint exposes internal diagnostics
+  const isProduction = (Deno.env.get('ENVIRONMENT') || '').toLowerCase() === 'production';
+  if (isProduction) {
+    return errorResponse(
+      'FORBIDDEN',
+      'test-env endpoint is disabled in production',
+      403,
+      req
+    );
   }
 
   const results: any = {
@@ -38,7 +49,7 @@ serve(async (req) => {
     results.errors.push('SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set')
     return new Response(
       JSON.stringify(results, null, 2),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...getCorsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' } }
     )
   }
 
@@ -73,6 +84,6 @@ serve(async (req) => {
 
   return new Response(
     JSON.stringify(results, null, 2),
-    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    { headers: { ...getCorsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' } }
   )
 })

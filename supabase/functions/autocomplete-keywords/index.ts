@@ -1,26 +1,24 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { handleCors, successResponse } from '../_shared/cors.ts';
+import { requireAuth } from '../_shared/auth.ts';
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
+
+  // Auth check
+  const authResult = await requireAuth(req);
+  if (authResult.error) return authResult.error;
 
   try {
     const { query, lang = 'en' } = await req.json();
 
-    if (!query || query.trim().length < 1) {
-      return new Response(
-        JSON.stringify({ suggestions: [] }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (!query || typeof query !== 'string' || query.trim().length < 1) {
+      return successResponse({ suggestions: [] }, req);
     }
 
-    const q = query.trim();
+    // Sanitize: limit length, strip control chars
+    const q = query.trim().slice(0, 200).replace(/[\x00-\x1F\x7F]/g, '');
     const suggestions: string[] = [];
 
     // Try YouTube suggest API first (most relevant for video content platform)
@@ -62,15 +60,9 @@ serve(async (req) => {
     // Deduplicate and limit to 8
     const unique = [...new Set(suggestions)].slice(0, 8);
 
-    return new Response(
-      JSON.stringify({ suggestions: unique }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ suggestions: unique }, req);
   } catch (error: any) {
     console.error('[Autocomplete] Error:', error);
-    return new Response(
-      JSON.stringify({ suggestions: [] }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ suggestions: [] }, req);
   }
 });

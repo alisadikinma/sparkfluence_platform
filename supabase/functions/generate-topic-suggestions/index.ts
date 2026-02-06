@@ -1,10 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { sanitizePromptInput, sanitizeLanguage, sanitizeUserId } from '../_shared/inputSanitizer.ts';
+import { corsHeaders, handleCors } from '../_shared/cors.ts';
+import { requireAuth } from '../_shared/auth.ts';
 
 // ============================================================================
 // Direct LLM calls
@@ -64,20 +62,41 @@ async function callOpenRouter(msgs: Array<{ role: string; content: string }>, ap
 // ============================================================================
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
+
+  // Auth check
+  const authResult = await requireAuth(req);
+  if (authResult.error) return authResult.error;
 
   const startTime = Date.now();
   const DEADLINE_MS = 22000; // Must respond within 22s to avoid Supabase killing us
 
   try {
-    const {
-      interest, profession, niches, objectives, dnaStyles,
-      language = 'indonesian', count = 6, country = 'ID',
-      batch = 1, exclude_titles = [], user_id,
-      search_keyword,
-    } = await req.json();
+    const body = await req.json();
+
+    // Sanitize all user inputs before use in LLM prompts
+    const interest = sanitizePromptInput(body.interest, 500);
+    const profession = sanitizePromptInput(body.profession, 200);
+    const niches = Array.isArray(body.niches)
+      ? body.niches.map((n: any) => sanitizePromptInput(String(n), 100)).filter(Boolean).slice(0, 10)
+      : [];
+    const objectives = Array.isArray(body.objectives)
+      ? body.objectives.map((o: any) => sanitizePromptInput(String(o), 100)).filter(Boolean).slice(0, 10)
+      : [];
+    const dnaStyles = Array.isArray(body.dnaStyles)
+      ? body.dnaStyles.map((s: any) => sanitizePromptInput(String(s), 100)).filter(Boolean).slice(0, 10)
+      : [];
+    const language = sanitizeLanguage(body.language);
+    const count = Math.min(Math.max(Number(body.count) || 6, 1), 10);
+    const ALLOWED_COUNTRIES = ['ID', 'US', 'IN', 'FR'];
+    const country = ALLOWED_COUNTRIES.includes(body.country) ? body.country : 'ID';
+    const batch = Math.min(Math.max(Number(body.batch) || 1, 1), 20);
+    const exclude_titles = Array.isArray(body.exclude_titles)
+      ? body.exclude_titles.map((t: any) => sanitizePromptInput(String(t), 200)).filter(Boolean).slice(0, 50)
+      : [];
+    const user_id = sanitizeUserId(body.user_id);
+    const search_keyword = sanitizePromptInput(body.search_keyword, 300);
 
     const isKeywordSearch = !!(search_keyword && search_keyword.trim());
 
