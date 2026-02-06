@@ -1,7 +1,7 @@
 export { VisualPreviewGallery } from './VisualPreviewGallery';
 export { GenerateBRollModal } from './GenerateBRollModal';
 export type { BRollOptions } from './GenerateBRollModal';
-export { LayoutPopover } from './LayoutPopover';
+export { LayoutPopover, LayoutIcon } from './LayoutPopover';
 export { parseVisualDirection, StructuredVDChips } from './VisualDirectionDisplay';
 export { CreatorOptionsModal } from './CreatorOptionsModal';
 export { ImageGallery } from './ImageGallery';

@@ -4,6 +4,7 @@ import { supabase } from '../../../lib/supabase';
 import {
   X, Loader2, Search, Upload, Camera, Sparkles, User, Trash2, CheckCircle2, ChevronDown
 } from 'lucide-react';
+import { LayoutIcon } from './LayoutPopover';
 
 // ============================================================================
 // TYPES
@@ -43,12 +44,12 @@ interface AvatarOption {
 
 type LayoutType = 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center';
 
-const LAYOUT_OPTIONS: { value: LayoutType; label: string; image: string }[] = [
-  { value: 'full', label: 'Full', image: '/layout-previews/full.png' },
-  { value: 'split-60-40', label: 'Split 60/40', image: '/layout-previews/split-60-40.png' },
-  { value: 'split-50-50', label: 'Split 50/50', image: '/layout-previews/split-50-50.png' },
-  { value: 'pip', label: 'PiP', image: '/layout-previews/pip.png' },
-  { value: 'creator-center', label: 'Center', image: '/layout-previews/creator-center.png' },
+const LAYOUT_OPTIONS: { value: LayoutType; label: string }[] = [
+  { value: 'full', label: 'Full' },
+  { value: 'split-60-40', label: 'Split 60/40' },
+  { value: 'split-50-50', label: 'Split 50/50' },
+  { value: 'pip', label: 'PiP' },
+  { value: 'creator-center', label: 'Center' },
 ];
 
 interface GenerateBRollModalProps {
@@ -818,11 +819,9 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                           : 'hover:bg-white/5 border border-border-default'
                       }`}
                     >
-                      <img
-                        src={opt.image}
-                        alt={opt.label}
-                        className="w-[38px] h-[57px] object-cover rounded-sm"
-                        loading="lazy"
+                      <LayoutIcon
+                        layout={opt.value}
+                        className="w-[38px] h-[57px] rounded-sm"
                       />
                       <span className="text-[9px] text-text-muted leading-tight">{opt.label}</span>
                     </button>

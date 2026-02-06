@@ -422,6 +422,17 @@ function countEditingCues(visualDirection: string): number {
   return EDITING_CUE_PATTERNS.filter(p => p.test(visualDirection)).length;
 }
 
+/**
+ * Get minimum required editing cues based on segment duration.
+ * MrBeast pacing = visual change every ~3 seconds.
+ */
+function getMinEditingCues(durationSeconds: number | undefined): number {
+  const dur = durationSeconds || 5;
+  if (dur <= 5) return 2;
+  if (dur <= 8) return 3;
+  return 4; // 9-10s segments need 4 cues
+}
+
 // ============================================================================
 // MAIN VALIDATION FUNCTION
 // ============================================================================
@@ -503,14 +514,15 @@ export function validateAndFixScript(
       score -= 5;
     }
 
-    // ----- 2c. Editing Cue Check (≥2 per visual_direction) -----
+    // ----- 2c. Editing Cue Check (duration-aware minimum) -----
     const cueCount = countEditingCues(segment.visual_direction);
-    if (cueCount < 2) {
+    const minCues = getMinEditingCues(segment.duration_seconds || segment.duration);
+    if (cueCount < minCues) {
       issues.push({
         segment_id: segmentId,
         field: 'visual_direction',
         severity: 'warning',
-        message: `Only ${cueCount} editing cue(s) found (need ≥2). Add [Camera:], [SFX:], [TEXT POP:], [CUT TO:], [ACTION:], etc.`,
+        message: `Only ${cueCount} editing cue(s) found (need ≥${minCues} for ${segment.duration_seconds || segment.duration || '?'}s segment). Add [Camera:], [SFX:], [TEXT POP:], [CUT TO:], [ACTION:], etc.`,
         auto_fixed: false,
       });
       score -= 3;

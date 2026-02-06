@@ -48,12 +48,17 @@ const TYPE_PATTERNS: Record<ContentType, RegExp[]> = {
     /daftar|list of/i,
   ],
   tutorial: [
-    /cara\s+(membuat|bikin|pakai|install|setting|buat)/i,
+    /\bcara\s+\w+/i,      // "Cara Investasi", "Cara Bikin", "Cara Masak" — any "Cara [X]"
     /how\s+to/i,
     /tutorial/i,
     /step[\s-]by[\s-]step/i,
     /panduan|guide/i,
     /begini\s+caranya/i,
+    /\blearn\s+\w+/i,     // "Learn Python", "Learn Cooking"
+    /\bbelajar\s+\w+/i,   // "Belajar Coding"
+    /\bmaster\s+\w+/i,    // "Master Photography"
+    /untuk\s+pemula/i,    // "untuk Pemula" (for beginners)
+    /\bbeginner/i,        // "Beginner's guide"
   ],
   controversy: [
     /unpopular\s+opinion/i,
@@ -123,6 +128,11 @@ const TYPE_PATTERNS: Record<ContentType, RegExp[]> = {
     /rahasia/i,
     /secret/i,
     /mengapa|kenapa|why/i,
+    /\btips?\b/i,         // "Finance Tips", "Travel tip"
+    /\btrick\b/i,
+    /\bhacks?\b/i,        // "Life hacks" without number prefix
+    /\bguide\b/i,
+    /\bexplain/i,
   ],
   general: [] // Fallback, no patterns
 };

@@ -63,7 +63,17 @@ const SLANG_DATABASE: Record<string, LanguageSlang> = {
 - Mix Indonesian with English slang naturally (code-mixing)
 - Add particles for natural flow: sih, tuh, gitu, dong, banget
 - Use hyperbolic reactions: "literally", "banget", "parah", "gila"
-- Tone: casual chaotic friend giving advice, NOT a teacher/expert`
+- Tone: casual chaotic friend giving advice, NOT a teacher/expert
+
+❌ BAD TRANSCREATION (literal translation with slang sprinkled):
+English: "Stop doing this immediately, you look like an amateur."
+Bad ID: "Hentikan melakukan ini, lo keliatan kayak amatir."
+Why bad: Indonesian sentence structure, just swapped saya→lo. Still sounds like a textbook.
+
+✅ GOOD TRANSCREATION (complete cultural reimagining):
+English: "Stop doing this immediately, you look like an amateur."
+Good ID: "Anjir, lo masih gitu? Keliatan noob parah, sumpah."
+Why good: Different structure, particles (parah, sumpah), hyperbolic, sounds like a real friend talking.`
   },
 
   hindi: {
@@ -93,7 +103,17 @@ const SLANG_DATABASE: Record<string, LanguageSlang> = {
 - Mix freely with English tech/trending terms
 - Use tum pronoun (avoid excessive aap/ji)
 - Add natural fillers: yaar, na, matlab, arre, bhai
-- Tone: like a smart friend explaining in a chai shop, NOT a news anchor`
+- Tone: like a smart friend explaining in a chai shop, NOT a news anchor
+
+❌ BAD TRANSCREATION (literal translation):
+English: "Stop doing this immediately, you look like an amateur."
+Bad HI: "तुरंत ये करना बंद करो, तुम amateur लग रहे हो।"
+Why bad: Direct translation, no personality, sounds like a warning sign.
+
+✅ GOOD TRANSCREATION (cultural reimagining):
+English: "Stop doing this immediately, you look like an amateur."
+Good HI: "यार, अभी तक ये कर रहे हो? बहोत गलत हो भाई।"
+Why good: Uses fillers (यार, भाई), Hinglish mix, conversational, chai-shop energy.`
   },
 
   english: {
@@ -209,8 +229,14 @@ export function getLocalizedHookStrategy(contentType: ContentType, language: str
     return `   ${i + 1}. ${prefix}"${h.script}"`;
   };
 
-  // Build the slang terms list for transcreation instruction
-  const slangTermsList = slang.current_terms.slice(0, 10).map(t => `${t.term} (=${t.meaning})`).join(', ');
+  // Build topic-aware slang terms list for transcreation instruction
+  // Universal terms work for any topic; lifestyle terms only for non-technical content
+  const UNIVERSAL_SLANG_TERMS = ['Slay', 'Cringe', 'Flex', 'FOMO', 'Vibes', 'Fire', 'Mid', 'W / L', 'Lock in', 'Cooked'];
+  const isHighFriction = ['tutorial', 'educational', 'comparison', 'review'].includes(contentType);
+  const relevantTerms = isHighFriction
+    ? slang.current_terms.filter(t => UNIVERSAL_SLANG_TERMS.some(u => u.toLowerCase() === t.term.toLowerCase()) || ['Burnout', 'Toxic', 'Red flag'].includes(t.term))
+    : slang.current_terms;
+  const slangTermsList = relevantTerms.slice(0, 10).map(t => `${t.term} (=${t.meaning})`).join(', ');
   const particlesList = slang.particles.join(', ');
 
   return `
@@ -501,15 +527,22 @@ export function getCTAStrategy(contentType: ContentType, language: string): stri
 // ============================================================================
 
 const HIGH_FRICTION_KEYWORDS = [
-  'finance', 'keuangan', 'investasi', 'investment', 'saham', 'stock', 'crypto', 'trading',
-  'pajak', 'tax', 'asuransi', 'insurance', 'bank', 'tabungan', 'saving',
+  // Finance / Keuangan
+  'finance', 'financial', 'keuangan', 'invest', 'investasi', 'saham', 'stock', 'crypto',
+  'trading', 'trade', 'pajak', 'tax', 'asuransi', 'insurance', 'bank', 'tabungan',
+  'saving', 'budget', 'hutang', 'debt', 'kredit', 'mortgage',
+  // Law / Hukum
   'hukum', 'law', 'legal', 'regulasi', 'regulation', 'undang', 'kebijakan', 'policy',
-  'coding', 'programming', 'algorithm', 'database', 'API', 'framework', 'debug',
-  'machine learning', 'data science', 'backend', 'frontend',
+  // Tech / Coding
+  'code', 'coding', 'program', 'programming', 'algorithm', 'database', 'API', 'framework',
+  'debug', 'machine learning', 'data science', 'backend', 'frontend', 'devops', 'deploy',
+  'python', 'javascript', 'typescript', 'react', 'sql',
+  // Academic / Sejarah / Sains
   'sejarah', 'history', 'sains', 'science', 'matematika', 'math', 'fisika', 'physics',
-  'kimia', 'chemistry', 'biologi', 'biology', 'ekonomi', 'economics',
+  'kimia', 'chemistry', 'biologi', 'biology', 'ekonomi', 'economics', 'statistik',
+  // Health / Kesehatan
   'kesehatan', 'health', 'medis', 'medical', 'penyakit', 'disease', 'obat', 'medicine',
-  'nutrisi', 'nutrition', 'diet', 'vitamin'
+  'nutrisi', 'nutrition', 'diet', 'vitamin', 'kalori', 'calorie',
 ];
 
 const POPE_IN_POOL_SUGGESTIONS: Record<string, string[]> = {
@@ -533,11 +566,17 @@ const POPE_IN_POOL_SUGGESTIONS: Record<string, string[]> = {
     'Creator chai बनाते हुए explain करे — satisfying activity से viewer रुकता है',
     'Creator walk करते हुए explain करे — movement से retention बढ़ता है',
     'Creator खाना खाते हुए knowledge drop करे — satisfying + informative',
+    'Creator puzzle/Rubik\'s cube solve करते हुए बात करे — visual brain engagement',
+    'Creator light workout करते हुए discuss करे — health audience stays longer',
+    'Creator drawing/sketching करते हुए explain करे — ASMR-like visual retention',
   ],
   french: [
     'Le créateur cuisine/fait du café en expliquant — activité satisfaisante retient le spectateur',
     'Le créateur marche dans un lieu animé en expliquant — mouvement booste la rétention',
     'Le créateur mange en partageant ses connaissances — satisfaisant + informatif',
+    'Le créateur résout un puzzle/Rubik\'s cube en parlant — le visuel garde le cerveau engagé',
+    'Le créateur fait du sport léger en discutant — l\'audience santé reste plus longtemps',
+    'Le créateur dessine/peint en expliquant — rétention visuelle type ASMR',
   ]
 };
 
@@ -586,6 +625,11 @@ a background activity for visual variety. This is OPTIONAL for this topic.`;
 
 function pickRandom<T>(arr: T[], count: number): T[] {
   if (arr.length <= count) return [...arr];
-  const shuffled = [...arr].sort(() => Math.random() - 0.5);
+  // Fisher-Yates shuffle — unbiased uniform distribution
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
   return shuffled.slice(0, count);
 }

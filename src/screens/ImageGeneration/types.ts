@@ -103,12 +103,12 @@ export interface ImageModelSettings {
 
 export const SUPPORTED_DURATIONS = [5, 8, 10];
 
-export const LAYOUT_OPTIONS: { value: Segment['layout']; label: string; image: string }[] = [
-  { value: 'full', label: 'Full', image: '/layout-previews/full.png' },
-  { value: 'split-60-40', label: 'Split 60/40', image: '/layout-previews/split-60-40.png' },
-  { value: 'split-50-50', label: 'Split 50/50', image: '/layout-previews/split-50-50.png' },
-  { value: 'pip', label: 'PiP', image: '/layout-previews/pip.png' },
-  { value: 'creator-center', label: 'Center', image: '/layout-previews/creator-center.png' },
+export const LAYOUT_OPTIONS: { value: Segment['layout']; label: string }[] = [
+  { value: 'full', label: 'Full' },
+  { value: 'split-60-40', label: 'Split 60/40' },
+  { value: 'split-50-50', label: 'Split 50/50' },
+  { value: 'pip', label: 'PiP' },
+  { value: 'creator-center', label: 'Center' },
 ];
 
 export const VD_CATEGORIES = ['Scene', 'Camera', 'Lighting', 'Color', 'Mood', 'FX'] as const;

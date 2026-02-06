@@ -1,6 +1,57 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LAYOUT_OPTIONS, type Segment } from '../types';
 
+/** Inline SVG schematic for each layout type (9:16 aspect ratio, 42x63px) */
+export const LayoutIcon: React.FC<{ layout: Segment['layout']; className?: string }> = ({ layout, className }) => (
+  <svg
+    viewBox="0 0 42 63"
+    className={className}
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    {/* Phone frame */}
+    <rect x="1" y="1" width="40" height="61" rx="3" stroke="currentColor" strokeWidth="1" className="text-white/30" />
+
+    {layout === 'full' && (
+      /* Full: Creator fills entire frame */
+      <rect x="2" y="2" width="38" height="59" rx="2" className="fill-purple-500/50" />
+    )}
+
+    {layout === 'split-60-40' && (<>
+      {/* Left 60%: Creator */}
+      <rect x="2" y="2" width="22" height="59" rx="2" className="fill-purple-500/50" />
+      {/* Right 40%: B-Roll */}
+      <rect x="25" y="2" width="15" height="59" rx="2" className="fill-white/15" />
+    </>)}
+
+    {layout === 'split-50-50' && (<>
+      {/* Left 50%: Creator */}
+      <rect x="2" y="2" width="18" height="59" rx="2" className="fill-purple-500/50" />
+      {/* Right 50%: B-Roll */}
+      <rect x="21" y="2" width="19" height="59" rx="2" className="fill-white/15" />
+    </>)}
+
+    {layout === 'pip' && (<>
+      {/* Full background: B-Roll */}
+      <rect x="2" y="2" width="38" height="59" rx="2" className="fill-white/15" />
+      {/* Small PiP: Creator in bottom-right */}
+      <rect x="24" y="40" width="14" height="19" rx="2" className="fill-purple-500/50" stroke="currentColor" strokeWidth="0.5" />
+    </>)}
+
+    {layout === 'creator-center' && (<>
+      {/* Background: B-Roll */}
+      <rect x="2" y="2" width="38" height="59" rx="2" className="fill-white/15" />
+      {/* Centered Creator */}
+      <rect x="8" y="10" width="26" height="43" rx="2" className="fill-purple-500/50" />
+    </>)}
+
+    {/* Creator label */}
+    <text x="50%" y={layout === 'pip' ? '25' : '32'} textAnchor="middle" className="fill-purple-300" fontSize="6" fontWeight="bold">
+      {layout === 'pip' ? '' : 'C'}
+    </text>
+  </svg>
+);
+
 export const LayoutPopover: React.FC<{
   value: Segment['layout'];
   onChange: (layout: Segment['layout']) => void;
@@ -49,12 +100,7 @@ export const LayoutPopover: React.FC<{
                     : 'hover:bg-white/5'
                 }`}
               >
-                <img
-                  src={opt.image}
-                  alt={opt.label}
-                  className="w-[42px] h-[63px] object-cover rounded-sm"
-                  loading="lazy"
-                />
+                <LayoutIcon layout={opt.value} className="w-[42px] h-[63px]" />
                 <span className="text-[9px] text-text-muted leading-tight">{opt.label}</span>
               </button>
             ))}

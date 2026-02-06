@@ -111,10 +111,14 @@ These tell the video editor EXACTLY what to do — no ambiguity.
 - [ACTION: Hold Product / Show Screen] — Product showcase
 
 **Rules:**
-1. MINIMUM 2 cues per visual_direction field
-2. Combine types: e.g., "[Camera: Push-in] | [TEXT POP: \\"3 cara\\"] | [SFX: Whoosh]"
+1. MINIMUM cues per visual_direction based on segment duration:
+   - ≤5s segments: ≥2 cues
+   - 6-8s segments: ≥3 cues
+   - 9-10s segments: ≥4 cues (visual change every ~2.5s = MrBeast pacing)
+2. Combine types: e.g., "[Camera: Push-in] | [TEXT POP: \\"3 cara\\"] | [SFX: Whoosh] | [ACTION: Point at camera]"
 3. CREATOR shots favor Camera + Action cues
-4. B-ROLL shots favor CUT TO + Visual + Speed cues`;
+4. B-ROLL shots favor CUT TO + Visual + Speed cues
+5. NEVER let a segment go >3 seconds without a visual change`;
 
 // ============================================================================
 // A-ROLL PRIORITY RULES — Camera On Speaker

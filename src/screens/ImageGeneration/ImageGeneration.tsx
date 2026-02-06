@@ -9,7 +9,7 @@ import { calculateSegmentDuration, getDurationExplanation } from "../../lib/segm
 import { getWordLimitStatus, getMaxWords, type LanguageCode } from "../../lib/wordLimits";
 import {
   VisualPreviewGallery, GenerateBRollModal, type BRollOptions,
-  LayoutPopover, parseVisualDirection, StructuredVDChips,
+  LayoutPopover, LayoutIcon, parseVisualDirection, StructuredVDChips,
   CreatorOptionsModal, ImageGallery,
   StockImageModal, RegenerateModal, ReferenceImageModal,
 } from "./components";
@@ -2936,10 +2936,9 @@ export const ImageGeneration = (): JSX.Element => {
                                     <div>
                                       <p className="text-[10px] text-text-muted mb-1">Layout</p>
                                       <div className="flex items-center gap-2">
-                                        <img
-                                          src={LAYOUT_OPTIONS.find(o => o.value === segment.layout)?.image || '/layout-previews/full.png'}
-                                          alt="Layout"
-                                          className="w-[28px] h-[42px] object-cover rounded-sm border border-border-default"
+                                        <LayoutIcon
+                                          layout={segment.layout}
+                                          className="w-[28px] h-[42px] rounded-sm border border-border-default"
                                         />
                                         <span className="text-xs text-text-primary font-medium">
                                           {LAYOUT_OPTIONS.find(o => o.value === segment.layout)?.label || 'Full'}
