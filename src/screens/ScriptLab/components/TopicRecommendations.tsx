@@ -14,8 +14,8 @@ interface TopicRecommendationsProps {
   disabled?: boolean;
 }
 
-// Cache settings - v2: invalidated to support 9 initial topics
-const TOPICS_CACHE_KEY = 'sparkfluence_scriptlab_topics_v2';
+// Cache settings - v3: invalidated to remove stale instagram source data
+const TOPICS_CACHE_KEY = 'sparkfluence_scriptlab_topics_v3';
 const TOPICS_CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
 
 export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
@@ -772,7 +772,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
           <div className="flex flex-wrap items-center gap-1.5 mt-2">
             <span className="text-text-muted text-xs whitespace-nowrap">{uiText.trendingNow}</span>
             {trendingChips.map((chip, i) => {
-              const sourceColor = chip.source === 'tiktok' ? 'bg-pink-500' : chip.source === 'google' ? 'bg-blue-500' : chip.source === 'instagram' ? 'bg-purple-500' : 'bg-amber-500';
+              const sourceColor = chip.source === 'tiktok' ? 'bg-pink-500' : chip.source === 'google' ? 'bg-blue-500' : chip.source === 'youtube' ? 'bg-red-500' : chip.source === 'news' ? 'bg-emerald-500' : 'bg-amber-500';
               return (
                 <button
                   key={i}
@@ -831,11 +831,11 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
             style={{ transform: `translateX(-${carouselIndex * 100}%)` }}
           >
             {[...topics].sort((a, b) => {
-              const order: Record<string, number> = { google: 0, tiktok: 1, instagram: 2, ai: 3 };
+              const order: Record<string, number> = { google: 0, tiktok: 1, youtube: 2, news: 3, ai_creative: 4, ai: 5 };
               return (order[a.trending_source || 'ai'] ?? 3) - (order[b.trending_source || 'ai'] ?? 3);
             }).map((topic) => {
               const isSelected = selectedId === topic.id;
-              const badge = topic.trending_source ? SOURCE_BADGE_CONFIG[topic.trending_source] : null;
+              const badge = (topic.trending_source && SOURCE_BADGE_CONFIG[topic.trending_source]) || SOURCE_BADGE_CONFIG.ai;
               return (
                 <div key={topic.id} className="w-full flex-shrink-0">
                   <button
@@ -905,11 +905,11 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       <div className="hidden sm:block">
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
           {[...topics].sort((a, b) => {
-            const order: Record<string, number> = { google: 0, tiktok: 1, instagram: 2, ai: 3 };
+            const order: Record<string, number> = { google: 0, tiktok: 1, youtube: 2, news: 3, ai_creative: 4, ai: 5 };
             return (order[a.trending_source || 'ai'] ?? 3) - (order[b.trending_source || 'ai'] ?? 3);
           }).map((topic) => {
             const isSelected = selectedId === topic.id;
-            const badge = topic.trending_source ? SOURCE_BADGE_CONFIG[topic.trending_source] : SOURCE_BADGE_CONFIG.ai;
+            const badge = (topic.trending_source && SOURCE_BADGE_CONFIG[topic.trending_source]) || SOURCE_BADGE_CONFIG.ai;
             return (
               <button
                 key={topic.id}

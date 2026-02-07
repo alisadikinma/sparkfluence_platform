@@ -15,6 +15,11 @@ python-dotenv==1.0.0
 # Async support
 aiofiles==23.2.1
 
+# Trending data fetcher (fetch_trending.py)
+pytrends==4.9.2
+feedparser==6.0.11
+rapidfuzz==3.6.1
+
 # Note: FFmpeg must be installed separately on the system
 # Installation:
 # - Windows: winget install Gyan.FFmpeg

@@ -1,4 +1,4 @@
-export type TrendingSource = 'google' | 'tiktok' | 'instagram' | 'ai';
+export type TrendingSource = 'google' | 'tiktok' | 'youtube' | 'news' | 'ai_creative' | 'ai';
 
 export interface Topic {
   id: number;
@@ -10,8 +10,10 @@ export interface Topic {
 }
 
 export const SOURCE_BADGE_CONFIG: Record<TrendingSource, { label: string; bg: string; text: string; border: string }> = {
-  tiktok:    { label: 'TikTok',    bg: 'bg-pink-500/15',   text: 'text-pink-400',   border: 'border-pink-500/30' },
-  google:    { label: 'Google',    bg: 'bg-blue-500/15',   text: 'text-blue-400',   border: 'border-blue-500/30' },
-  instagram: { label: 'Instagram', bg: 'bg-purple-500/15', text: 'text-purple-400', border: 'border-purple-500/30' },
-  ai:        { label: 'AI',        bg: 'bg-amber-500/15',  text: 'text-amber-400',  border: 'border-amber-500/30' },
+  google:      { label: 'Google',    bg: 'bg-blue-500/15',   text: 'text-blue-400',   border: 'border-blue-500/30' },
+  tiktok:      { label: 'TikTok',    bg: 'bg-pink-500/15',   text: 'text-pink-400',   border: 'border-pink-500/30' },
+  youtube:     { label: 'YouTube',   bg: 'bg-red-500/15',    text: 'text-red-400',    border: 'border-red-500/30' },
+  news:        { label: 'News',      bg: 'bg-emerald-500/15',text: 'text-emerald-400',border: 'border-emerald-500/30' },
+  ai_creative: { label: 'AI',        bg: 'bg-amber-500/15',  text: 'text-amber-400',  border: 'border-amber-500/30' },
+  ai:          { label: 'AI',        bg: 'bg-amber-500/15',  text: 'text-amber-400',  border: 'border-amber-500/30' },
 };

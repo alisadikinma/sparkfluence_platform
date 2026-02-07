@@ -196,11 +196,11 @@ RULES:
 2. Do NOT limit to any specific niche — be creative and broad
 3. If trending keywords relate to "${kw}", incorporate them (tag source)
 4. Each needs hook angle + 2-3 hashtags
-5. Tag source: google/tiktok/instagram/ai
+5. Tag source: google/tiktok/youtube/news/ai_creative
 6. Language: ${langMap[language] || 'English'}
 7. Return ONLY JSON
 
-FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|tiktok|instagram|ai","trending_keyword":"...|null","hashtags":["#tag1","#tag2"]}]}`;
+FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|tiktok|youtube|news|ai_creative","trending_keyword":"...|null","hashtags":["#tag1","#tag2"]}]}`;
 
       userPrompt = `${topicCount} topics about: "${kw}"`;
       if (batch > 1) userPrompt += `. Batch ${batch}, different angles.`;
@@ -217,11 +217,11 @@ CRITICAL RULES:
 3. ONLY use trending keywords if they MATCH the user's niches. IGNORE trending keywords that are unrelated to the niches (e.g. if niche is "Technology", ignore fitness/travel/food trends)
 4. If no trending keyword matches the niches, generate ALL topics as "ai" source — do NOT force irrelevant trends
 5. Each needs hook angle + 2-3 hashtags relevant to the niche
-6. Tag source: google/tiktok/instagram (ONLY if trending keyword is relevant) or ai
+6. Tag source: google/tiktok/youtube/news (ONLY if trending keyword is relevant) or ai_creative
 7. Language: ${langMap[language] || 'English'}
 8. Return ONLY JSON
 
-FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|tiktok|instagram|ai","trending_keyword":"...|null","hashtags":["#tag1","#tag2"]}]}`;
+FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|tiktok|youtube|news|ai_creative","trending_keyword":"...|null","hashtags":["#tag1","#tag2"]}]}`;
 
       userPrompt = `${topicCount} topics for: ${interest} (${niches.join(', ')}), style: ${dnaStyles.join(', ')}`;
       if (profession) userPrompt += `, profession: ${profession}`;
@@ -285,11 +285,11 @@ FORMAT: {"topics":[{"title":"...","description":"...","trending_source":"google|
     const parsed = JSON.parse(jsonStr);
     if (!parsed.topics || !Array.isArray(parsed.topics)) throw new Error('Invalid response');
 
-    const validSources = ['google', 'tiktok', 'instagram', 'ai'];
+    const validSources = ['google', 'tiktok', 'youtube', 'news', 'ai_creative', 'ai'];
     const topics = parsed.topics.map((t: any) => ({
       title: t.title || '',
       description: t.description || '',
-      trending_source: validSources.includes(t.trending_source) ? t.trending_source : 'ai',
+      trending_source: validSources.includes(t.trending_source) ? t.trending_source : 'ai_creative',
       trending_keyword: t.trending_keyword || null,
       hashtags: Array.isArray(t.hashtags) ? t.hashtags.slice(0, 3).map((h: string) => h.startsWith('#') ? h : `#${h}`) : [],
     }));

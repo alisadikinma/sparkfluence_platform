@@ -3,8 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
-import { AppSidebar } from "../../components/layout/AppSidebar";
-import { TopNavbar } from "../../components/layout/TopNavbar";
 import { PlatformIcons } from "../../components/ui/platform-icons";
 import {
   Sparkles, Calendar, TrendingUp, Clock, ArrowUpRight,
@@ -532,13 +530,7 @@ export const Dashboard = (): JSX.Element => {
   }
 
   return (
-    <div className="flex w-full min-h-screen bg-page">
-      <AppSidebar activePage="dashboard" />
-
-      <div className="flex-1 lg:ml-0">
-        <TopNavbar tokenBalance={tokenBalance} />
-
-        <main className="pt-20 pb-8 px-4 sm:px-6 lg:px-8">
+    <main className="pt-8 pb-8 px-4 sm:px-6 lg:px-8">
           {/* Greeting */}
           <h1 className="text-xl sm:text-2xl font-semibold text-text-primary mb-6">
             {getGreeting()}
@@ -896,8 +888,6 @@ export const Dashboard = (): JSX.Element => {
               ))}
             </div>
           </section>
-        </main>
-      </div>
-    </div>
+    </main>
   );
 };
