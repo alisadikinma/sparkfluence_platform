@@ -5,8 +5,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { usePlanner } from "../../contexts/PlannerContext";
 import { supabase } from "../../lib/supabase";
-import { AppSidebar } from "../../components/layout/AppSidebar";
-import { TopNavbar } from "../../components/layout/TopNavbar";
 import {
   Clock, Video, Play, Trash2, X,
   CheckCircle, AlertCircle, Loader2, Image as ImageIcon,
@@ -1097,23 +1095,18 @@ export const History = (): JSX.Element => {
   };
 
   return (
-    <div className="flex w-full min-h-screen bg-page">
-      <AppSidebar activePage="history" />
+    <div className="w-full min-h-screen bg-page">
+      <main className="pb-8 px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-text-primary">{t.nav?.history || 'History'}</h1>
+          <p className="text-text-secondary text-sm">
+            {t.history?.subtitle || 'View all your past video projects'}
+          </p>
+        </div>
 
-      <div className="flex-1 lg:ml-0">
-        <TopNavbar />
-
-        <main className="pt-20 pb-8 px-4 sm:px-6 lg:px-8">
-          {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-text-primary">{t.nav?.history || 'History'}</h1>
-            <p className="text-text-secondary text-sm">
-              {t.history?.subtitle || 'View all your past video projects'}
-            </p>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-2 mb-6 border-b border-border-default">
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6 border-b border-border-default">
             {tabs.map(tab => (
               <button
                 key={tab.key}
@@ -1391,8 +1384,7 @@ export const History = (): JSX.Element => {
               })}
             </div>
           )}
-        </main>
-      </div>
+      </main>
 
       {/* Video Detail Modal - Compact layout */}
       {selectedProject && (

@@ -2,8 +2,6 @@ import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { useAuth } from "../../contexts/AuthContext";
-import { AppSidebar } from "../../components/layout/AppSidebar";
-import { TopNavbar } from "../../components/layout/TopNavbar";
 import { supabase } from "../../lib/supabase";
 import { generateOrderId } from "../../lib/orderIdGenerator";
 import { Target, Loader2, Zap, TrendingUp, Users, Clock, Globe, Sparkles, ChevronDown, Brain, PenTool } from "lucide-react";
@@ -322,8 +320,8 @@ Focus on emotional storytelling that resonates with the target demographic.
       };
       localStorage.setItem("ad_studio_data", JSON.stringify(adStudioData));
 
-      // Navigate to image generation
-      navigate("/image-generation", {
+      // Navigate to Ad Studio workspace
+      navigate(`/ad-studio/${orderId}/script`, {
         state: {
           sessionId,
           orderId,
@@ -458,13 +456,8 @@ Focus on emotional storytelling that resonates with the target demographic.
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <AppSidebar activePage="adStudio" />
-
-      <main className="flex-1 lg:ml-0">
-        <TopNavbar />
-
-        <div className="pt-16 sm:pt-20 pb-4 px-4 sm:px-8 lg:px-10">
+    <div className="w-full min-h-screen bg-background">
+        <div className="pb-4 pt-6 px-4 sm:px-8 lg:px-10">
           <div className="w-full">
 
             {/* Main Grid - 3 columns */}
@@ -789,7 +782,6 @@ Focus on emotional storytelling that resonates with the target demographic.
             </div>
           </div>
         </div>
-      </main>
     </div>
   );
 };

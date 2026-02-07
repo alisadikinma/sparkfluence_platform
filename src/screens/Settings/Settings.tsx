@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
-import { AppSidebar } from "../../components/layout/AppSidebar";
-import { TopNavbar } from "../../components/layout/TopNavbar";
 import { Card, CardContent } from "../../components/ui/card";
 import { UserCircle, Link2, Bell, CreditCard, ChevronRight, LogOut } from "lucide-react";
 
@@ -64,17 +62,9 @@ export const Settings = (): JSX.Element => {
   };
 
   return (
-    <div className="flex w-full min-h-screen bg-page">
-      {/* Shared Sidebar */}
-      <AppSidebar activePage="settings" />
-
-      {/* Main Content Area */}
-      <div className="flex-1 transition-all duration-300">
-        {/* Shared Top Navbar */}
-        <TopNavbar />
-
-        {/* Content */}
-        <main className="mt-16 sm:mt-20 p-4 sm:p-6">
+    <div className="w-full min-h-screen bg-page">
+      {/* Content */}
+      <main className="p-4 sm:p-6">
           {/* Header */}
           <div className="flex items-center justify-between mb-8">
             <h1 className="text-2xl lg:text-3xl font-bold text-text-primary">{t.settings.title}</h1>
@@ -111,8 +101,7 @@ export const Settings = (): JSX.Element => {
               );
             })}
           </div>
-        </main>
-      </div>
+      </main>
     </div>
   );
 };

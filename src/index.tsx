@@ -23,23 +23,18 @@ import { NicheRecommendations } from "./screens/NicheRecommendations";
 import { CreativeDNA } from "./screens/CreativeDNA";
 import { AvatarUpload } from "./screens/AvatarUpload";
 import { AvatarPreview } from "./screens/AvatarPreview";
-import { ContentCuration } from "./screens/ContentCuration";
-import { ImageGeneration } from "./screens/ImageGeneration";
-import { VideoGeneration } from "./screens/VideoGeneration";
-import { MusicSelector } from "./screens/MusicSelector";
-import { Loading } from "./screens/Loading";
-import { FullVideo } from "./screens/FullVideo";
-import { FullVideoPreview } from "./screens/FullVideoPreview";
 import { Gallery } from "./screens/Gallery";
 import { Planner } from "./screens/Planner";
 import { History } from "./screens/History/History";
 import { AuthCallback } from "./screens/AuthCallback/AuthCallback";
-import { ScriptLab } from "./screens/ScriptLab";
 import { AdStudio } from "./screens/AdStudio";
-import { SparkfluenceStudio } from "./screens/SparkfluenceStudio/SparkfluenceStudio";
 import { SparkfluenceEngineTest } from "./screens/EngineTest";
 import { Privacy, Terms } from "./screens/Legal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ChatLayout } from "./components/layout";
+import { ChatHome } from "./screens/ChatHome";
+import { Workspace } from "./screens/Workspace";
+import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 
 // Wrapper component for smooth scroll
 const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -83,28 +78,63 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/creative-dna" element={<CreativeDNA />} />
                     <Route path="/avatar-upload" element={<AvatarUpload />} />
                     <Route path="/avatar-preview" element={<AvatarPreview />} />
-                    <Route path="/content-curation" element={<ContentCuration />} />
-                    <Route path="/topic-selection" element={<Navigate to="/script-lab" replace />} />
-                    <Route path="/image-generation" element={<ImageGeneration />} />
-                    <Route path="/video-generation" element={<VideoGeneration />} />
-                    <Route path="/music-selector" element={<MusicSelector />} />
-                    <Route path="/loading" element={<Loading />} />
-                    <Route path="/full-video" element={<FullVideo />} />
-                    <Route path="/full-video-preview" element={<FullVideoPreview />} />
-                    <Route path="/gallery" element={<Gallery />} />
-                    <Route path="/history" element={<History />} />
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/script-lab" element={<ScriptLab />} />
-                    <Route path="/ad-studio" element={<AdStudio />} />
-                    <Route path="/studio" element={<SparkfluenceStudio />} />
-                    <Route path="/planner" element={<Planner />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="/settings/plan-billing" element={<PlanBilling />} />
-                    <Route path="/settings/profile" element={<Profile />} />
-                    <Route path="/settings/linked-accounts" element={<LinkedAccounts />} />
-                    <Route path="/settings/notifications" element={<Notifications />} />
-                    <Route path="/app/billing" element={<Billing />} />
-                    <Route path="/billing" element={<Billing />} />
+                    {/* Legacy routes — redirect to v3.0 equivalents */}
+                    <Route path="/content-curation" element={<Navigate to="/script-gen" replace />} />
+                    <Route path="/topic-selection" element={<Navigate to="/script-gen" replace />} />
+                    <Route path="/image-generation" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/video-generation" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/music-selector" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/loading" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/full-video" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/full-video-preview" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/script-lab" element={<Navigate to="/script-gen" replace />} />
+                    <Route path="/studio" element={<Navigate to="/creator-lab" replace />} />
+                    <Route path="/ad-studio" element={<ChatLayout><AdStudio /></ChatLayout>} />
+
+                    {/* Standalone pages — wrapped in ChatLayout for v3.0 sidebar */}
+                    <Route path="/dashboard" element={<ChatLayout><Dashboard /></ChatLayout>} />
+                    <Route path="/planner" element={<ChatLayout><Planner /></ChatLayout>} />
+                    <Route path="/gallery" element={<ChatLayout><Gallery /></ChatLayout>} />
+                    <Route path="/history" element={<ChatLayout><History /></ChatLayout>} />
+                    <Route path="/settings" element={<ChatLayout><Settings /></ChatLayout>} />
+                    <Route path="/settings/plan-billing" element={<ChatLayout><PlanBilling /></ChatLayout>} />
+                    <Route path="/settings/profile" element={<ChatLayout><Profile /></ChatLayout>} />
+                    <Route path="/settings/linked-accounts" element={<ChatLayout><LinkedAccounts /></ChatLayout>} />
+                    <Route path="/settings/notifications" element={<ChatLayout><Notifications /></ChatLayout>} />
+                    <Route path="/app/billing" element={<ChatLayout><Billing /></ChatLayout>} />
+                    <Route path="/billing" element={<ChatLayout><Billing /></ChatLayout>} />
+
+                    {/* ═══ v3.0 Chat-Based Routes (ChatLayout + Workspace) ═══ */}
+
+                    {/* Script Gen — new session home */}
+                    <Route path="/script-gen" element={<ChatLayout><ChatHome /></ChatLayout>} />
+
+                    {/* Script Gen — existing session workspace */}
+                    <Route path="/script-gen/:orderId" element={
+                      <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
+                    } />
+                    <Route path="/script-gen/:orderId/:step" element={
+                      <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
+                    } />
+
+                    {/* Creator Lab — new session home */}
+                    <Route path="/creator-lab" element={<ChatLayout><ChatHome /></ChatLayout>} />
+
+                    {/* Creator Lab — existing session workspace */}
+                    <Route path="/creator-lab/:orderId" element={
+                      <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
+                    } />
+                    <Route path="/creator-lab/:orderId/:step" element={
+                      <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
+                    } />
+
+                    {/* Ad Studio — workspace routes */}
+                    <Route path="/ad-studio/:orderId" element={
+                      <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
+                    } />
+                    <Route path="/ad-studio/:orderId/:step" element={
+                      <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
+                    } />
 
                       {/* Admin only - Engine Test Dashboard */}
                       <Route path="/sparkfluence-engine-test" element={<SparkfluenceEngineTest />} />

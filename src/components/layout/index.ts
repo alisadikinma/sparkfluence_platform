@@ -5,3 +5,5 @@ export { PublicLayout } from './PublicLayout';
 export { AppSidebar } from './AppSidebar';
 export { UserDropdown } from './UserDropdown';
 export { TopNavbar } from './TopNavbar';
+export { ChatLayout } from './ChatLayout';
+export { ChatSidebar } from './ChatSidebar';

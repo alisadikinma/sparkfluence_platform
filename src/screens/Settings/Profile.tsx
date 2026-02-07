@@ -4,8 +4,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
 import { clearAvatarCache } from "../../lib/avatarCache";
-import { AppSidebar } from "../../components/layout/AppSidebar";
-import { TopNavbar } from "../../components/layout/TopNavbar";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -923,13 +921,8 @@ export const Profile = (): JSX.Element => {
   const mainLeftMargin = sidebarCollapsed ? 'lg:ml-[72px]' : 'lg:ml-[240px]';
 
   return (
-    <div className="flex w-full min-h-screen bg-page">
-      <AppSidebar activePage="settings" />
-
-      <div className="flex-1 transition-all duration-300">
-        <TopNavbar />
-
-        <main className="mt-16 sm:mt-20 pb-8 px-4 sm:px-6">
+    <div className="w-full min-h-screen bg-page">
+      <main className="pb-8 px-4 sm:px-6">
           {/* Back Button & Title */}
           <button
             onClick={() => navigate("/settings")}
@@ -1452,8 +1445,7 @@ export const Profile = (): JSX.Element => {
               </div>
             )}
           </div>
-        </main>
-      </div>
+      </main>
     </div>
   );
 };
