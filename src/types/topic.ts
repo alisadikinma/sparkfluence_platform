@@ -9,6 +9,18 @@ export interface Topic {
   hashtags?: string[];
 }
 
+export interface TikTokChallenge {
+  id: string;
+  name: string;
+  slug: string;
+  category: string;
+  description: string;
+  hashtags: string[];
+  example_format: string;
+  script_instruction: string;
+  volume_score: number;
+}
+
 export const SOURCE_BADGE_CONFIG: Record<TrendingSource, { label: string; bg: string; text: string; border: string }> = {
   google:      { label: 'Google',    bg: 'bg-blue-500/15',   text: 'text-blue-400',   border: 'border-blue-500/30' },
   tiktok:      { label: 'TikTok',    bg: 'bg-pink-500/15',   text: 'text-pink-400',   border: 'border-pink-500/30' },

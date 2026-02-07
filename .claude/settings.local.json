@@ -65,7 +65,9 @@
       "mcp__supabase__execute_sql",
       "Bash(npx supabase@2.75.5 functions deploy:*)",
       "Bash(npx -p typescript tsc:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(pushd:*)",
+      "Bash(npx vite build:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

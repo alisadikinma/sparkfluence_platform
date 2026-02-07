@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useOnboarding } from '../../contexts/OnboardingContext';
@@ -7,7 +7,8 @@ import { supabase } from '../../lib/supabase';
 import { generateOrderId } from '../../lib/orderIdGenerator';
 import { ScriptForm, SelectedTopic } from '../ScriptLab/components/ScriptForm';
 import { TopicRecommendations } from '../ScriptLab/components/TopicRecommendations';
-import { Sparkles, Loader2, Brain, Zap, PenTool } from 'lucide-react';
+import { TikTokChallenge } from '../../types/topic';
+import { Sparkles, Loader2, Brain, Zap, PenTool, X, ChevronDown } from 'lucide-react';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -25,6 +26,10 @@ export const ChatHome: React.FC = () => {
   const [generatingPhase, setGeneratingPhase] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<SelectedTopic | null>(null);
+  const [selectedChallenge, setSelectedChallenge] = useState<TikTokChallenge | null>(null);
+
+  // Ref to scroll ScriptForm into view when topic selected
+  const formRef = useRef<HTMLDivElement>(null);
 
   // Determine session type from current URL path
   const getSessionType = (): 'script_gen' | 'creator_lab' | 'ad_studio' => {
@@ -38,6 +43,15 @@ export const ChatHome: React.FC = () => {
   const handleSelectTopic = (topic: SelectedTopic) => {
     setSelectedTopic(topic);
   };
+
+  // Scroll form into view when topic or challenge is selected
+  useEffect(() => {
+    if ((selectedTopic || selectedChallenge) && formRef.current) {
+      setTimeout(() => {
+        formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [selectedTopic, selectedChallenge]);
 
   const handleClearTopic = () => {
     setSelectedTopic(null);
@@ -57,7 +71,8 @@ export const ChatHome: React.FC = () => {
     avatarId?: string | null;
     avatarUrl?: string | null;
   }) => {
-    if (!formData.prompt.trim()) return;
+    // Allow empty prompt when challenge is selected (AI auto-picks topic)
+    if (!formData.prompt.trim() && !selectedChallenge) return;
 
     setLoading(true);
     setGeneratingPhase(0);
@@ -119,6 +134,10 @@ export const ChatHome: React.FC = () => {
             use_dna_tone: formData.useDnaTone,
             creative_dna: formData.creativeDna,
             video_model: formData.model === 'auto' ? 'veo31' : formData.model,
+            ...(selectedChallenge ? {
+              challenge_format: selectedChallenge.name,
+              challenge_instruction: selectedChallenge.script_instruction,
+            } : {}),
           },
         },
       );
@@ -197,6 +216,19 @@ export const ChatHome: React.FC = () => {
     }
   };
 
+  // Greeting text
+  const userName = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Creator';
+  const greeting = {
+    id: `Hai ${userName}`,
+    en: `Hi ${userName}`,
+    hi: `नमस्ते ${userName}`,
+  };
+  const subtitle = {
+    id: 'Pilih topik yang menarik, lalu kita buatkan scriptnya.',
+    en: 'Pick a topic that excites you, then we\'ll craft the script.',
+    hi: 'एक रोचक विषय चुनें, फिर हम स्क्रिप्ट बनाएंगे।',
+  };
+
   // ── Full-screen loading overlay ──
   if (loading) {
     const phaseIcons = [
@@ -213,37 +245,37 @@ export const ChatHome: React.FC = () => {
     };
     const labels = phaseLabels[uiLanguage as keyof typeof phaseLabels] || phaseLabels.en;
 
-    const currentTopic = selectedTopic?.title || '';
+    const currentTopic = selectedTopic?.title || (selectedChallenge ? `${selectedChallenge.name} Challenge` : '');
 
     return (
-      <div className="w-full min-h-screen bg-page flex flex-col items-center justify-center px-4">
+      <div className="w-full min-h-screen bg-[#0B0E14] flex flex-col items-center justify-center px-4">
         <div className="flex flex-col items-center gap-8 max-w-md w-full">
           {/* Animated Icon */}
           <div className="relative">
-            <div className="w-24 h-24 rounded-full bg-gradient-to-r from-primary to-accent-pink flex items-center justify-center shadow-lg shadow-primary/30">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/30">
               <div className="animate-pulse">
                 {phaseIcons[Math.min(generatingPhase - 1, 3)] || phaseIcons[0]}
               </div>
             </div>
             <div
-              className="absolute inset-0 rounded-full border-2 border-transparent border-t-primary animate-spin"
+              className="absolute inset-0 rounded-full border-2 border-transparent border-t-emerald-500 animate-spin"
               style={{ animationDuration: '1.5s' }}
             />
           </div>
 
           {/* Title and current step */}
           <div className="text-center">
-            <h2 className="text-2xl font-bold text-text-primary mb-3">
+            <h2 className="text-2xl font-bold text-[#FAFAF9] mb-3">
               {uiLanguage === 'id'
                 ? 'Membuat Script Viral'
                 : uiLanguage === 'hi'
                   ? 'वायरल स्क्रिप्ट बना रहे हैं'
                   : 'Creating Viral Script'}
             </h2>
-            <p className="text-primary font-medium text-lg mb-2 min-h-[28px] transition-all duration-300">
+            <p className="text-emerald-400 font-medium text-lg mb-2 min-h-[28px] transition-all duration-300">
               {generatingStep}
             </p>
-            <p className="text-text-muted text-sm">
+            <p className="text-[#78716C] text-sm">
               {uiLanguage === 'id'
                 ? 'Mohon tunggu sebentar...'
                 : uiLanguage === 'hi'
@@ -259,7 +291,7 @@ export const ChatHome: React.FC = () => {
                 <div className="flex flex-col items-center gap-1 flex-1">
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 ${
-                      generatingPhase >= phase ? 'bg-primary scale-110' : 'bg-surface'
+                      generatingPhase >= phase ? 'bg-emerald-500 scale-110' : 'bg-[#161616]'
                     }`}
                   >
                     {generatingPhase > phase ? (
@@ -279,12 +311,12 @@ export const ChatHome: React.FC = () => {
                     ) : generatingPhase === phase ? (
                       <Loader2 className="w-5 h-5 text-white animate-spin" />
                     ) : (
-                      <span className="text-text-muted text-sm font-medium">{phase}</span>
+                      <span className="text-[#78716C] text-sm font-medium">{phase}</span>
                     )}
                   </div>
                   <span
                     className={`text-xs transition-colors duration-300 ${
-                      generatingPhase >= phase ? 'text-primary' : 'text-text-muted'
+                      generatingPhase >= phase ? 'text-emerald-400' : 'text-[#78716C]'
                     }`}
                   >
                     {labels[phase - 1]}
@@ -293,7 +325,7 @@ export const ChatHome: React.FC = () => {
                 {phase < 4 && (
                   <div
                     className={`h-0.5 flex-1 transition-all duration-500 ${
-                      generatingPhase > phase ? 'bg-primary' : 'bg-surface'
+                      generatingPhase > phase ? 'bg-emerald-500' : 'bg-[#161616]'
                     }`}
                   />
                 )}
@@ -303,15 +335,15 @@ export const ChatHome: React.FC = () => {
 
           {/* Topic being processed */}
           {currentTopic && (
-            <div className="bg-card border border-border-default rounded-xl p-4 w-full">
-              <p className="text-text-muted text-xs mb-1">
+            <div className="bg-[#12121a] border border-[#262626] rounded-xl p-4 w-full">
+              <p className="text-[#78716C] text-xs mb-1">
                 {uiLanguage === 'id'
                   ? 'Topik:'
                   : uiLanguage === 'hi'
                     ? 'विषय:'
                     : 'Topic:'}
               </p>
-              <p className="text-text-primary text-sm line-clamp-2">{currentTopic}</p>
+              <p className="text-[#FAFAF9] text-sm line-clamp-2">{currentTopic}</p>
             </div>
           )}
         </div>
@@ -319,10 +351,24 @@ export const ChatHome: React.FC = () => {
     );
   }
 
-  // ── Main Layout: 2-column (form left, topics right) ──
+  // ── Main Layout: Topic-first (Gemini-style) ──
   return (
-    <div className="w-full min-h-screen bg-page overflow-x-hidden">
-      <div className="pb-6 sm:pb-8 px-3 sm:px-6 lg:px-10 xl:px-12 pt-6 sm:pt-8">
+    <div className="w-full min-h-screen bg-[#0B0E14] overflow-x-hidden">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* ── Greeting Section ── */}
+        <div className={`pt-8 sm:pt-12 pb-6 sm:pb-8 text-center transition-all duration-500 ${selectedTopic ? 'pt-4 sm:pt-6 pb-3 sm:pb-4' : ''}`}>
+          <h1 className={`font-bold text-[#FAFAF9] transition-all duration-500 ${selectedTopic ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-4xl'}`}>
+            <span className="bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent">
+              {greeting[uiLanguage as keyof typeof greeting] || greeting.en}
+            </span>
+          </h1>
+          {!selectedTopic && (
+            <p className="text-[#A8A29E] text-sm sm:text-base mt-2 sm:mt-3">
+              {subtitle[uiLanguage as keyof typeof subtitle] || subtitle.en}
+            </p>
+          )}
+        </div>
+
         {/* Error Message */}
         {error && (
           <div className="mb-6">
@@ -332,34 +378,112 @@ export const ChatHome: React.FC = () => {
           </div>
         )}
 
-        {/* 2-column layout on desktop: 40% form (left), 60% topics (right) */}
-        <div className="lg:flex lg:gap-6 xl:gap-8 max-w-4xl lg:max-w-none mx-auto">
-          {/* Left 40%: Script Form (sticky on desktop) */}
-          <div className="lg:w-[40%] lg:flex-shrink-0">
-            <div className="lg:sticky lg:top-4">
-              {/* Section Title */}
-              <div className="flex items-center gap-2 mb-3 sm:mb-5">
-                <PenTool className="w-4 h-4 sm:w-6 sm:h-6 text-primary" />
-                <h3 className="text-sm sm:text-xl font-semibold text-text-primary">
-                  {uiLanguage === 'id'
-                    ? 'Buat Script'
-                    : uiLanguage === 'hi'
-                      ? 'स्क्रिप्ट बनाएं'
-                      : 'Create Script'}
-                </h3>
-              </div>
-              <ScriptForm
-                onSubmit={handleSubmit}
-                loading={loading}
-                selectedTopic={selectedTopic}
-                onClearTopic={handleClearTopic}
-              />
-            </div>
-          </div>
+        {/* ── Topics Section (full width, primary focus) ── */}
+        <div className={`transition-all duration-500 ${selectedTopic ? 'opacity-60 pointer-events-none max-h-[200px] overflow-hidden' : ''}`}>
+          <TopicRecommendations onSelectTopic={handleSelectTopic} onSelectChallenge={setSelectedChallenge} disabled={loading} />
+        </div>
 
-          {/* Right 60%: Topic Recommendations */}
-          <div className="lg:w-[60%] min-w-0">
-            <TopicRecommendations onSelectTopic={handleSelectTopic} disabled={loading} />
+        {/* ── Selected Topic Indicator + Expand to collapse topics ── */}
+        {selectedTopic && (
+          <div className="flex items-center justify-center my-3">
+            <button
+              onClick={() => {
+                setSelectedTopic(null);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="flex items-center gap-2 text-[#78716C] hover:text-[#A8A29E] transition-colors text-xs"
+            >
+              <ChevronDown className="w-3.5 h-3.5 rotate-180" />
+              {uiLanguage === 'id' ? 'Ganti topik' : uiLanguage === 'hi' ? 'विषय बदलें' : 'Change topic'}
+            </button>
+          </div>
+        )}
+
+        {/* ── Script Form Section (shows when topic OR challenge is selected) ── */}
+        <div
+          ref={formRef}
+          className={`transition-all duration-500 ease-out ${
+            (selectedTopic || selectedChallenge)
+              ? 'opacity-100 translate-y-0 max-h-[2000px]'
+              : 'opacity-0 translate-y-8 max-h-0 overflow-hidden pointer-events-none'
+          }`}
+        >
+          {/* Selected topic card */}
+          {selectedTopic && (
+            <div className="mb-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-emerald-400 text-xs font-medium mb-1">
+                    {uiLanguage === 'id' ? 'Topik Terpilih' : uiLanguage === 'hi' ? 'चयनित विषय' : 'Selected Topic'}
+                  </p>
+                  <h3 className="text-[#FAFAF9] font-semibold text-base sm:text-lg leading-snug">
+                    {selectedTopic.title}
+                  </h3>
+                  {selectedTopic.description && (
+                    <p className="text-[#A8A29E] text-sm mt-1 line-clamp-2">
+                      {selectedTopic.description}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleClearTopic}
+                  className="p-1.5 rounded-lg text-[#78716C] hover:text-red-400 hover:bg-red-500/10 transition-colors flex-shrink-0"
+                  title={uiLanguage === 'id' ? 'Hapus topik' : 'Clear topic'}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Challenge format badge — always visible in form area when selected */}
+          {selectedChallenge && (
+            <div className="mb-4 bg-pink-500/5 border border-pink-500/20 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-pink-400 text-xs font-medium mb-1">
+                    {uiLanguage === 'id' ? 'Format Challenge' : 'Challenge Format'}
+                  </p>
+                  <h3 className="text-[#FAFAF9] font-semibold text-sm sm:text-base leading-snug">
+                    {selectedChallenge.name}
+                  </h3>
+                  <p className="text-[#A8A29E] text-xs mt-1">
+                    {selectedChallenge.description}
+                  </p>
+                  <p className="text-pink-400/60 text-xs mt-1.5 italic">
+                    {selectedChallenge.example_format}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedChallenge(null)}
+                  className="p-1.5 rounded-lg text-[#78716C] hover:text-pink-400 hover:bg-pink-500/10 transition-colors flex-shrink-0"
+                  title={uiLanguage === 'id' ? 'Hapus challenge' : 'Remove challenge'}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Script form with settings */}
+          <div className="max-w-2xl mx-auto pb-8">
+            <div className="flex items-center gap-2 mb-3">
+              <PenTool className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-sm font-semibold text-[#FAFAF9]">
+                {uiLanguage === 'id'
+                  ? 'Pengaturan Script'
+                  : uiLanguage === 'hi'
+                    ? 'स्क्रिप्ट सेटिंग्स'
+                    : 'Script Settings'}
+              </h3>
+            </div>
+            <ScriptForm
+              onSubmit={handleSubmit}
+              loading={loading}
+              selectedTopic={selectedTopic}
+              onClearTopic={handleClearTopic}
+              selectedChallenge={selectedChallenge}
+            />
           </div>
         </div>
       </div>

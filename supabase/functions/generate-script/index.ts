@@ -152,7 +152,10 @@ serve(async (req) => {
       script,
       target_words,
       // Translate mode parameters
-      scripts
+      scripts,
+      // TikTok Challenge format modifier (Option C)
+      challenge_format,
+      challenge_instruction,
       // NOTE: character_description is handled by VideoEditor -> generate-images
       // No need to pass avatar URL here anymore
     } = requestBody
@@ -496,9 +499,50 @@ Return ONLY valid JSON, no explanations.`
       }
     }
 
-    if (!content || !input_type) {
+    // Allow empty content when challenge_format is provided (AI auto-picks topic)
+    if (!content && !challenge_format) {
       return new Response(
-        JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required fields' } }),
+        JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required fields: content or challenge_format' } }),
+        { status: 400, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // ============================================================
+    // CHALLENGE-ONLY: Auto-pick trending topic when no content given
+    // ============================================================
+    let effectiveContent = content || ''
+    if (!effectiveContent.trim() && challenge_format) {
+      console.log(`[Challenge-Only] No topic provided. Auto-picking trending topic for: ${challenge_format}`)
+
+      // Fetch trending keywords from DB for topic inspiration
+      let trendingContext = ''
+      try {
+        const { data: trendingTopics } = await supabase
+          .from('trending_topics')
+          .select('keyword, source, volume_score')
+          .order('volume_score', { ascending: false })
+          .limit(15)
+
+        if (trendingTopics && trendingTopics.length > 0) {
+          const keywords = trendingTopics.map((t: { keyword: string; source: string; volume_score: number }) => t.keyword).join(', ')
+          trendingContext = `\nCurrently trending: ${keywords}`
+        }
+      } catch (e) {
+        console.log('[Challenge-Only] Could not fetch trending topics:', e)
+      }
+
+      // Build auto-topic context from challenge + trending + DNA
+      const dnaContext = creative_dna && Array.isArray(creative_dna) && creative_dna.length > 0
+        ? `\nCreator's niche/style: ${creative_dna.join(', ')}`
+        : ''
+
+      effectiveContent = `[AUTO-TOPIC for ${challenge_format} challenge] Pick the most viral and engaging topic for a "${challenge_format}" style TikTok video.${dnaContext}${trendingContext}\n\nChoose ONE specific, compelling topic and create the script. The topic should be trending, relatable, and perfect for the ${challenge_format} format.`
+      console.log(`[Challenge-Only] Auto-topic prompt length: ${effectiveContent.length}`)
+    }
+
+    if (!input_type) {
+      return new Response(
+        JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Missing required field: input_type' } }),
         { status: 400, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -506,7 +550,7 @@ Return ONLY valid JSON, no explanations.`
     // ============================================================
     // SECURITY: Sanitize all user inputs before processing
     // ============================================================
-    const sanitizedContent = sanitizePromptInput(content, 5000)
+    const sanitizedContent = sanitizePromptInput(effectiveContent, 5000)
     if (!sanitizedContent) {
       return new Response(
         JSON.stringify({ success: false, error: { code: 'INVALID_INPUT', message: 'Content is empty or invalid' } }),
@@ -554,7 +598,32 @@ Return ONLY valid JSON, no explanations.`
       sanitizedContent, dnaStyles, selectedVideoModel
     )
     // P0: Inject product naming rule for tech topics
-    const systemPrompt = injectProductNamingRule(baseSystemPrompt)
+    let systemPrompt = injectProductNamingRule(baseSystemPrompt)
+
+    // Inject TikTok Challenge format modifier (Option C)
+    if (challenge_format && challenge_instruction) {
+      systemPrompt += `
+
+## TIKTOK CHALLENGE FORMAT: ${challenge_format}
+
+${challenge_instruction}
+
+CHALLENGE ADAPTATION RULES:
+1. Keep the viral 4-part structure (HOOK → FORESHADOW → BODY → PEAK → CTA) but adapt the DELIVERY STYLE to match "${challenge_format}".
+2. HOOK must reference the challenge format immediately. Example for GRWM: "Sambil gue siap-siap, gue mau share..." / For POV: "Lo lagi duduk di depan gue, dan gue bilang..."
+3. Each segment's script text and visual_direction MUST reflect the challenge style:
+   - GRWM → creator doing routine activity, casual narration, intimate camera angles
+   - POV → direct "you" address, dramatic acting, point-of-view camera
+   - Day in My Life → show real activities, transition between locations, vlog style
+   - Storytime → narrative buildup, emotional beats, twist/reveal structure
+   - Mini Tutorial → numbered steps, clear demonstrations, "Step 1:" format
+   - Ranking/Tier List → countdown format, suspense building toward #1
+   - This or That → present two options, argue for one, drive comments
+   - Duet/React → reference viral claim first, then expert counter-argument
+4. visual_direction MUST include challenge-specific camera/scene directions (not generic talking head).
+5. The content topic stays the same — only the DELIVERY FORMAT changes.`
+      console.log(`[Challenge] Applying format: ${challenge_format}`)
+    }
     const userPrompt = buildUserPrompt(
       input_type,
       sanitizedContent,
