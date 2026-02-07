@@ -65,7 +65,7 @@ MULTILINE COMMANDS:
 | Frontend | React 18 + TypeScript + Vite + Tailwind + Shadcn UI |
 | Backend | Supabase (PostgreSQL + pgvector + Auth + Edge Functions + Storage) |
 | Video Processing | Python FastAPI + FFmpeg (VPS) |
-| AI - Script | Gemini 2.0 Flash (FREE) → OpenRouter Llama 3.3-70b (fallback) |
+| AI - Script | OpenRouter: Gemini 2.5 Flash Lite (PRIMARY, PAID) → Gemini 2.0 Flash direct (fallback) |
 | AI - Images | fal.ai: Nano Banana Edit (CREATOR) + Seedream v4 / Qwen (B-ROLL) |
 | AI - Video | fal.ai: Kling 2.5 Turbo (DEFAULT) + Wan 2.5 (with audio) |
 | AI - TTS | fal.ai: Chatterbox Turbo (voice cloning) |
@@ -119,6 +119,218 @@ Location: `D:\Projects\sparkfluence_platform\docs\knowledge\`
 
 ---
 
+## API Key Rotation System
+
+### Overview
+All LLM/API keys are stored in `api_keys_pool` table (NOT environment variables). Keys are rotated automatically with retry, usage tracking, and exhaustion handling.
+
+### Database Table: `api_keys_pool`
+```
+Columns: id, provider, key_name, api_key, usage_count, usage_limit,
+         limit_type, is_active, is_exhausted, priority, reset_period,
+         last_reset_at, next_reset_at, notes
+Index: idx_api_keys_provider(provider, is_active)
+```
+
+### DB Functions (SECURITY DEFINER)
+| Function | Purpose |
+|----------|---------|
+| `get_available_api_key(provider)` | Returns least-used, highest-priority active key |
+| `increment_api_key_usage(key_id, increment)` | Increment usage counter after success |
+| `mark_api_key_exhausted(key_id)` | Temp disable on 429/402 (resets daily) |
+| `deactivate_key(key_id)` | Permanent disable on leaked/compromised |
+| `get_api_keys_stats(provider?)` | Usage stats per provider |
+| `reset_exhausted_api_keys(provider?)` | Daily cron reset |
+
+### TypeScript: `supabase/functions/_shared/apiKeyRotation.ts`
+```typescript
+// Core functions
+getApiKeyFromPool(supabase, provider)     // Get next available key
+callWithRotationHybrid(supabase, provider, apiCallFn, maxRetries=5) // Auto-retry
+
+// Provider-specific callers (use these in Edge Functions)
+callOpenRouterHybrid(supabase, messages, options) // PRIMARY — google/gemini-2.5-flash-lite (PAID)
+callGeminiHybrid(supabase, messages, options)     // FALLBACK — gemini-2.0-flash-lite (FREE)
+callTavilyHybrid(supabase, query, options)        // Tavily search
+
+// Error handling
+incrementUsage(supabase, keyId)   // After success
+markExhausted(supabase, keyId)    // On 429/402
+deactivateKey(supabase, keyId)    // On leaked/compromised (permanent)
+```
+
+### Retry Flow
+```
+429 (Rate Limit) → markExhausted → try next key → restore after all exhausted
+402 (Payment)    → markExhausted → try next key → daily reset
+403 (Leaked)     → deactivateKey → NEVER use again
+401/403 (Other)  → skip key, don't mark exhausted
+200 (Success)    → incrementUsage → return result
+```
+
+### Providers in Pool
+| Provider | Priority | Used By |
+|----------|----------|---------|
+| `openrouter` | **PRIMARY** — `google/gemini-2.5-flash-lite` (PAID) | generate-script, rewrite-visual-direction, generate-topic-suggestions, autoShorten |
+| `gemini` | FALLBACK — `gemini-2.0-flash-lite` (FREE) | generate-script fallback, generate-niche-suggestions, analyze-image, generate-video-prompt, recommend-styles |
+| `tavily` | - | keywordExtractor (search enrichment) |
+| `rapidapi_instagram` | - | fetch-trending-data (Instagram trends) |
+
+### Migration
+- Table: `supabase/baseline/schema_public_20260113.sql`
+- Functions: `supabase/migrations/20260117000000_api_key_rotation_functions.sql`
+
+---
+
+## Trending Topics System
+
+### Data Flow
+```
+External Sources → fetch_trending.py (VPS cron 8h) → trending_topics DB
+                                                          ↓
+User Request → generate-topic-suggestions (Edge Fn) → LLM + trending data
+                                                          ↓
+                                                   TopicRecommendations UI
+```
+
+### Database Tables
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `trending_topics` | 5-source trending keywords, 8h TTL | source, keyword, country, volume_score (0-100), expires_at |
+| `user_topic_history` | Per-user topic selections for dedup | user_id, topic_title, trending_source, action |
+| `topic_outfit_cache` | LLM outfit category cache | topic_hash (unique), category, outfit |
+
+### 5 Trending Sources
+| Source | Method | Countries |
+|--------|--------|-----------|
+| Google Trends | JSON API + RSS fallback | ID, US, IN, FR |
+| TikTok CC | Creative Center scrape (dehydratedState) | ID, US, FR |
+| YouTube | Piped/Invidious API | ID, US, IN, FR |
+| Google News | RSS feed | ID, US, IN, FR |
+| Instagram | RapidAPI (daily, key rotation) | ID, US, IN, FR |
+
+### Backend: `backend/fetch_trending.py`
+- Python script with 3-layer deduplication (normalize → fuzzy match ≥65% → merge)
+- AI creative angles via Gemini/OpenRouter for top 15 keywords
+- CLI: `python fetch_trending.py [--country ID] [--source google] [--dry-run]`
+- Cron: every 8h (00:00, 08:00, 16:00 UTC) via `backend/setup_cron.sh`
+- Dependencies: `pytrends`, `feedparser`, `rapidfuzz`
+
+### Edge Function: `generate-topic-suggestions`
+- **Input:** interest, niches, objectives, dnaStyles, language, country, count, batch, exclude_titles, search_keyword
+- **Modes:** Personalized (niches-based) or Keyword Search
+- **LLM Chain:** OpenRouter `google/gemini-2.5-flash-lite` (primary) → Gemini direct (fallback) (22s deadline)
+- **Dedup:** Combines user_topic_history (30 days) + exclude_titles from Load More
+- **CRITICAL RULE:** "ONLY use trending if matching user niches. IGNORE unrelated trends."
+- **Output:** `{ topics: [{ title, description, trending_source, trending_keyword, hashtags }] }`
+
+### Frontend: `TopicRecommendations` Component
+- Trending chips: top 15 from DB, color-coded by source
+- Autocomplete search (300ms debounce → `autocomplete-keywords` edge function)
+- Topic generation: 9 initial + Load More (max 4 batches)
+- Rate limiting: max 3 refreshes/60s, 30s cooldown
+- Cache: localStorage `sparkfluence_scriptlab_topics_v3` (30-min TTL, niches hash validation)
+- Selection recording: INSERT into `user_topic_history`
+
+### Source Badge Colors (Tailwind)
+```
+google:      blue-500    | tiktok:   pink-500
+youtube:     red-500     | news:     emerald-500
+ai_creative: amber-500   | ai:       amber-500
+```
+
+### Types: `src/types/topic.ts`
+```typescript
+type TrendingSource = 'google' | 'tiktok' | 'youtube' | 'news' | 'ai_creative' | 'ai';
+interface Topic { id, title, description, trending_source?, trending_keyword?, hashtags? }
+SOURCE_BADGE_CONFIG: Record<TrendingSource, { label, bg, text, border }>
+```
+
+---
+
+## v3.0 Chat-Based UI (`feat/v3-chat-redesign`)
+
+### Layout Architecture
+- `ChatLayout` wraps ALL authenticated pages (replaces old Sidebar layout)
+- `ChatSidebar` — collapsible left sidebar with nav menu + session list
+- `ChatHome` — new session landing page (topic input + ScriptForm + TopicRecommendations)
+- `Workspace` — multi-step workspace with 3-column layout
+
+### Route Structure
+| Route | Component | Purpose |
+|-------|-----------|---------|
+| `/script-gen` | ChatHome | New script session |
+| `/script-gen/:orderId` | Workspace | Active session |
+| `/script-gen/:orderId/:step` | Workspace | Step navigation (script/images/video/studio) |
+| `/creator-lab` | ChatHome | New creator session |
+| `/creator-lab/:orderId` | Workspace | Active session |
+| `/ad-studio` | AdStudio | Ad script tool |
+| `/ad-studio/:orderId` | Workspace | Active session |
+
+### Workspace 3-Column Layout (1440px+)
+```
+Left Wing ("The Brain")     │ Center (main workspace)    │ Right Wing ("The Body")
+VelocityMeter               │ StepBar                    │ LiveSimulator
+BrandKit                    │ ScriptStep / ImageStep /   │ (9:16 phone frame)
+PreFlightChecklist           │ VideoStep / StudioStep     │
+```
+
+### Workspace State: `WorkspaceContext.tsx`
+- useReducer with 25+ actions (INIT_SESSION, SET_SCRIPT_DATA, SELECT_HOOK, EDIT_SEGMENT, etc.)
+- `isDirty` flag triggers auto-save via `useSessionPersistence` (5s debounce)
+- `scriptConfirmed: true` locks all script editing
+- Computed helpers: `canProceedToImages`, `canProceedToVideo`, `canProceedToStudio`
+
+### Session Persistence
+- `useChatSessions` — CRUD operations on `chat_sessions` table
+- `useSessionPersistence` — auto-save (debounce 5s), restore on mount, flush on unmount
+- Sessions identified by `orderId` (not UUID `id`)
+
+### Database: `chat_sessions` Table
+```sql
+-- Key columns: order_id (unique), session_type, status, topic, settings (JSONB),
+--   script_data (JSONB), selected_hook, script_versions (JSONB), script_confirmed,
+--   image_data (JSONB), video_data (JSONB)
+-- Status: draft → script_ready → images_ready → video_ready → complete
+-- RLS: select/insert/update/delete_own_chat_sessions
+```
+
+### Workspace Components
+| Component | Purpose |
+|-----------|---------|
+| `StepBar` | Visual step indicator (script → images → video → studio) |
+| `HookSelector` | 3-hook variant tabs (Safe/Bold/Visual) with tinting |
+| `ViralityScore` | Compact pill or expanded ring with score breakdown |
+| `ScriptComparison` | Word-level LCS diff between script versions |
+| `ScriptStep` | Segment cards with retention borders, director chips, waveform bars |
+| `ImageStep` | Image generation per segment (stub) |
+| `VideoStep` | Video generation with pre-flight checklist (stub) |
+| `StudioStep` | Remotion player + timeline placeholder (stub) |
+
+### Design System
+- Color palette: warm charcoal + emerald (NOT AI purple)
+- `--bg-base: #0B0E14`, `--bg-surface: #161616`, `--accent: #10B981`
+- Design spec: `docs/plans/2026-02-07-bolt-new-ui-specs.md`
+- Retention heatmap borders: emerald (HOOK/PEAK), amber (FORE/BODY), gray (LOOP-END)
+- Glassmorphism ONLY on sticky headers/overlays/modals
+- Desktop-optimized, 9:16 portrait ratio for media previews
+
+### Segment Card Features
+- Retention border (4px left edge, color by segment type)
+- Word count + waveform bar (fill %, turns red if over limit)
+- Director chips: `[🎥 Medium Shot]`, `[🎬 Jump Cut]`, etc.
+- LOOP-END toggle: OFF → card opacity 40%, skipped in generation
+- "Fix" button: AI rewrite for low-scoring segments
+
+### Legacy Route Redirects
+```
+/content-curation → /script-gen    /image-generation → /creator-lab
+/topic-selection  → /script-gen    /video-generation → /creator-lab
+/script-lab       → /script-gen    /studio           → /creator-lab
+```
+
+---
+
 ## Key Directories
 
 ```
@@ -126,31 +338,37 @@ D:\Projects\sparkfluence_platform\
 ├── src\
 │   ├── components\
 │   │   ├── ui\               # Shadcn components
-│   │   ├── layout\           # Sidebar, Navbar, Footer
+│   │   ├── layout\           # ChatLayout, ChatSidebar, PublicLayout, Navbar
 │   │   └── features\         # VoiceRecorder, ImageGeneration
-│   ├── contexts\             # Auth, Onboarding, Language, Theme
-│   ├── hooks\                # useAuth, useSubscription, useAvatarManager
+│   ├── contexts\             # Auth, Onboarding, Language, Theme, Workspace
+│   ├── hooks\                # useAuth, useChatSessions, useSessionPersistence
 │   ├── lib\
 │   │   ├── supabase.ts       # Supabase client
 │   │   └── orderIdGenerator.ts
-│   ├── screens\              # 28+ screens
+│   ├── screens\              # 30+ screens (ChatHome, Workspace, AdStudio...)
 │   └── index.tsx             # App entry + routing
 ├── supabase\
 │   ├── functions\            # Edge Functions (Deno)
 │   │   ├── _shared\          # Shared utilities
 │   │   │   ├── config\       # aiModels.ts, modelCapabilities.ts
 │   │   │   ├── knowledge\    # Viral content, slang, prompts
-│   │   │   └── lookups\      # videoSpecs.ts, cinematography
+│   │   │   ├── lookups\      # videoSpecs.ts, cinematography
+│   │   │   └── apiKeyRotation.ts  # Key pool rotation logic
 │   │   ├── generate-script\
 │   │   ├── generate-images\
 │   │   ├── generate-videos\
 │   │   ├── generate-tts\
-│   │   └── generate-music\
+│   │   ├── generate-music\
+│   │   ├── generate-topic-suggestions\  # LLM + trending
+│   │   └── fetch-trending-data\         # 5-source collector
 │   └── migrations\
 ├── backend\
-│   └── main.py               # FastAPI + FFmpeg
+│   ├── main.py               # FastAPI + FFmpeg
+│   ├── fetch_trending.py     # Trending data fetcher (cron 8h)
+│   └── setup_cron.sh         # Cron job scheduler
 ├── docs\
-│   └── knowledge\            # 5 knowledge files
+│   ├── knowledge\            # 5 knowledge files
+│   └── plans\                # Design docs & implementation plans
 └── CLAUDE.md                 # This file
 ```
 
@@ -220,7 +438,7 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 
 ```
 1. SCRIPT GENERATION
-   └── Gemini 2.0 Flash → Script with segments
+   └── OpenRouter Gemini 2.5 Flash Lite (primary) → Gemini 2.0 Flash direct (fallback)
    
 2. IMAGE GENERATION
    ├── CREATOR segments → nano-banana/edit (with avatar reference)
@@ -251,6 +469,16 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 | Function | `trg_fn_{table}_set_updated_at()` | `trg_fn_video_jobs_set_updated_at()` |
 | Index | `idx_{table}_{column}` | `idx_video_jobs_user_id` |
 | RLS Policy | `{action}_{role}_{table}` | `select_authenticated_video_jobs` |
+
+### Key Tables
+| Table | Purpose |
+|-------|---------|
+| `api_keys_pool` | LLM/API key storage with rotation (gemini, openrouter, tavily, rapidapi) |
+| `chat_sessions` | v3.0 session state (script, images, video as JSONB) |
+| `trending_topics` | 5-source trending keywords, 8h TTL, volume_score 0-100 |
+| `user_topic_history` | Per-user topic selections for dedup (30-day window) |
+| `topic_outfit_cache` | LLM outfit category cache (topic_hash unique) |
+| `video_jobs` | VPS video processing jobs |
 
 ### Job Status Codes
 
@@ -365,6 +593,11 @@ git log --oneline -10
 | LLM forcing irrelevant trends | Say "ONLY if relevant" not "at least N trending" |
 | Tailwind overflow scroll broken | Parent overflow-hidden blocks child - use flex-wrap |
 | localStorage cache stale | Use versioned cache keys (e.g., `_v2` suffix) |
+| API key rotation all exhausted | Check `api_keys_pool` — all keys may be is_exhausted=true (wait for daily reset) |
+| Trending topics empty | Run `fetch_trending.py` or check `expires_at` TTL in `trending_topics` |
+| Workspace not saving | Check `isDirty` flag in WorkspaceContext and `useSessionPersistence` debounce |
+| Script editing locked | `scriptConfirmed: true` blocks edits — user must unconfirm first |
+| ChatLayout sidebar missing | Ensure route wraps component with `<ChatLayout>` in `index.tsx` |
 
 ---
 
@@ -420,5 +653,5 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 
 ---
 
-**Last Updated:** January 2026
-**Version:** 6.0 (fal.ai unified stack - Kling/Wan video, Chatterbox TTS, Minimax Music)
+**Last Updated:** February 2026
+**Version:** 7.0 (v3.0 Chat UI + API Key Rotation + Trending Topics + fal.ai unified stack)

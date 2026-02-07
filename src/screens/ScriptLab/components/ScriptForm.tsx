@@ -7,7 +7,7 @@ import { getAvatarWithCache } from "../../../lib/avatarCache";
 import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
 import { Sparkles, ChevronDown, ScrollText, User, Upload, X, Loader2, Trash2, Edit2, Check } from "lucide-react";
 import { Button } from "../../../components/ui/button";
-import { Topic } from "../../../types/topic";
+import { Topic, TikTokChallenge } from "../../../types/topic";
 
 export type SelectedTopic = Topic;
 
@@ -38,6 +38,7 @@ interface ScriptFormProps {
   loading: boolean;
   selectedTopic?: SelectedTopic | null;
   onClearTopic?: () => void;
+  selectedChallenge?: TikTokChallenge | null;
 }
 
 type InputType = "topic" | "transcript";
@@ -48,6 +49,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   loading,
   selectedTopic,
   onClearTopic,
+  selectedChallenge,
 }) => {
   const { t, language: uiLang } = useLanguage();
   const { data: onboardingData } = useOnboardingStatus();
@@ -450,7 +452,8 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim()) return;
+    // Allow empty prompt when challenge is selected (AI auto-picks topic)
+    if (!prompt.trim() && !selectedChallenge) return;
 
     // Determine the correct avatar URL based on selected option
     let finalAvatarUrl: string | null = null;
@@ -513,7 +516,11 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   const uiText = {
     topic: uiLang === "id" ? "Topik" : uiLang === "hi" ? "विषय" : "Topic",
     transcript: uiLang === "id" ? "Transkrip" : uiLang === "hi" ? "ट्रांसक्रिप्ट" : "Transcript",
-    topicPlaceholder: uiLang === "id"
+    topicPlaceholder: selectedChallenge
+      ? (uiLang === "id"
+        ? `Opsional — kosongkan supaya AI pilihkan topik trending untuk "${selectedChallenge.name}"`
+        : `Optional — leave empty so AI picks a trending topic for "${selectedChallenge.name}"`)
+      : uiLang === "id"
       ? "Contoh: 5 kebiasaan pagi yang meningkatkan produktivitas..."
       : uiLang === "hi"
       ? "उदाहरण: 5 सुबह की आदतें जो उत्पादकता बढ़ाएं..."
@@ -640,6 +647,17 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
             }`}
             disabled={loading}
           />
+
+          {/* Challenge badge inside form */}
+          {selectedChallenge && (
+            <div className="flex items-center gap-2 px-2 py-1.5 mb-2 bg-pink-500/10 border border-pink-500/20 rounded-lg">
+              <span className="text-pink-400 text-xs font-medium">
+                {uiLang === 'id' ? 'Challenge:' : 'Challenge:'}
+              </span>
+              <span className="text-[#FAFAF9] text-xs font-medium">{selectedChallenge.name}</span>
+              <span className="text-pink-400/50 text-xs italic truncate flex-1">— {selectedChallenge.example_format.split('.')[0]}</span>
+            </div>
+          )}
 
           {inputType === "transcript" && prompt.length > 0 && (
             <div className="text-right text-text-muted text-xs mb-2">
@@ -877,7 +895,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
               <Button
                 type="submit"
-                disabled={loading || !prompt.trim()}
+                disabled={loading || (!prompt.trim() && !selectedChallenge)}
                 className="bg-primary hover:bg-primary-hover text-white px-4 sm:px-6 py-2 sm:py-2.5 rounded-lg flex items-center gap-2 text-sm sm:text-base"
               >
                 <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />

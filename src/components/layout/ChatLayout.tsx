@@ -11,7 +11,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut } = useAuth();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   // Menu items (NO Settings — lives in user profile area at sidebar bottom)
   const menuItems = [
@@ -47,7 +47,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
         userName={user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User'}
         userAvatarUrl={user?.user_metadata?.avatar_url || null}
         onSettingsClick={() => navigate('/settings')}
-        onLogout={() => signOut()}
+        onLogout={async () => { await signOut(); navigate('/login'); }}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
       />
