@@ -217,7 +217,7 @@ export const LEXICON_ID: EmotionLexicon = {
   'takut': { emotion: 'fear', intensity: 0.8, source: '[L]' },
   'ngeri': { emotion: 'fear', intensity: 0.85, source: '[L]' },
   'serem': { emotion: 'fear', intensity: 0.75, source: '[L]' },
-  'gagal': { emotion: 'fear', intensity: 0.7, source: '[L]' },
+  'gagal': { emotion: 'fear', intensity: 0.7, secondary: 'sadness', source: '[L]' },
   'rugi': { emotion: 'fear', intensity: 0.75, secondary: 'sadness', source: '[L]' },
   'salah': { emotion: 'fear', intensity: 0.6, source: '[L]' },
   'jangan': { emotion: 'fear', intensity: 0.6, source: '[M]' },
@@ -247,7 +247,6 @@ export const LEXICON_ID: EmotionLexicon = {
   'nyesel': { emotion: 'sadness', intensity: 0.75, source: '[L]' },
   'kecewa': { emotion: 'sadness', intensity: 0.75, source: '[L]' },
   'menyesal': { emotion: 'sadness', intensity: 0.8, source: '[L]' },
-  'gagal': { emotion: 'sadness', intensity: 0.65, secondary: 'fear', source: '[L]' },
   'sia-sia': { emotion: 'sadness', intensity: 0.7, source: '[L]' },
 
   // ── SURPRISE ──
@@ -361,7 +360,6 @@ export const LEXICON_HI: EmotionLexicon = {
   'पटाका': { emotion: 'surprise', intensity: 0.7, secondary: 'joy', source: '[S9]' },
 
   // ── TRUST ──
-  'सच': { emotion: 'trust', intensity: 0.75, source: '[K]' },
   'भरोसा': { emotion: 'trust', intensity: 0.85, source: '[K]' },
   'proven': { emotion: 'trust', intensity: 0.8, source: '[M]' },
   'tested': { emotion: 'trust', intensity: 0.7, source: '[M]' },

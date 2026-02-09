@@ -673,6 +673,39 @@ git log --oneline -10
 
 ---
 
+## Claude Code Automations
+
+### Skills (invoke with `/skill-name`)
+| Skill | Purpose |
+|-------|---------|
+| `/deploy-edge-function <name>` | Deploy Edge Function with pre-validation |
+| `/create-migration <name>` | Scaffold migration with naming conventions |
+| `/sync-knowledge` | Sync `src/lib/knowledge/` ↔ `supabase/functions/_shared/knowledge/` mirrors |
+| `/new-edge-function <name>` | Scaffold Edge Function with CORS, auth, error handling boilerplate |
+| `/frontend-design <desc>` | Build components following Sparkfluence design system (emerald + charcoal) |
+
+### Hooks (automatic)
+| Hook | Trigger | Action |
+|------|---------|--------|
+| `block-env-edit.js` | PreToolUse (Edit/Write) | Blocks edits to `.env` and credential files |
+| `block-lockfile-edit.js` | PreToolUse (Edit/Write) | Blocks edits to `package-lock.json`, `yarn.lock` |
+| `type-check-on-edit.js` | PostToolUse (Edit/Write) | Runs `tsc --noEmit` after TS file edits |
+
+### Agents (subagents for parallel review)
+| Agent | File | Focus |
+|-------|------|-------|
+| `security-reviewer` | `.claude/agents/security-reviewer.md` | RLS, secrets, XSS, injection |
+| `edge-function-reviewer` | `.claude/agents/edge-function-reviewer.md` | CORS, response format, API key rotation, Deno rules |
+
+### MCP Servers (`.mcp.json`)
+| Server | Purpose |
+|--------|---------|
+| `supabase` | Direct DB operations + docs |
+| `context7` | Live library documentation lookup |
+| `github` | PR/issue management (needs `GITHUB_PERSONAL_ACCESS_TOKEN` env var) |
+
+---
+
 ## Quick Reference
 
 ### Before ANY Action
@@ -707,4 +740,4 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 ---
 
 **Last Updated:** February 2026
-**Version:** 7.0 (v3.0 Chat UI + API Key Rotation + Trending Topics + fal.ai unified stack)
+**Version:** 7.1 (+ Claude Code Automations: skills, hooks, agents, MCP servers)
