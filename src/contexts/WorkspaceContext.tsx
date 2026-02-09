@@ -123,6 +123,10 @@ export interface WorkspaceState {
   isGeneratingScript: boolean;
   isRegeneratingScript: boolean;
 
+  // Dashboard (Phase 4)
+  sliderValues: { hookAggressiveness: number; controversyLevel: number; humorDensity: number; pacing: number; emotionalIntensity: number };
+  focusedSegmentId: string | null;
+
   // Dirty flag (unsaved changes)
   isDirty: boolean;
 }
@@ -157,6 +161,15 @@ export type WorkspaceAction =
   | { type: 'SET_SEGMENT_GENERATING_VIDEO'; segmentId: string; isGenerating: boolean }
   | { type: 'SET_SEGMENT_VIDEO'; segmentId: string; videoUrl: string }
   | { type: 'SET_SEGMENT_VIDEO_ERROR'; segmentId: string; error: string }
+  // Segment operations (Phase 2)
+  | { type: 'TOGGLE_SEGMENT'; segmentId: string }
+  | { type: 'ADJUST_DURATION'; segmentId: string; durationSeconds: number }
+  // Dashboard (Phase 4)
+  | { type: 'SET_SLIDER_VALUES'; values: { hookAggressiveness: number; controversyLevel: number; humorDensity: number; pacing: number; emotionalIntensity: number } }
+  | { type: 'SET_FOCUSED_SEGMENT'; segmentId: string | null }
+  // Advanced segment operations (Phase 6)
+  | { type: 'MERGE_SEGMENTS'; segmentId1: string; segmentId2: string }
+  | { type: 'SPLIT_SEGMENT'; segmentId: string; splitIndex: number }
   // Reset
   | { type: 'RESET' };
 
@@ -196,6 +209,8 @@ export const initialWorkspaceState: WorkspaceState = {
   qualityReport: null,
   isGeneratingScript: false,
   isRegeneratingScript: false,
+  sliderValues: { hookAggressiveness: 5, controversyLevel: 3, humorDensity: 4, pacing: 6, emotionalIntensity: 5 },
+  focusedSegmentId: null,
   isDirty: false,
 };
 
@@ -388,6 +403,106 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         ),
       };
 
+    case 'TOGGLE_SEGMENT':
+      return {
+        ...state,
+        segments: state.segments.map(seg =>
+          seg.id === action.segmentId
+            ? { ...seg, isEnabled: !seg.isEnabled }
+            : seg
+        ),
+        isDirty: true,
+      };
+
+    case 'ADJUST_DURATION': {
+      const newMaxWords = Math.floor((130 / 60) * action.durationSeconds * 0.80);
+      return {
+        ...state,
+        segments: state.segments.map(seg =>
+          seg.id === action.segmentId
+            ? { ...seg, durationSeconds: action.durationSeconds, maxWords: newMaxWords }
+            : seg
+        ),
+        isDirty: true,
+      };
+    }
+
+    case 'SET_SLIDER_VALUES':
+      return { ...state, sliderValues: action.values, isDirty: true };
+
+    case 'SET_FOCUSED_SEGMENT':
+      return { ...state, focusedSegmentId: action.segmentId };
+
+    case 'MERGE_SEGMENTS': {
+      const idx1 = state.segments.findIndex(s => s.id === action.segmentId1);
+      const idx2 = state.segments.findIndex(s => s.id === action.segmentId2);
+      if (idx1 === -1 || idx2 === -1 || Math.abs(idx1 - idx2) !== 1) return state;
+      const first = state.segments[Math.min(idx1, idx2)];
+      const second = state.segments[Math.max(idx1, idx2)];
+      const merged: WorkspaceSegment = {
+        ...first,
+        script: `${first.script.trim()} ${second.script.trim()}`,
+        visualDirection: `${first.visualDirection.trim()} ${second.visualDirection.trim()}`,
+        durationSeconds: first.durationSeconds + second.durationSeconds,
+        maxWords: first.maxWords + second.maxWords,
+      };
+      const newSegments = state.segments
+        .filter(s => s.id !== second.id)
+        .map(s => s.id === first.id ? merged : s);
+      // Renumber
+      return {
+        ...state,
+        segments: newSegments.map((s, i) => ({ ...s, segmentNumber: i + 1 })),
+        isDirty: true,
+      };
+    }
+
+    case 'SPLIT_SEGMENT': {
+      const segIdx = state.segments.findIndex(s => s.id === action.segmentId);
+      if (segIdx === -1) return state;
+      const seg = state.segments[segIdx];
+      const words = seg.script.trim().split(/\s+/);
+      if (words.length < 2 || action.splitIndex <= 0 || action.splitIndex >= words.length) return state;
+      const half1 = words.slice(0, action.splitIndex).join(' ');
+      const half2 = words.slice(action.splitIndex).join(' ');
+      const dur1 = Math.round(seg.durationSeconds * (action.splitIndex / words.length));
+      const dur2 = seg.durationSeconds - dur1;
+      const maxW1 = Math.floor((130 / 60) * dur1 * 0.80);
+      const maxW2 = Math.floor((130 / 60) * dur2 * 0.80);
+      const seg1: WorkspaceSegment = {
+        ...seg,
+        script: half1,
+        durationSeconds: dur1 || 3,
+        maxWords: maxW1 || 5,
+      };
+      const seg2: WorkspaceSegment = {
+        ...seg,
+        id: `${seg.id}-split`,
+        segmentId: `${seg.segmentId}-b`,
+        script: half2,
+        durationSeconds: dur2 || 3,
+        maxWords: maxW2 || 5,
+        imageUrl: null,
+        images: [],
+        isGeneratingImage: false,
+        imageError: null,
+        videoUrl: null,
+        isGeneratingVideo: false,
+        videoError: null,
+      };
+      const newSegments = [
+        ...state.segments.slice(0, segIdx),
+        seg1,
+        seg2,
+        ...state.segments.slice(segIdx + 1),
+      ];
+      return {
+        ...state,
+        segments: newSegments.map((s, i) => ({ ...s, segmentNumber: i + 1 })),
+        isDirty: true,
+      };
+    }
+
     case 'RESET':
       return initialWorkspaceState;
 
@@ -438,10 +553,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dispatch({ type: 'CONFIRM_SCRIPT' });
   }, []);
 
-  // Computed flags
+  // Computed flags (chained — each requires prior step to be complete)
   const canProceedToImages = state.scriptConfirmed && state.segments.length > 0;
-  const canProceedToVideo = state.segments.every(s => !s.isEnabled || s.imageUrl !== null);
-  const canProceedToStudio = state.segments.every(s => !s.isEnabled || s.videoUrl !== null);
+  const hasEnabledSegments = state.segments.some(s => s.isEnabled);
+  const canProceedToVideo = canProceedToImages && hasEnabledSegments && state.segments.every(s => !s.isEnabled || s.imageUrl !== null);
+  const canProceedToStudio = canProceedToVideo && state.segments.every(s => !s.isEnabled || s.videoUrl !== null);
 
   const value: WorkspaceContextValue = {
     state,

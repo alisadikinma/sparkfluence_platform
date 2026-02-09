@@ -16,11 +16,15 @@ import {
   Camera,
   Clapperboard,
   Power,
+  ChevronDown,
+  GitMerge,
+  SplitSquareHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import type { HookOptions, ScoreBreakdown } from '../../../contexts/WorkspaceContext';
 import { HookSelector, getHookTint } from '../components/HookSelector';
 import { ViralityScore } from '../components/ViralityScore';
+import { ScriptComparison } from '../components/ScriptComparison';
 
 // ============================================================================
 // LOCAL TYPES
@@ -52,6 +56,7 @@ interface ScriptSegment {
   isFixing: boolean;
   estimatedSpeechSeconds: number;
   waveformFill: number;
+  isEnabled?: boolean;
 }
 
 interface ComparisonData {
@@ -81,6 +86,20 @@ interface ScriptStepProps {
   scriptConfirmed?: boolean;
   onConfirm?: () => void;
   onUnconfirm?: () => void;
+  // Phase 2: Segment operations
+  onToggleSegment?: (segmentId: string) => void;
+  onAdjustDuration?: (segmentId: string, durationSeconds: number) => void;
+  // Phase 3: Version system
+  scriptVersions?: Array<{ version: number; score: number }>;
+  selectedVersion?: number;
+  onSelectVersion?: (version: number) => void;
+  onGenerateNewVersion?: () => void;
+  // Phase 5: Coach focus
+  focusedSegmentId?: string | null;
+  onFocusSegment?: (segmentId: string) => void;
+  // Phase 6: Merge/Split
+  onMergeSegments?: (segmentId1: string, segmentId2: string) => void;
+  onSplitSegment?: (segmentId: string, splitIndex: number) => void;
 }
 
 // ============================================================================
@@ -389,6 +408,32 @@ const AutoResizeTextarea: React.FC<AutoResizeTextareaProps> = ({
 // SEGMENT CARD
 // ============================================================================
 
+// ============================================================================
+// WORD DENSITY HELPERS
+// ============================================================================
+
+function calculateWordDensity(wordCount: number, maxWords: number): number {
+  if (maxWords <= 0) return 0;
+  return Math.round((wordCount / maxWords) * 100);
+}
+
+function densityColor(density: number): { bg: string; text: string; label: string } {
+  if (density >= 70) return { bg: 'bg-emerald-500', text: 'text-emerald-400', label: 'Good density' };
+  if (density >= 50) return { bg: 'bg-amber-400', text: 'text-amber-400', label: 'Consider adding detail' };
+  return { bg: 'bg-red-400', text: 'text-red-400', label: 'Low density' };
+}
+
+// Duration options for the dropdown
+const DURATION_OPTIONS = [5, 6, 7, 8] as const;
+
+function maxWordsForDuration(seconds: number): number {
+  return Math.floor((130 / 60) * seconds * 0.80);
+}
+
+// ============================================================================
+// SEGMENT CARD
+// ============================================================================
+
 interface SegmentCardProps {
   segment: ScriptSegment;
   isHook: boolean;
@@ -399,8 +444,16 @@ interface SegmentCardProps {
   onEditScript: (value: string) => void;
   onFixSegment: () => void;
   scriptConfirmed: boolean;
-  loopEndEnabled: boolean;
-  onToggleLoopEnd: () => void;
+  segmentEnabled: boolean;
+  onToggleEnabled: () => void;
+  onDurationChange: (seconds: number) => void;
+  isFocused?: boolean;
+  onFocus?: () => void;
+  canMergeDown?: boolean;
+  onMerge?: () => void;
+  canSplit?: boolean;
+  onSplit?: () => void;
+  lowDensity?: boolean;
 }
 
 const SegmentCard: React.FC<SegmentCardProps> = ({
@@ -413,11 +466,22 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
   onEditScript,
   onFixSegment,
   scriptConfirmed,
-  loopEndEnabled,
-  onToggleLoopEnd,
+  segmentEnabled,
+  onToggleEnabled,
+  onDurationChange,
+  isFocused,
+  onFocus,
+  canMergeDown,
+  onMerge,
+  canSplit,
+  onSplit,
+  lowDensity,
 }) => {
+  const [showDurationDropdown, setShowDurationDropdown] = useState(false);
   const borderColor = retentionBorderColor(segment.segmentType);
-  const isDisabledLoopEnd = isLoopEnd && !loopEndEnabled;
+  const isDisabled = !segmentEnabled;
+  const density = calculateWordDensity(segment.wordCount, segment.maxWords);
+  const densityInfo = densityColor(density);
 
   // Determine card background — hook tint when HOOK segment selected
   const cardBg = isHook ? getHookTint(selectedHook) : undefined;
@@ -425,100 +489,139 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
   return (
     <div
       className={`
-        relative rounded-xl border border-[#262626] overflow-hidden
+        relative rounded-xl border overflow-hidden cursor-pointer
         transition-all duration-200
-        ${isDisabledLoopEnd ? 'opacity-40' : ''}
+        ${isDisabled ? 'opacity-40' : ''}
+        ${isFocused ? 'border-emerald-500/50 ring-1 ring-emerald-500/20' : 'border-[#262626]'}
       `}
       style={{
         boxShadow: `inset 4px 0 0 0 ${borderColor}`,
         backgroundColor: cardBg || '#161616',
       }}
+      onClick={onFocus}
     >
       <div className="p-4 space-y-3">
-        {/* LOOP-END toggle */}
-        {isLoopEnd && (
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-semibold text-[#78716C] uppercase tracking-wider">
-              Loop End
+        {/* Enable/Disable toggle row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {/* Segment number */}
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#1E1E1E] text-[11px] font-bold text-[#FAFAF9]">
+              {segment.segmentNumber}
             </span>
+
+            {/* Segment type badge */}
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#FAFAF9] bg-[#252525] px-2 py-0.5 rounded">
+              {segment.segmentType}
+            </span>
+
+            {/* Shot type badge */}
+            <span
+              className={`
+                inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider
+                px-2 py-0.5 rounded border
+                ${
+                  segment.shotType === 'CREATOR'
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-amber-400/10 text-amber-400 border-amber-400/20'
+                }
+              `}
+            >
+              <ShotTypeIcon shotType={segment.shotType} />
+              {segment.shotType}
+            </span>
+
+            {/* Duration adjuster dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => !scriptConfirmed && !isDisabled && setShowDurationDropdown(!showDurationDropdown)}
+                disabled={scriptConfirmed || isDisabled}
+                className={`
+                  inline-flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded border
+                  transition-colors
+                  ${scriptConfirmed || isDisabled
+                    ? 'text-[#57534E] border-[#262626] cursor-not-allowed'
+                    : 'text-[#A8A29E] border-[#3f3f46] hover:border-emerald-500/40 hover:text-emerald-400 cursor-pointer'
+                  }
+                `}
+              >
+                {segment.duration}s
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showDurationDropdown && (
+                <div className="absolute top-full left-0 mt-1 z-20 bg-[#1E1E1E] border border-[#3f3f46] rounded-lg shadow-xl overflow-hidden">
+                  {DURATION_OPTIONS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        onDurationChange(d);
+                        setShowDurationDropdown(false);
+                      }}
+                      className={`
+                        block w-full text-left px-4 py-1.5 text-[11px] font-mono
+                        transition-colors
+                        ${d === segment.duration
+                          ? 'text-emerald-400 bg-emerald-500/10'
+                          : 'text-[#A8A29E] hover:bg-[#262626]'
+                        }
+                      `}
+                    >
+                      {d}s ({maxWordsForDuration(d)}w)
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right side: toggle + fix */}
+          <div className="flex items-center gap-2">
+            {/* Fix button */}
+            {segment.needsFix && !segment.isFixing && (
+              <button
+                type="button"
+                onClick={onFixSegment}
+                disabled={scriptConfirmed || isDisabled}
+                className={`
+                  inline-flex items-center gap-1 text-[10px] font-medium
+                  px-2 py-0.5 rounded-full border
+                  bg-amber-500/10 text-amber-400 border-amber-500/30
+                  hover:bg-amber-500/20 transition-colors
+                  ${(scriptConfirmed || isDisabled) ? 'opacity-50 cursor-not-allowed' : ''}
+                `}
+              >
+                <Wand2 className="w-3 h-3" />
+                Fix
+              </button>
+            )}
+            {segment.isFixing && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                Fixing...
+              </span>
+            )}
+
+            {/* Enable/disable toggle */}
             <button
               type="button"
-              onClick={onToggleLoopEnd}
+              onClick={onToggleEnabled}
               disabled={scriptConfirmed}
               className={`
                 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold
                 transition-all duration-200 border
                 ${scriptConfirmed ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}
                 ${
-                  loopEndEnabled
+                  segmentEnabled
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                     : 'bg-[#1E1E1E] text-[#57534E] border-[#262626]'
                 }
               `}
             >
               <Power className="w-3 h-3" />
-              {loopEndEnabled ? 'ON' : 'OFF'}
+              {segmentEnabled ? 'ON' : 'OFF'}
             </button>
           </div>
-        )}
-
-        {/* Header row */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Segment number */}
-          <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[#1E1E1E] text-[11px] font-bold text-[#FAFAF9]">
-            {segment.segmentNumber}
-          </span>
-
-          {/* Segment type badge */}
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#FAFAF9] bg-[#252525] px-2 py-0.5 rounded">
-            {segment.segmentType}
-          </span>
-
-          {/* Shot type badge */}
-          <span
-            className={`
-              inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider
-              px-2 py-0.5 rounded border
-              ${
-                segment.shotType === 'CREATOR'
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  : 'bg-amber-400/10 text-amber-400 border-amber-400/20'
-              }
-            `}
-          >
-            <ShotTypeIcon shotType={segment.shotType} />
-            {segment.shotType}
-          </span>
-
-          {/* Duration */}
-          <span className="text-[11px] text-[#A8A29E] font-mono">
-            {segment.duration}s
-          </span>
-
-          {/* Fix button */}
-          {segment.needsFix && !segment.isFixing && (
-            <button
-              type="button"
-              onClick={onFixSegment}
-              disabled={scriptConfirmed || isDisabledLoopEnd}
-              className={`
-                inline-flex items-center gap-1 text-[10px] font-medium
-                px-2 py-0.5 rounded-full border
-                bg-amber-500/10 text-amber-400 border-amber-500/30
-                hover:bg-amber-500/20 transition-colors
-                ${(scriptConfirmed || isDisabledLoopEnd) ? 'opacity-50 cursor-not-allowed' : ''}
-              `}
-            >
-              <Wand2 className="w-3 h-3" />
-              Fix
-            </button>
-          )}
-          {segment.isFixing && (
-            <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              Fixing...
-            </span>
-          )}
         </div>
 
         {/* HOOK special: HookSelector */}
@@ -527,7 +630,7 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
             options={hookOptions}
             selectedKey={selectedHook}
             onSelect={onSelectHook}
-            disabled={scriptConfirmed || isDisabledLoopEnd}
+            disabled={scriptConfirmed || isDisabled}
           />
         )}
 
@@ -536,27 +639,38 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
           <AutoResizeTextarea
             value={segment.script}
             onChange={onEditScript}
-            disabled={scriptConfirmed || isDisabledLoopEnd}
+            disabled={scriptConfirmed || isDisabled}
             className={`
               text-[15px] leading-relaxed text-[#FAFAF9]
-              ${(scriptConfirmed || isDisabledLoopEnd) ? 'cursor-not-allowed' : ''}
+              ${(scriptConfirmed || isDisabled) ? 'cursor-not-allowed' : ''}
             `}
             placeholder="Enter script text..."
           />
         )}
 
-        {/* Word count */}
-        <div className="flex justify-end">
-          <span
-            className={`text-[12px] font-mono ${
-              segment.isOverLimit ? 'text-red-400' : 'text-[#78716C]'
-            }`}
-          >
-            {segment.wordCount}/{segment.maxWords} words
-          </span>
+        {/* Word density indicator */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className={`text-[11px] font-medium ${densityInfo.text}`}>
+              {density}% {densityInfo.label}
+            </span>
+            <span
+              className={`text-[12px] font-mono ${
+                segment.isOverLimit ? 'text-red-400' : 'text-[#78716C]'
+              }`}
+            >
+              {segment.wordCount}/{segment.maxWords} words
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-[#0B0E14] rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${densityInfo.bg}`}
+              style={{ width: `${Math.min(density, 100)}%` }}
+            />
+          </div>
         </div>
 
-        {/* Waveform overlay bar */}
+        {/* Waveform / speech timing bar */}
         <div className="space-y-1">
           <div className="w-full h-1.5 bg-[#0B0E14] rounded-full overflow-hidden">
             <div
@@ -571,8 +685,15 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
           </div>
         </div>
 
-        {/* Director Chips row */}
+        {/* Emotion badge + Director Chips */}
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* Emotion badge */}
+          {segment.emotion && (
+            <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium bg-violet-500/10 text-violet-400">
+              {segment.emotion}
+            </span>
+          )}
+
           {segment.directorChips.map((chip) => {
             const ChipIcon = chipIconMap[chip.type] || Camera;
             const colorClass = chipColorMap[chip.type] || 'bg-[#262626] text-[#A8A29E]';
@@ -592,7 +713,7 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
           })}
 
           {/* Add chip button */}
-          {!scriptConfirmed && !isDisabledLoopEnd && (
+          {!scriptConfirmed && !isDisabled && (
             <button
               type="button"
               className="inline-flex items-center gap-1 rounded-full px-3 py-1
@@ -604,6 +725,37 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
             </button>
           )}
         </div>
+
+        {/* Merge/Split actions + auto-merge suggestion */}
+        {!scriptConfirmed && !isDisabled && (canMergeDown || canSplit || lowDensity) && (
+          <div className="flex items-center gap-2 pt-1 border-t border-[#1E1E1E]">
+            {canSplit && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSplit?.(); }}
+                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#78716C] hover:text-[#A8A29E] transition-colors"
+              >
+                <Scissors className="w-3 h-3" />
+                Split
+              </button>
+            )}
+            {canMergeDown && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onMerge?.(); }}
+                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#78716C] hover:text-[#A8A29E] transition-colors"
+              >
+                <GitMerge className="w-3 h-3" />
+                Merge &darr;
+              </button>
+            )}
+            {lowDensity && canMergeDown && (
+              <span className="text-[9px] text-amber-400/70 ml-auto">
+                Low density — consider merging
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -630,13 +782,30 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
   scriptConfirmed: scriptConfirmedProp,
   onConfirm: onConfirmProp,
   onUnconfirm: onUnconfirmProp,
+  onToggleSegment: onToggleSegmentProp,
+  onAdjustDuration: onAdjustDurationProp,
+  scriptVersions: scriptVersionsProp,
+  selectedVersion: selectedVersionProp,
+  onSelectVersion: onSelectVersionProp,
+  onGenerateNewVersion: onGenerateNewVersionProp,
+  focusedSegmentId,
+  onFocusSegment,
+  onMergeSegments: onMergeSegmentsProp,
+  onSplitSegment: onSplitSegmentProp,
 }) => {
   // Internal state (fallback to mock data when props not provided)
   const [internalSegments, setInternalSegments] = useState<ScriptSegment[]>(MOCK_SEGMENTS);
   const [internalSelectedHook, setInternalSelectedHook] = useState('option_a_safe');
   const [internalNotes, setInternalNotes] = useState('');
   const [internalConfirmed, setInternalConfirmed] = useState(false);
-  const [loopEndEnabled, setLoopEndEnabled] = useState(true);
+
+  // Version system state
+  const [internalVersions, setInternalVersions] = useState<Array<{ version: number; score: number }>>([
+    { version: 1, score: 88 },
+  ]);
+  const [internalSelectedVersion, setInternalSelectedVersion] = useState(1);
+  const [showCompare, setShowCompare] = useState(false);
+  const [compareViewMode, setCompareViewMode] = useState<'inline' | 'side-by-side'>('inline');
 
   // Resolve props vs internal state
   const segments = segmentsProp ?? internalSegments;
@@ -648,6 +817,9 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
   const canRegenerate = canRegenerateProp ?? true;
   const additionalNotes = additionalNotesProp ?? internalNotes;
   const scriptConfirmed = scriptConfirmedProp ?? internalConfirmed;
+  const scriptVersions = scriptVersionsProp ?? internalVersions;
+  const selectedVersion = selectedVersionProp ?? internalSelectedVersion;
+  const maxVersions = 3;
 
   // Handlers
   const handleEditSegment = useCallback(
@@ -716,69 +888,175 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
     }
   }, [onUnconfirmProp]);
 
-  const handleToggleLoopEnd = useCallback(() => {
-    setLoopEndEnabled((prev) => !prev);
-  }, []);
+  const handleToggleSegment = useCallback(
+    (segmentId: string) => {
+      if (onToggleSegmentProp) {
+        onToggleSegmentProp(segmentId);
+      } else {
+        setInternalSegments((prev) =>
+          prev.map((seg) => seg.id === segmentId ? { ...seg, isEnabled: !(seg.isEnabled ?? true) } : seg),
+        );
+      }
+    },
+    [onToggleSegmentProp],
+  );
+
+  const handleAdjustDuration = useCallback(
+    (segmentId: string, durationSeconds: number) => {
+      if (onAdjustDurationProp) {
+        onAdjustDurationProp(segmentId, durationSeconds);
+      } else {
+        setInternalSegments((prev) =>
+          prev.map((seg) =>
+            seg.id === segmentId
+              ? { ...seg, duration: durationSeconds, maxWords: maxWordsForDuration(durationSeconds) }
+              : seg
+          ),
+        );
+      }
+    },
+    [onAdjustDurationProp],
+  );
+
+  const handleSelectVersion = useCallback(
+    (version: number) => {
+      if (onSelectVersionProp) {
+        onSelectVersionProp(version);
+      } else {
+        setInternalSelectedVersion(version);
+      }
+    },
+    [onSelectVersionProp],
+  );
+
+  const handleGenerateNewVersion = useCallback(() => {
+    if (onGenerateNewVersionProp) {
+      onGenerateNewVersionProp();
+    } else {
+      // Mock: add a new version with slightly different score
+      const nextVersion = internalVersions.length + 1;
+      if (nextVersion <= maxVersions) {
+        setInternalVersions((prev) => [
+          ...prev,
+          { version: nextVersion, score: Math.max(60, Math.min(99, 88 + Math.floor(Math.random() * 10 - 5))) },
+        ]);
+        setInternalSelectedVersion(nextVersion);
+      }
+    }
+  }, [onGenerateNewVersionProp, internalVersions.length]);
 
   return (
     <div className="space-y-4">
       {/* ================================================================ */}
       {/* TOP ACTION BAR                                                   */}
       {/* ================================================================ */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        {/* Left: Virality Score (compact) */}
-        <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />
+      <div className="space-y-3">
+        {/* Row 1: Virality Score + Action buttons */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          {/* Left: Virality Score (compact) */}
+          <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />
 
-        {/* Right: Action buttons */}
-        <div className="flex items-center gap-2">
-          {/* Regenerate button */}
-          <button
-            type="button"
-            onClick={handleRegenerate}
-            disabled={isRegenerating || !canRegenerate || scriptConfirmed}
-            className={`
-              inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium
-              transition-all duration-200
-              ${
-                isRegenerating || !canRegenerate || scriptConfirmed
-                  ? 'border-[#262626] bg-[#161616] text-[#57534E] cursor-not-allowed'
-                  : 'border-[#3f3f46] bg-[#1E1E1E] text-[#A8A29E] hover:border-amber-500/40 hover:text-amber-400'
+          {/* Right: Action buttons */}
+          <div className="flex items-center gap-2">
+            {/* Generate Version N / Regenerate */}
+            <button
+              type="button"
+              onClick={scriptVersions.length < maxVersions ? handleGenerateNewVersion : handleRegenerate}
+              disabled={isRegenerating || !canRegenerate || scriptConfirmed}
+              className={`
+                inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium
+                transition-all duration-200
+                ${
+                  isRegenerating || !canRegenerate || scriptConfirmed
+                    ? 'border-[#262626] bg-[#161616] text-[#57534E] cursor-not-allowed'
+                    : 'border-[#3f3f46] bg-[#1E1E1E] text-[#A8A29E] hover:border-amber-500/40 hover:text-amber-400'
+                }
+              `}
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin' : ''}`}
+              />
+              {isRegenerating
+                ? 'Generating...'
+                : scriptVersions.length < maxVersions
+                  ? `Generate V${scriptVersions.length + 1}`
+                  : 'Regenerate'
               }
-            `}
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin' : ''}`}
-            />
-            {isRegenerating ? 'Regenerating...' : 'Regenerate'}
-          </button>
+            </button>
 
-          {/* Confirm / Unconfirm button */}
-          {scriptConfirmed ? (
-            <button
-              type="button"
-              onClick={handleUnconfirm}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
-                border-amber-500/30 bg-amber-500/10 text-amber-400
-                text-xs font-medium transition-all duration-200
-                hover:bg-amber-500/20"
-            >
-              <Lock className="w-3.5 h-3.5" />
-              Unlock Script
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleConfirm}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
-                border-emerald-500/30 bg-emerald-500/10 text-emerald-400
-                text-xs font-medium transition-all duration-200
-                hover:bg-emerald-500/20 hover:border-emerald-500/50"
-            >
-              <CheckCircle className="w-3.5 h-3.5" />
-              Confirm & Continue
-            </button>
-          )}
+            {/* Compare button (only when 2+ versions) */}
+            {scriptVersions.length >= 2 && (
+              <button
+                type="button"
+                onClick={() => setShowCompare(!showCompare)}
+                className={`
+                  inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium
+                  transition-all duration-200
+                  ${showCompare
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                    : 'border-[#3f3f46] bg-[#1E1E1E] text-[#A8A29E] hover:border-[#57534E]'
+                  }
+                `}
+              >
+                Compare
+              </button>
+            )}
+
+            {/* Confirm / Unconfirm button */}
+            {scriptConfirmed ? (
+              <button
+                type="button"
+                onClick={handleUnconfirm}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
+                  border-amber-500/30 bg-amber-500/10 text-amber-400
+                  text-xs font-medium transition-all duration-200
+                  hover:bg-amber-500/20"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                Unlock Script
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConfirm}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
+                  border-emerald-500/30 bg-emerald-500/10 text-emerald-400
+                  text-xs font-medium transition-all duration-200
+                  hover:bg-emerald-500/20 hover:border-emerald-500/50"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                Confirm & Continue
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Row 2: Version tabs */}
+        {scriptVersions.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            {scriptVersions.map((v) => (
+              <button
+                key={v.version}
+                type="button"
+                onClick={() => handleSelectVersion(v.version)}
+                className={`
+                  inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                  transition-all duration-200 border
+                  ${selectedVersion === v.version
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                    : 'border-[#262626] bg-[#161616] text-[#78716C] hover:text-[#A8A29E] hover:border-[#3f3f46]'
+                  }
+                `}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${selectedVersion === v.version ? 'bg-emerald-500' : 'bg-[#3f3f46]'}`} />
+                V{v.version}
+                <span className={`text-[10px] ${selectedVersion === v.version ? 'text-emerald-400/70' : 'text-[#57534E]'}`}>
+                  {v.score}%
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Confirmed banner */}
@@ -795,9 +1073,17 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
       {/* SEGMENT CARDS LIST                                                */}
       {/* ================================================================ */}
       <div className="space-y-3">
-        {segments.map((segment) => {
+        {segments.map((segment, segIdx) => {
           const isHook = segment.segmentType === 'HOOK';
           const isLoopEnd = segment.segmentType === 'LOOP-END';
+          const nextSegment = segments[segIdx + 1];
+          const segDensity = calculateWordDensity(segment.wordCount, segment.maxWords);
+          // Can merge: not HOOK, not last, next exists and is same shot type or both BODY-like
+          const canMergeDown = !isHook && !isLoopEnd && !!nextSegment &&
+            nextSegment.segmentType !== 'HOOK' && nextSegment.segmentType !== 'LOOP-END';
+          // Can split: word count >= 4 (need at least 2 words per half)
+          const canSplit = segment.wordCount >= 4;
+          const lowDensity = segDensity < 50;
 
           return (
             <SegmentCard
@@ -811,8 +1097,20 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
               onEditScript={(value) => handleEditSegment(segment.id, 'script', value)}
               onFixSegment={() => handleFixSegment(segment.id)}
               scriptConfirmed={scriptConfirmed}
-              loopEndEnabled={isLoopEnd ? loopEndEnabled : true}
-              onToggleLoopEnd={handleToggleLoopEnd}
+              segmentEnabled={segment.isEnabled ?? true}
+              onToggleEnabled={() => handleToggleSegment(segment.id)}
+              onDurationChange={(seconds) => handleAdjustDuration(segment.id, seconds)}
+              isFocused={focusedSegmentId === segment.id}
+              onFocus={() => onFocusSegment?.(segment.id)}
+              canMergeDown={canMergeDown}
+              onMerge={() => nextSegment && onMergeSegmentsProp?.(segment.id, nextSegment.id)}
+              canSplit={canSplit}
+              onSplit={() => {
+                // Split at midpoint by default
+                const midpoint = Math.ceil(segment.wordCount / 2);
+                onSplitSegmentProp?.(segment.id, midpoint);
+              }}
+              lowDensity={lowDensity}
             />
           );
         })}
@@ -845,11 +1143,37 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
       </div>
 
       {/* ================================================================ */}
-      {/* EXPANDED VIRALITY SCORE                                           */}
+      {/* SCRIPT COMPARISON (Phase 3)                                       */}
       {/* ================================================================ */}
-      <div className="rounded-xl border border-[#262626] bg-[#161616] p-6">
-        <ViralityScore score={viralityScore} breakdown={scoreBreakdown} />
-      </div>
+      {scriptVersions.length >= 2 && (
+        <ScriptComparison
+          isOpen={showCompare}
+          viewMode={compareViewMode}
+          onViewModeChange={setCompareViewMode}
+          version1={{
+            segments: segments as any,
+            score: scriptVersions[0]?.score ?? 0,
+            hookOptions: hookOptions as any,
+          }}
+          version2={{
+            segments: segments as any,
+            score: scriptVersions[scriptVersions.length - 1]?.score ?? 0,
+            hookOptions: hookOptions as any,
+          }}
+          aiRecommendation={2}
+          onKeepVersion1={() => {
+            handleSelectVersion(1);
+            setShowCompare(false);
+          }}
+          onUseVersion2={() => {
+            handleSelectVersion(scriptVersions[scriptVersions.length - 1]?.version ?? 2);
+            setShowCompare(false);
+          }}
+          onClose={() => setShowCompare(false)}
+          isLoading={isRegenerating}
+        />
+      )}
+
     </div>
   );
 };

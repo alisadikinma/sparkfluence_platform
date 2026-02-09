@@ -74,17 +74,71 @@ MULTILINE COMMANDS:
 
 ---
 
-## Knowledge Files (5 Files)
+## Knowledge & Data Files Index
 
-Location: `D:\Projects\sparkfluence_platform\docs\knowledge\`
+> **IMPORTANT:** All knowledge files are `.ts` exports (Deno cannot import `.md`).
+> Before creating new knowledge files, check this index to avoid duplication.
+> After creating/deleting files, update this index.
 
-| File | Purpose | Use When |
-|------|---------|----------|
-| `01-viral-content.md` | 4-part script structure, virality factors, hooks, retention | Script generation |
-| `02-slang-dictionary.md` | ID/HI/EN slang, particles, outdated terms | Language validation |
-| `03-prompt-engineering.md` | Emotion→Expression, lighting, camera, Visual Brief | Image/video prompts |
-| `04-ai-api-specs.md` | fal.ai models (image, video, TTS, music), Gemini API | AI integration |
-| `05-tech-stack.md` | Supabase, Deno, React, FFmpeg patterns | Development |
+### Knowledge Files (`supabase/functions/_shared/knowledge/`)
+
+| File | Lines | Status | Content | Imported By |
+|------|-------|--------|---------|-------------|
+| `08-indonesian-slang-2026.ts` | 152 | **ACTIVE** | Indonesian Gen-Z slang + particles | `prompts/slangValidator.ts` |
+| `09-hindi-slang-2026.ts` | 210 | **ACTIVE** | Hindi/Hinglish slang + particles | `prompts/slangValidator.ts` |
+| `10-global-english-slang-2026.ts` | 203 | **ACTIVE** | English Gen-Z slang | `prompts/slangValidator.ts` |
+| `11-hook-library-2026.ts` | 208 | **ACTIVE** | 100 hooks (5 categories), `HOOK_CATEGORY_META` | `prompts/seefluencerFramework.ts` |
+| `12-scoring-engine.ts` | 570 | **ACTIVE** | Retention scoring, power words, pacing rules, benchmarks | Client-side Retention Curve + AI Coach |
+| `13-emotion-lexicon.ts` | 520 | **ACTIVE** | Word→emotion→intensity (EN/ID/HI, 200+ words each) | Client-side Emotion Arc |
+| `__tests__/validate-scoring-engine.ts` | 360 | **TEST** | Validation: 38 tests, 36/38 passing (94.7%) | `npx tsx` runner |
+| `ad-studio/01-advertising-psychology.ts` | 275 | **RESERVED** | Cialdini's 6 principles, cognitive biases, emotional triggers | Future: `generate-ad-script` |
+| `ad-studio/02-video-ad-frameworks.ts` | 298 | **RESERVED** | AIDA/PAS/BAB/Hook-Story-Offer + timing | Future: `generate-ad-script` |
+| `ad-studio/03-platform-specs.ts` | 308 | **RESERVED** | Platform-specific ad specs | Future: `generate-ad-script` |
+| `ad-studio/04-audience-psychology-matrix.ts` | 349 | **RESERVED** | Gen Z/Millennial/Gen X/Boomer attention params | Future: `generate-ad-script` |
+| `ad-studio/05-b2b-vs-b2c-patterns.ts` | 321 | **RESERVED** | B2B vs B2C advertising patterns | Future: `generate-ad-script` |
+| `ad-studio/06-cta-conversion-optimization.ts` | 335 | **RESERVED** | CTA templates, conversion stats, placement | Future: `generate-ad-script` |
+| `ad-studio/07-script-templates.ts` | 441 | **RESERVED** | Ad script templates by framework | Future: `generate-ad-script` |
+| `tier3/market-intel-q1-2026.md` | 730 | **REFERENCE ONLY** | ID/IN market stats, viral case studies, cultural context | Cannot be imported (.md) |
+
+### Prompt Builders (`supabase/functions/_shared/prompts/`)
+
+| File | Content | Used By |
+|------|---------|---------|
+| `viralScriptKnowledge.ts` | PROJECT_INSTRUCTION — viral DNA principles | `generate-script` |
+| `seefluencerFramework.ts` | Hook/Foreshadow/Body/CTA/PEAK strategies | `generate-script` |
+| `beastMoziLayer.ts` | MrBeast pacing + Hormozi density + editing cues | `generate-script` |
+| `slangValidator.ts` | Slang validation (imports 08/09/10 knowledge) | `generate-script` |
+| `scriptValidator.ts` | Script structure validation | `generate-script` |
+| `cinematicImageKnowledge.ts` | Image generation prompt knowledge | `generate-images` |
+| `cinematicVideoKnowledge.ts` | Video generation prompt knowledge | `generate-videos` |
+| `visualEnhancer.ts` | Visual direction enhancement | `generate-images` |
+| `productNamingRule.ts` | Product name detection rules | `generate-images` |
+| `audioDirective.ts` | Audio/TTS prompt directives | `generate-tts` |
+| `contentTypeDetector.ts` | Content type classification | `generate-script` |
+
+### Lookups (`supabase/functions/_shared/lookups/`)
+
+| File | Lines | Content | Status |
+|------|-------|---------|--------|
+| `index.ts` | 145 | Re-export hub for all lookups | **ACTIVE** |
+| `cinematographyLookup.ts` | 1,403 | EMOTION_MAP, shot types, camera, lighting | **ACTIVE** |
+| `slangLookup.ts` | 434 | Slang arrays with virality scores | **ACTIVE** |
+| `videoSpecs.ts` | 419 | Video model specifications | **ACTIVE** |
+| `productKeywords.ts` | 525 | Product keyword detection data | **ACTIVE** |
+| `metaphorLookup.ts` | 557 | Metaphor generation (disabled Jan 2026) | **DISABLED** |
+
+### Config (`supabase/functions/_shared/config/`)
+
+| File | Lines | Content |
+|------|-------|---------|
+| `aiModels.ts` | 1,152 | IMAGE_MODELS, VIDEO_MODELS, TTS endpoints + params |
+
+### Frontend Mirrors (`src/lib/knowledge/`)
+
+| File | Mirror Of | Purpose |
+|------|-----------|---------|
+| `12-scoring-engine.ts` | `_shared/knowledge/12-scoring-engine.ts` | Client-side Retention Curve + scoring |
+| `13-emotion-lexicon.ts` | `_shared/knowledge/13-emotion-lexicon.ts` | Client-side Emotion Arc visualization |
 
 ---
 
@@ -350,9 +404,10 @@ D:\Projects\sparkfluence_platform\
 ├── supabase\
 │   ├── functions\            # Edge Functions (Deno)
 │   │   ├── _shared\          # Shared utilities
-│   │   │   ├── config\       # aiModels.ts, modelCapabilities.ts
-│   │   │   ├── knowledge\    # Viral content, slang, prompts
-│   │   │   ├── lookups\      # videoSpecs.ts, cinematography
+│   │   │   ├── config\       # aiModels.ts (IMAGE_MODELS, VIDEO_MODELS, TTS)
+│   │   │   ├── knowledge\    # Slang (08-10), hooks (11), ad-studio (01-07)
+│   │   │   ├── prompts\      # Prompt builders (seefluencer, beastMozi, slangValidator...)
+│   │   │   ├── lookups\      # cinematography, slang, videoSpecs, productKeywords
 │   │   │   └── apiKeyRotation.ts  # Key pool rotation logic
 │   │   ├── generate-script\
 │   │   ├── generate-images\
@@ -367,7 +422,6 @@ D:\Projects\sparkfluence_platform\
 │   ├── fetch_trending.py     # Trending data fetcher (cron 8h)
 │   └── setup_cron.sh         # Cron job scheduler
 ├── docs\
-│   ├── knowledge\            # 5 knowledge files
 │   └── plans\                # Design docs & implementation plans
 └── CLAUDE.md                 # This file
 ```
@@ -615,7 +669,6 @@ git log --oneline -10
 
 **Config Files**:
 - `supabase/functions/_shared/config/aiModels.ts`
-- `supabase/functions/_shared/config/modelCapabilities.ts`
 - `supabase/functions/_shared/lookups/videoSpecs.ts`
 
 ---
