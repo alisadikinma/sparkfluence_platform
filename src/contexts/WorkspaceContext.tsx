@@ -40,6 +40,7 @@ export interface ScriptVersion {
   version: number;
   segments: WorkspaceSegment[];
   hookOptions: HookOptions | null;
+  selectedHook: string;
   score: number;
   createdAt: string;
 }
@@ -260,6 +261,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
           version: 1,
           segments: action.segments,
           hookOptions: action.hookOptions,
+          selectedHook: state.selectedHook,
           score: action.qualityReport.final_score,
           createdAt: new Date().toISOString(),
         }],
@@ -271,7 +273,21 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       if (state.scriptConfirmed || !state.hookOptions) return state;
       const hookData = state.hookOptions[action.key];
       if (!hookData) return state;
-      // Update HOOK segment with selected hook data
+
+      // Cache-first: check if any version was generated with this hook
+      const cachedVersion = state.scriptVersions.find(v => v.selectedHook === action.key);
+      if (cachedVersion) {
+        // Restore cached version's segments instead of regenerating
+        return {
+          ...state,
+          selectedHook: action.key,
+          segments: cachedVersion.segments,
+          selectedVersion: cachedVersion.version,
+          isDirty: true,
+        };
+      }
+
+      // No cache — update HOOK segment with selected hook data
       const updatedSegments = state.segments.map(seg =>
         seg.segmentType === 'HOOK'
           ? { ...seg, script: hookData.script_text, visualDirection: hookData.visual_direction }
@@ -415,7 +431,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       };
 
     case 'ADJUST_DURATION': {
-      const newMaxWords = Math.floor((130 / 60) * action.durationSeconds * 0.80);
+      const newMaxWords = Math.round((130 / 60) * action.durationSeconds * 0.80);
       return {
         ...state,
         segments: state.segments.map(seg =>

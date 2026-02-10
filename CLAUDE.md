@@ -385,6 +385,82 @@ PreFlightChecklist           │ VideoStep / StudioStep     │
 
 ---
 
+## Sparkfluence Design System (ALWAYS APPLY)
+
+### Color Palette
+```
+--bg-base:     #0B0E14   (warm charcoal — app background)
+--bg-surface:  #161616   (card/panel backgrounds)
+--bg-elevated: #1E1E1E   (popovers, dropdowns, modals)
+--accent:      #10B981   (emerald — primary action, success, highlights)
+--accent-dim:  #059669   (emerald darker — hover states)
+--text-primary:   #F5F5F5
+--text-secondary: #A3A3A3
+--text-muted:     #737373
+--border:      #262626
+--border-focus: #10B981
+--danger:      #EF4444
+--warning:     #F59E0B
+--info:        #3B82F6
+```
+
+**NEVER use AI purple (#7C3AED / violet). Sparkfluence uses emerald green.**
+
+### Typography
+- Headings: `text-lg font-semibold` to `text-2xl font-bold`
+- Body: `text-sm` (14px default)
+- Labels: `text-xs text-neutral-400`
+- Monospace: `font-mono text-xs` (for technical data, timestamps)
+
+### Component Patterns
+```tsx
+// Card
+<div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+
+// Primary Button
+<button className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors">
+
+// Ghost Button
+<button className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg px-4 py-2 text-sm transition-colors">
+
+// Glassmorphism (ONLY sticky headers, overlays, modals)
+<div className="bg-neutral-900/80 backdrop-blur-xl border border-neutral-800/50">
+
+// Badge / Pill
+<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+
+// Input
+<input className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors" />
+```
+
+### Segment Retention Borders
+```
+HOOK / PEAK:   border-l-4 border-emerald-500
+FORE / BODY:   border-l-4 border-amber-500
+CTA:           border-l-4 border-blue-500
+LOOP-END:      border-l-4 border-neutral-600
+```
+
+### Trending Source Badge Colors
+```
+google:      bg-blue-500/10    text-blue-400    border-blue-500/20
+tiktok:      bg-pink-500/10    text-pink-400    border-pink-500/20
+youtube:     bg-red-500/10     text-red-400     border-red-500/20
+news:        bg-emerald-500/10 text-emerald-400 border-emerald-500/20
+ai_creative: bg-amber-500/10   text-amber-400   border-amber-500/20
+```
+
+### Layout & Animation
+- **Desktop-first**: 1440px+ primary, responsive to 1024px
+- **9:16 portrait ratio**: All media previews
+- **3-column workspace**: Left (240px) | Center (flex-1) | Right (320px) at 1440px+
+- **Dark-only**: No light mode toggle
+- **Animation**: Framer Motion, 200-300ms, no bounce/spring
+- **Icons**: lucide-react (SVG, not emoji)
+- **Components**: Shadcn UI for Dialog, Popover, Select, Tooltip, Tabs
+
+---
+
 ## Key Directories
 
 ```
@@ -703,6 +779,24 @@ git log --oneline -10
 | `supabase` | Direct DB operations + docs |
 | `context7` | Live library documentation lookup |
 | `github` | PR/issue management (needs `GITHUB_PERSONAL_ACCESS_TOKEN` env var) |
+
+---
+
+## Planning & Brainstorming Rules
+
+**NEVER use `EnterPlanMode`.** Superpowers skills handle the full workflow. Pick ONE based on context:
+
+| Context | Use This | NOT This |
+|---------|----------|----------|
+| UI/frontend brainstorm | `sparkfluence-brainstorm` | superpowers:brainstorming, EnterPlanMode |
+| Non-UI brainstorm (backend, DB, API) | `superpowers:brainstorming` | sparkfluence-brainstorm, EnterPlanMode |
+| Implementation plan (spec is clear) | `superpowers:write-plans` → `superpowers:execute-plans` | EnterPlanMode |
+| Small/obvious task (< 3 steps) | Just do it | Any planning mechanism |
+
+**Key rules:**
+- **NEVER use `EnterPlanMode`** — superpowers already covers brainstorm → plan → execute
+- `sparkfluence-brainstorm` already includes brainstorming + design skills — do NOT also invoke `superpowers:brainstorming`
+- Never combine multiple planning mechanisms in one task
 
 ---
 

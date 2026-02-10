@@ -28,6 +28,7 @@ interface SegmentInput {
 interface RetentionCurveProps {
   segments: SegmentInput[];
   language?: string;
+  onSegmentClick?: (segmentIndex: number) => void;
 }
 
 // ============================================================================
@@ -96,6 +97,7 @@ function barColor(score: number): string {
 export const RetentionCurve: React.FC<RetentionCurveProps> = ({
   segments,
   language = 'id',
+  onSegmentClick,
 }) => {
   const enabledSegments = useMemo(
     () => segments.filter((s) => s.isEnabled !== false),
@@ -192,7 +194,12 @@ export const RetentionCurve: React.FC<RetentionCurveProps> = ({
           const color = barColor(point.predicted);
 
           return (
-            <g key={i}>
+            <g
+              key={i}
+              onClick={() => onSegmentClick?.(i)}
+              className={onSegmentClick ? 'cursor-pointer' : ''}
+              role={onSegmentClick ? 'button' : undefined}
+            >
               <rect
                 x={x}
                 y={y}
@@ -201,7 +208,18 @@ export const RetentionCurve: React.FC<RetentionCurveProps> = ({
                 rx={2}
                 fill={color}
                 opacity={0.8}
+                className="transition-opacity hover:opacity-100"
               />
+              {/* Hover overlay for clickable bars */}
+              {onSegmentClick && (
+                <rect
+                  x={x}
+                  y={topPadding}
+                  width={barWidth}
+                  height={chartHeight}
+                  fill="transparent"
+                />
+              )}
               {/* Score label on top */}
               <text
                 x={x + barWidth / 2}
@@ -225,16 +243,16 @@ export const RetentionCurve: React.FC<RetentionCurveProps> = ({
         })}
       </svg>
 
-      {/* Drop alert */}
+      {/* Drop alert — biggest viewer drop-off */}
       {biggestDrop && (
         <div className="flex items-start gap-1.5 text-[10px]">
           <span className="text-amber-400">&#9888;</span>
           <span className="text-[#A8A29E]">
-            Drop at{' '}
+            Biggest drop at{' '}
             <span className="text-[#FAFAF9] font-medium">
               {retentionPoints[biggestDrop.index]?.segment}
             </span>
-            : -{biggestDrop.drop}%
+            : -{biggestDrop.drop}% viewers leave here
           </span>
         </div>
       )}
@@ -242,7 +260,7 @@ export const RetentionCurve: React.FC<RetentionCurveProps> = ({
       {/* Stats row */}
       <div className="flex items-center justify-between text-[10px]">
         <span className="text-[#78716C]">
-          Avg: <span className={avgRetention >= 72 ? 'text-emerald-400' : 'text-amber-400'}>{avgRetention}%</span>
+          Avg retention: <span className={avgRetention >= 72 ? 'text-emerald-400' : 'text-amber-400'}>{avgRetention}%</span>
         </span>
         <span className="text-[#57534E]">
           Top 10% = {SCORE_BENCHMARKS.top_10_percent}%+

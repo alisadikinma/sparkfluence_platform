@@ -9,7 +9,6 @@ import {
   RefreshCw,
   CheckCircle,
   Lock,
-  AlertTriangle,
   Wand2,
   User,
   Film,
@@ -19,12 +18,12 @@ import {
   ChevronDown,
   GitMerge,
   SplitSquareHorizontal,
+  AlertTriangle,
   type LucideIcon,
 } from 'lucide-react';
-import type { HookOptions, ScoreBreakdown } from '../../../contexts/WorkspaceContext';
-import { HookSelector, getHookTint } from '../components/HookSelector';
+import type { HookOptions, ScoreBreakdown, WorkspaceSegment } from '../../../contexts/WorkspaceContext';
+import { getHookTint } from '../components/HookSelector';
 import { ViralityScore } from '../components/ViralityScore';
-import { ScriptComparison } from '../components/ScriptComparison';
 
 // ============================================================================
 // LOCAL TYPES
@@ -59,15 +58,10 @@ interface ScriptSegment {
   isEnabled?: boolean;
 }
 
-interface ComparisonData {
-  oldVersion: number;
-  newVersion: number;
-  oldScore: number;
-  newScore: number;
-}
-
 interface ScriptStepProps {
+  // Data — accepts either mapped ScriptSegment[] or raw WorkspaceSegment[]
   segments?: ScriptSegment[];
+  workspaceSegments?: WorkspaceSegment[];
   onEditSegment?: (segmentId: string, field: 'script' | 'visualDirection', value: string) => void;
   onFixSegment?: (segmentId: string) => void;
   hookOptions?: HookOptions | null;
@@ -75,29 +69,17 @@ interface ScriptStepProps {
   onSelectHook?: (key: string) => void;
   viralityScore?: number;
   scoreBreakdown?: ScoreBreakdown;
-  onRegenerate?: () => void;
   isRegenerating?: boolean;
-  canRegenerate?: boolean;
-  comparisonData?: ComparisonData | null;
-  onKeepVersion?: (version: number) => void;
-  onDismissComparison?: () => void;
-  additionalNotes?: string;
-  onNotesChange?: (notes: string) => void;
   scriptConfirmed?: boolean;
   onConfirm?: () => void;
   onUnconfirm?: () => void;
-  // Phase 2: Segment operations
+  // Segment operations
   onToggleSegment?: (segmentId: string) => void;
   onAdjustDuration?: (segmentId: string, durationSeconds: number) => void;
-  // Phase 3: Version system
-  scriptVersions?: Array<{ version: number; score: number }>;
-  selectedVersion?: number;
-  onSelectVersion?: (version: number) => void;
-  onGenerateNewVersion?: () => void;
-  // Phase 5: Coach focus
+  // Coach focus
   focusedSegmentId?: string | null;
   onFocusSegment?: (segmentId: string) => void;
-  // Phase 6: Merge/Split
+  // Merge/Split
   onMergeSegments?: (segmentId1: string, segmentId2: string) => void;
   onSplitSegment?: (segmentId: string, splitIndex: number) => void;
 }
@@ -106,14 +88,14 @@ interface ScriptStepProps {
 // MOCK DATA
 // ============================================================================
 
-const MOCK_SEGMENTS: ScriptSegment[] = [
+export const MOCK_SEGMENTS: ScriptSegment[] = [
   {
     id: '1',
     segmentNumber: 1,
     segmentType: 'HOOK',
     shotType: 'CREATOR' as const,
-    duration: 8,
-    script: 'Gue baru nemuin 3 cara AI yang literally bikin passive income.',
+    duration: 5,
+    script: 'Lo gak tau 3 cara AI ini? Rugi parah.',
     visualDirection:
       'Scene: Creator di coffee shop, tuang kopi | Camera: Medium \u2192 Push-in ke wajah | [TEXT POP: "3 CARA AI"] | [SFX: Ding]',
     directorChips: [
@@ -122,6 +104,29 @@ const MOCK_SEGMENTS: ScriptSegment[] = [
       { id: 'c3', type: 'sfx' as const, label: 'Ding', icon: 'Volume2', color: 'green' },
     ],
     emotion: 'excited',
+    maxWords: 9,
+    wordCount: 8,
+    isOverLimit: false,
+    retentionLevel: 'high' as const,
+    needsFix: false,
+    isFixing: false,
+    estimatedSpeechSeconds: 3.7,
+    waveformFill: 0.74,
+  },
+  {
+    id: '2',
+    segmentNumber: 2,
+    segmentType: 'FORE',
+    shotType: 'B-ROLL' as const,
+    duration: 8,
+    script: 'Tapi tunggu, yang ketiga literally bikin 50 orang quit 9-to-5.',
+    visualDirection: '[CUT TO: AI tools dashboard montage] | Camera: Quick-cut sequence | [SFX: Whoosh]',
+    directorChips: [
+      { id: 'c4', type: 'cut' as const, label: 'CUT TO: Montage', icon: 'Scissors', color: 'orange' },
+      { id: 'c5', type: 'camera' as const, label: 'Quick-cut sequence', icon: 'Video', color: 'blue' },
+      { id: 'c6', type: 'sfx' as const, label: 'Whoosh', icon: 'Volume2', color: 'green' },
+    ],
+    emotion: 'intriguing',
     maxWords: 14,
     wordCount: 11,
     isOverLimit: false,
@@ -132,35 +137,12 @@ const MOCK_SEGMENTS: ScriptSegment[] = [
     waveformFill: 0.64,
   },
   {
-    id: '2',
-    segmentNumber: 2,
-    segmentType: 'FORE',
-    shotType: 'B-ROLL' as const,
-    duration: 10,
-    script: 'Yang ketiga literally bikin gue quit 9-to-5. Stay sampai akhir.',
-    visualDirection: '[CUT TO: AI tools dashboard montage] | Camera: Quick-cut sequence | [SFX: Whoosh]',
-    directorChips: [
-      { id: 'c4', type: 'cut' as const, label: 'CUT TO: Montage', icon: 'Scissors', color: 'orange' },
-      { id: 'c5', type: 'camera' as const, label: 'Quick-cut sequence', icon: 'Video', color: 'blue' },
-      { id: 'c6', type: 'sfx' as const, label: 'Whoosh', icon: 'Volume2', color: 'green' },
-    ],
-    emotion: 'intriguing',
-    maxWords: 17,
-    wordCount: 12,
-    isOverLimit: false,
-    retentionLevel: 'medium' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 5.5,
-    waveformFill: 0.55,
-  },
-  {
     id: '3',
     segmentNumber: 3,
     segmentType: 'BODY-1',
     shotType: 'B-ROLL' as const,
-    duration: 10,
-    script: 'Pertama: AI copywriting. Jasper bikin 50 artikel sehari.',
+    duration: 8,
+    script: 'Nah pertama: AI copywriting. Jasper bikin 50 artikel per hari, coba sendiri.',
     visualDirection: '[CUT TO: Screen recording Jasper] | Camera: Zoom-in ke text output | [SFX: Typing]',
     directorChips: [
       { id: 'c8', type: 'cut' as const, label: 'CUT TO: Screen Recording', icon: 'Scissors', color: 'orange' },
@@ -168,80 +150,79 @@ const MOCK_SEGMENTS: ScriptSegment[] = [
       { id: 'c10', type: 'sfx' as const, label: 'Typing', icon: 'Volume2', color: 'green' },
     ],
     emotion: 'informative',
-    maxWords: 17,
-    wordCount: 9,
+    maxWords: 14,
+    wordCount: 11,
     isOverLimit: false,
-    retentionLevel: 'medium' as const,
+    retentionLevel: 'high' as const,
     needsFix: false,
     isFixing: false,
-    estimatedSpeechSeconds: 4.2,
-    waveformFill: 0.42,
+    estimatedSpeechSeconds: 5.1,
+    waveformFill: 0.64,
   },
   {
     id: '4',
     segmentNumber: 4,
     segmentType: 'BODY-2',
     shotType: 'B-ROLL' as const,
-    duration: 10,
-    script: 'Kedua: AI video. Satu TikTok 10 menit bikin. Hasilnya? 50 juta views.',
+    duration: 8,
+    script: 'Tapi kedua lebih gila: AI video, 10 menit bikin satu TikTok. 50 juta views.',
     visualDirection: '[CUT TO: AI video generation screen] | Camera: Pan across multiple TikTok screens',
     directorChips: [
       { id: 'c12', type: 'cut' as const, label: 'CUT TO: AI Video Gen', icon: 'Scissors', color: 'orange' },
       { id: 'c13', type: 'camera' as const, label: 'Pan across screens', icon: 'Video', color: 'blue' },
     ],
     emotion: 'surprising',
-    maxWords: 17,
-    wordCount: 14,
+    maxWords: 14,
+    wordCount: 13,
     isOverLimit: false,
-    retentionLevel: 'medium' as const,
+    retentionLevel: 'high' as const,
     needsFix: false,
     isFixing: false,
-    estimatedSpeechSeconds: 6.5,
-    waveformFill: 0.65,
+    estimatedSpeechSeconds: 6.0,
+    waveformFill: 0.75,
   },
   {
     id: '5',
     segmentNumber: 5,
     segmentType: 'PEAK',
     shotType: 'B-ROLL' as const,
-    duration: 10,
-    script: 'Ketiga: AI trading bot. Gue pake sendiri. Profit 40% dalam 3 bulan.',
+    duration: 8,
+    script: 'Tapi ternyata ketiga paling gila: AI trading, 100 orang profit 40% dalam 3 bulan.',
     visualDirection: '[CUT TO: Trading dashboard green profit] | Camera: Slow zoom ke profit number',
     directorChips: [
       { id: 'c16', type: 'cut' as const, label: 'CUT TO: Trading Dashboard', icon: 'Scissors', color: 'orange' },
       { id: 'c17', type: 'camera' as const, label: 'Slow zoom', icon: 'Video', color: 'blue' },
     ],
     emotion: 'mind-blown',
-    maxWords: 17,
-    wordCount: 14,
+    maxWords: 14,
+    wordCount: 13,
     isOverLimit: false,
     retentionLevel: 'high' as const,
     needsFix: false,
     isFixing: false,
-    estimatedSpeechSeconds: 6.5,
-    waveformFill: 0.65,
+    estimatedSpeechSeconds: 6.0,
+    waveformFill: 0.75,
   },
   {
     id: '6',
     segmentNumber: 6,
     segmentType: 'CTA',
     shotType: 'CREATOR' as const,
-    duration: 10,
-    script: 'Mau mulai yang mana? Comment 1, 2, atau 3.',
+    duration: 5,
+    script: 'Save sekarang, follow gue biar gak ketinggalan.',
     visualDirection: 'Scene: Creator sip kopi, relaxed smile | Camera: Medium shot',
     directorChips: [
       { id: 'c20', type: 'camera' as const, label: 'Medium shot', icon: 'Video', color: 'blue' },
-      { id: 'c21', type: 'text_pop' as const, label: '1, 2, atau 3?', icon: 'Type', color: 'pink' },
     ],
     emotion: 'friendly',
-    maxWords: 17,
-    wordCount: 10,
+    maxWords: 9,
+    wordCount: 7,
     isOverLimit: false,
-    retentionLevel: 'medium' as const,
+    retentionLevel: 'high' as const,
     needsFix: false,
     isFixing: false,
-    estimatedSpeechSeconds: 4.6,
-    waveformFill: 0.46,
+    estimatedSpeechSeconds: 3.2,
+    waveformFill: 0.64,
   },
   {
     id: '7',
@@ -249,7 +230,7 @@ const MOCK_SEGMENTS: ScriptSegment[] = [
     segmentType: 'LOOP-END',
     shotType: 'CREATOR' as const,
     duration: 5,
-    script: 'Oh iya, gue lupa satu cara lagi...',
+    script: 'Inget tadi gue bilang rugi? Gue lupa satu...',
     visualDirection: 'Scene: Creator tuang kopi lagi (mirror HOOK) | Camera: Same angle as HOOK',
     directorChips: [
       { id: 'c23', type: 'camera' as const, label: 'Same angle as HOOK', icon: 'Video', color: 'blue' },
@@ -260,8 +241,8 @@ const MOCK_SEGMENTS: ScriptSegment[] = [
     maxWords: 9,
     wordCount: 8,
     isOverLimit: false,
-    retentionLevel: 'low' as const,
-    needsFix: true,
+    retentionLevel: 'high' as const,
+    needsFix: false,
     isFixing: false,
     estimatedSpeechSeconds: 3.7,
     waveformFill: 0.74,
@@ -270,19 +251,19 @@ const MOCK_SEGMENTS: ScriptSegment[] = [
 
 const MOCK_HOOK_OPTIONS: HookOptions = {
   option_a_safe: {
-    script_text: 'Gue baru nemuin 3 cara AI yang literally bikin passive income.',
+    script_text: 'Lo gak tau 3 cara AI ini? Rugi parah.',
     visual_direction:
       'Scene: Creator di coffee shop, tuang kopi | Camera: Medium \u2192 Push-in ke wajah | [TEXT POP: "3 CARA AI"] | [SFX: Ding]',
     hook_type: 'curiosity_gap',
   },
   option_b_negative: {
-    script_text: 'Lo masih kerja manual di 2026? Ketinggalan parah.',
+    script_text: 'Stop kerja manual! 3 AI tools ini literally ganti lo.',
     visual_direction:
-      'Scene: Creator slam laptop tutup | Camera: Close-up slam \u2192 Whip-pan ke wajah | [SFX: Boom] | [TEXT POP: "KETINGGALAN"]',
+      'Scene: Creator slam laptop tutup | Camera: Close-up slam \u2192 Whip-pan ke wajah | [SFX: Boom] | [TEXT POP: "STOP"]',
     hook_type: 'negative_controversial',
   },
   option_c_visual: {
-    script_text: 'Liat dashboard ini. Semua dari AI.',
+    script_text: 'Liat dashboard gue? 3 AI tools bikin semua ini.',
     visual_direction:
       '[Camera: Blur \u2192 Sharp focus on screen] | Creator tunjuk laptop | [CUT TO: Screen recording dashboard] | [SFX: Cash register]',
     hook_type: 'visual_action',
@@ -424,10 +405,81 @@ function densityColor(density: number): { bg: string; text: string; label: strin
 }
 
 // Duration options for the dropdown
-const DURATION_OPTIONS = [5, 6, 7, 8] as const;
+const DURATION_OPTIONS = [3, 5, 8] as const;
 
 function maxWordsForDuration(seconds: number): number {
-  return Math.floor((130 / 60) * seconds * 0.80);
+  return Math.round((130 / 60) * seconds * 0.80);
+}
+
+// ============================================================================
+// WORKSPACE → SCRIPT SEGMENT MAPPER
+// ============================================================================
+
+function parseDirectorChips(visualDirection: string): DirectorChip[] {
+  const chips: DirectorChip[] = [];
+  let idx = 0;
+
+  // Camera/shot patterns
+  const cameraMatch = visualDirection.match(/Camera:\s*([^|[\]]+)/i);
+  if (cameraMatch) {
+    chips.push({ id: `c${idx++}`, type: 'camera', label: cameraMatch[1].trim(), icon: 'Video', color: 'blue' });
+  }
+
+  // CUT TO patterns
+  const cutMatches = visualDirection.matchAll(/\[CUT TO:\s*([^\]]+)\]/gi);
+  for (const m of cutMatches) {
+    chips.push({ id: `c${idx++}`, type: 'cut', label: `CUT TO: ${m[1].trim()}`, icon: 'Scissors', color: 'orange' });
+  }
+
+  // SFX patterns
+  const sfxMatches = visualDirection.matchAll(/\[SFX:\s*([^\]]+)\]/gi);
+  for (const m of sfxMatches) {
+    chips.push({ id: `c${idx++}`, type: 'sfx', label: m[1].trim(), icon: 'Volume2', color: 'green' });
+  }
+
+  // TEXT POP patterns
+  const textPopMatches = visualDirection.matchAll(/\[TEXT POP:\s*([^\]]+)\]/gi);
+  for (const m of textPopMatches) {
+    chips.push({ id: `c${idx++}`, type: 'text_pop', label: m[1].trim().replace(/"/g, ''), icon: 'Type', color: 'pink' });
+  }
+
+  // VFX patterns
+  const vfxMatches = visualDirection.matchAll(/\[VFX:\s*([^\]]+)\]/gi);
+  for (const m of vfxMatches) {
+    chips.push({ id: `c${idx++}`, type: 'vfx', label: m[1].trim(), icon: 'Sparkles', color: 'violet' });
+  }
+
+  return chips;
+}
+
+function mapWorkspaceToScriptSegment(ws: WorkspaceSegment): ScriptSegment {
+  const words = ws.script.trim().split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+  const maxWords = ws.maxWords || maxWordsForDuration(ws.durationSeconds);
+  const density = maxWords > 0 ? wordCount / maxWords : 0;
+  const estimatedSpeechSeconds = parseFloat((wordCount / (130 / 60)).toFixed(1));
+  const waveformFill = ws.durationSeconds > 0 ? estimatedSpeechSeconds / ws.durationSeconds : 0;
+
+  return {
+    id: ws.id,
+    segmentNumber: ws.segmentNumber,
+    segmentType: ws.segmentType,
+    shotType: ws.shotType,
+    duration: ws.durationSeconds,
+    script: ws.script,
+    visualDirection: ws.visualDirection,
+    directorChips: parseDirectorChips(ws.visualDirection),
+    emotion: ws.emotion,
+    maxWords,
+    wordCount,
+    isOverLimit: wordCount > maxWords,
+    retentionLevel: density >= 0.7 ? 'high' : density >= 0.5 ? 'medium' : 'low',
+    needsFix: density < 0.5 || wordCount > maxWords,
+    isFixing: false,
+    estimatedSpeechSeconds,
+    waveformFill,
+    isEnabled: ws.isEnabled,
+  };
 }
 
 // ============================================================================
@@ -436,11 +488,9 @@ function maxWordsForDuration(seconds: number): number {
 
 interface SegmentCardProps {
   segment: ScriptSegment;
-  isHook: boolean;
   isLoopEnd: boolean;
-  hookOptions: HookOptions | null;
   selectedHook: string;
-  onSelectHook: (key: string) => void;
+  isHookSegment: boolean;
   onEditScript: (value: string) => void;
   onFixSegment: () => void;
   scriptConfirmed: boolean;
@@ -452,17 +502,16 @@ interface SegmentCardProps {
   canMergeDown?: boolean;
   onMerge?: () => void;
   canSplit?: boolean;
-  onSplit?: () => void;
+  onSplitAtIndex?: (index: number) => void;
   lowDensity?: boolean;
+  nextSegmentDuration?: number;
 }
 
 const SegmentCard: React.FC<SegmentCardProps> = ({
   segment,
-  isHook,
   isLoopEnd,
-  hookOptions,
   selectedHook,
-  onSelectHook,
+  isHookSegment,
   onEditScript,
   onFixSegment,
   scriptConfirmed,
@@ -474,33 +523,44 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
   canMergeDown,
   onMerge,
   canSplit,
-  onSplit,
+  onSplitAtIndex,
   lowDensity,
+  nextSegmentDuration,
 }) => {
   const [showDurationDropdown, setShowDurationDropdown] = useState(false);
+  const [showSplitPicker, setShowSplitPicker] = useState(false);
+  const [showMergeConfirm, setShowMergeConfirm] = useState(false);
+  const mergedDuration = segment.duration + (nextSegmentDuration ?? 0);
+  const mergeExceedsLimit = mergedDuration > 8;
   const borderColor = retentionBorderColor(segment.segmentType);
   const isDisabled = !segmentEnabled;
   const density = calculateWordDensity(segment.wordCount, segment.maxWords);
   const densityInfo = densityColor(density);
 
-  // Determine card background — hook tint when HOOK segment selected
-  const cardBg = isHook ? getHookTint(selectedHook) : undefined;
+  // Determine card background — hook tint when HOOK segment
+  const cardBg = isHookSegment ? getHookTint(selectedHook) : undefined;
 
   return (
     <div
       className={`
         relative rounded-xl border overflow-hidden cursor-pointer
-        transition-all duration-200
+        transition-all duration-200 focus-visible:ring-2 focus-visible:ring-emerald-500/30
         ${isDisabled ? 'opacity-40' : ''}
         ${isFocused ? 'border-emerald-500/50 ring-1 ring-emerald-500/20' : 'border-[#262626]'}
       `}
       style={{
-        boxShadow: `inset 4px 0 0 0 ${borderColor}`,
+        boxShadow: isFocused
+          ? `inset 4px 0 0 0 ${borderColor}, 0 0 12px rgba(16,185,129,0.08)`
+          : `inset 4px 0 0 0 ${borderColor}`,
         backgroundColor: cardBg || '#161616',
       }}
+      tabIndex={0}
+      role="button"
+      aria-label={`Segment ${segment.segmentNumber} - ${segment.segmentType}`}
       onClick={onFocus}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onFocus?.(); } }}
     >
-      <div className="p-4 space-y-3">
+      <div className="p-3 space-y-3">
         {/* Enable/Disable toggle row */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -624,76 +684,43 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
           </div>
         </div>
 
-        {/* HOOK special: HookSelector */}
-        {isHook && hookOptions && (
-          <HookSelector
-            options={hookOptions}
-            selectedKey={selectedHook}
-            onSelect={onSelectHook}
-            disabled={scriptConfirmed || isDisabled}
-          />
-        )}
-
         {/* Script text area */}
-        {!isHook && (
-          <AutoResizeTextarea
-            value={segment.script}
-            onChange={onEditScript}
-            disabled={scriptConfirmed || isDisabled}
-            className={`
-              text-[15px] leading-relaxed text-[#FAFAF9]
-              ${(scriptConfirmed || isDisabled) ? 'cursor-not-allowed' : ''}
-            `}
-            placeholder="Enter script text..."
-          />
-        )}
+        <AutoResizeTextarea
+          value={segment.script}
+          onChange={onEditScript}
+          disabled={scriptConfirmed || isDisabled}
+          className={`
+            text-[15px] leading-relaxed text-[#FAFAF9]
+            ${(scriptConfirmed || isDisabled) ? 'cursor-not-allowed' : ''}
+          `}
+          placeholder="Enter script text..."
+        />
 
-        {/* Word density indicator */}
+        {/* Smart bar: word density + speech timing merged */}
         <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <span className={`text-[11px] font-medium ${densityInfo.text}`}>
-              {density}% {densityInfo.label}
-            </span>
-            <span
-              className={`text-[12px] font-mono ${
-                segment.isOverLimit ? 'text-red-400' : 'text-[#78716C]'
-              }`}
-            >
-              {segment.wordCount}/{segment.maxWords} words
-            </span>
-          </div>
-          <div className="w-full h-1.5 bg-[#0B0E14] rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${densityInfo.bg}`}
-              style={{ width: `${Math.min(density, 100)}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Waveform / speech timing bar */}
-        <div className="space-y-1">
-          <div className="w-full h-1.5 bg-[#0B0E14] rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${waveformColor(segment.waveformFill)}`}
-              style={{ width: `${Math.min(segment.waveformFill * 100, 100)}%` }}
-            />
-          </div>
-          <div className="flex justify-end">
-            <span className="text-[11px] font-mono text-[#78716C]">
-              {segment.estimatedSpeechSeconds.toFixed(1)}s / {segment.duration}s
+          <div className="flex items-center gap-2">
+            {/* Emotion chip inline */}
+            {segment.emotion && (
+              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-500/10 text-violet-400 flex-shrink-0">
+                {segment.emotion}
+              </span>
+            )}
+            {/* Bar */}
+            <div className="flex-1 h-1.5 bg-[#0B0E14] rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${densityInfo.bg}`}
+                style={{ width: `${Math.min(density, 100)}%` }}
+              />
+            </div>
+            {/* Combined label */}
+            <span className={`text-[11px] font-mono flex-shrink-0 ${segment.isOverLimit ? 'text-red-400' : 'text-[#78716C]'}`}>
+              {segment.wordCount}/{segment.maxWords}w &middot; {segment.estimatedSpeechSeconds.toFixed(1)}s/{segment.duration}s
             </span>
           </div>
         </div>
 
-        {/* Emotion badge + Director Chips */}
+        {/* Director Chips */}
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Emotion badge */}
-          {segment.emotion && (
-            <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium bg-violet-500/10 text-violet-400">
-              {segment.emotion}
-            </span>
-          )}
-
           {segment.directorChips.map((chip) => {
             const ChipIcon = chipIconMap[chip.type] || Camera;
             const colorClass = chipColorMap[chip.type] || 'bg-[#262626] text-[#A8A29E]';
@@ -728,31 +755,116 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
 
         {/* Merge/Split actions + auto-merge suggestion */}
         {!scriptConfirmed && !isDisabled && (canMergeDown || canSplit || lowDensity) && (
-          <div className="flex items-center gap-2 pt-1 border-t border-[#1E1E1E]">
-            {canSplit && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onSplit?.(); }}
-                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#78716C] hover:text-[#A8A29E] transition-colors"
-              >
-                <Scissors className="w-3 h-3" />
-                Split
-              </button>
+          <div className="space-y-2 pt-1 border-t border-[#1E1E1E]">
+            <div className="flex items-center gap-2">
+              {canSplit && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowSplitPicker(!showSplitPicker); }}
+                  className={`inline-flex items-center gap-1 text-[10px] font-medium transition-colors ${
+                    showSplitPicker
+                      ? 'text-emerald-400'
+                      : 'text-[#78716C] hover:text-[#A8A29E]'
+                  }`}
+                >
+                  <Scissors className="w-3 h-3" />
+                  {showSplitPicker ? 'Cancel Split' : 'Split'}
+                </button>
+              )}
+              {canMergeDown && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowMergeConfirm(true); }}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-[#78716C] hover:text-[#A8A29E] transition-colors"
+                >
+                  <GitMerge className="w-3 h-3" />
+                  Merge &darr;
+                </button>
+              )}
+              {lowDensity && canMergeDown && (
+                <span className="text-[9px] text-amber-400/70 ml-auto">
+                  Low density — consider merging
+                </span>
+              )}
+            </div>
+
+            {/* Split word picker: click between words to choose split point */}
+            {showSplitPicker && (
+              <div className="rounded-lg bg-[#0B0E14] border border-[#262626] p-2">
+                <p className="text-[9px] text-[#57534E] mb-1.5">Click between words to split:</p>
+                <div className="flex flex-wrap items-center gap-y-1">
+                  {segment.script.trim().split(/\s+/).map((word, i, arr) => (
+                    <React.Fragment key={i}>
+                      <span className="text-[12px] text-[#FAFAF9] px-0.5">{word}</span>
+                      {i < arr.length - 1 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSplitAtIndex?.(i + 1);
+                            setShowSplitPicker(false);
+                          }}
+                          className="w-4 h-5 flex items-center justify-center text-[#3f3f46] hover:text-emerald-400
+                            hover:bg-emerald-500/10 rounded transition-colors mx-0.5"
+                          title={`Split after "${word}"`}
+                        >
+                          <SplitSquareHorizontal className="w-3 h-3" />
+                        </button>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
             )}
-            {canMergeDown && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onMerge?.(); }}
-                className="inline-flex items-center gap-1 text-[10px] font-medium text-[#78716C] hover:text-[#A8A29E] transition-colors"
-              >
-                <GitMerge className="w-3 h-3" />
-                Merge &darr;
-              </button>
-            )}
-            {lowDensity && canMergeDown && (
-              <span className="text-[9px] text-amber-400/70 ml-auto">
-                Low density — consider merging
-              </span>
+
+            {/* Merge confirmation dialog */}
+            {showMergeConfirm && (
+              <div className="rounded-lg bg-[#0B0E14] border border-[#262626] p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  {mergeExceedsLimit ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <GitMerge className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-[#FAFAF9] font-medium">
+                      {mergeExceedsLimit
+                        ? `Merge akan jadi ${mergedDuration}s (melebihi batas 8s)`
+                        : `Merge segment ini? Hasil: ${mergedDuration}s`
+                      }
+                    </p>
+                    {mergeExceedsLimit && (
+                      <p className="text-[10px] text-amber-400/80">
+                        Durasi setelah merge melebihi 8 detik. Segment yang terlalu panjang bisa menurunkan retention.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMerge?.();
+                      setShowMergeConfirm(false);
+                    }}
+                    className={`flex-1 py-1.5 rounded text-[10px] font-medium border transition-colors ${
+                      mergeExceedsLimit
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                    }`}
+                  >
+                    {mergeExceedsLimit ? 'Merge Anyway' : 'Yes, Merge'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowMergeConfirm(false); }}
+                    className="flex-1 py-1.5 rounded text-[10px] font-medium text-[#78716C] bg-[#161616] border border-[#262626] hover:border-[#3f3f46] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -767,6 +879,7 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
 
 export const ScriptStep: React.FC<ScriptStepProps> = ({
   segments: segmentsProp,
+  workspaceSegments: workspaceSegmentsProp,
   onEditSegment: onEditSegmentProp,
   onFixSegment: onFixSegmentProp,
   hookOptions: hookOptionsProp,
@@ -774,20 +887,12 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
   onSelectHook: onSelectHookProp,
   viralityScore: viralityScoreProp,
   scoreBreakdown: scoreBreakdownProp,
-  onRegenerate: onRegenerateProp,
   isRegenerating: isRegeneratingProp,
-  canRegenerate: canRegenerateProp,
-  additionalNotes: additionalNotesProp,
-  onNotesChange: onNotesChangeProp,
   scriptConfirmed: scriptConfirmedProp,
   onConfirm: onConfirmProp,
   onUnconfirm: onUnconfirmProp,
   onToggleSegment: onToggleSegmentProp,
   onAdjustDuration: onAdjustDurationProp,
-  scriptVersions: scriptVersionsProp,
-  selectedVersion: selectedVersionProp,
-  onSelectVersion: onSelectVersionProp,
-  onGenerateNewVersion: onGenerateNewVersionProp,
   focusedSegmentId,
   onFocusSegment,
   onMergeSegments: onMergeSegmentsProp,
@@ -796,30 +901,20 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
   // Internal state (fallback to mock data when props not provided)
   const [internalSegments, setInternalSegments] = useState<ScriptSegment[]>(MOCK_SEGMENTS);
   const [internalSelectedHook, setInternalSelectedHook] = useState('option_a_safe');
-  const [internalNotes, setInternalNotes] = useState('');
   const [internalConfirmed, setInternalConfirmed] = useState(false);
 
-  // Version system state
-  const [internalVersions, setInternalVersions] = useState<Array<{ version: number; score: number }>>([
-    { version: 1, score: 88 },
-  ]);
-  const [internalSelectedVersion, setInternalSelectedVersion] = useState(1);
-  const [showCompare, setShowCompare] = useState(false);
-  const [compareViewMode, setCompareViewMode] = useState<'inline' | 'side-by-side'>('inline');
-
-  // Resolve props vs internal state
-  const segments = segmentsProp ?? internalSegments;
+  // Resolve props vs internal state — map WorkspaceSegment[] if provided
+  const mappedSegments = React.useMemo(
+    () => workspaceSegmentsProp?.map(mapWorkspaceToScriptSegment),
+    [workspaceSegmentsProp],
+  );
+  const segments = segmentsProp ?? mappedSegments ?? internalSegments;
   const hookOptions = hookOptionsProp ?? MOCK_HOOK_OPTIONS;
   const selectedHook = selectedHookProp ?? internalSelectedHook;
   const viralityScore = viralityScoreProp ?? 88;
   const scoreBreakdown = scoreBreakdownProp ?? MOCK_SCORE_BREAKDOWN;
   const isRegenerating = isRegeneratingProp ?? false;
-  const canRegenerate = canRegenerateProp ?? true;
-  const additionalNotes = additionalNotesProp ?? internalNotes;
   const scriptConfirmed = scriptConfirmedProp ?? internalConfirmed;
-  const scriptVersions = scriptVersionsProp ?? internalVersions;
-  const selectedVersion = selectedVersionProp ?? internalSelectedVersion;
-  const maxVersions = 3;
 
   // Handlers
   const handleEditSegment = useCallback(
@@ -853,23 +948,6 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
       }
     },
     [onSelectHookProp],
-  );
-
-  const handleRegenerate = useCallback(() => {
-    if (onRegenerateProp) {
-      onRegenerateProp();
-    }
-  }, [onRegenerateProp]);
-
-  const handleNotesChange = useCallback(
-    (notes: string) => {
-      if (onNotesChangeProp) {
-        onNotesChangeProp(notes);
-      } else {
-        setInternalNotes(notes);
-      }
-    },
-    [onNotesChangeProp],
   );
 
   const handleConfirm = useCallback(() => {
@@ -918,144 +996,81 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
     [onAdjustDurationProp],
   );
 
-  const handleSelectVersion = useCallback(
-    (version: number) => {
-      if (onSelectVersionProp) {
-        onSelectVersionProp(version);
-      } else {
-        setInternalSelectedVersion(version);
-      }
-    },
-    [onSelectVersionProp],
-  );
-
-  const handleGenerateNewVersion = useCallback(() => {
-    if (onGenerateNewVersionProp) {
-      onGenerateNewVersionProp();
-    } else {
-      // Mock: add a new version with slightly different score
-      const nextVersion = internalVersions.length + 1;
-      if (nextVersion <= maxVersions) {
-        setInternalVersions((prev) => [
-          ...prev,
-          { version: nextVersion, score: Math.max(60, Math.min(99, 88 + Math.floor(Math.random() * 10 - 5))) },
-        ]);
-        setInternalSelectedVersion(nextVersion);
-      }
-    }
-  }, [onGenerateNewVersionProp, internalVersions.length]);
-
   return (
     <div className="space-y-4">
       {/* ================================================================ */}
-      {/* TOP ACTION BAR                                                   */}
+      {/* TOP ACTION BAR — Score + Hook Tabs + Confirm                      */}
       {/* ================================================================ */}
-      <div className="space-y-3">
-        {/* Row 1: Virality Score + Action buttons */}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          {/* Left: Virality Score (compact) */}
-          <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Virality Score pill */}
+        <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />
 
-          {/* Right: Action buttons */}
-          <div className="flex items-center gap-2">
-            {/* Generate Version N / Regenerate */}
-            <button
-              type="button"
-              onClick={scriptVersions.length < maxVersions ? handleGenerateNewVersion : handleRegenerate}
-              disabled={isRegenerating || !canRegenerate || scriptConfirmed}
-              className={`
-                inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium
-                transition-all duration-200
-                ${
-                  isRegenerating || !canRegenerate || scriptConfirmed
-                    ? 'border-[#262626] bg-[#161616] text-[#57534E] cursor-not-allowed'
-                    : 'border-[#3f3f46] bg-[#1E1E1E] text-[#A8A29E] hover:border-amber-500/40 hover:text-amber-400'
-                }
-              `}
-            >
-              <RefreshCw
-                className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin' : ''}`}
-              />
-              {isRegenerating
-                ? 'Generating...'
-                : scriptVersions.length < maxVersions
-                  ? `Generate V${scriptVersions.length + 1}`
-                  : 'Regenerate'
-              }
-            </button>
-
-            {/* Compare button (only when 2+ versions) */}
-            {scriptVersions.length >= 2 && (
-              <button
-                type="button"
-                onClick={() => setShowCompare(!showCompare)}
-                className={`
-                  inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium
-                  transition-all duration-200
-                  ${showCompare
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                    : 'border-[#3f3f46] bg-[#1E1E1E] text-[#A8A29E] hover:border-[#57534E]'
-                  }
-                `}
-              >
-                Compare
-              </button>
-            )}
-
-            {/* Confirm / Unconfirm button */}
-            {scriptConfirmed ? (
-              <button
-                type="button"
-                onClick={handleUnconfirm}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
-                  border-amber-500/30 bg-amber-500/10 text-amber-400
-                  text-xs font-medium transition-all duration-200
-                  hover:bg-amber-500/20"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                Unlock Script
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleConfirm}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
-                  border-emerald-500/30 bg-emerald-500/10 text-emerald-400
-                  text-xs font-medium transition-all duration-200
-                  hover:bg-emerald-500/20 hover:border-emerald-500/50"
-              >
-                <CheckCircle className="w-3.5 h-3.5" />
-                Confirm & Continue
-              </button>
-            )}
+        {/* Hook variant tabs (Safe / Bold / Visual) */}
+        {hookOptions && (
+          <div className="flex items-center gap-1">
+            {Object.entries(hookOptions).map(([key, hook]) => {
+              const isActive = selectedHook === key;
+              const label = key.includes('safe') ? 'Safe' : key.includes('negative') ? 'Bold' : 'Visual';
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => !scriptConfirmed && handleSelectHook(key)}
+                  disabled={scriptConfirmed}
+                  className={`
+                    inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                    transition-all duration-200 border cursor-pointer
+                    ${scriptConfirmed ? 'cursor-not-allowed opacity-60' : ''}
+                    ${isActive
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                      : 'border-[#262626] bg-[#161616] text-[#78716C] hover:text-[#A8A29E] hover:border-[#3f3f46]'
+                    }
+                  `}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-[#3f3f46]'}`} />
+                  {label}
+                </button>
+              );
+            })}
           </div>
-        </div>
+        )}
 
-        {/* Row 2: Version tabs */}
-        {scriptVersions.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            {scriptVersions.map((v) => (
-              <button
-                key={v.version}
-                type="button"
-                onClick={() => handleSelectVersion(v.version)}
-                className={`
-                  inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                  transition-all duration-200 border
-                  ${selectedVersion === v.version
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                    : 'border-[#262626] bg-[#161616] text-[#78716C] hover:text-[#A8A29E] hover:border-[#3f3f46]'
-                  }
-                `}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${selectedVersion === v.version ? 'bg-emerald-500' : 'bg-[#3f3f46]'}`} />
-                V{v.version}
-                <span className={`text-[10px] ${selectedVersion === v.version ? 'text-emerald-400/70' : 'text-[#57534E]'}`}>
-                  {v.score}%
-                </span>
-              </button>
-            ))}
-          </div>
+        {/* Regenerating indicator */}
+        {isRegenerating && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
+            <RefreshCw className="w-3.5 h-3.5 motion-safe:animate-spin" />
+            Generating...
+          </span>
+        )}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Confirm / Unlock */}
+        {scriptConfirmed ? (
+          <button
+            type="button"
+            onClick={handleUnconfirm}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border
+              border-amber-500/30 bg-amber-500/10 text-amber-400
+              text-xs font-medium transition-all duration-200 cursor-pointer
+              hover:bg-amber-500/20"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            Unlock Script
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleConfirm}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg
+              bg-emerald-500 text-white
+              text-xs font-medium transition-all duration-200 cursor-pointer
+              hover:bg-emerald-600"
+          >
+            <CheckCircle className="w-3.5 h-3.5" />
+            Confirm & Continue
+          </button>
         )}
       </div>
 
@@ -1089,11 +1104,9 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
             <SegmentCard
               key={segment.id}
               segment={segment}
-              isHook={isHook}
               isLoopEnd={isLoopEnd}
-              hookOptions={hookOptions}
               selectedHook={selectedHook}
-              onSelectHook={handleSelectHook}
+              isHookSegment={isHook}
               onEditScript={(value) => handleEditSegment(segment.id, 'script', value)}
               onFixSegment={() => handleFixSegment(segment.id)}
               scriptConfirmed={scriptConfirmed}
@@ -1105,74 +1118,15 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
               canMergeDown={canMergeDown}
               onMerge={() => nextSegment && onMergeSegmentsProp?.(segment.id, nextSegment.id)}
               canSplit={canSplit}
-              onSplit={() => {
-                // Split at midpoint by default
-                const midpoint = Math.ceil(segment.wordCount / 2);
-                onSplitSegmentProp?.(segment.id, midpoint);
+              onSplitAtIndex={(index) => {
+                onSplitSegmentProp?.(segment.id, index);
               }}
               lowDensity={lowDensity}
+              nextSegmentDuration={nextSegment?.duration}
             />
           );
         })}
       </div>
-
-      {/* ================================================================ */}
-      {/* ADDITIONAL NOTES                                                  */}
-      {/* ================================================================ */}
-      <div className="rounded-xl border border-[#262626] bg-[#161616] p-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <AlertTriangle className="w-3.5 h-3.5 text-[#78716C]" />
-          <span className="text-[11px] font-semibold text-[#A8A29E] uppercase tracking-wider">
-            Additional Notes
-          </span>
-        </div>
-        <textarea
-          value={additionalNotes}
-          onChange={(e) => handleNotesChange(e.target.value)}
-          disabled={scriptConfirmed}
-          placeholder="Add notes for the AI to consider during regeneration..."
-          rows={3}
-          className={`
-            w-full bg-[#0B0E14] border border-[#262626] rounded-lg px-3 py-2
-            text-[13px] text-[#FAFAF9] placeholder-[#57534E]
-            outline-none resize-none
-            focus:border-emerald-500/40 transition-colors
-            ${scriptConfirmed ? 'opacity-50 cursor-not-allowed' : ''}
-          `}
-        />
-      </div>
-
-      {/* ================================================================ */}
-      {/* SCRIPT COMPARISON (Phase 3)                                       */}
-      {/* ================================================================ */}
-      {scriptVersions.length >= 2 && (
-        <ScriptComparison
-          isOpen={showCompare}
-          viewMode={compareViewMode}
-          onViewModeChange={setCompareViewMode}
-          version1={{
-            segments: segments as any,
-            score: scriptVersions[0]?.score ?? 0,
-            hookOptions: hookOptions as any,
-          }}
-          version2={{
-            segments: segments as any,
-            score: scriptVersions[scriptVersions.length - 1]?.score ?? 0,
-            hookOptions: hookOptions as any,
-          }}
-          aiRecommendation={2}
-          onKeepVersion1={() => {
-            handleSelectVersion(1);
-            setShowCompare(false);
-          }}
-          onUseVersion2={() => {
-            handleSelectVersion(scriptVersions[scriptVersions.length - 1]?.version ?? 2);
-            setShowCompare(false);
-          }}
-          onClose={() => setShowCompare(false)}
-          isLoading={isRegenerating}
-        />
-      )}
 
     </div>
   );
