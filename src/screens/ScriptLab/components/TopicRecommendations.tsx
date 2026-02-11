@@ -183,7 +183,6 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         const { data, error } = await supabase
           .from('trending_challenges')
           .select('id, name, slug, category, description, hashtags, example_format, script_instruction, volume_score')
-          .gt('expires_at', new Date().toISOString())
           .order('volume_score', { ascending: false })
           .limit(10);
 

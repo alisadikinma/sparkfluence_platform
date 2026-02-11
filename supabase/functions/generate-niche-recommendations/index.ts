@@ -1,14 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { callLLM, callTavilyHybrid, callStockImageSearch } from '../_shared/apiKeyRotation.ts';
 
 /**
  * Generate Niche Recommendations
- * 
- * Uses Tavily API for market research:
- * - Search volume indicators
- * - Competition analysis
- * - Related niches discovery
- * 
+ *
+ * Uses Tavily API for market research + OpenRouter LLM for analysis.
+ * All API keys from api_keys_pool table with automatic rotation.
+ *
  * Flow: Tavily Research → LLM Analysis → Personalized Niches
  */
 
@@ -34,206 +33,6 @@ async function generateCacheHash(interest: string, profession: string): Promise<
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-// ============================================================================
-// API Key Rotation (Hybrid: Pool → Secrets)
-// ============================================================================
-
-interface ApiKeyResult {
-  keyId: string | null;
-  apiKey: string;
-  keyName: string;
-  source: 'pool' | 'secret';
-}
-
-async function getApiKeyHybrid(
-  supabase: any,
-  provider: string,
-  secretName: string
-): Promise<ApiKeyResult | null> {
-  // 1. Try pool first
-  try {
-    const { data, error } = await supabase.rpc('get_available_api_key', {
-      p_provider: provider
-    });
-
-    if (!error && data && data.length > 0) {
-      const key = data[0];
-      console.log(`[${provider}] Using pool key: ${key.key_name} (${key.usage_count}/${key.usage_limit})`);
-      return {
-        keyId: key.key_id,
-        apiKey: key.api_key,
-        keyName: key.key_name,
-        source: 'pool'
-      };
-    }
-  } catch (err) {
-    console.log(`[${provider}] Pool check failed, trying secret`);
-  }
-
-  // 2. Fallback to secrets
-  const apiKey = Deno.env.get(secretName);
-  if (apiKey) {
-    console.log(`[${provider}] Using secret: ${secretName}`);
-    return {
-      keyId: null,
-      apiKey,
-      keyName: `Secret (${secretName})`,
-      source: 'secret'
-    };
-  }
-
-  console.error(`[${provider}] No API key available`);
-  return null;
-}
-
-async function incrementUsage(supabase: any, keyId: string | null): Promise<void> {
-  if (!keyId) return;
-  try {
-    await supabase.rpc('increment_api_key_usage', { p_key_id: keyId, p_increment: 1 });
-  } catch (err) {
-    console.warn('Failed to increment usage:', err);
-  }
-}
-
-async function markExhausted(supabase: any, keyId: string | null): Promise<void> {
-  if (!keyId) return;
-  try {
-    await supabase.rpc('mark_api_key_exhausted', { p_key_id: keyId });
-    console.log(`Key ${keyId} marked exhausted`);
-  } catch (err) {
-    console.warn('Failed to mark exhausted:', err);
-  }
-}
-
-// ============================================================================
-// Tavily Search (For Market Research)
-// ============================================================================
-
-interface TavilyResult {
-  title: string;
-  url: string;
-  content: string;
-  score: number;
-}
-
-async function searchTavily(
-  supabase: any,
-  query: string,
-  maxResults: number = 8
-): Promise<{ results: TavilyResult[]; answer: string | null; error: string | null }> {
-  
-  const keyResult = await getApiKeyHybrid(supabase, 'tavily', 'TAVILY_API_KEY');
-  
-  if (!keyResult) {
-    return { results: [], answer: null, error: 'No Tavily API key available' };
-  }
-
-  try {
-    const response = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: keyResult.apiKey,
-        query,
-        search_depth: 'basic',
-        max_results: maxResults,
-        include_answer: true,
-        include_raw_content: false,
-        include_images: false
-      })
-    });
-
-    if (response.status === 429 || response.status === 401 || response.status === 403) {
-      console.warn(`Tavily returned ${response.status}, marking key exhausted`);
-      await markExhausted(supabase, keyResult.keyId);
-      return { results: [], answer: null, error: `API error: ${response.status}` };
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Tavily error:', errorText);
-      return { results: [], answer: null, error: `Tavily error: ${response.status}` };
-    }
-
-    const data = await response.json();
-    
-    // Increment usage on success
-    await incrementUsage(supabase, keyResult.keyId);
-
-    return {
-      results: data.results || [],
-      answer: data.answer || null,
-      error: null
-    };
-
-  } catch (err: any) {
-    console.error('Tavily fetch error:', err);
-    return { results: [], answer: null, error: err.message };
-  }
-}
-
-// ============================================================================
-// OpenRouter LLM (With Rotation)
-// ============================================================================
-
-async function callLLM(
-  supabase: any,
-  systemPrompt: string,
-  userPrompt: string
-): Promise<{ content: string | null; error: string | null }> {
-  
-  const keyResult = await getApiKeyHybrid(supabase, 'openrouter', 'OPENROUTER_API_KEY');
-  
-  if (!keyResult) {
-    return { content: null, error: 'No OpenRouter API key available' };
-  }
-
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${keyResult.apiKey}`,
-        'HTTP-Referer': 'https://sparkfluence.com',
-        'X-Title': 'Sparkfluence'
-      },
-      body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.75,
-        max_tokens: 3000
-      })
-    });
-
-    if (response.status === 429 || response.status === 401 || response.status === 403) {
-      console.warn(`OpenRouter returned ${response.status}, marking key exhausted`);
-      await markExhausted(supabase, keyResult.keyId);
-      return { content: null, error: `API error: ${response.status}` };
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('OpenRouter error:', errorText);
-      return { content: null, error: `OpenRouter error: ${response.status}` };
-    }
-
-    const data = await response.json();
-    await incrementUsage(supabase, keyResult.keyId);
-
-    return {
-      content: data.choices?.[0]?.message?.content || null,
-      error: null
-    };
-
-  } catch (err: any) {
-    console.error('OpenRouter fetch error:', err);
-    return { content: null, error: err.message };
-  }
 }
 
 // ============================================================================
@@ -319,7 +118,7 @@ serve(async (req) => {
     // 2. Tavily Market Research (Multiple Queries)
     // ========================================================================
     console.log('\n🔍 Starting Tavily market research...');
-    
+
     const queries = [
       `${interest} niche ideas YouTube TikTok ${currentYear} trending`,
       `${interest} ${profession} content creator successful channels`,
@@ -331,20 +130,24 @@ serve(async (req) => {
 
     for (const query of queries) {
       console.log(`  → Searching: "${query.substring(0, 50)}..."`);
-      
-      const { results, answer, error } = await searchTavily(supabase, query, 5);
-      
-      if (error) {
-        console.warn(`  ⚠ Search error: ${error}`);
+
+      const { data: tavilyData, error: tavilyError } = await callTavilyHybrid(supabase, query, {
+        searchDepth: 'basic',
+        maxResults: 5,
+        includeAnswer: true,
+      });
+
+      if (tavilyError || !tavilyData) {
+        console.warn(`  ⚠ Search error: ${tavilyError}`);
         continue;
       }
 
-      if (answer) {
-        tavilyAnswer = answer;
+      if (tavilyData.answer) {
+        tavilyAnswer = tavilyData.answer;
       }
 
       // Extract key insights from results
-      results.forEach(r => {
+      (tavilyData.results || []).forEach((r: any) => {
         if (r.content && r.content.length > 50) {
           researchResults.push(`[${r.title}]: ${r.content.substring(0, 300)}`);
         }
@@ -408,10 +211,19 @@ Use the market research provided to make each recommendation specific and backed
 
 Return ONLY valid JSON.`;
 
-    const { content: llmContent, error: llmError } = await callLLM(supabase, systemPrompt, userPrompt);
+    const llmResult = await callLLM(
+      supabase,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      { temperature: 0.75, maxTokens: 3000 }
+    );
 
-    if (llmError || !llmContent) {
-      throw new Error(llmError || 'No LLM response');
+    const llmContent = llmResult.content;
+
+    if (!llmResult.success || !llmContent) {
+      throw new Error(llmResult.error || 'No LLM response');
     }
 
     // Parse JSON
@@ -438,36 +250,30 @@ Return ONLY valid JSON.`;
     console.log(`  ✓ LLM returned ${parsedNiches.niches.length} niches`);
 
     // ========================================================================
-    // 4. Fetch Pexels Images
+    // 4. Fetch Stock Images (Pexels → Unsplash pool rotation)
     // ========================================================================
-    console.log('\n🖼️ Fetching images from Pexels...');
-    
-    const pexelsApiKey = Deno.env.get('PEXELS_API_KEY');
+    console.log('\n🖼️ Fetching stock images...');
+
     const nichesWithImages = [];
 
     for (let i = 0; i < parsedNiches.niches.length; i++) {
       const niche = parsedNiches.niches[i];
       let imageUrl = getDefaultImage(i);
 
-      if (pexelsApiKey && niche.image_keyword) {
+      if (niche.image_keyword) {
         try {
-          const pexelsResponse = await fetch(
-            `https://api.pexels.com/v1/search?query=${encodeURIComponent(niche.image_keyword)}&per_page=3&orientation=landscape`,
-            { headers: { 'Authorization': pexelsApiKey } }
-          );
-          
-          if (pexelsResponse.ok) {
-            const pexelsData = await pexelsResponse.json();
-            if (pexelsData.photos?.length > 0) {
-              const randomIndex = Math.floor(Math.random() * Math.min(3, pexelsData.photos.length));
-              imageUrl = pexelsData.photos[randomIndex]?.src?.medium || imageUrl;
-            }
+          const searchResult = await callStockImageSearch(supabase, niche.image_keyword, {
+            orientation: 'landscape',
+            perPage: 3,
+          });
+
+          if (searchResult.results.length > 0) {
+            const randomIndex = Math.floor(Math.random() * Math.min(3, searchResult.results.length));
+            imageUrl = searchResult.results[randomIndex]?.url_regular || imageUrl;
           }
         } catch (imgError) {
-          console.warn(`Pexels error for "${niche.image_keyword}"`);
+          console.warn(`Stock image error for "${niche.image_keyword}"`);
         }
-        
-        await new Promise(resolve => setTimeout(resolve, 100));
       }
 
       nichesWithImages.push({

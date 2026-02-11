@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { callGeminiHybrid, callOpenRouterHybrid, getApiKeyFromPool, incrementUsage } from '../_shared/apiKeyRotation.ts'
+import { callLLM } from '../_shared/apiKeyRotation.ts'
 import {
   PROJECT_INSTRUCTION,
   CINEMATIC_VISUAL_GUIDE,
@@ -201,107 +201,21 @@ New script (EXACTLY ${target_words} words):`
       }
 
       try {
-        // Get API key from pool only (no secrets fallback)
-        const geminiKey = await getApiKeyFromPool(supabase, 'gemini')
+        const llmResult = await callLLM(
+          supabase,
+          [{ role: 'user', content: shortenPrompt }],
+          { geminiFirst: true, temperature: 0.7, maxTokens: 500 }
+        )
 
-        if (geminiKey) {
-          console.log(`[Shorten] Using Gemini from pool: ${geminiKey.keyName}`)
-
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: shortenPrompt }] }],
-                generationConfig: { temperature: 0.7, maxOutputTokens: 500 }
-              })
-            }
+        if (llmResult.success && llmResult.content) {
+          const shortenedScript = llmResult.content.trim().replace(/^["']|["']$/g, '')
+          return new Response(
+            JSON.stringify({ success: true, shortened_script: shortenedScript }),
+            { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
           )
-
-          if (response.ok) {
-            const data = await response.json()
-            const content = data?.candidates?.[0]?.content?.parts?.[0]?.text
-
-            if (content) {
-              // Increment usage
-              await incrementUsage(supabase, geminiKey.keyId, 1)
-
-              const shortenedScript = content.trim().replace(/^["']|["']$/g, '')
-              return new Response(
-                JSON.stringify({ success: true, shortened_script: shortenedScript }),
-                { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
-              )
-            }
-          } else {
-            console.log(`[Shorten] Gemini returned ${response.status}`)
-          }
         }
 
-        console.log('[Shorten] Gemini failed/unavailable, trying OpenRouter from pool...')
-
-        // Fallback to OpenRouter from pool
-        const openRouterKey = await getApiKeyFromPool(supabase, 'openrouter')
-        let openRouterSuccess = false
-
-        if (openRouterKey) {
-          console.log(`[Shorten] Using OpenRouter from pool: ${openRouterKey.keyName}`)
-
-          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${openRouterKey.apiKey}`,
-              'HTTP-Referer': 'https://sparkfluence.com',
-              'X-Title': 'Sparkfluence'
-            },
-            body: JSON.stringify({
-              model: 'meta-llama/llama-3.3-70b-instruct',
-              messages: [{ role: 'user', content: shortenPrompt }],
-              temperature: 0.7,
-              max_tokens: 500
-            })
-          })
-
-          if (response.ok) {
-            const data = await response.json()
-            const orContent = data?.choices?.[0]?.message?.content
-
-            if (orContent) {
-              // Increment usage
-              await incrementUsage(supabase, openRouterKey.keyId, 1)
-
-              const shortenedScript = orContent.trim().replace(/^["']|["']$/g, '')
-              return new Response(
-                JSON.stringify({ success: true, shortened_script: shortenedScript }),
-                { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
-              )
-            }
-          } else {
-            console.log(`[Shorten] OpenRouter returned ${response.status}`)
-          }
-        }
-
-        // OpenRouter also failed - try Gemini 1.5 Flash as final retry
-        if (!openRouterSuccess) {
-          console.log('[Shorten] OpenRouter failed, retrying with Gemini 1.5 Flash...')
-
-          const geminiRetryResult = await callGeminiHybrid(
-            supabase,
-            [{ role: 'user', content: shortenPrompt }],
-            { model: 'gemini-2.0-flash-lite', temperature: 0.7, maxTokens: 500 }
-          )
-
-          if (geminiRetryResult.success && geminiRetryResult.content) {
-            const shortenedScript = geminiRetryResult.content.trim().replace(/^["']|["']$/g, '')
-            return new Response(
-              JSON.stringify({ success: true, shortened_script: shortenedScript }),
-              { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
-            )
-          }
-        }
-
-        console.error('[Shorten] All providers failed')
+        console.error('[Shorten] All providers failed:', llmResult.error)
         return new Response(
           JSON.stringify({ success: false, error: 'All API providers failed. Please try again later.' }),
           { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
@@ -355,137 +269,33 @@ OUTPUT FORMAT (JSON only, no markdown):
 Return ONLY valid JSON, no explanations.`
 
       try {
-        const geminiKey = await getApiKeyFromPool(supabase, 'gemini')
+        // Helper to clean JSON from markdown fences
+        const cleanJson = (raw: string) => {
+          let s = raw.trim()
+          if (s.startsWith('```json')) s = s.replace(/```json\n?/g, '').replace(/```\n?/g, '')
+          else if (s.startsWith('```')) s = s.replace(/```\n?/g, '')
+          return s
+        }
 
-        if (geminiKey) {
-          console.log(`[Translate] Using Gemini from pool: ${geminiKey.keyName}`)
+        const llmResult = await callLLM(
+          supabase,
+          [{ role: 'user', content: translatePrompt }],
+          { geminiFirst: true, temperature: 0.7, maxTokens: 4000 }
+        )
 
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: translatePrompt }] }],
-                generationConfig: { temperature: 0.7, maxOutputTokens: 4000 }
-              })
-            }
-          )
-
-          if (response.ok) {
-            const data = await response.json()
-            let content = data?.candidates?.[0]?.content?.parts?.[0]?.text
-
-            if (content) {
-              await incrementUsage(supabase, geminiKey.keyId, scriptsArray.length)
-
-              // Clean JSON from markdown if present
-              content = content.trim()
-              if (content.startsWith('```json')) {
-                content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '')
-              } else if (content.startsWith('```')) {
-                content = content.replace(/```\n?/g, '')
-              }
-
-              try {
-                const parsed = JSON.parse(content)
-                return new Response(
-                  JSON.stringify({ success: true, translations: parsed.translations }),
-                  { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
-                )
-              } catch (parseErr) {
-                console.error('[Translate] JSON parse error:', parseErr, 'Content:', content)
-              }
-            }
-          } else {
-            console.log(`[Translate] Gemini returned ${response.status}`)
+        if (llmResult.success && llmResult.content) {
+          try {
+            const parsed = JSON.parse(cleanJson(llmResult.content))
+            return new Response(
+              JSON.stringify({ success: true, translations: parsed.translations }),
+              { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
+            )
+          } catch (parseErr) {
+            console.error('[Translate] JSON parse error:', parseErr)
           }
         }
 
-        console.log('[Translate] Gemini failed/unavailable, trying OpenRouter...')
-
-        const openRouterKey = await getApiKeyFromPool(supabase, 'openrouter')
-        let openRouterSuccess = false
-
-        if (openRouterKey) {
-          console.log(`[Translate] Using OpenRouter from pool: ${openRouterKey.keyName}`)
-
-          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${openRouterKey.apiKey}`,
-              'HTTP-Referer': 'https://sparkfluence.com',
-              'X-Title': 'Sparkfluence'
-            },
-            body: JSON.stringify({
-              model: 'meta-llama/llama-3.3-70b-instruct',
-              messages: [{ role: 'user', content: translatePrompt }],
-              temperature: 0.7,
-              max_tokens: 4000
-            })
-          })
-
-          if (response.ok) {
-            const data = await response.json()
-            let orContent = data?.choices?.[0]?.message?.content
-
-            if (orContent) {
-              await incrementUsage(supabase, openRouterKey.keyId, scriptsArray.length)
-              openRouterSuccess = true
-
-              orContent = orContent.trim()
-              if (orContent.startsWith('```json')) {
-                orContent = orContent.replace(/```json\n?/g, '').replace(/```\n?/g, '')
-              } else if (orContent.startsWith('```')) {
-                orContent = orContent.replace(/```\n?/g, '')
-              }
-
-              try {
-                const parsed = JSON.parse(orContent)
-                return new Response(
-                  JSON.stringify({ success: true, translations: parsed.translations }),
-                  { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
-                )
-              } catch (parseErr) {
-                console.error('[Translate] JSON parse error:', parseErr)
-                openRouterSuccess = false  // JSON parse failed, try next provider
-              }
-            }
-          }
-        }
-
-        // OpenRouter also failed - try Gemini 1.5 Flash as final retry
-        if (!openRouterSuccess) {
-          console.log('[Translate] OpenRouter failed, retrying with Gemini 1.5 Flash...')
-
-          const geminiRetryResult = await callGeminiHybrid(
-            supabase,
-            [{ role: 'user', content: translatePrompt }],
-            { model: 'gemini-2.0-flash-lite', temperature: 0.7, maxTokens: 4000 }
-          )
-
-          if (geminiRetryResult.success && geminiRetryResult.content) {
-            let content = geminiRetryResult.content.trim()
-            if (content.startsWith('```json')) {
-              content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '')
-            } else if (content.startsWith('```')) {
-              content = content.replace(/```\n?/g, '')
-            }
-
-            try {
-              const parsed = JSON.parse(content)
-              return new Response(
-                JSON.stringify({ success: true, translations: parsed.translations }),
-                { headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
-              )
-            } catch (parseErr) {
-              console.error('[Translate] Gemini retry JSON parse error:', parseErr)
-            }
-          }
-        }
-
-        console.error('[Translate] All providers failed')
+        console.error('[Translate] All providers failed:', llmResult.error)
         return new Response(
           JSON.stringify({ success: false, error: 'All API providers failed. Please try again later.' }),
           { status: 500, headers: { ...requestCorsHeaders, 'Content-Type': 'application/json' } }
@@ -636,86 +446,34 @@ CHALLENGE ADAPTATION RULES:
     )
 
     // ============================================================
-    // CALL LLM (OpenRouter PRIMARY, Gemini FALLBACK, Gemini-lite RETRY)
+    // CALL LLM (OpenRouter PRIMARY → Gemini FALLBACK, auto-rotation)
     // ============================================================
 
     let generatedText: string = ''
     let llmSource = 'unknown'
-    let lastError = ''
 
-    // Try OpenRouter first (paid model — reliable, no free-tier rate limits)
-    console.log('[LLM] Trying OpenRouter gemini-2.5-flash-lite (primary)...')
-    const openRouterResult = await callOpenRouterHybrid(
-      supabase,
-      [
+    console.log('[LLM] Calling LLM (OR primary → Gemini fallback)...')
+    const mainResult = await callLLM(supabase, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { temperature: 0.6, maxTokens: 8192 })
+
+    if (mainResult.success && mainResult.content) {
+      generatedText = mainResult.content
+      llmSource = mainResult.provider
+    } else {
+      // Last resort: lite model
+      console.log('[LLM] All providers failed, retrying with lite model...')
+      const retryResult = await callLLM(supabase, [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
-      ],
-      {
-        model: 'google/gemini-2.5-flash-lite',
-        temperature: 0.6,
-        maxTokens: 8192
-      }
-    )
+      ], { geminiFirst: true, geminiModel: 'gemini-2.0-flash-lite', temperature: 0.6, maxTokens: 8192 })
 
-    if (openRouterResult.data?.choices?.[0]?.message?.content) {
-      console.log(`[LLM] OpenRouter success (source: ${openRouterResult.source})`)
-      generatedText = openRouterResult.data.choices[0].message.content
-      llmSource = `openrouter-${openRouterResult.source}`
-    } else {
-      // Fallback to Gemini direct if OpenRouter fails
-      console.log('[LLM] OpenRouter failed:', openRouterResult.error)
-      lastError = openRouterResult.error || 'OpenRouter failed'
-      console.log('[LLM] Trying Gemini 2.0 Flash (fallback)...')
-
-      const geminiResult = await callGeminiHybrid(
-        supabase,
-        [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        {
-          model: 'gemini-2.0-flash',
-          temperature: 0.6,
-          maxTokens: 8192
-        }
-      )
-
-      if (geminiResult.success && geminiResult.content) {
-        console.log(`[LLM] Gemini success (source: ${geminiResult.source})`)
-        generatedText = geminiResult.content
-        llmSource = `gemini-${geminiResult.source}`
+      if (retryResult.success && retryResult.content) {
+        generatedText = retryResult.content
+        llmSource = retryResult.provider
       } else {
-        // Gemini also failed - try Gemini lite one more time
-        console.log('[LLM] Gemini failed:', geminiResult.error)
-        lastError = geminiResult.error || 'Gemini failed'
-        console.log('[LLM] Retrying with Gemini 2.0 Flash Lite...')
-
-        const geminiRetry = await callGeminiHybrid(
-          supabase,
-          [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          {
-            model: 'gemini-2.0-flash-lite',
-            temperature: 0.6,
-            maxTokens: 8192
-          }
-        )
-
-        if (geminiRetry.success && geminiRetry.content) {
-          console.log(`[LLM] Gemini lite retry success (source: ${geminiRetry.source})`)
-          generatedText = geminiRetry.content
-          llmSource = `gemini-lite-${geminiRetry.source}`
-        } else {
-          // All providers failed
-          console.error('[LLM] All providers failed')
-          console.error('[LLM] OpenRouter error:', openRouterResult.error)
-          console.error('[LLM] Gemini error:', geminiResult.error)
-          console.error('[LLM] Gemini lite error:', geminiRetry.error)
-          throw new Error(`All LLM providers failed. Last error: ${lastError}`)
-        }
+        throw new Error(`All LLM providers failed. Last error: ${retryResult.error}`)
       }
     }
 
@@ -727,11 +485,7 @@ CHALLENGE ADAPTATION RULES:
     
     // Create a simple LLM wrapper for entity fix
     const callLLMForFix = async (prompt: string): Promise<string> => {
-      const result = await callGeminiHybrid(
-        supabase,
-        [{ role: 'user', content: prompt }],
-        { model: 'gemini-2.0-flash', temperature: 0.3, maxTokens: 4096 }
-      )
+      const result = await callLLM(supabase, [{ role: 'user', content: prompt }], { geminiFirst: true, temperature: 0.3, maxTokens: 4096 })
       if (result.success && result.content) {
         return result.content
       }
@@ -757,24 +511,16 @@ CHALLENGE ADAPTATION RULES:
     if (!scriptData.segments || scriptData.segments.length === 0) {
       console.warn('[Script] Parse resulted in empty segments — retrying LLM call...')
 
-      // Retry with Gemini (potentially different key from rotation)
-      const retryResult = await callGeminiHybrid(
-        supabase,
-        [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        {
-          model: 'gemini-2.0-flash',
-          temperature: 0.5,  // Slightly lower temperature for more deterministic output
-          maxTokens: 8192
-        }
-      )
+      // Retry with LLM (lower temperature for more deterministic output)
+      const retryResult = await callLLM(supabase, [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ], { geminiFirst: true, temperature: 0.5, maxTokens: 8192 })
 
       if (retryResult.success && retryResult.content) {
-        console.log(`[Script] Retry LLM success (finishReason: ${retryResult.finishReason})`)
+        console.log(`[Script] Retry LLM success (provider: ${retryResult.provider})`)
         generatedText = retryResult.content
-        llmSource = `gemini-retry-parse-${retryResult.source}`
+        llmSource = `retry-parse-${retryResult.provider}`
         scriptData = parseScriptOutput(generatedText, selectedDuration, content, selectedLanguage)
       }
 
@@ -1600,49 +1346,18 @@ Return JSON:
   }
 }`
 
-  // Try Gemini first (FAST)
-  let generatedText: string = ''
-  
-  console.log('[Regenerate] Trying Gemini (primary)...')
-  const geminiResult = await callGeminiHybrid(
-    supabase,
-    [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    {
-      model: 'gemini-2.0-flash',
-      temperature: 0.7,
-      maxTokens: 1024
-    }
-  )
+  // Call LLM (Gemini first for speed, OR fallback)
+  console.log('[Regenerate] Calling LLM (Gemini primary → OR fallback)...')
+  const llmResult = await callLLM(supabase, [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ], { geminiFirst: true, temperature: 0.7, maxTokens: 1024 })
 
-  if (geminiResult.success && geminiResult.content) {
-    console.log('[Regenerate] Gemini success')
-    generatedText = geminiResult.content
-  } else {
-    // Fallback to OpenRouter
-    console.log('[Regenerate] Gemini failed:', geminiResult.error)
-    console.log('[Regenerate] Trying OpenRouter...')
-    
-    const openRouterResult = await callOpenRouterHybrid(
-      supabase,
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      {
-        model: 'google/gemini-2.5-flash-lite',
-        temperature: 0.7,
-        maxTokens: 1024
-      }
-    )
-
-    if (openRouterResult.error || !openRouterResult.data?.choices?.[0]?.message?.content) {
-      throw new Error(openRouterResult.error || 'All LLM providers failed')
-    }
-    generatedText = openRouterResult.data.choices[0].message.content
+  if (!llmResult.success || !llmResult.content) {
+    throw new Error(llmResult.error || 'All LLM providers failed')
   }
+  const generatedText = llmResult.content
+  console.log(`[Regenerate] LLM success (provider: ${llmResult.provider})`)
 
   // Parse JSON
   let jsonStr = generatedText.trim()
@@ -2061,31 +1776,17 @@ Rules:
 ${batchItems}`
 
   try {
-    // Primary: OpenRouter (google/gemini-2.5-flash-lite)
-    let responseContent: string | null = null
-    console.log('[AutoShorten] Trying OpenRouter gemini-2.5-flash-lite (primary)...')
-    const orResult = await callOpenRouterHybrid(supabase, [
+    console.log('[AutoShorten] Calling LLM (OR primary → Gemini fallback)...')
+    const llmResult = await callLLM(supabase, [
       { role: 'user', content: prompt }
-    ], { model: 'google/gemini-2.5-flash-lite', temperature: 0.5, maxTokens: 2048 })
+    ], { temperature: 0.5, maxTokens: 2048 })
 
-    if (orResult.data?.choices?.[0]?.message?.content) {
-      responseContent = orResult.data.choices[0].message.content
-      console.log(`[AutoShorten] OpenRouter success (source: ${orResult.source})`)
-    } else {
-      // Fallback: Gemini direct (gemini-2.0-flash)
-      console.warn(`[AutoShorten] OpenRouter failed: ${orResult.error}, trying Gemini direct...`)
-      const geminiResult = await callGeminiHybrid(supabase, [
-        { role: 'user', content: prompt }
-      ], { temperature: 0.5, maxTokens: 2048 })
-
-      if (geminiResult.success && geminiResult.content) {
-        responseContent = geminiResult.content
-        console.log('[AutoShorten] Gemini direct success')
-      } else {
-        console.warn(`[AutoShorten] ⚠️ Both OpenRouter and Gemini failed: ${geminiResult.error}`)
-        return { segments, shortened_count: 0 }
-      }
+    if (!llmResult.success || !llmResult.content) {
+      console.warn(`[AutoShorten] All LLM providers failed: ${llmResult.error}`)
+      return { segments, shortened_count: 0 }
     }
+    const responseContent = llmResult.content
+    console.log(`[AutoShorten] LLM success (provider: ${llmResult.provider})`)
 
     // Parse response — expect numbered lines like [1] text here
     const responseLines = responseContent.trim().split('\n')

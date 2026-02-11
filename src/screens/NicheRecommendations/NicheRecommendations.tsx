@@ -18,93 +18,75 @@ interface Niche {
   image_url: string;
 }
 
-// Fallback niches if everything fails
-const fallbackNiches: Niche[] = [
-  {
-    id: 1,
-    title: "Help your audience boost productivity with reviews of tech tools and apps to use everyday",
-    description: "Tech reviews and productivity",
-    growth_potential: "+8% Eng",
-    image_url: "https://images.pexels.com/photos/4065876/pexels-photo-4065876.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 2,
-    title: "Focus on strategies for building a personalized brand that aligns with image in the digital age",
-    description: "Personal branding strategies",
-    growth_potential: "+4% Agg",
-    image_url: "https://images.pexels.com/photos/4467687/pexels-photo-4467687.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 3,
-    title: "The role of eco-friendly fashion, how new starts are redefining fashion to energy-saving tips",
-    description: "Sustainable fashion",
-    growth_potential: "+3% Exp",
-    image_url: "https://images.pexels.com/photos/3755706/pexels-photo-3755706.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 4,
-    title: "Personal financial education for the younger generation — from budgeting and investing",
-    description: "Financial literacy for Gen Z",
-    growth_potential: "+2% Emag",
-    image_url: "https://images.pexels.com/photos/6863332/pexels-photo-6863332.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 5,
-    title: "A niche that discusses emotional balance, self-motivation, and mindfulness practices",
-    description: "Mental wellness",
-    growth_potential: "+9% Art",
-    image_url: "https://images.pexels.com/photos/3759657/pexels-photo-3759657.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 6,
-    title: "Explore the world of modern gaming, from game reviews and competitive tips to esports",
-    description: "Gaming and esports",
-    growth_potential: "+10% Lk",
-    image_url: "https://images.pexels.com/photos/7915437/pexels-photo-7915437.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 7,
-    title: "Share quick and healthy recipes for busy professionals looking to maintain wellness",
-    description: "Healthy cooking tips",
-    growth_potential: "+7% Eng",
-    image_url: "https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 8,
-    title: "Travel content focused on hidden gems and authentic local experiences",
-    description: "Off-the-beaten-path travel",
-    growth_potential: "+6% Exp",
-    image_url: "https://images.pexels.com/photos/2376997/pexels-photo-2376997.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 9,
-    title: "DIY home improvement projects and interior design inspiration on a budget",
-    description: "Budget home decor",
-    growth_potential: "+5% Home",
-    image_url: "https://images.pexels.com/photos/1457842/pexels-photo-1457842.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 10,
-    title: "Fitness routines and workout tips for beginners starting their wellness journey",
-    description: "Beginner fitness",
-    growth_potential: "+8% Fit",
-    image_url: "https://images.pexels.com/photos/4162491/pexels-photo-4162491.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 11,
-    title: "Educational content about environmental conservation and sustainable living practices",
-    description: "Eco-conscious lifestyle",
-    growth_potential: "+4% Eco",
-    image_url: "https://images.pexels.com/photos/4022092/pexels-photo-4022092.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
-  {
-    id: 12,
-    title: "Photography tips and creative editing techniques for mobile content creators",
-    description: "Mobile photography",
-    growth_potential: "+9% Photo",
-    image_url: "https://images.pexels.com/photos/2916450/pexels-photo-2916450.jpeg?auto=compress&cs=tinysrgb&w=400",
-  },
+// Default fallback images
+const defaultImages = [
+  "https://images.pexels.com/photos/4065876/pexels-photo-4065876.jpeg?auto=compress&cs=tinysrgb&w=400",
+  "https://images.pexels.com/photos/4467687/pexels-photo-4467687.jpeg?auto=compress&cs=tinysrgb&w=400",
+  "https://images.pexels.com/photos/3755706/pexels-photo-3755706.jpeg?auto=compress&cs=tinysrgb&w=400",
+  "https://images.pexels.com/photos/6863332/pexels-photo-6863332.jpeg?auto=compress&cs=tinysrgb&w=400",
+  "https://images.pexels.com/photos/3759657/pexels-photo-3759657.jpeg?auto=compress&cs=tinysrgb&w=400",
+  "https://images.pexels.com/photos/7915437/pexels-photo-7915437.jpeg?auto=compress&cs=tinysrgb&w=400",
 ];
+
+// Interest-keyed fallback niches (used as last resort when all APIs fail)
+const fallbackNichesByInterest: Record<string, Niche[]> = {
+  "Technology": [
+    { id: 1, title: "AI tools review and tutorials for productivity", description: "AI Tools", growth_potential: "+12% Tech", image_url: defaultImages[0] },
+    { id: 2, title: "Latest gadget unboxing and honest reviews", description: "Tech Reviews", growth_potential: "+8% Eng", image_url: defaultImages[1] },
+    { id: 3, title: "Coding tutorials and web development tips", description: "Programming", growth_potential: "+10% Dev", image_url: defaultImages[2] },
+    { id: 4, title: "Startup tips and tech entrepreneurship stories", description: "Tech Startups", growth_potential: "+6% Biz", image_url: defaultImages[3] },
+    { id: 5, title: "Cybersecurity awareness and online safety tips", description: "Cybersecurity", growth_potential: "+9% Sec", image_url: defaultImages[4] },
+    { id: 6, title: "SaaS tools comparison and software reviews", description: "Software Reviews", growth_potential: "+7% SaaS", image_url: defaultImages[5] },
+  ],
+  "Entertainment": [
+    { id: 1, title: "Movie reviews and film analysis for cinephiles", description: "Film Analysis", growth_potential: "+8% Eng", image_url: defaultImages[0] },
+    { id: 2, title: "Gaming tips, reviews and esports highlights", description: "Gaming", growth_potential: "+10% Game", image_url: defaultImages[1] },
+    { id: 3, title: "K-Drama and anime recommendations and reviews", description: "Asian Entertainment", growth_potential: "+12% Pop", image_url: defaultImages[2] },
+    { id: 4, title: "Music production tips and song cover tutorials", description: "Music Creation", growth_potential: "+6% Music", image_url: defaultImages[3] },
+    { id: 5, title: "Comedy sketches and trending meme content", description: "Comedy Content", growth_potential: "+15% Viral", image_url: defaultImages[4] },
+    { id: 6, title: "Celebrity news and pop culture commentary", description: "Pop Culture", growth_potential: "+7% News", image_url: defaultImages[5] },
+  ],
+  "Culinary": [
+    { id: 1, title: "Quick and easy recipes for busy professionals", description: "Quick Meals", growth_potential: "+8% Cook", image_url: defaultImages[0] },
+    { id: 2, title: "Street food exploration and restaurant reviews", description: "Food Review", growth_potential: "+10% Food", image_url: defaultImages[1] },
+    { id: 3, title: "Healthy meal prep ideas and nutrition tips", description: "Healthy Eating", growth_potential: "+9% Health", image_url: defaultImages[2] },
+    { id: 4, title: "Baking tutorials from beginner to advanced", description: "Baking", growth_potential: "+6% Bake", image_url: defaultImages[3] },
+    { id: 5, title: "Traditional cuisine recipes from around the world", description: "World Cuisine", growth_potential: "+7% Global", image_url: defaultImages[4] },
+    { id: 6, title: "Kitchen hacks and food photography tips", description: "Kitchen Tips", growth_potential: "+5% Tips", image_url: defaultImages[5] },
+  ],
+  "Fashion": [
+    { id: 1, title: "Daily outfit inspiration and style guides", description: "OOTD Style", growth_potential: "+8% Fashion", image_url: defaultImages[0] },
+    { id: 2, title: "Sustainable fashion and thrift haul finds", description: "Thrift Fashion", growth_potential: "+10% Eco", image_url: defaultImages[1] },
+    { id: 3, title: "Streetwear trends and sneaker culture", description: "Streetwear", growth_potential: "+12% Street", image_url: defaultImages[2] },
+    { id: 4, title: "Fashion on a budget — looking stylish for less", description: "Budget Fashion", growth_potential: "+7% Save", image_url: defaultImages[3] },
+    { id: 5, title: "Accessory styling tips and wardrobe essentials", description: "Accessories", growth_potential: "+5% Style", image_url: defaultImages[4] },
+    { id: 6, title: "Seasonal fashion trends and color coordination", description: "Trend Alert", growth_potential: "+6% Trend", image_url: defaultImages[5] },
+  ],
+  "Health": [
+    { id: 1, title: "Home workout routines for all fitness levels", description: "Home Fitness", growth_potential: "+10% Fit", image_url: defaultImages[0] },
+    { id: 2, title: "Mental health awareness and mindfulness practices", description: "Mental Wellness", growth_potential: "+12% Mind", image_url: defaultImages[1] },
+    { id: 3, title: "Nutrition tips and healthy eating habits", description: "Nutrition", growth_potential: "+8% Eat", image_url: defaultImages[2] },
+    { id: 4, title: "Yoga and meditation guides for beginners", description: "Yoga", growth_potential: "+9% Zen", image_url: defaultImages[3] },
+    { id: 5, title: "Sleep optimization and stress management tips", description: "Sleep Health", growth_potential: "+7% Rest", image_url: defaultImages[4] },
+    { id: 6, title: "Running tips and marathon training plans", description: "Running", growth_potential: "+6% Run", image_url: defaultImages[5] },
+  ],
+  "_default": [
+    { id: 1, title: "Boost productivity with practical tips and tools", description: "Productivity", growth_potential: "+8% Eng", image_url: defaultImages[0] },
+    { id: 2, title: "Personal branding strategies for the digital age", description: "Personal Branding", growth_potential: "+6% Brand", image_url: defaultImages[1] },
+    { id: 3, title: "Financial literacy and smart money management", description: "Finance Tips", growth_potential: "+7% Fin", image_url: defaultImages[2] },
+    { id: 4, title: "Self-improvement and motivation content", description: "Self Development", growth_potential: "+9% Growth", image_url: defaultImages[3] },
+    { id: 5, title: "Creative content ideas and storytelling techniques", description: "Content Creation", growth_potential: "+10% Create", image_url: defaultImages[4] },
+    { id: 6, title: "Trending topics and viral content strategies", description: "Viral Content", growth_potential: "+12% Viral", image_url: defaultImages[5] },
+  ],
+};
+
+// Get fallback niches for a specific interest
+function getFallbackNiches(interest?: string): Niche[] {
+  if (interest && fallbackNichesByInterest[interest]) {
+    return fallbackNichesByInterest[interest];
+  }
+  return fallbackNichesByInterest["_default"];
+}
 
 export const NicheRecommendations = (): JSX.Element => {
   const navigate = useNavigate();
@@ -170,18 +152,18 @@ export const NicheRecommendations = (): JSX.Element => {
     try {
       if (!onboardingData.interest || !onboardingData.profession) {
         console.warn('Missing onboarding data, using fallback');
-        setAllNiches(fallbackNiches);
+        setAllNiches(getFallbackNiches());
         setLoading(false);
         return;
       }
 
-      // If force regenerate, skip cache on backend
+      // Primary: generate-niche-recommendations (heavy, Tavily + LLM + images)
       console.log('[NicheRec] Calling API with country:', userCountry);
       const { data, error: funcError } = await supabase.functions.invoke('generate-niche-recommendations', {
         body: {
           interest: onboardingData.interest,
           profession: onboardingData.profession,
-          country: userCountry,  // Pass user's country for Google Trends
+          country: userCountry,
           skipCache: forceRegenerate
         }
       });
@@ -196,10 +178,39 @@ export const NicheRecommendations = (): JSX.Element => {
 
       setAllNiches(data.data.niches);
       setIsCached(data.data.cached || false);
-      
+
     } catch (err: any) {
-      console.error('Error generating niches:', err);
-      setAllNiches(fallbackNiches);
+      console.error('Error generating niches (primary):', err);
+
+      // Secondary fallback: lightweight generate-niche-suggestions in browse mode
+      try {
+        console.log('[NicheRec] Trying lightweight fallback...');
+        const { data: lightData } = await supabase.functions.invoke('generate-niche-suggestions', {
+          body: {
+            mode: 'browse',
+            interest: onboardingData.interest,
+            profession: onboardingData.profession,
+          }
+        });
+
+        if (lightData?.success && lightData?.niches?.length > 0) {
+          const lightNiches: Niche[] = lightData.niches.map((title: string, idx: number) => ({
+            id: idx + 1,
+            title,
+            description: title,
+            growth_potential: 'Trending',
+            image_url: defaultImages[idx % defaultImages.length],
+          }));
+          setAllNiches(lightNiches);
+          console.log('[NicheRec] Lightweight fallback succeeded:', lightNiches.length, 'niches');
+          return;
+        }
+      } catch (lightErr) {
+        console.error('Lightweight fallback also failed:', lightErr);
+      }
+
+      // Last resort: interest-specific static fallback
+      setAllNiches(getFallbackNiches(onboardingData.interest));
     } finally {
       setLoading(false);
     }

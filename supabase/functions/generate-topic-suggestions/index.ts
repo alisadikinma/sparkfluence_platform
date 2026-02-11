@@ -1,61 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { callLLM } from '../_shared/apiKeyRotation.ts';
 import { sanitizePromptInput, sanitizeLanguage, sanitizeUserId } from '../_shared/inputSanitizer.ts';
 import { corsHeaders, handleCors } from '../_shared/cors.ts';
 import { requireAuth } from '../_shared/auth.ts';
-
-// ============================================================================
-// Direct LLM calls
-// ============================================================================
-
-async function callGemini(prompt: string, apiKey: string, timeoutMs: number): Promise<{ content: string | null; error: string | null }> {
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.85, maxOutputTokens: 2500, responseMimeType: 'application/json' },
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      }
-    );
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      return { content: null, error: `HTTP ${res.status}: ${errBody.slice(0, 150)}` };
-    }
-    const data = await res.json();
-    return { content: data?.candidates?.[0]?.content?.parts?.[0]?.text || null, error: null };
-  } catch (e: any) {
-    return { content: null, error: e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timeout' : e.message };
-  }
-}
-
-async function callOpenRouter(msgs: Array<{ role: string; content: string }>, apiKey: string, model: string, timeoutMs: number): Promise<{ content: string | null; error: string | null }> {
-  try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://sparkfluence.studio',
-        'X-Title': 'Sparkfluence',
-      },
-      body: JSON.stringify({ model, messages: msgs, temperature: 0.85, max_tokens: 2500, response_format: { type: 'json_object' } }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      return { content: null, error: `HTTP ${res.status}: ${errBody.slice(0, 150)}` };
-    }
-    const data = await res.json();
-    return { content: data?.choices?.[0]?.message?.content || null, error: null };
-  } catch (e: any) {
-    return { content: null, error: e.name === 'TimeoutError' || e.name === 'AbortError' ? 'timeout' : e.message };
-  }
-}
 
 // ============================================================================
 // Robust JSON parser — handles common LLM output issues
@@ -171,9 +119,9 @@ serve(async (req) => {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     // ====================================================================
-    // 1. Fetch EVERYTHING in parallel: trending, history, and ALL API keys
+    // 1. Fetch trending + history in parallel
     // ====================================================================
-    const [trendingResult, historyResult, geminiPoolRows, orPoolRows] = await Promise.all([
+    const [trendingResult, historyResult] = await Promise.all([
       supabase.from('trending_topics').select('keyword, source, volume_score')
         .eq('country', country).gt('expires_at', new Date().toISOString())
         .order('volume_score', { ascending: false }).limit(15)
@@ -183,21 +131,7 @@ serve(async (req) => {
             .eq('user_id', user_id).gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString())
             .limit(20).then(({ data }) => (data || []).map((r: any) => r.topic_title)).catch(() => [])
         : Promise.resolve([]),
-      // Fetch ALL active keys directly (faster than RPC, gets all keys)
-      supabase.from('api_keys_pool').select('api_key')
-        .eq('provider', 'gemini').eq('is_active', true).eq('is_exhausted', false)
-        .order('priority').order('usage_count')
-        .then(({ data }) => (data || []).map((r: any) => r.api_key)).catch(() => []),
-      supabase.from('api_keys_pool').select('api_key')
-        .eq('provider', 'openrouter').eq('is_active', true).eq('is_exhausted', false)
-        .order('priority').order('usage_count')
-        .then(({ data }) => (data || []).map((r: any) => r.api_key)).catch(() => []),
     ]);
-
-    // Collect keys: Gemini from pool only (env key is compromised), OpenRouter pool + env
-    const orEnvKey = Deno.env.get('OPENROUTER_API_KEY') || null;
-    const geminiKeys = geminiPoolRows as string[];
-    const orKeys = [...new Set([...orPoolRows, orEnvKey].filter(Boolean))] as string[];
 
     let trendingKeywords = trendingResult as Array<{ keyword: string; source: string; volume_score: number }>;
     let trendingSource = 'database';
@@ -223,7 +157,7 @@ serve(async (req) => {
 
     const allExclusions = [...new Set([...historyResult, ...exclude_titles])];
 
-    console.log(`[Topics] Setup done in ${Date.now() - startTime}ms. Keys: gemini=${geminiKeys.length}, or=${orKeys.length}, trends=${trendingKeywords.length}`);
+    console.log(`[Topics] Setup done in ${Date.now() - startTime}ms. trends=${trendingKeywords.length}, exclusions=${allExclusions.length}`);
 
     // ====================================================================
     // 2. Build LLM prompt
@@ -301,46 +235,18 @@ OUTPUT FORMAT:
     }
 
     // ====================================================================
-    // 3. Call LLM with deadline awareness
+    // 3. Call LLM (OR primary → Gemini fallback, auto rotation)
     // ====================================================================
-    let content: string | null = null;
-    let usedProvider = 'unknown';
-    const errors: string[] = [];
-    const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
     const msgs = [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }];
 
-    const remainingMs = () => DEADLINE_MS - (Date.now() - startTime);
+    const llmResult = await callLLM(supabase, msgs, { temperature: 0.85, maxTokens: 2500 });
 
-    // Priority 1: OpenRouter (Gemini 2.5 Flash Lite — fast, cheap, $4.67 credit)
-    const orModel = 'google/gemini-2.5-flash-lite';
-    for (const key of orKeys) {
-      if (content || remainingMs() < 5000) break;
-      const timeout = Math.min(15000, remainingMs() - 3000);
-      if (timeout < 3000) break;
-      const r = await callOpenRouter(msgs, key, orModel, timeout);
-      if (r.content) { content = r.content; usedProvider = `openrouter:gemini-2.5-flash-lite`; }
-      else errors.push(`OR(gemini-2.5-flash-lite): ${r.error}`);
-    }
-    if (orKeys.length === 0) errors.push('OpenRouter: no keys');
-
-    // Priority 2: Gemini direct (fallback if OpenRouter fails)
-    if (!content && remainingMs() > 5000) {
-      for (const key of geminiKeys) {
-        if (content || remainingMs() < 4000) break;
-        const timeout = Math.min(10000, remainingMs() - 2000);
-        if (timeout < 3000) break;
-        const r = await callGemini(fullPrompt, key, timeout);
-        if (r.content) { content = r.content; usedProvider = 'gemini-direct'; }
-        else errors.push(`Gemini: ${r.error}`);
-      }
-      if (geminiKeys.length === 0) errors.push('Gemini: no keys');
+    if (!llmResult.success || !llmResult.content) {
+      throw new Error(`All providers failed (${Date.now() - startTime}ms): ${llmResult.error}`);
     }
 
-    if (!content) {
-      throw new Error(`All providers failed (${Date.now() - startTime}ms): ${errors.join(' | ')}`);
-    }
-
-    console.log(`[Topics] LLM done in ${Date.now() - startTime}ms via ${usedProvider}`);
+    const content = llmResult.content;
+    console.log(`[Topics] LLM done in ${Date.now() - startTime}ms via ${llmResult.provider}`);
 
     // ====================================================================
     // 4. Parse JSON (with robust repair)
@@ -394,7 +300,7 @@ OUTPUT FORMAT:
     return new Response(
       JSON.stringify({
         success: true,
-        data: { topics, batch, language, provider: usedProvider, generated_at: new Date().toISOString(),
+        data: { topics, batch, language, provider: llmResult.provider, generated_at: new Date().toISOString(),
           trending_source: trendingSource, trending_count: trendingKeywords.length, exclusion_count: allExclusions.length,
           search_keyword: isKeywordSearch ? search_keyword.trim() : null,
           timing_ms: Date.now() - startTime },

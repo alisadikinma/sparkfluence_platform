@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
+import { callLLM } from '../_shared/apiKeyRotation.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,21 +40,17 @@ serve(async (req) => {
     // Build prompt for Gemini
     const prompt = buildPrompt({ interest, profession, platforms, objectives, niches, language })
 
-    // Call Gemini 2.0 Flash via pool-based key rotation
-    const geminiResult = await callGeminiHybrid(supabase, [
+    // Call LLM (Gemini first, OR fallback)
+    const llmResult = await callLLM(supabase, [
       { role: 'user', content: prompt }
-    ], {
-      model: 'gemini-2.0-flash',
-      temperature: 0.7,
-      maxTokens: 256
-    })
+    ], { geminiFirst: true, temperature: 0.7, maxTokens: 256 })
 
-    if (!geminiResult.success || !geminiResult.content) {
-      console.error('[RECOMMEND-STYLES] Gemini error:', geminiResult.error)
-      throw new Error(geminiResult.error || 'Gemini API failed')
+    if (!llmResult.success || !llmResult.content) {
+      console.error('[RECOMMEND-STYLES] LLM error:', llmResult.error)
+      throw new Error(llmResult.error || 'LLM call failed')
     }
 
-    const text = geminiResult.content
+    const text = llmResult.content
 
     console.log('[RECOMMEND-STYLES] Gemini response:', text)
 

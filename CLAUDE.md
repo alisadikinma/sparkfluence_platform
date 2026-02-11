@@ -20,6 +20,31 @@
 └── If unsure, ASK FIRST
 ```
 
+### 📝 CLAUDE.md Self-Maintenance (MANDATORY)
+```
+After EVERY code change session, you MUST:
+1. Review CLAUDE.md sections affected by the changes
+2. Update any outdated information (models, tables, functions, flows, configs)
+3. Add new tables/functions/features if they were created
+4. Remove references to deleted/deprecated code
+
+WHY: This file is the SINGLE SOURCE OF TRUTH for the next session.
+     If CLAUDE.md is outdated, the next session will repeat mistakes,
+     use wrong models, miss new features, or break existing logic.
+
+WHEN to update:
+├── New table/column added          → Update "Key Tables" + "Database Conventions"
+├── New Edge Function               → Update "Key Directories" + "Generation Flow"
+├── AI model changed                → Update "AI Model Priority" + "Providers in Pool"
+├── New Python source/feature       → Update "Trending Topics System" section
+├── New frontend route/component    → Update "v3.0 Chat-Based UI" section
+├── Config/env changes              → Update "Environment Variables"
+├── New dependency                  → Update relevant section
+└── Bug fix with learnings          → Update "Debugging Checklist"
+
+DO NOT skip this step. DO NOT assume "it's a small change".
+```
+
 ### 🖥️ Windows Environment (Command Prompt)
 ```
 ENVIRONMENT: Windows 11
@@ -65,26 +90,95 @@ MULTILINE COMMANDS:
 | Frontend | React 18 + TypeScript + Vite + Tailwind + Shadcn UI |
 | Backend | Supabase (PostgreSQL + pgvector + Auth + Edge Functions + Storage) |
 | Video Processing | Python FastAPI + FFmpeg (VPS) |
-| AI - Script | OpenRouter: Gemini 2.5 Flash Lite (PRIMARY, PAID) → Gemini 2.0 Flash direct (fallback) |
+| AI - Script | **OpenRouter** `google/gemini-2.5-flash-lite` **(PRIMARY, PAID)** → Gemini 2.0 Flash direct (FREE fallback) |
 | AI - Images | fal.ai: Nano Banana Edit (CREATOR) + Seedream v4 / Qwen (B-ROLL) |
 | AI - Video | fal.ai: Kling 2.5 Turbo (DEFAULT) + Wan 2.5 (with audio) |
 | AI - TTS | fal.ai: Chatterbox Turbo (voice cloning) |
 | AI - Music | fal.ai: Minimax Music v2 (AI-generated BGM) |
 | AI - Transcription | Groq Whisper (FREE) |
 
+### ⚠️ AI Model Priority (NEVER GET THIS WRONG)
+```
+🟢 PRIMARY (PAID)  → OpenRouter: google/gemini-2.5-flash-lite
+   Used by: ALL AI features — generate-script, generate-topic-suggestions,
+   generate-niche-suggestions, analyze-image, generate-video-prompt,
+   rewrite-visual-direction, autoShorten, fetch_trending.py (AI Creative + Challenges)
+
+🟡 FALLBACK (FREE)  → Gemini Direct: gemini-2.0-flash (via Google API key)
+   Used ONLY when: OpenRouter keys exhausted (429/402) or unavailable
+   This is a FREE tier fallback — rate limits are strict
+
+❌ NEVER treat Gemini direct as primary. OpenRouter has PAID credit = always try first.
+❌ NEVER write new code that calls Gemini direct without trying OpenRouter first.
+```
+
 ---
 
-## Knowledge Files (5 Files)
+## Knowledge & Data Files Index
 
-Location: `D:\Projects\sparkfluence_platform\docs\knowledge\`
+> **IMPORTANT:** All knowledge files are `.ts` exports (Deno cannot import `.md`).
+> Before creating new knowledge files, check this index to avoid duplication.
+> After creating/deleting files, update this index.
 
-| File | Purpose | Use When |
-|------|---------|----------|
-| `01-viral-content.md` | 4-part script structure, virality factors, hooks, retention | Script generation |
-| `02-slang-dictionary.md` | ID/HI/EN slang, particles, outdated terms | Language validation |
-| `03-prompt-engineering.md` | Emotion→Expression, lighting, camera, Visual Brief | Image/video prompts |
-| `04-ai-api-specs.md` | fal.ai models (image, video, TTS, music), Gemini API | AI integration |
-| `05-tech-stack.md` | Supabase, Deno, React, FFmpeg patterns | Development |
+### Knowledge Files (`supabase/functions/_shared/knowledge/`)
+
+| File | Lines | Status | Content | Imported By |
+|------|-------|--------|---------|-------------|
+| `08-indonesian-slang-2026.ts` | 152 | **ACTIVE** | Indonesian Gen-Z slang + particles | `prompts/slangValidator.ts` |
+| `09-hindi-slang-2026.ts` | 210 | **ACTIVE** | Hindi/Hinglish slang + particles | `prompts/slangValidator.ts` |
+| `10-global-english-slang-2026.ts` | 203 | **ACTIVE** | English Gen-Z slang | `prompts/slangValidator.ts` |
+| `11-hook-library-2026.ts` | 208 | **ACTIVE** | 100 hooks (5 categories), `HOOK_CATEGORY_META` | `prompts/seefluencerFramework.ts` |
+| `12-scoring-engine.ts` | 570 | **ACTIVE** | Retention scoring, power words, pacing rules, benchmarks | Client-side Retention Curve + AI Coach |
+| `13-emotion-lexicon.ts` | 520 | **ACTIVE** | Word→emotion→intensity (EN/ID/HI, 200+ words each) | Client-side Emotion Arc |
+| `__tests__/validate-scoring-engine.ts` | 360 | **TEST** | Validation: 38 tests, 36/38 passing (94.7%) | `npx tsx` runner |
+| `ad-studio/01-advertising-psychology.ts` | 275 | **RESERVED** | Cialdini's 6 principles, cognitive biases, emotional triggers | Future: `generate-ad-script` |
+| `ad-studio/02-video-ad-frameworks.ts` | 298 | **RESERVED** | AIDA/PAS/BAB/Hook-Story-Offer + timing | Future: `generate-ad-script` |
+| `ad-studio/03-platform-specs.ts` | 308 | **RESERVED** | Platform-specific ad specs | Future: `generate-ad-script` |
+| `ad-studio/04-audience-psychology-matrix.ts` | 349 | **RESERVED** | Gen Z/Millennial/Gen X/Boomer attention params | Future: `generate-ad-script` |
+| `ad-studio/05-b2b-vs-b2c-patterns.ts` | 321 | **RESERVED** | B2B vs B2C advertising patterns | Future: `generate-ad-script` |
+| `ad-studio/06-cta-conversion-optimization.ts` | 335 | **RESERVED** | CTA templates, conversion stats, placement | Future: `generate-ad-script` |
+| `ad-studio/07-script-templates.ts` | 441 | **RESERVED** | Ad script templates by framework | Future: `generate-ad-script` |
+| `tier3/market-intel-q1-2026.md` | 730 | **REFERENCE ONLY** | ID/IN market stats, viral case studies, cultural context | Cannot be imported (.md) |
+
+### Prompt Builders (`supabase/functions/_shared/prompts/`)
+
+| File | Content | Used By |
+|------|---------|---------|
+| `viralScriptKnowledge.ts` | PROJECT_INSTRUCTION — viral DNA principles | `generate-script` |
+| `seefluencerFramework.ts` | Hook/Foreshadow/Body/CTA/PEAK strategies | `generate-script` |
+| `beastMoziLayer.ts` | MrBeast pacing + Hormozi density + editing cues | `generate-script` |
+| `slangValidator.ts` | Slang validation (imports 08/09/10 knowledge) | `generate-script` |
+| `scriptValidator.ts` | Script structure validation | `generate-script` |
+| `cinematicImageKnowledge.ts` | Image generation prompt knowledge | `generate-images` |
+| `cinematicVideoKnowledge.ts` | Video generation prompt knowledge | `generate-videos` |
+| `visualEnhancer.ts` | Visual direction enhancement | `generate-images` |
+| `productNamingRule.ts` | Product name detection rules | `generate-images` |
+| `audioDirective.ts` | Audio/TTS prompt directives | `generate-tts` |
+| `contentTypeDetector.ts` | Content type classification | `generate-script` |
+
+### Lookups (`supabase/functions/_shared/lookups/`)
+
+| File | Lines | Content | Status |
+|------|-------|---------|--------|
+| `index.ts` | 145 | Re-export hub for all lookups | **ACTIVE** |
+| `cinematographyLookup.ts` | 1,403 | EMOTION_MAP, shot types, camera, lighting | **ACTIVE** |
+| `slangLookup.ts` | 434 | Slang arrays with virality scores | **ACTIVE** |
+| `videoSpecs.ts` | 419 | Video model specifications | **ACTIVE** |
+| `productKeywords.ts` | 525 | Product keyword detection data | **ACTIVE** |
+| `metaphorLookup.ts` | 557 | Metaphor generation (disabled Jan 2026) | **DISABLED** |
+
+### Config (`supabase/functions/_shared/config/`)
+
+| File | Lines | Content |
+|------|-------|---------|
+| `aiModels.ts` | 1,152 | IMAGE_MODELS, VIDEO_MODELS, TTS endpoints + params |
+
+### Frontend Mirrors (`src/lib/knowledge/`)
+
+| File | Mirror Of | Purpose |
+|------|-----------|---------|
+| `12-scoring-engine.ts` | `_shared/knowledge/12-scoring-engine.ts` | Client-side Retention Curve + scoring |
+| `13-emotion-lexicon.ts` | `_shared/knowledge/13-emotion-lexicon.ts` | Client-side Emotion Arc visualization |
 
 ---
 
@@ -144,19 +238,42 @@ Index: idx_api_keys_provider(provider, is_active)
 
 ### TypeScript: `supabase/functions/_shared/apiKeyRotation.ts`
 ```typescript
-// Core functions
-getApiKeyFromPool(supabase, provider)     // Get next available key
-callWithRotationHybrid(supabase, provider, apiCallFn, maxRetries=5) // Auto-retry
+// ✅ Unified LLM caller (handles OR→Gemini fallback + key rotation automatically)
+callLLM(supabase, messages, options?)
+// → { success, content, provider, error }
+// Options: { temperature?, maxTokens?, model?, geminiModel?, geminiFirst? }
+// Default: OpenRouter primary → Gemini fallback
+// geminiFirst: true → Gemini primary → OpenRouter fallback
 
-// Provider-specific callers (use these in Edge Functions)
-callOpenRouterHybrid(supabase, messages, options) // PRIMARY — google/gemini-2.5-flash-lite (PAID)
-callGeminiHybrid(supabase, messages, options)     // FALLBACK — gemini-2.0-flash-lite (FREE)
-callTavilyHybrid(supabase, query, options)        // Tavily search
+// Tavily search (auto-rotation)
+callTavilyHybrid(supabase, query, options)
 
-// Error handling
-incrementUsage(supabase, keyId)   // After success
-markExhausted(supabase, keyId)    // On 429/402
-deactivateKey(supabase, keyId)    // On leaked/compromised (permanent)
+// Stock image search (Pexels primary → Unsplash fallback, auto-rotation)
+callStockImageSearch(supabase, query, options?)
+// → { success, results: StockImageResult[], total, provider }
+// Options: { orientation?, perPage?, page? }
+
+// Unsplash download tracking (required by API guidelines)
+trackUnsplashDownload(supabase, downloadLocationUrl)
+
+// Groq Whisper transcription (auto-rotation) — Edge Functions only
+callGroqTranscribe(supabase, audioBlob, options?)
+// → { success, data, provider, error }
+```
+
+### Python: `backend/api_key_pool.py`
+```python
+from api_key_pool import get_pool
+
+pool = get_pool()
+
+# Groq Whisper transcription with pool-based key rotation
+result = await pool.transcribe_with_groq(audio_path)
+
+# Low-level key access (for other providers)
+key_id, api_key = await pool.get_key('groq')
+await pool.increment_usage(key_id)    # After success
+await pool.mark_exhausted(key_id)     # On 429/402
 ```
 
 ### Retry Flow
@@ -171,10 +288,42 @@ deactivateKey(supabase, keyId)    // On leaked/compromised (permanent)
 ### Providers in Pool
 | Provider | Priority | Used By |
 |----------|----------|---------|
-| `openrouter` | **PRIMARY** — `google/gemini-2.5-flash-lite` (PAID) | generate-script, rewrite-visual-direction, generate-topic-suggestions, autoShorten |
-| `gemini` | FALLBACK — `gemini-2.0-flash-lite` (FREE) | generate-script fallback, generate-niche-suggestions, analyze-image, generate-video-prompt, recommend-styles |
+| `openrouter` | 🟢 **PRIMARY (PAID)** — `google/gemini-2.5-flash-lite` | All edge functions via `callLLM()` (default primary) |
+| `gemini` | 🟡 **FALLBACK (FREE)** — `gemini-2.0-flash` | All edge functions via `callLLM()` (auto-fallback, or primary when `geminiFirst: true`) |
 | `tavily` | - | keywordExtractor (search enrichment) |
-| `rapidapi_instagram` | - | fetch-trending-data (Instagram trends) |
+| `pexels` | 🟢 **PRIMARY** — Stock images (200 req/hour) | `callStockImageSearch()` primary, `search-stock-images`, `generate-niche-recommendations` |
+| `unsplash` | 🟡 **FALLBACK** — Stock images (50 req/hour demo) | `callStockImageSearch()` fallback (requires download tracking) |
+| `groq` | - | Whisper transcription — Edge: `callGroqTranscribe()`, Python: `api_key_pool.transcribe_with_groq()` |
+
+### ⚠️ API Key Source: Pool Table vs Deno.env Secrets
+```
+RULE: Where a key comes from depends on whether it needs ROTATION.
+
+🗄️ FROM api_keys_pool TABLE (via shared rotation functions):
+   Used when: Multiple keys exist, need rotation on 429/402, usage tracking
+   ├── openrouter    — callLLM() primary
+   ├── gemini        — callLLM() fallback
+   ├── tavily        — callTavilyHybrid()
+   ├── pexels        — callStockImageSearch() primary (4 keys, 200 req/hr each)
+   ├── unsplash      — callStockImageSearch() fallback (4 keys, 50 req/hr each)
+   └── groq          — callGroqTranscribe() / api_key_pool.transcribe_with_groq()
+
+🔑 FROM Deno.env.get() SECRETS (set via `supabase secrets set`):
+   Used when: Single key, no rotation needed
+   ├── FAL_AI_API_KEY         — fal.ai (images, video, TTS, music) — single key
+   ├── VEO_API_KEY            — Google Veo video — single key
+   ├── YOUTUBE_CLIENT_ID      — YouTube OAuth — single key
+   ├── YOUTUBE_CLIENT_SECRET  — YouTube OAuth — single key
+   └── FONNTE_API_TOKEN       — WhatsApp notifications — single key
+
+❌ COMMON ERROR: "No OpenRouter API key available"
+   → Means: api_keys_pool has NO active openrouter keys (all exhausted or none added)
+   → Fix: Check api_keys_pool table → reset_exhausted_api_keys('openrouter')
+   → NOT a Deno.env secret issue — OpenRouter keys live in the POOL, not in secrets
+
+❌ NEVER add openrouter/gemini/pexels/unsplash/groq keys to Deno.env secrets (they MUST be in pool)
+❌ NEVER add fal.ai keys to api_keys_pool (they use Deno.env secrets)
+```
 
 ### Migration
 - Table: `supabase/baseline/schema_public_20260113.sql`
@@ -200,26 +349,26 @@ User Request → generate-topic-suggestions (Edge Fn) → LLM + trending data
 | `user_topic_history` | Per-user topic selections for dedup | user_id, topic_title, trending_source, action |
 | `topic_outfit_cache` | LLM outfit category cache | topic_hash (unique), category, outfit |
 
-### 5 Trending Sources
+### 4 Trending Sources
 | Source | Method | Countries |
 |--------|--------|-----------|
 | Google Trends | JSON API + RSS fallback | ID, US, IN, FR |
 | TikTok CC | Creative Center scrape (dehydratedState) | ID, US, FR |
 | YouTube | Piped/Invidious API | ID, US, IN, FR |
 | Google News | RSS feed | ID, US, IN, FR |
-| Instagram | RapidAPI (daily, key rotation) | ID, US, IN, FR |
 
 ### Backend: `backend/fetch_trending.py`
 - Python script with 3-layer deduplication (normalize → fuzzy match ≥65% → merge)
-- AI creative angles via Gemini/OpenRouter for top 15 keywords
-- CLI: `python fetch_trending.py [--country ID] [--source google] [--dry-run]`
+- AI creative angles + trending challenges via **OpenRouter (PRIMARY)** → Gemini direct (fallback)
+- Source 6: TikTok Challenges — AI-detected from hashtags + 8 evergreen base challenges → `trending_challenges` table
+- CLI: `python fetch_trending.py [--country ID] [--source google|challenges] [--dry-run]`
 - Cron: every 8h (00:00, 08:00, 16:00 UTC) via `backend/setup_cron.sh`
 - Dependencies: `pytrends`, `feedparser`, `rapidfuzz`
 
 ### Edge Function: `generate-topic-suggestions`
 - **Input:** interest, niches, objectives, dnaStyles, language, country, count, batch, exclude_titles, search_keyword
 - **Modes:** Personalized (niches-based) or Keyword Search
-- **LLM Chain:** OpenRouter `google/gemini-2.5-flash-lite` (primary) → Gemini direct (fallback) (22s deadline)
+- **LLM Chain:** OpenRouter `google/gemini-2.5-flash-lite` **(PRIMARY, PAID)** → Gemini direct **(FREE fallback)** (22s deadline)
 - **Dedup:** Combines user_topic_history (30 days) + exclude_titles from Load More
 - **CRITICAL RULE:** "ONLY use trending if matching user niches. IGNORE unrelated trends."
 - **Output:** `{ topics: [{ title, description, trending_source, trending_keyword, hashtags }] }`
@@ -331,6 +480,82 @@ PreFlightChecklist           │ VideoStep / StudioStep     │
 
 ---
 
+## Sparkfluence Design System (ALWAYS APPLY)
+
+### Color Palette
+```
+--bg-base:     #0B0E14   (warm charcoal — app background)
+--bg-surface:  #161616   (card/panel backgrounds)
+--bg-elevated: #1E1E1E   (popovers, dropdowns, modals)
+--accent:      #10B981   (emerald — primary action, success, highlights)
+--accent-dim:  #059669   (emerald darker — hover states)
+--text-primary:   #F5F5F5
+--text-secondary: #A3A3A3
+--text-muted:     #737373
+--border:      #262626
+--border-focus: #10B981
+--danger:      #EF4444
+--warning:     #F59E0B
+--info:        #3B82F6
+```
+
+**NEVER use AI purple (#7C3AED / violet). Sparkfluence uses emerald green.**
+
+### Typography
+- Headings: `text-lg font-semibold` to `text-2xl font-bold`
+- Body: `text-sm` (14px default)
+- Labels: `text-xs text-neutral-400`
+- Monospace: `font-mono text-xs` (for technical data, timestamps)
+
+### Component Patterns
+```tsx
+// Card
+<div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+
+// Primary Button
+<button className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors">
+
+// Ghost Button
+<button className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg px-4 py-2 text-sm transition-colors">
+
+// Glassmorphism (ONLY sticky headers, overlays, modals)
+<div className="bg-neutral-900/80 backdrop-blur-xl border border-neutral-800/50">
+
+// Badge / Pill
+<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+
+// Input
+<input className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors" />
+```
+
+### Segment Retention Borders
+```
+HOOK / PEAK:   border-l-4 border-emerald-500
+FORE / BODY:   border-l-4 border-amber-500
+CTA:           border-l-4 border-blue-500
+LOOP-END:      border-l-4 border-neutral-600
+```
+
+### Trending Source Badge Colors
+```
+google:      bg-blue-500/10    text-blue-400    border-blue-500/20
+tiktok:      bg-pink-500/10    text-pink-400    border-pink-500/20
+youtube:     bg-red-500/10     text-red-400     border-red-500/20
+news:        bg-emerald-500/10 text-emerald-400 border-emerald-500/20
+ai_creative: bg-amber-500/10   text-amber-400   border-amber-500/20
+```
+
+### Layout & Animation
+- **Desktop-first**: 1440px+ primary, responsive to 1024px
+- **9:16 portrait ratio**: All media previews
+- **3-column workspace**: Left (240px) | Center (flex-1) | Right (320px) at 1440px+
+- **Dark-only**: No light mode toggle
+- **Animation**: Framer Motion, 200-300ms, no bounce/spring
+- **Icons**: lucide-react (SVG, not emoji)
+- **Components**: Shadcn UI for Dialog, Popover, Select, Tooltip, Tabs
+
+---
+
 ## Key Directories
 
 ```
@@ -350,9 +575,10 @@ D:\Projects\sparkfluence_platform\
 ├── supabase\
 │   ├── functions\            # Edge Functions (Deno)
 │   │   ├── _shared\          # Shared utilities
-│   │   │   ├── config\       # aiModels.ts, modelCapabilities.ts
-│   │   │   ├── knowledge\    # Viral content, slang, prompts
-│   │   │   ├── lookups\      # videoSpecs.ts, cinematography
+│   │   │   ├── config\       # aiModels.ts (IMAGE_MODELS, VIDEO_MODELS, TTS)
+│   │   │   ├── knowledge\    # Slang (08-10), hooks (11), ad-studio (01-07)
+│   │   │   ├── prompts\      # Prompt builders (seefluencer, beastMozi, slangValidator...)
+│   │   │   ├── lookups\      # cinematography, slang, videoSpecs, productKeywords
 │   │   │   └── apiKeyRotation.ts  # Key pool rotation logic
 │   │   ├── generate-script\
 │   │   ├── generate-images\
@@ -364,10 +590,10 @@ D:\Projects\sparkfluence_platform\
 │   └── migrations\
 ├── backend\
 │   ├── main.py               # FastAPI + FFmpeg
+│   ├── api_key_pool.py       # Pool-based API key rotation (Python mirror of apiKeyRotation.ts)
 │   ├── fetch_trending.py     # Trending data fetcher (cron 8h)
 │   └── setup_cron.sh         # Cron job scheduler
 ├── docs\
-│   ├── knowledge\            # 5 knowledge files
 │   └── plans\                # Design docs & implementation plans
 └── CLAUDE.md                 # This file
 ```
@@ -437,8 +663,8 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 ## Generation Flow
 
 ```
-1. SCRIPT GENERATION
-   └── OpenRouter Gemini 2.5 Flash Lite (primary) → Gemini 2.0 Flash direct (fallback)
+1. SCRIPT GENERATION (+ topic suggestions, niche, image analysis, video prompt, etc.)
+   └── OpenRouter google/gemini-2.5-flash-lite (PRIMARY, PAID) → Gemini 2.0 Flash direct (FREE fallback)
    
 2. IMAGE GENERATION
    ├── CREATOR segments → nano-banana/edit (with avatar reference)
@@ -473,9 +699,10 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 ### Key Tables
 | Table | Purpose |
 |-------|---------|
-| `api_keys_pool` | LLM/API key storage with rotation (gemini, openrouter, tavily, rapidapi) |
+| `api_keys_pool` | LLM/API key storage with rotation (gemini, openrouter, tavily) |
 | `chat_sessions` | v3.0 session state (script, images, video as JSONB) |
 | `trending_topics` | 5-source trending keywords, 8h TTL, volume_score 0-100 |
+| `trending_challenges` | Content challenge formats (8 base + AI), 24h TTL, upsert on (slug, source, fetch_date) |
 | `user_topic_history` | Per-user topic selections for dedup (30-day window) |
 | `topic_outfit_cache` | LLM outfit category cache (topic_hash unique) |
 | `video_jobs` | VPS video processing jobs |
@@ -521,6 +748,33 @@ const falApiKey = Deno.env.get('FAL_AI_API_KEY');
 { success: false, error: { code: 'ERROR_CODE', message: 'Human readable' } }
 ```
 
+### ⚠️ LLM API Calls in Edge Functions (MANDATORY)
+
+```
+❌ NEVER create local callGemini/callOpenRouter functions in edge functions
+❌ NEVER use getApiKeyFromPool() + raw fetch() to LLM APIs
+❌ NEVER use Deno.env.get('OPENROUTER_API_KEY') or Deno.env.get('GEMINI_API_KEY')
+❌ NEVER use callOpenRouterHybrid/callGeminiHybrid directly (deprecated)
+
+✅ ALWAYS use callLLM() — the unified caller with auto-fallback:
+   import { callLLM, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
+
+   // Default: OpenRouter (paid) → Gemini (free) fallback
+   const result = await callLLM(supabase, messages, { temperature: 0.7, maxTokens: 2048 });
+
+   // Gemini first (for fast/cheap tasks): Gemini → OpenRouter fallback
+   const result = await callLLM(supabase, messages, { geminiFirst: true, temperature: 0.5 });
+
+   // Result: { success, content, provider, error }
+   if (result.success) { console.log(result.content); }
+
+   // Search — auto-retries up to 5 keys
+   const search = await callTavilyHybrid(supabase, query, { maxResults: 10 });
+
+Why: callLLM handles both providers, auto-fallback, key rotation, 429/402 handling,
+     and usage tracking in ONE function. No manual cascading needed.
+```
+
 ---
 
 ## Language Rules
@@ -540,15 +794,16 @@ const falApiKey = Deno.env.get('FAL_AI_API_KEY');
 VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=xxx
 
-:: Supabase Secrets (ask before setting)
-GEMINI_API_KEY=xxx
-OPENROUTER_API_KEY=xxx
+:: Supabase Secrets (ask before setting) — only keys NOT in api_keys_pool
 FAL_AI_API_KEY=key_id:key_secret
-GROQ_API_KEY=xxx
+
+:: ❌ DEPRECATED — these are now in api_keys_pool table, NOT in env/secrets:
+::    GEMINI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY
 
 :: Python Backend (.env)
 SUPABASE_URL=xxx
 SUPABASE_SERVICE_ROLE_KEY=xxx
+:: GROQ_API_KEY=xxx  ← optional fallback only, pool is primary
 ```
 
 ---
@@ -593,7 +848,10 @@ git log --oneline -10
 | LLM forcing irrelevant trends | Say "ONLY if relevant" not "at least N trending" |
 | Tailwind overflow scroll broken | Parent overflow-hidden blocks child - use flex-wrap |
 | localStorage cache stale | Use versioned cache keys (e.g., `_v2` suffix) |
-| API key rotation all exhausted | Check `api_keys_pool` — all keys may be is_exhausted=true (wait for daily reset) |
+| API key rotation all exhausted | Check `api_keys_pool` — all keys may be is_exhausted=true (wait for daily reset or run `reset_exhausted_api_keys()`) |
+| AI features not working | **Always try OpenRouter FIRST (PAID)**. Gemini direct = FREE fallback only. Check openrouter keys before gemini keys. |
+| Stock image search failing | Check `api_keys_pool` for `pexels` + `unsplash` providers. All 8 keys exhausted? Run `reset_exhausted_api_keys('pexels')` |
+| Groq transcription failing | Check `api_keys_pool` for `groq` provider. Python backend also falls back to `GROQ_API_KEY` env var if pool empty |
 | Trending topics empty | Run `fetch_trending.py` or check `expires_at` TTL in `trending_topics` |
 | Workspace not saving | Check `isDirty` flag in WorkspaceContext and `useSessionPersistence` debounce |
 | Script editing locked | `scriptConfirmed: true` blocks edits — user must unconfirm first |
@@ -615,8 +873,58 @@ git log --oneline -10
 
 **Config Files**:
 - `supabase/functions/_shared/config/aiModels.ts`
-- `supabase/functions/_shared/config/modelCapabilities.ts`
 - `supabase/functions/_shared/lookups/videoSpecs.ts`
+
+---
+
+## Claude Code Automations
+
+### Skills (invoke with `/skill-name`)
+| Skill | Purpose |
+|-------|---------|
+| `/deploy-edge-function <name>` | Deploy Edge Function with pre-validation |
+| `/create-migration <name>` | Scaffold migration with naming conventions |
+| `/sync-knowledge` | Sync `src/lib/knowledge/` ↔ `supabase/functions/_shared/knowledge/` mirrors |
+| `/new-edge-function <name>` | Scaffold Edge Function with CORS, auth, error handling boilerplate |
+| `/frontend-design <desc>` | Build components following Sparkfluence design system (emerald + charcoal) |
+
+### Hooks (automatic)
+| Hook | Trigger | Action |
+|------|---------|--------|
+| `block-env-edit.js` | PreToolUse (Edit/Write) | Blocks edits to `.env` and credential files |
+| `block-lockfile-edit.js` | PreToolUse (Edit/Write) | Blocks edits to `package-lock.json`, `yarn.lock` |
+| `type-check-on-edit.js` | PostToolUse (Edit/Write) | Runs `tsc --noEmit` after TS file edits |
+
+### Agents (subagents for parallel review)
+| Agent | File | Focus |
+|-------|------|-------|
+| `security-reviewer` | `.claude/agents/security-reviewer.md` | RLS, secrets, XSS, injection |
+| `edge-function-reviewer` | `.claude/agents/edge-function-reviewer.md` | CORS, response format, API key rotation, Deno rules |
+
+### MCP Servers (`.mcp.json`)
+| Server | Purpose |
+|--------|---------|
+| `supabase` | Direct DB operations + docs |
+| `context7` | Live library documentation lookup |
+| `github` | PR/issue management (needs `GITHUB_PERSONAL_ACCESS_TOKEN` env var) |
+
+---
+
+## Planning & Brainstorming Rules
+
+**NEVER use `EnterPlanMode`.** Superpowers skills handle the full workflow. Pick ONE based on context:
+
+| Context | Use This | NOT This |
+|---------|----------|----------|
+| UI/frontend brainstorm | `sparkfluence-brainstorm` | superpowers:brainstorming, EnterPlanMode |
+| Non-UI brainstorm (backend, DB, API) | `superpowers:brainstorming` | sparkfluence-brainstorm, EnterPlanMode |
+| Implementation plan (spec is clear) | `superpowers:write-plans` → `superpowers:execute-plans` | EnterPlanMode |
+| Small/obvious task (< 3 steps) | Just do it | Any planning mechanism |
+
+**Key rules:**
+- **NEVER use `EnterPlanMode`** — superpowers already covers brainstorm → plan → execute
+- `sparkfluence-brainstorm` already includes brainstorming + design skills — do NOT also invoke `superpowers:brainstorming`
+- Never combine multiple planning mechanisms in one task
 
 ---
 
@@ -654,4 +962,4 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 ---
 
 **Last Updated:** February 2026
-**Version:** 7.0 (v3.0 Chat UI + API Key Rotation + Trending Topics + fal.ai unified stack)
+**Version:** 7.1 (+ Claude Code Automations: skills, hooks, agents, MCP servers)
