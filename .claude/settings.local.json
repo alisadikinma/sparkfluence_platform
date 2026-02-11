@@ -67,7 +67,14 @@
       "Bash(ls:*)",
       "Bash(supabase link:*)",
       "Bash(supabase login:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "mcp__github__create_repository",
+      "Bash(gh auth status:*)",
+      "WebFetch(domain:www.firecrawl.dev)",
+      "Bash(if exist \"%USERPROFILE%\\\\.claude\\\\settings.json\" type \"%USERPROFILE%\\\\.claude\\\\settings.json\")",
+      "Bash(while read file)",
+      "Bash(do sed -i 's/sparkfluence/gaspol/g' \"$file\")",
+      "Bash(done)"
     ]
   },
   "enableAllProjectMcpServers": true,

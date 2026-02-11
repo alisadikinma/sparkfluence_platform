@@ -912,18 +912,32 @@ git log --oneline -10
 
 ## Planning & Brainstorming Rules
 
-**NEVER use `EnterPlanMode`.** Superpowers skills handle the full workflow. Pick ONE based on context:
+**NEVER use `EnterPlanMode`.** Gaspol skills handle the full workflow. Pick ONE based on context:
 
 | Context | Use This | NOT This |
 |---------|----------|----------|
-| UI/frontend brainstorm | `sparkfluence-brainstorm` | superpowers:brainstorming, EnterPlanMode |
-| Non-UI brainstorm (backend, DB, API) | `superpowers:brainstorming` | sparkfluence-brainstorm, EnterPlanMode |
-| Implementation plan (spec is clear) | `superpowers:write-plans` → `superpowers:execute-plans` | EnterPlanMode |
+| UI/frontend brainstorm | `gaspol-brainstorm` | EnterPlanMode |
+| Non-UI brainstorm (backend, DB, API) | `gaspol-brainstorm` | EnterPlanMode |
+| Implementation plan (spec is clear) | `gaspol-plan` → `gaspol-execute` | EnterPlanMode |
+| Verify before claiming done | `gaspol-verify` | Skip verification |
+| Code review | `gaspol-review` | Manual review |
+| Update CLAUDE.md after changes | `gaspol-sync-docs` | Skip docs update |
+| Branch completion | `gaspol-finish` | Direct merge without checks |
 | Small/obvious task (< 3 steps) | Just do it | Any planning mechanism |
 
+**Full workflow chain:**
+```
+gaspol-brainstorm → gaspol-plan → gaspol-execute
+    → gaspol-verify → gaspol-sync-docs → gaspol-review
+    → gaspol-finish
+```
+
 **Key rules:**
-- **NEVER use `EnterPlanMode`** — superpowers already covers brainstorm → plan → execute
-- `sparkfluence-brainstorm` already includes brainstorming + design skills — do NOT also invoke `superpowers:brainstorming`
+- **NEVER use `EnterPlanMode`** — gaspol skills cover brainstorm → plan → execute → verify → finish
+- `gaspol-brainstorm` includes design intelligence — auto-triggers `gaspol-design` for UI work
+- `gaspol-execute` enforces Anti-Placeholder Iron Law + per-phase checkpoints
+- `gaspol-verify` is MANDATORY before claiming any work complete
+- `gaspol-sync-docs` is MANDATORY after implementation to keep CLAUDE.md in sync
 - Never combine multiple planning mechanisms in one task
 
 ---
