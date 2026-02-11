@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { getApiKeyFromPool, getStats, callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
+import { callLLM, getStats } from '../_shared/apiKeyRotation.ts'
 import { handleCors, getCorsHeaders, errorResponse } from '../_shared/cors.ts'
 import { requireAuth } from '../_shared/auth.ts'
 
@@ -66,19 +66,19 @@ serve(async (req) => {
     results.errors.push(e.message)
   }
 
-  // Step 3: Test Gemini via pool
+  // Step 3: Test LLM (Gemini-first mode)
   try {
-    const geminiResult = await callGeminiHybrid(supabase, [
+    const llmResult = await callLLM(supabase, [
       { role: 'user', content: 'Say "Hello" in one word.' }
-    ], { maxTokens: 10 })
+    ], { geminiFirst: true, maxTokens: 10 })
 
-    if (geminiResult.success) {
-      results.step3_gemini_pool_test = `✅ Gemini pool works (source: ${geminiResult.source}): ${geminiResult.content}`
+    if (llmResult.success) {
+      results.step3_gemini_pool_test = `✅ LLM works (provider: ${llmResult.provider}): ${llmResult.content}`
     } else {
-      results.step3_gemini_pool_test = `❌ Gemini pool error: ${geminiResult.error}`
+      results.step3_gemini_pool_test = `❌ LLM error: ${llmResult.error}`
     }
   } catch (e: any) {
-    results.step3_gemini_pool_test = '❌ Gemini pool test failed'
+    results.step3_gemini_pool_test = '❌ LLM test failed'
     results.errors.push(e.message)
   }
 

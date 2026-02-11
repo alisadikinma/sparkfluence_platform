@@ -16,7 +16,7 @@
 // ============================================================================
 
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { callGeminiHybrid, callTavilyHybrid } from './apiKeyRotation.ts'
+import { callLLM, callTavilyHybrid } from './apiKeyRotation.ts'
 
 // ============================================================================
 // Types
@@ -113,18 +113,14 @@ export async function extractWithLLM(
   const prompt = KEYWORD_EXTRACTION_PROMPT + topicLine + `TEXT TO ANALYZE:\n"${text.substring(0, 800)}"\n\nJSON only:`
 
   try {
-    const result = await callGeminiHybrid(
+    const result = await callLLM(
       supabase,
       [{ role: 'user', content: prompt }],
-      {
-        model: 'gemini-2.0-flash',
-        temperature: 0.1,
-        maxTokens: 512
-      }
+      { geminiFirst: true, temperature: 0.1, maxTokens: 512 }
     )
 
     if (!result.success || !result.content) {
-      console.warn(`[LLM Extract] Gemini error: ${result.error}`)
+      console.warn(`[LLM Extract] Error: ${result.error}`)
       return null
     }
 

@@ -1,6 +1,6 @@
 import { corsHeaders } from '../_shared/cors.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { callGeminiHybrid } from '../_shared/apiKeyRotation.ts';
+import { callLLM } from '../_shared/apiKeyRotation.ts';
 
 /**
  * Generate optimized video prompts from image analysis
@@ -122,16 +122,12 @@ REQUIREMENTS:
 
 Generate a single-paragraph video prompt that brings this image to life as ${durationSeconds}-second video clip:`;
 
-  const result = await callGeminiHybrid(supabase, [
+  const result = await callLLM(supabase, [
     { role: 'user', content: promptGeneration }
-  ], {
-    model: 'gemini-2.0-flash',
-    temperature: 0.7,
-    maxTokens: 300
-  });
+  ], { geminiFirst: true, temperature: 0.7, maxTokens: 300 });
 
   if (!result.success || !result.content) {
-    throw new Error(result.error || 'No prompt generated from Gemini');
+    throw new Error(result.error || 'No prompt generated');
   }
 
   return result.content.trim();

@@ -1,6 +1,8 @@
 """
 Subtitle Processor - Groq Whisper Integration
 Extracts audio → Transcribes → Generates ASS → Burns subtitle
+
+Uses pool-based Groq key rotation via api_key_pool module.
 """
 import os
 import logging
@@ -17,11 +19,11 @@ logger = logging.getLogger('SubtitleProcessor')
 
 class SubtitleProcessor:
     """Process video to add word-by-word subtitles using Groq Whisper."""
-    
+
     def __init__(self):
-        self.groq_key = os.getenv('GROQ_API_KEY')
-        if not self.groq_key:
-            logger.warning("GROQ_API_KEY not set - transcription will fail")
+        # Pool-based key rotation (preferred)
+        from api_key_pool import get_pool
+        self._pool = get_pool()
     
     async def download_video(self, url: str, output_path: Path) -> Path:
         """Download video from URL."""
@@ -56,38 +58,24 @@ class SubtitleProcessor:
     
     async def transcribe_groq(self, audio_path: Path) -> Dict[str, Any]:
         """
-        Transcribe audio with Groq Whisper.
+        Transcribe audio with Groq Whisper using pool-based key rotation.
         Returns word-level timestamps for subtitle sync.
         """
-        url = "https://api.groq.com/openai/v1/audio/transcriptions"
-        
-        async with httpx.AsyncClient(timeout=180) as client:
-            with open(audio_path, 'rb') as f:
-                files = {'file': ('audio.mp3', f, 'audio/mpeg')}
-                data = {
-                    'model': 'whisper-large-v3-turbo',
-                    'response_format': 'verbose_json',
-                    'timestamp_granularities[]': 'word'
-                }
-                headers = {'Authorization': f'Bearer {self.groq_key}'}
-                
-                resp = await client.post(url, headers=headers, files=files, data=data)
-                resp.raise_for_status()
-                result = resp.json()
-        
+        result = await self._pool.transcribe_with_groq(audio_path)
+
         logger.info(f"Whisper response keys: {result.keys() if result else None}")
         segments = result.get('segments') or []
         word_count = sum(len(seg.get('words') or []) for seg in segments)
-        root_wc=len(result.get("words") or [])
+        root_wc = len(result.get("words") or [])
         logger.info(f"Transcription: {len(segments)} segs, {word_count} seg_words, {root_wc} root_words")
-        
+
         # Debug: Log if segments or words are null
         if result.get('segments') is None:
             logger.warning("Whisper returned null segments")
         for i, seg in enumerate(segments):
             if seg.get('words') is None:
                 logger.warning(f"Segment {i} has null words field")
-        
+
         return result
     
     def generate_ass(self, whisper_data: Dict[str, Any], output_path: Path, style: str = 'tiktok') -> Path:

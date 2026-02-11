@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { callOpenRouterHybrid, callGeminiHybrid } from '../_shared/apiKeyRotation.ts'
+import { callLLM } from '../_shared/apiKeyRotation.ts'
 import { handleCors, successResponse, errorResponse } from '../_shared/cors.ts'
 import { requireAuth } from '../_shared/auth.ts'
 import { sanitizePromptInput } from '../_shared/inputSanitizer.ts'
@@ -159,40 +159,20 @@ serve(async (req: Request) => {
       { role: 'user', content: prompt }
     ];
 
-    // Try OpenRouter first (primary), then Gemini (fallback)
-    let rewrittenVD: string | null = null;
+    const llmResult = await callLLM(supabase, messages, { temperature: 0.7, maxTokens: 512 });
 
-    console.log('[rewrite-vd] Calling OpenRouter...');
-    const orResult = await callOpenRouterHybrid(supabase, messages, {
-      model: 'google/gemini-2.5-flash-lite',
-      temperature: 0.7,
-      maxTokens: 512,
-    });
-
-    if (!orResult.error && orResult.data?.choices?.[0]?.message?.content) {
-      rewrittenVD = orResult.data.choices[0].message.content.trim();
-      console.log(`[rewrite-vd] OpenRouter success (${orResult.source})`);
-    } else {
-      console.warn('[rewrite-vd] OpenRouter failed, trying Gemini fallback...');
-      const geminiResult = await callGeminiHybrid(supabase, messages, {
-        model: 'gemini-2.0-flash-lite',
-        temperature: 0.7,
-        maxTokens: 512,
-      });
-
-      if (geminiResult.success && geminiResult.content) {
-        rewrittenVD = geminiResult.content.trim();
-        console.log(`[rewrite-vd] Gemini fallback success (${geminiResult.source})`);
-      } else {
-        console.error('[rewrite-vd] Both LLMs failed:', orResult.error, geminiResult.error);
-        return errorResponse(
-          'LLM_FAILED',
-          'Failed to rewrite visual direction — both OpenRouter and Gemini unavailable',
-          502,
-          req
-        );
-      }
+    if (!llmResult.success || !llmResult.content) {
+      console.error('[rewrite-vd] All LLMs failed:', llmResult.error);
+      return errorResponse(
+        'LLM_FAILED',
+        'Failed to rewrite visual direction — all providers unavailable',
+        502,
+        req
+      );
     }
+
+    console.log(`[rewrite-vd] LLM success (${llmResult.provider})`);
+    const rewrittenVD = llmResult.content.trim();
 
     // Clean up LLM output (remove code blocks, quotes, extra whitespace)
     rewrittenVD = rewrittenVD

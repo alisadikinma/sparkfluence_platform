@@ -19,6 +19,7 @@ import threading
 # Import FFmpeg modules
 from ffmpeg import VideoCombiner, CombineConfig, VideoSegmentInput, TransitionType
 from ffmpeg.subtitle_processor import SubtitleProcessor
+from api_key_pool import get_pool
 
 # Import webhook handler for GeminiGen auto-retry
 from webhook_handler import router as webhook_router
@@ -787,27 +788,9 @@ async def process_video_combination_v2(
 
                 update_job_status(job_id, 60, "Transcribing with Whisper")
 
-                # Transcribe with Groq Whisper
-                groq_key = os.getenv('GROQ_API_KEY')
-                if not groq_key:
-                    raise Exception("GROQ_API_KEY not configured")
-
-                async with httpx.AsyncClient(timeout=180.0) as client:
-                    with open(audio_file, 'rb') as f:
-                        files = {'file': ('audio.mp3', f, 'audio/mpeg')}
-                        data = {
-                            'model': 'whisper-large-v3-turbo',
-                            'response_format': 'verbose_json',
-                            'timestamp_granularities[]': 'word'
-                        }
-                        headers = {'Authorization': f'Bearer {groq_key}'}
-
-                        resp = await client.post(
-                            "https://api.groq.com/openai/v1/audio/transcriptions",
-                            headers=headers, files=files, data=data
-                        )
-                        resp.raise_for_status()
-                        whisper_result = resp.json()
+                # Transcribe with Groq Whisper (pool-based key rotation)
+                pool = get_pool()
+                whisper_result = await pool.transcribe_with_groq(Path(audio_file))
 
                 update_job_status(job_id, 65, "Generating subtitle file")
 
@@ -1324,10 +1307,7 @@ async def add_subtitles(
     """
     verify_api_key(api_key)
     
-    # Check Groq API key
-    if not os.getenv('GROQ_API_KEY'):
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
-    
+    # Groq key checked at transcription time via pool rotation
     job_id = f"sub_{uuid.uuid4().hex[:12]}"
     
     jobs[job_id] = {
@@ -1607,8 +1587,7 @@ async def post_process(
     if request.add_bgm and not request.music_url:
         raise HTTPException(status_code=400, detail="music_url is required when add_bgm is true")
 
-    if request.add_subtitles and not os.getenv('GROQ_API_KEY'):
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured for subtitles")
+    # Groq key checked at transcription time via pool rotation
 
     if not (0.0 <= request.bgm_volume <= 1.0):
         raise HTTPException(status_code=400, detail="bgm_volume must be between 0.0 and 1.0")
@@ -1714,24 +1693,9 @@ async def process_post_process(job_id: str, request: PostProcessRequest):
 
             update_job_status(job_id, 25, "Transcribing audio")
 
-            # Transcribe with Groq Whisper
-            groq_key = os.getenv('GROQ_API_KEY')
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                with open(audio_file, 'rb') as f:
-                    files = {'file': ('audio.mp3', f, 'audio/mpeg')}
-                    data = {
-                        'model': 'whisper-large-v3-turbo',
-                        'response_format': 'verbose_json',
-                        'timestamp_granularities[]': 'word'
-                    }
-                    headers = {'Authorization': f'Bearer {groq_key}'}
-
-                    resp = await client.post(
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        headers=headers, files=files, data=data
-                    )
-                    resp.raise_for_status()
-                    whisper_data = resp.json()
+            # Transcribe with Groq Whisper (pool-based key rotation)
+            pool = get_pool()
+            whisper_data = await pool.transcribe_with_groq(Path(audio_file))
 
             update_job_status(job_id, 40, "Generating subtitles")
 

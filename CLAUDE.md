@@ -20,6 +20,31 @@
 └── If unsure, ASK FIRST
 ```
 
+### 📝 CLAUDE.md Self-Maintenance (MANDATORY)
+```
+After EVERY code change session, you MUST:
+1. Review CLAUDE.md sections affected by the changes
+2. Update any outdated information (models, tables, functions, flows, configs)
+3. Add new tables/functions/features if they were created
+4. Remove references to deleted/deprecated code
+
+WHY: This file is the SINGLE SOURCE OF TRUTH for the next session.
+     If CLAUDE.md is outdated, the next session will repeat mistakes,
+     use wrong models, miss new features, or break existing logic.
+
+WHEN to update:
+├── New table/column added          → Update "Key Tables" + "Database Conventions"
+├── New Edge Function               → Update "Key Directories" + "Generation Flow"
+├── AI model changed                → Update "AI Model Priority" + "Providers in Pool"
+├── New Python source/feature       → Update "Trending Topics System" section
+├── New frontend route/component    → Update "v3.0 Chat-Based UI" section
+├── Config/env changes              → Update "Environment Variables"
+├── New dependency                  → Update relevant section
+└── Bug fix with learnings          → Update "Debugging Checklist"
+
+DO NOT skip this step. DO NOT assume "it's a small change".
+```
+
 ### 🖥️ Windows Environment (Command Prompt)
 ```
 ENVIRONMENT: Windows 11
@@ -65,12 +90,27 @@ MULTILINE COMMANDS:
 | Frontend | React 18 + TypeScript + Vite + Tailwind + Shadcn UI |
 | Backend | Supabase (PostgreSQL + pgvector + Auth + Edge Functions + Storage) |
 | Video Processing | Python FastAPI + FFmpeg (VPS) |
-| AI - Script | OpenRouter: Gemini 2.5 Flash Lite (PRIMARY, PAID) → Gemini 2.0 Flash direct (fallback) |
+| AI - Script | **OpenRouter** `google/gemini-2.5-flash-lite` **(PRIMARY, PAID)** → Gemini 2.0 Flash direct (FREE fallback) |
 | AI - Images | fal.ai: Nano Banana Edit (CREATOR) + Seedream v4 / Qwen (B-ROLL) |
 | AI - Video | fal.ai: Kling 2.5 Turbo (DEFAULT) + Wan 2.5 (with audio) |
 | AI - TTS | fal.ai: Chatterbox Turbo (voice cloning) |
 | AI - Music | fal.ai: Minimax Music v2 (AI-generated BGM) |
 | AI - Transcription | Groq Whisper (FREE) |
+
+### ⚠️ AI Model Priority (NEVER GET THIS WRONG)
+```
+🟢 PRIMARY (PAID)  → OpenRouter: google/gemini-2.5-flash-lite
+   Used by: ALL AI features — generate-script, generate-topic-suggestions,
+   generate-niche-suggestions, analyze-image, generate-video-prompt,
+   rewrite-visual-direction, autoShorten, fetch_trending.py (AI Creative + Challenges)
+
+🟡 FALLBACK (FREE)  → Gemini Direct: gemini-2.0-flash (via Google API key)
+   Used ONLY when: OpenRouter keys exhausted (429/402) or unavailable
+   This is a FREE tier fallback — rate limits are strict
+
+❌ NEVER treat Gemini direct as primary. OpenRouter has PAID credit = always try first.
+❌ NEVER write new code that calls Gemini direct without trying OpenRouter first.
+```
 
 ---
 
@@ -198,19 +238,42 @@ Index: idx_api_keys_provider(provider, is_active)
 
 ### TypeScript: `supabase/functions/_shared/apiKeyRotation.ts`
 ```typescript
-// Core functions
-getApiKeyFromPool(supabase, provider)     // Get next available key
-callWithRotationHybrid(supabase, provider, apiCallFn, maxRetries=5) // Auto-retry
+// ✅ Unified LLM caller (handles OR→Gemini fallback + key rotation automatically)
+callLLM(supabase, messages, options?)
+// → { success, content, provider, error }
+// Options: { temperature?, maxTokens?, model?, geminiModel?, geminiFirst? }
+// Default: OpenRouter primary → Gemini fallback
+// geminiFirst: true → Gemini primary → OpenRouter fallback
 
-// Provider-specific callers (use these in Edge Functions)
-callOpenRouterHybrid(supabase, messages, options) // PRIMARY — google/gemini-2.5-flash-lite (PAID)
-callGeminiHybrid(supabase, messages, options)     // FALLBACK — gemini-2.0-flash-lite (FREE)
-callTavilyHybrid(supabase, query, options)        // Tavily search
+// Tavily search (auto-rotation)
+callTavilyHybrid(supabase, query, options)
 
-// Error handling
-incrementUsage(supabase, keyId)   // After success
-markExhausted(supabase, keyId)    // On 429/402
-deactivateKey(supabase, keyId)    // On leaked/compromised (permanent)
+// Stock image search (Pexels primary → Unsplash fallback, auto-rotation)
+callStockImageSearch(supabase, query, options?)
+// → { success, results: StockImageResult[], total, provider }
+// Options: { orientation?, perPage?, page? }
+
+// Unsplash download tracking (required by API guidelines)
+trackUnsplashDownload(supabase, downloadLocationUrl)
+
+// Groq Whisper transcription (auto-rotation) — Edge Functions only
+callGroqTranscribe(supabase, audioBlob, options?)
+// → { success, data, provider, error }
+```
+
+### Python: `backend/api_key_pool.py`
+```python
+from api_key_pool import get_pool
+
+pool = get_pool()
+
+# Groq Whisper transcription with pool-based key rotation
+result = await pool.transcribe_with_groq(audio_path)
+
+# Low-level key access (for other providers)
+key_id, api_key = await pool.get_key('groq')
+await pool.increment_usage(key_id)    # After success
+await pool.mark_exhausted(key_id)     # On 429/402
 ```
 
 ### Retry Flow
@@ -225,10 +288,42 @@ deactivateKey(supabase, keyId)    // On leaked/compromised (permanent)
 ### Providers in Pool
 | Provider | Priority | Used By |
 |----------|----------|---------|
-| `openrouter` | **PRIMARY** — `google/gemini-2.5-flash-lite` (PAID) | generate-script, rewrite-visual-direction, generate-topic-suggestions, autoShorten |
-| `gemini` | FALLBACK — `gemini-2.0-flash-lite` (FREE) | generate-script fallback, generate-niche-suggestions, analyze-image, generate-video-prompt, recommend-styles |
+| `openrouter` | 🟢 **PRIMARY (PAID)** — `google/gemini-2.5-flash-lite` | All edge functions via `callLLM()` (default primary) |
+| `gemini` | 🟡 **FALLBACK (FREE)** — `gemini-2.0-flash` | All edge functions via `callLLM()` (auto-fallback, or primary when `geminiFirst: true`) |
 | `tavily` | - | keywordExtractor (search enrichment) |
-| `rapidapi_instagram` | - | fetch-trending-data (Instagram trends) |
+| `pexels` | 🟢 **PRIMARY** — Stock images (200 req/hour) | `callStockImageSearch()` primary, `search-stock-images`, `generate-niche-recommendations` |
+| `unsplash` | 🟡 **FALLBACK** — Stock images (50 req/hour demo) | `callStockImageSearch()` fallback (requires download tracking) |
+| `groq` | - | Whisper transcription — Edge: `callGroqTranscribe()`, Python: `api_key_pool.transcribe_with_groq()` |
+
+### ⚠️ API Key Source: Pool Table vs Deno.env Secrets
+```
+RULE: Where a key comes from depends on whether it needs ROTATION.
+
+🗄️ FROM api_keys_pool TABLE (via shared rotation functions):
+   Used when: Multiple keys exist, need rotation on 429/402, usage tracking
+   ├── openrouter    — callLLM() primary
+   ├── gemini        — callLLM() fallback
+   ├── tavily        — callTavilyHybrid()
+   ├── pexels        — callStockImageSearch() primary (4 keys, 200 req/hr each)
+   ├── unsplash      — callStockImageSearch() fallback (4 keys, 50 req/hr each)
+   └── groq          — callGroqTranscribe() / api_key_pool.transcribe_with_groq()
+
+🔑 FROM Deno.env.get() SECRETS (set via `supabase secrets set`):
+   Used when: Single key, no rotation needed
+   ├── FAL_AI_API_KEY         — fal.ai (images, video, TTS, music) — single key
+   ├── VEO_API_KEY            — Google Veo video — single key
+   ├── YOUTUBE_CLIENT_ID      — YouTube OAuth — single key
+   ├── YOUTUBE_CLIENT_SECRET  — YouTube OAuth — single key
+   └── FONNTE_API_TOKEN       — WhatsApp notifications — single key
+
+❌ COMMON ERROR: "No OpenRouter API key available"
+   → Means: api_keys_pool has NO active openrouter keys (all exhausted or none added)
+   → Fix: Check api_keys_pool table → reset_exhausted_api_keys('openrouter')
+   → NOT a Deno.env secret issue — OpenRouter keys live in the POOL, not in secrets
+
+❌ NEVER add openrouter/gemini/pexels/unsplash/groq keys to Deno.env secrets (they MUST be in pool)
+❌ NEVER add fal.ai keys to api_keys_pool (they use Deno.env secrets)
+```
 
 ### Migration
 - Table: `supabase/baseline/schema_public_20260113.sql`
@@ -254,26 +349,26 @@ User Request → generate-topic-suggestions (Edge Fn) → LLM + trending data
 | `user_topic_history` | Per-user topic selections for dedup | user_id, topic_title, trending_source, action |
 | `topic_outfit_cache` | LLM outfit category cache | topic_hash (unique), category, outfit |
 
-### 5 Trending Sources
+### 4 Trending Sources
 | Source | Method | Countries |
 |--------|--------|-----------|
 | Google Trends | JSON API + RSS fallback | ID, US, IN, FR |
 | TikTok CC | Creative Center scrape (dehydratedState) | ID, US, FR |
 | YouTube | Piped/Invidious API | ID, US, IN, FR |
 | Google News | RSS feed | ID, US, IN, FR |
-| Instagram | RapidAPI (daily, key rotation) | ID, US, IN, FR |
 
 ### Backend: `backend/fetch_trending.py`
 - Python script with 3-layer deduplication (normalize → fuzzy match ≥65% → merge)
-- AI creative angles via Gemini/OpenRouter for top 15 keywords
-- CLI: `python fetch_trending.py [--country ID] [--source google] [--dry-run]`
+- AI creative angles + trending challenges via **OpenRouter (PRIMARY)** → Gemini direct (fallback)
+- Source 6: TikTok Challenges — AI-detected from hashtags + 8 evergreen base challenges → `trending_challenges` table
+- CLI: `python fetch_trending.py [--country ID] [--source google|challenges] [--dry-run]`
 - Cron: every 8h (00:00, 08:00, 16:00 UTC) via `backend/setup_cron.sh`
 - Dependencies: `pytrends`, `feedparser`, `rapidfuzz`
 
 ### Edge Function: `generate-topic-suggestions`
 - **Input:** interest, niches, objectives, dnaStyles, language, country, count, batch, exclude_titles, search_keyword
 - **Modes:** Personalized (niches-based) or Keyword Search
-- **LLM Chain:** OpenRouter `google/gemini-2.5-flash-lite` (primary) → Gemini direct (fallback) (22s deadline)
+- **LLM Chain:** OpenRouter `google/gemini-2.5-flash-lite` **(PRIMARY, PAID)** → Gemini direct **(FREE fallback)** (22s deadline)
 - **Dedup:** Combines user_topic_history (30 days) + exclude_titles from Load More
 - **CRITICAL RULE:** "ONLY use trending if matching user niches. IGNORE unrelated trends."
 - **Output:** `{ topics: [{ title, description, trending_source, trending_keyword, hashtags }] }`
@@ -495,6 +590,7 @@ D:\Projects\sparkfluence_platform\
 │   └── migrations\
 ├── backend\
 │   ├── main.py               # FastAPI + FFmpeg
+│   ├── api_key_pool.py       # Pool-based API key rotation (Python mirror of apiKeyRotation.ts)
 │   ├── fetch_trending.py     # Trending data fetcher (cron 8h)
 │   └── setup_cron.sh         # Cron job scheduler
 ├── docs\
@@ -567,8 +663,8 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 ## Generation Flow
 
 ```
-1. SCRIPT GENERATION
-   └── OpenRouter Gemini 2.5 Flash Lite (primary) → Gemini 2.0 Flash direct (fallback)
+1. SCRIPT GENERATION (+ topic suggestions, niche, image analysis, video prompt, etc.)
+   └── OpenRouter google/gemini-2.5-flash-lite (PRIMARY, PAID) → Gemini 2.0 Flash direct (FREE fallback)
    
 2. IMAGE GENERATION
    ├── CREATOR segments → nano-banana/edit (with avatar reference)
@@ -603,9 +699,10 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 ### Key Tables
 | Table | Purpose |
 |-------|---------|
-| `api_keys_pool` | LLM/API key storage with rotation (gemini, openrouter, tavily, rapidapi) |
+| `api_keys_pool` | LLM/API key storage with rotation (gemini, openrouter, tavily) |
 | `chat_sessions` | v3.0 session state (script, images, video as JSONB) |
 | `trending_topics` | 5-source trending keywords, 8h TTL, volume_score 0-100 |
+| `trending_challenges` | Content challenge formats (8 base + AI), 24h TTL, upsert on (slug, source, fetch_date) |
 | `user_topic_history` | Per-user topic selections for dedup (30-day window) |
 | `topic_outfit_cache` | LLM outfit category cache (topic_hash unique) |
 | `video_jobs` | VPS video processing jobs |
@@ -651,6 +748,33 @@ const falApiKey = Deno.env.get('FAL_AI_API_KEY');
 { success: false, error: { code: 'ERROR_CODE', message: 'Human readable' } }
 ```
 
+### ⚠️ LLM API Calls in Edge Functions (MANDATORY)
+
+```
+❌ NEVER create local callGemini/callOpenRouter functions in edge functions
+❌ NEVER use getApiKeyFromPool() + raw fetch() to LLM APIs
+❌ NEVER use Deno.env.get('OPENROUTER_API_KEY') or Deno.env.get('GEMINI_API_KEY')
+❌ NEVER use callOpenRouterHybrid/callGeminiHybrid directly (deprecated)
+
+✅ ALWAYS use callLLM() — the unified caller with auto-fallback:
+   import { callLLM, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
+
+   // Default: OpenRouter (paid) → Gemini (free) fallback
+   const result = await callLLM(supabase, messages, { temperature: 0.7, maxTokens: 2048 });
+
+   // Gemini first (for fast/cheap tasks): Gemini → OpenRouter fallback
+   const result = await callLLM(supabase, messages, { geminiFirst: true, temperature: 0.5 });
+
+   // Result: { success, content, provider, error }
+   if (result.success) { console.log(result.content); }
+
+   // Search — auto-retries up to 5 keys
+   const search = await callTavilyHybrid(supabase, query, { maxResults: 10 });
+
+Why: callLLM handles both providers, auto-fallback, key rotation, 429/402 handling,
+     and usage tracking in ONE function. No manual cascading needed.
+```
+
 ---
 
 ## Language Rules
@@ -670,15 +794,16 @@ const falApiKey = Deno.env.get('FAL_AI_API_KEY');
 VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=xxx
 
-:: Supabase Secrets (ask before setting)
-GEMINI_API_KEY=xxx
-OPENROUTER_API_KEY=xxx
+:: Supabase Secrets (ask before setting) — only keys NOT in api_keys_pool
 FAL_AI_API_KEY=key_id:key_secret
-GROQ_API_KEY=xxx
+
+:: ❌ DEPRECATED — these are now in api_keys_pool table, NOT in env/secrets:
+::    GEMINI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY
 
 :: Python Backend (.env)
 SUPABASE_URL=xxx
 SUPABASE_SERVICE_ROLE_KEY=xxx
+:: GROQ_API_KEY=xxx  ← optional fallback only, pool is primary
 ```
 
 ---
@@ -723,7 +848,10 @@ git log --oneline -10
 | LLM forcing irrelevant trends | Say "ONLY if relevant" not "at least N trending" |
 | Tailwind overflow scroll broken | Parent overflow-hidden blocks child - use flex-wrap |
 | localStorage cache stale | Use versioned cache keys (e.g., `_v2` suffix) |
-| API key rotation all exhausted | Check `api_keys_pool` — all keys may be is_exhausted=true (wait for daily reset) |
+| API key rotation all exhausted | Check `api_keys_pool` — all keys may be is_exhausted=true (wait for daily reset or run `reset_exhausted_api_keys()`) |
+| AI features not working | **Always try OpenRouter FIRST (PAID)**. Gemini direct = FREE fallback only. Check openrouter keys before gemini keys. |
+| Stock image search failing | Check `api_keys_pool` for `pexels` + `unsplash` providers. All 8 keys exhausted? Run `reset_exhausted_api_keys('pexels')` |
+| Groq transcription failing | Check `api_keys_pool` for `groq` provider. Python backend also falls back to `GROQ_API_KEY` env var if pool empty |
 | Trending topics empty | Run `fetch_trending.py` or check `expires_at` TTL in `trending_topics` |
 | Workspace not saving | Check `isDirty` flag in WorkspaceContext and `useSessionPersistence` debounce |
 | Script editing locked | `scriptConfirmed: true` blocks edits — user must unconfirm first |

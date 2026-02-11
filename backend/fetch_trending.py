@@ -186,6 +186,112 @@ class TrendingItem:
     raw_data: Optional[dict] = None
 
 
+@dataclass
+class ChallengeItem:
+    """A TikTok/Reels content challenge format (e.g., Storytime, GRWM, POV)."""
+    name: str
+    slug: str
+    category: str  # creative, lifestyle, education, entertainment, engagement, reaction
+    description: str
+    source: str = "tiktok"
+    country: str = "GLOBAL"
+    volume_score: int = 50
+    hashtags: list[str] = field(default_factory=list)
+    example_format: str = ""
+    script_instruction: str = ""
+    raw_data: dict = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Evergreen base challenges — always upserted, AI can add new ones on top
+# ---------------------------------------------------------------------------
+
+BASE_CHALLENGES: list[ChallengeItem] = [
+    ChallengeItem(
+        name="Storytime",
+        slug="storytime",
+        category="creative",
+        description="Tell a compelling personal story with a twist ending that hooks viewers from the first second",
+        volume_score=90,
+        hashtags=["storytime", "storytimeTikTok", "mystory", "storytime2026"],
+        example_format="Hook with shocking statement → Build tension → Reveal twist → Call to action",
+        script_instruction="Start with an attention-grabbing hook like \"This is the craziest thing that happened to me...\" Build suspense throughout. End with unexpected twist. Use casual, conversational tone.",
+    ),
+    ChallengeItem(
+        name="Ranking / Tier List",
+        slug="tier-list",
+        category="entertainment",
+        description="Rank items from worst to best with commentary that sparks debate and engagement",
+        volume_score=85,
+        hashtags=["tierlist", "ranking", "ratethis", "tierlistchallenge"],
+        example_format="Show item → Give rating with reasoning → Move to next → Final tier list reveal",
+        script_instruction="Rank 5-8 items in a specific category. Give hot takes that encourage comments. Use S/A/B/C/D/F tier system. Be opinionated but fun.",
+    ),
+    ChallengeItem(
+        name="Mini Tutorial",
+        slug="mini-tutorial",
+        category="education",
+        description="Quick step-by-step tutorial in under 60 seconds that teaches something valuable",
+        volume_score=88,
+        hashtags=["tutorial", "howto", "learnontiktok", "quicktip"],
+        example_format="Problem statement → Step 1 → Step 2 → Step 3 → Final result",
+        script_instruction='Start with "Here is how to..." or "Stop doing X, do Y instead". Keep steps clear and concise. Show before/after if possible. End with pro tip.',
+    ),
+    ChallengeItem(
+        name="POV Storytelling",
+        slug="pov",
+        category="creative",
+        description="Point-of-view storytelling where viewer is immersed in a scenario or character",
+        volume_score=82,
+        hashtags=["pov", "povtiktok", "acting", "skit"],
+        example_format="POV: [scenario] → Act out the scene → Punchline or emotional payoff",
+        script_instruction='Start with "POV:" followed by relatable scenario. Act directly to camera as if viewer is the other person. Use expressions and reactions. Can be funny, dramatic, or wholesome.',
+    ),
+    ChallengeItem(
+        name="Duet Challenge",
+        slug="duet-react",
+        category="reaction",
+        description="React or respond to viral content with your own creative twist or commentary",
+        volume_score=78,
+        hashtags=["duet", "react", "duetthis", "reaction"],
+        example_format="Show original content → Your reaction/response → Add value or humor",
+        script_instruction="Reference a trending topic or viral moment. Add your unique perspective, expertise, or humor. Encourage viewers to share their take in comments.",
+    ),
+    ChallengeItem(
+        name="Day in My Life",
+        slug="day-in-life",
+        category="lifestyle",
+        description="Document your day while weaving in valuable tips, routines, or lifestyle content",
+        volume_score=80,
+        hashtags=["dayinmylife", "dailyroutine", "vlog", "aesthetic"],
+        example_format="Morning routine → Work/activity highlights → Evening wind-down → Reflection",
+        script_instruction="Show authentic daily routine with aesthetic transitions. Include productivity tips or lifestyle hacks naturally. Use voiceover narration. Keep it aspirational but relatable.",
+    ),
+    ChallengeItem(
+        name="Get Ready With Me",
+        slug="grwm",
+        category="lifestyle",
+        description="Show your preparation routine while sharing stories, tips, or having casual conversation",
+        volume_score=86,
+        hashtags=["grwm", "getreadywithme", "makeup", "outfit"],
+        example_format="Getting ready process → Casual storytelling or tips → Final look reveal",
+        script_instruction="Film while getting ready (makeup, outfit, etc). Use this as backdrop for storytelling or sharing opinions on trending topics. Casual, friend-to-friend vibe. End with final look.",
+    ),
+    ChallengeItem(
+        name="This or That",
+        slug="this-or-that",
+        category="engagement",
+        description="Present two options and argue for one — designed to maximize comments and debate",
+        volume_score=75,
+        hashtags=["thisorthat", "wouldyourather", "debate", "unpopularopinion"],
+        example_format="Present Option A vs Option B → Give your pick with reasoning → Ask viewers to choose",
+        script_instruction='Present two popular options in your niche. Take a strong stance on one. Use "Am I the only one who thinks..." framing. End with "Comment your choice" CTA to drive engagement.',
+    ),
+]
+
+BASE_CHALLENGE_SLUGS = frozenset(c.slug for c in BASE_CHALLENGES)
+
+
 # ============================================================================
 # SOURCE 1: Google Trends (RSS feed — more reliable than pytrends)
 # ============================================================================
@@ -828,7 +934,7 @@ def _call_openrouter(prompt: str, api_key: str) -> tuple[str, int]:
                 "X-Title": "Sparkfluence",
             },
             json={
-                "model": "google/gemini-2.0-flash-001",
+                "model": "google/gemini-2.5-flash-lite",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.9,
                 "max_tokens": 1500,
@@ -943,6 +1049,264 @@ def generate_ai_creative_angles(
 
     log.warning(f"  AI Creative [{country}]: all providers exhausted")
     return []
+
+
+# ============================================================================
+# SOURCE 6: TikTok Challenges (AI-detected formats from trending hashtags)
+# ============================================================================
+
+_CHALLENGE_CATEGORIES = [
+    "creative", "lifestyle", "education", "entertainment",
+    "engagement", "reaction", "comedy", "fitness", "beauty",
+]
+
+
+def _build_challenge_prompt(hashtags: list[str]) -> str:
+    """Build prompt to detect trending challenge formats from hashtags."""
+    existing = ", ".join(BASE_CHALLENGE_SLUGS)
+    return (
+        "You are a TikTok trend analyst. Analyze these trending hashtags and "
+        "identify 5-8 NEW content challenge/format types that creators are "
+        "doing right now.\n\n"
+        f"TRENDING HASHTAGS:\n"
+        + "\n".join(f"- #{h}" for h in hashtags)
+        + f"\n\nALREADY KNOWN (do NOT duplicate these slugs): {existing}\n\n"
+        "For each NEW challenge format, provide:\n"
+        "- name: Human-readable name (e.g., \"Outfit Check\")\n"
+        "- slug: URL-safe lowercase (e.g., \"outfit-check\")\n"
+        f"- category: one of {_CHALLENGE_CATEGORIES}\n"
+        "- description: 1 sentence explaining the format\n"
+        "- hashtags: array of 3-5 related hashtags (without #)\n"
+        "- example_format: Step-by-step format (use → arrows)\n"
+        "- script_instruction: Instructions for a creator making this content\n"
+        "- volume_score: 50-95 based on how trending it is\n\n"
+        "Return ONLY valid JSON array. No markdown fences.\n"
+        "[\n"
+        '  {"name": "...", "slug": "...", "category": "...", '
+        '"description": "...", "hashtags": [...], "example_format": "...", '
+        '"script_instruction": "...", "volume_score": 75}\n'
+        "]"
+    )
+
+
+def _parse_challenge_result(text: str) -> list[ChallengeItem]:
+    """Parse AI response into ChallengeItems."""
+    clean = text.strip()
+    if clean.startswith("```"):
+        clean = re.sub(r"^```(?:json)?\s*", "", clean)
+        clean = re.sub(r"\s*```$", "", clean)
+    try:
+        items = json.loads(clean)
+        if isinstance(items, dict):
+            items = items.get("challenges") or items.get("results") or []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    challenges = []
+    for item in items[:8]:
+        slug = (item.get("slug") or "").strip().lower()
+        name = (item.get("name") or "").strip()
+        if not slug or not name or len(name) < 3 or slug in BASE_CHALLENGE_SLUGS:
+            continue
+
+        # Sanitize slug
+        slug = re.sub(r"[^a-z0-9-]", "-", slug).strip("-")
+        if not slug:
+            continue
+
+        cat = (item.get("category") or "general").lower()
+        if cat not in _CHALLENGE_CATEGORIES:
+            cat = "creative"
+
+        hashtags = item.get("hashtags", [])
+        if isinstance(hashtags, list):
+            hashtags = [str(h).strip().lstrip("#") for h in hashtags if h][:5]
+        else:
+            hashtags = []
+
+        challenges.append(ChallengeItem(
+            name=name,
+            slug=slug,
+            category=cat,
+            description=(item.get("description") or "")[:300],
+            volume_score=max(40, min(95, int(item.get("volume_score", 65)))),
+            hashtags=hashtags,
+            example_format=(item.get("example_format") or "")[:500],
+            script_instruction=(item.get("script_instruction") or "")[:500],
+            raw_data={"ai_generated": True},
+        ))
+
+    return challenges
+
+
+def generate_trending_challenges(
+    all_items: list[TrendingItem],
+) -> list[ChallengeItem]:
+    """
+    Generate trending challenge formats from TikTok hashtag data.
+    Merges AI-detected challenges with evergreen BASE_CHALLENGES.
+    """
+    # Collect TikTok hashtags from all countries
+    tiktok_items = [i for i in all_items if i.source == "tiktok"]
+    tiktok_items.sort(key=lambda x: x.volume_score, reverse=True)
+    top_hashtags = list(dict.fromkeys(i.keyword for i in tiktok_items))[:30]
+
+    if not top_hashtags:
+        log.info("  Challenges: no TikTok data, using base challenges only")
+        return list(BASE_CHALLENGES)
+
+    prompt = _build_challenge_prompt(top_hashtags)
+    ai_challenges: list[ChallengeItem] = []
+
+    # --- Priority 1: OpenRouter (PAID — primary) ---
+    or_key, or_key_id = get_api_key_from_pool("openrouter")
+    if or_key:
+        try:
+            text, status = _call_openrouter(prompt, or_key)
+            if status in (429, 402):
+                log.warning(
+                    f"  Challenges: OpenRouter {status}, trying Gemini..."
+                )
+                _supabase_rpc("mark_api_key_exhausted", {"p_key_id": or_key_id})
+            elif status == 200 and text:
+                ai_challenges = _parse_challenge_result(text)
+                if ai_challenges:
+                    increment_api_key_usage(or_key_id)
+                    log.info(
+                        f"  Challenges: {len(ai_challenges)} AI-detected formats "
+                        f"(via OpenRouter)"
+                    )
+            else:
+                log.warning(
+                    f"  Challenges: OpenRouter HTTP {status}, trying Gemini..."
+                )
+        except Exception as e:
+            log.warning(f"  Challenges: OpenRouter failed: {e}")
+
+    # --- Priority 2: Gemini direct (FREE — fallback only) ---
+    if not ai_challenges:
+        for attempt in range(3):
+            gemini_key, gemini_key_id = get_api_key_from_pool("gemini")
+            if not gemini_key:
+                break
+
+            try:
+                text, status = _call_gemini_direct(prompt, gemini_key)
+                if status in (429, 402):
+                    log.warning(
+                        f"  Challenges: Gemini key exhausted ({status}), rotating..."
+                    )
+                    _supabase_rpc("mark_api_key_exhausted", {"p_key_id": gemini_key_id})
+                    continue
+                elif status == 200 and text:
+                    ai_challenges = _parse_challenge_result(text)
+                    if ai_challenges:
+                        increment_api_key_usage(gemini_key_id)
+                        log.info(
+                            f"  Challenges: {len(ai_challenges)} AI-detected "
+                            f"formats (via Gemini)"
+                        )
+                        break
+                else:
+                    log.warning(f"  Challenges: Gemini HTTP {status}")
+                    break
+            except Exception as e:
+                log.error(f"  Challenges: Gemini failed: {e}")
+                break
+
+    # Merge: BASE always present + AI additions (dedup by slug)
+    all_challenges = list(BASE_CHALLENGES)
+    seen_slugs = set(BASE_CHALLENGE_SLUGS)
+
+    for ch in ai_challenges:
+        if ch.slug not in seen_slugs:
+            all_challenges.append(ch)
+            seen_slugs.add(ch.slug)
+
+    log.info(
+        f"  Challenges: {len(BASE_CHALLENGES)} base + "
+        f"{len(all_challenges) - len(BASE_CHALLENGES)} AI = "
+        f"{len(all_challenges)} total"
+    )
+    return all_challenges
+
+
+# ---------------------------------------------------------------------------
+# CHALLENGES WRITER
+# ---------------------------------------------------------------------------
+
+def write_challenges_to_supabase(
+    challenges: list[ChallengeItem], dry_run: bool = False
+):
+    """Upsert challenge formats into Supabase trending_challenges table."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        log.error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set!")
+        return
+
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    expires = (now + timedelta(hours=24)).isoformat()
+
+    rows = []
+    for ch in challenges:
+        rows.append({
+            "name": ch.name,
+            "slug": ch.slug,
+            "category": ch.category,
+            "description": ch.description,
+            "source": ch.source,
+            "country": ch.country,
+            "volume_score": ch.volume_score,
+            "hashtags": ch.hashtags,
+            "example_format": ch.example_format,
+            "script_instruction": ch.script_instruction,
+            "raw_data": ch.raw_data or None,
+            "fetch_date": today,
+            "fetched_at": now.isoformat(),
+            "expires_at": expires,
+        })
+
+    if dry_run:
+        log.info(f"\n  DRY RUN — would write {len(rows)} challenges:")
+        for r in rows:
+            tag = " (AI)" if (r.get("raw_data") or {}).get("ai_generated") else ""
+            log.info(
+                f"    [{r['category']:14s}] score={r['volume_score']:3d}  "
+                f"{r['name']}{tag}"
+            )
+        return
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+
+    with httpx.Client(timeout=30) as client:
+        # Upsert on (slug, source, fetch_date) unique constraint
+        resp = client.post(
+            f"{SUPABASE_URL}/rest/v1/trending_challenges"
+            f"?on_conflict=slug,source,fetch_date",
+            headers=headers,
+            json=rows,
+        )
+        if resp.status_code in (200, 201):
+            log.info(f"  Challenges: {len(rows)} items written to Supabase")
+        else:
+            log.error(
+                f"  Challenges: write failed {resp.status_code} — "
+                f"{resp.text[:200]}"
+            )
+
+        # Cleanup expired
+        resp = client.delete(
+            f"{SUPABASE_URL}/rest/v1/trending_challenges"
+            f"?expires_at=lt.{now.isoformat()}",
+            headers={**headers, "Prefer": ""},
+        )
+        if resp.status_code in (200, 204):
+            log.info("  Challenges: expired records cleaned up")
 
 
 # ============================================================================
@@ -1117,7 +1481,8 @@ def write_to_supabase(items: list[TrendingItem], dry_run: bool = False):
         for i in range(0, len(rows), batch_size):
             batch = rows[i : i + batch_size]
             resp = client.post(
-                f"{SUPABASE_URL}/rest/v1/trending_topics",
+                f"{SUPABASE_URL}/rest/v1/trending_topics"
+                f"?on_conflict=source,keyword,country,fetch_date",
                 headers=headers,
                 json=batch,
             )
@@ -1157,9 +1522,9 @@ def main():
     )
     parser.add_argument(
         "--source",
-        choices=["google", "tiktok", "youtube", "news", "ai", "ALL"],
+        choices=["google", "tiktok", "youtube", "news", "ai", "challenges", "ALL"],
         default="ALL",
-        help="Source to fetch (default: ALL)",
+        help="Source to fetch (default: ALL). 'challenges' = only trending challenges.",
     )
     parser.add_argument(
         "--dry-run",
@@ -1218,6 +1583,12 @@ def main():
             deduped.extend(ai_items)
 
     log.info(f"Final total:     {len(deduped)}")
+
+    # Source 6: Trending Challenges (AI-detected from TikTok hashtags + base)
+    if args.source in ("tiktok", "challenges", "ALL"):
+        log.info("\n--- Trending Challenges ---")
+        challenges = generate_trending_challenges(deduped)
+        write_challenges_to_supabase(challenges, dry_run=args.dry_run)
 
     # --- Summary ---
     log.info("\n--- Summary by source/country ---")

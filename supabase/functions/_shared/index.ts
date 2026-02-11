@@ -1,12 +1,12 @@
 /**
  * Shared Modules Index
- * 
+ *
  * Import from this file for all shared utilities:
  * ```typescript
- * import { 
+ * import {
  *   corsHeaders, handleCors, successResponse,
  *   getSupabase,
- *   callTavilyHybrid, callOpenRouterHybrid 
+ *   callLLM, callTavilyHybrid
  * } from '../_shared/index.ts';
  * ```
  */
@@ -26,34 +26,25 @@ export {
   createSupabaseClient 
 } from './supabase.ts';
 
-// API Key rotation (Hybrid mode: Pool → Secrets fallback)
+// API Key rotation
 export {
-  // Hybrid functions (recommended)
-  getApiKeyHybrid,
-  callWithRotationHybrid,
+  callLLM,
   callTavilyHybrid,
-  callOpenRouterHybrid,
-  
-  // Pool-only functions
-  getApiKeyFromPool,
-  
-  // Secret-only function
-  getApiKeyFromSecret,
-  
-  // Usage tracking
-  incrementUsage,
-  markExhausted,
+  callStockImageSearch,
+  trackUnsplashDownload,
+  callGroqTranscribe,
   getStats,
-  
-  // Legacy aliases (point to hybrid)
-  getApiKey,
-  callTavily,
-  callOpenRouter,
-  callWithRotation
+  getApiKeyFromPool,
 } from './apiKeyRotation.ts';
 
 // Types
-export type { ApiKeyResult, ApiKeyStats } from './apiKeyRotation.ts';
+export type {
+  ApiKeyResult,
+  ApiKeyStats,
+  StockImageResult,
+  StockImageSearchResult,
+  GroqTranscribeResult,
+} from './apiKeyRotation.ts';
 
 // ============================================================================
 // PROMPT MODULES (P0 Improvements - Jan 2026)

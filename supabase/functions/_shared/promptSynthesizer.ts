@@ -12,7 +12,7 @@
  * NOT simple append - creates a well-structured prompt following best practices.
  */
 
-import { getApiKeyFromPool } from './apiKeyRotation.ts'
+import { callLLM } from './apiKeyRotation.ts'
 import { 
   COSTUME_CATEGORIES,
   getCostumeByCategory,
@@ -216,56 +216,19 @@ export async function synthesizeImagePrompt(
   }
   
   try {
-    const keyResult = await getApiKeyFromPool(supabase, 'gemini')
-    
-    if (!keyResult.success || !keyResult.apiKey) {
-      console.warn('[PromptSynthesizer] No API key available, using fallback')
-      return {
-        synthesizedPrompt: fallbackSynthesis(input),
-        wasLLMUsed: false,
-        processingTimeMs: Date.now() - startTime,
-        source: 'fallback'
-      }
-    }
-    
-    const apiKey = keyResult.apiKey
     const userPrompt = buildSynthesisUserPrompt(input)
-    
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: SYNTHESIS_SYSTEM_PROMPT },
-              { text: userPrompt }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.4,
-            maxOutputTokens: 1024,
-            topP: 0.8
-          }
-        })
-      }
+
+    const llmResult = await callLLM(
+      supabase,
+      [
+        { role: 'system', content: SYNTHESIS_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ],
+      { geminiFirst: true, temperature: 0.4, maxTokens: 1024 }
     )
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.warn(`[PromptSynthesizer] Gemini error: ${response.status} - ${errorText}`)
-      
-      if (response.status === 429 && keyResult.keyId) {
-        await supabase
-          .from('api_keys_pool')
-          .update({ 
-            last_error: 'rate_limited',
-            last_used_at: new Date().toISOString()
-          })
-          .eq('id', keyResult.keyId)
-      }
-      
+
+    if (!llmResult.success || !llmResult.content) {
+      console.warn(`[PromptSynthesizer] LLM failed: ${llmResult.error}, using fallback`)
       return {
         synthesizedPrompt: fallbackSynthesis(input),
         wasLLMUsed: false,
@@ -273,12 +236,11 @@ export async function synthesizeImagePrompt(
         source: 'fallback'
       }
     }
-    
-    const data = await response.json()
-    const synthesizedPrompt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
-    
-    if (!synthesizedPrompt || synthesizedPrompt.length < 50) {
-      console.warn('[PromptSynthesizer] LLM returned empty/short response, using fallback')
+
+    const synthesizedPrompt = llmResult.content.trim()
+
+    if (synthesizedPrompt.length < 50) {
+      console.warn('[PromptSynthesizer] LLM returned short response, using fallback')
       return {
         synthesizedPrompt: fallbackSynthesis(input),
         wasLLMUsed: false,
@@ -286,27 +248,16 @@ export async function synthesizeImagePrompt(
         source: 'fallback'
       }
     }
-    
-    if (keyResult.keyId) {
-      await supabase
-        .from('api_keys_pool')
-        .update({ 
-          request_count: (keyResult.requestCount || 0) + 1,
-          last_used_at: new Date().toISOString(),
-          last_error: null
-        })
-        .eq('id', keyResult.keyId)
-    }
-    
+
     console.log(`[PromptSynthesizer] ✅ LLM synthesis complete (${synthesizedPrompt.length} chars)`)
-    
+
     return {
       synthesizedPrompt,
       wasLLMUsed: true,
       processingTimeMs: Date.now() - startTime,
       source: 'llm'
     }
-    
+
   } catch (error) {
     console.warn(`[PromptSynthesizer] Error: ${error}, using fallback`)
     return {
@@ -445,63 +396,33 @@ export async function getContextualOutfitAsync(
   let wasLLMUsed = false
   
   try {
-    const keyResult = await getApiKeyFromPool(supabase, 'gemini')
-    
-    if (keyResult.success && keyResult.apiKey) {
-      const userPrompt = `Video Topic: "${input.topic}"
+    const userPrompt = `Video Topic: "${input.topic}"
 ${input.scriptSnippet ? `Context: "${input.scriptSnippet.substring(0, 150)}..."` : ''}
 
 Pick ONE category from the list. Output ONLY the category name.`
-      
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keyResult.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: OUTFIT_CATEGORY_SYSTEM_PROMPT },
-                { text: userPrompt }
-              ]
-            }],
-            generationConfig: {
-              temperature: 0.1,  // Very low for consistency
-              maxOutputTokens: 50,
-              topP: 0.8
-            }
-          })
-        }
-      )
-      
-      if (response.ok) {
-        const data = await response.json()
-        const rawCategory = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || ''
-        
-        // Clean and validate category
-        const cleanCategory = rawCategory.toUpperCase().replace(/[^A-Z_]/g, '')
-        
-        if (cleanCategory && cleanCategory in COSTUME_CATEGORIES) {
-          category = cleanCategory
-          wasLLMUsed = true
-          console.log(`[getContextualOutfitAsync] ✅ LLM classified: "${input.topic}" → ${category}`)
-          
-          // Update key usage
-          if (keyResult.keyId) {
-            await supabase
-              .from('api_keys_pool')
-              .update({ 
-                request_count: (keyResult.requestCount || 0) + 1,
-                last_used_at: new Date().toISOString()
-              })
-              .eq('id', keyResult.keyId)
-          }
-        } else {
-          console.warn(`[getContextualOutfitAsync] ⚠️ Invalid category from LLM: "${rawCategory}", using fallback`)
-        }
+
+    const llmResult = await callLLM(
+      supabase,
+      [
+        { role: 'system', content: OUTFIT_CATEGORY_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ],
+      { geminiFirst: true, temperature: 0.1, maxTokens: 50 }
+    )
+
+    if (llmResult.success && llmResult.content) {
+      const rawCategory = llmResult.content.trim()
+      const cleanCategory = rawCategory.toUpperCase().replace(/[^A-Z_]/g, '')
+
+      if (cleanCategory && cleanCategory in COSTUME_CATEGORIES) {
+        category = cleanCategory
+        wasLLMUsed = true
+        console.log(`[getContextualOutfitAsync] ✅ LLM classified: "${input.topic}" → ${category}`)
       } else {
-        console.warn(`[getContextualOutfitAsync] LLM request failed: ${response.status}`)
+        console.warn(`[getContextualOutfitAsync] ⚠️ Invalid category from LLM: "${rawCategory}", using fallback`)
       }
+    } else {
+      console.warn(`[getContextualOutfitAsync] LLM failed: ${geminiResult.error}`)
     }
   } catch (llmErr) {
     console.warn(`[getContextualOutfitAsync] LLM error: ${llmErr}`)

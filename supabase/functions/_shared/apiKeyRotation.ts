@@ -9,12 +9,19 @@
  * - 429/402 → mark key as exhausted (daily cron resets)
  * - 403 leaked/compromised → permanently deactivate key
  * - Usage tracking per key
+ * - Unified callLLM() with automatic OpenRouter→Gemini fallback
  *
  * Usage:
  * ```typescript
- * import { callGeminiHybrid, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
+ * import { callLLM, callTavilyHybrid } from '../_shared/apiKeyRotation.ts';
  *
- * const result = await callGeminiHybrid(supabase, messages, { model: 'gemini-2.0-flash' });
+ * // Default: OpenRouter (paid) → Gemini (free fallback)
+ * const { content } = await callLLM(supabase, messages, { temperature: 0.85 });
+ *
+ * // Gemini first (for cheap/internal calls)
+ * const { content } = await callLLM(supabase, messages, { geminiFirst: true });
+ *
+ * // Search
  * const search = await callTavilyHybrid(supabase, 'AI niche ideas');
  * ```
  */
@@ -553,12 +560,326 @@ export async function callGeminiHybrid(
 }
 
 // ============================================================================
-// Legacy exports (for backward compatibility)
+// Unified Stock Image Search — Pexels (primary) → Unsplash (fallback)
 // ============================================================================
 
-// These use pool-only mode (original behavior)
-export const getApiKey = getApiKeyFromPool;
-export const callTavily = callTavilyHybrid;
-export const callOpenRouter = callOpenRouterHybrid;
-export const callGemini = callGeminiHybrid;
-export const callWithRotation = callWithRotationHybrid;
+export interface StockImageResult {
+  id: string;
+  provider: 'pexels' | 'unsplash';
+  url_thumb: string;
+  url_regular: string;
+  url_full: string;
+  width: number;
+  height: number;
+  photographer: string;
+  photographer_url: string;
+  alt_description: string;
+  /** Unsplash download_location URL for attribution tracking */
+  download_location?: string;
+}
+
+export interface StockImageSearchResult {
+  success: boolean;
+  results: StockImageResult[];
+  total: number;
+  provider: 'pexels' | 'unsplash' | 'none';
+  error?: string;
+}
+
+/**
+ * Unified stock image search with automatic provider fallback.
+ *
+ * Default: Pexels (primary, no attribution required) → Unsplash (fallback, download tracking required)
+ *
+ * Returns normalized results from whichever provider succeeds first.
+ */
+export async function callStockImageSearch(
+  supabase: SupabaseClient,
+  query: string,
+  options: {
+    orientation?: 'portrait' | 'landscape' | 'square';
+    perPage?: number;
+    page?: number;
+  } = {}
+): Promise<StockImageSearchResult> {
+  const orientation = options.orientation || 'portrait';
+  const perPage = options.perPage || 10;
+  const page = options.page || 1;
+
+  // 1. Try Pexels first (PRIMARY — no attribution required, 200 req/hour)
+  const pexelsResult = await callWithRotationHybrid(supabase, 'pexels', async (apiKey) => {
+    const params = new URLSearchParams({
+      query,
+      orientation,
+      per_page: perPage.toString(),
+      page: page.toString(),
+    });
+
+    const response = await fetch(`https://api.pexels.com/v1/search?${params}`, {
+      headers: { 'Authorization': apiKey }
+    });
+
+    const data = await response.json();
+    return { data, status: response.status };
+  });
+
+  if (pexelsResult.data?.photos && Array.isArray(pexelsResult.data.photos) && pexelsResult.data.photos.length > 0) {
+    const results: StockImageResult[] = pexelsResult.data.photos.map((img: any) => ({
+      id: String(img.id),
+      provider: 'pexels' as const,
+      url_thumb: img.src.tiny,
+      url_regular: img.src.large,
+      url_full: img.src.original,
+      width: img.width,
+      height: img.height,
+      photographer: img.photographer,
+      photographer_url: img.photographer_url,
+      alt_description: img.alt || '',
+    }));
+    console.log(`[StockSearch] Pexels returned ${results.length} results for "${query}"`);
+    return { success: true, results, total: pexelsResult.data.total_results || results.length, provider: 'pexels' };
+  }
+
+  console.log(`[StockSearch] Pexels failed or empty: ${pexelsResult.error || 'no results'}. Trying Unsplash...`);
+
+  // 2. Try Unsplash (FALLBACK — requires download tracking, 50 req/hour demo)
+  const unsplashResult = await callWithRotationHybrid(supabase, 'unsplash', async (apiKey) => {
+    const params = new URLSearchParams({
+      query,
+      orientation,
+      per_page: perPage.toString(),
+      page: page.toString(),
+    });
+
+    const response = await fetch(`https://api.unsplash.com/search/photos?${params}`, {
+      headers: {
+        'Authorization': `Client-ID ${apiKey}`,
+        'Accept-Version': 'v1'
+      }
+    });
+
+    const data = await response.json();
+    return { data, status: response.status };
+  });
+
+  if (unsplashResult.data?.results && Array.isArray(unsplashResult.data.results) && unsplashResult.data.results.length > 0) {
+    const results: StockImageResult[] = unsplashResult.data.results.map((img: any) => ({
+      id: img.id,
+      provider: 'unsplash' as const,
+      url_thumb: img.urls.thumb,
+      url_regular: img.urls.regular,
+      url_full: img.urls.full,
+      width: img.width,
+      height: img.height,
+      photographer: img.user.name,
+      photographer_url: img.user.links.html,
+      alt_description: img.alt_description || img.description || '',
+      download_location: img.links?.download_location,
+    }));
+    console.log(`[StockSearch] Unsplash returned ${results.length} results for "${query}"`);
+    return { success: true, results, total: unsplashResult.data.total || results.length, provider: 'unsplash' };
+  }
+
+  console.log(`[StockSearch] All providers failed for "${query}"`);
+  return {
+    success: false,
+    results: [],
+    total: 0,
+    provider: 'none',
+    error: `Pexels: ${pexelsResult.error || 'no results'}, Unsplash: ${unsplashResult.error || 'no results'}`
+  };
+}
+
+/**
+ * Track download for Unsplash attribution (required by API guidelines).
+ * Call this when an Unsplash image is actually used/downloaded.
+ */
+export async function trackUnsplashDownload(
+  supabase: SupabaseClient,
+  downloadLocationUrl: string
+): Promise<void> {
+  if (!downloadLocationUrl) return;
+
+  const result = await callWithRotationHybrid(supabase, 'unsplash', async (apiKey) => {
+    const response = await fetch(downloadLocationUrl, {
+      headers: { 'Authorization': `Client-ID ${apiKey}` }
+    });
+    return { data: null, status: response.status };
+  });
+
+  if (result.error) {
+    console.warn(`[StockSearch] Failed to track Unsplash download: ${result.error}`);
+  } else {
+    console.log(`[StockSearch] Unsplash download tracked`);
+  }
+}
+
+// ============================================================================
+// Unified Groq Transcription — Whisper with key rotation
+// ============================================================================
+
+export interface GroqTranscribeResult {
+  success: boolean;
+  data: any;
+  error?: string;
+}
+
+/**
+ * Transcribe audio using Groq Whisper with pool-based key rotation.
+ *
+ * Used by Python backend (VPS) and potentially Edge Functions.
+ * Note: For Edge Functions, audio must be passed as FormData-compatible.
+ *       For Python backend, use getApiKeyFromPool('groq') directly.
+ */
+export async function callGroqTranscribe(
+  supabase: SupabaseClient,
+  audioBlob: Blob,
+  options: {
+    model?: string;
+    responseFormat?: string;
+    timestampGranularities?: string;
+    filename?: string;
+  } = {}
+): Promise<GroqTranscribeResult> {
+  const model = options.model || 'whisper-large-v3-turbo';
+  const responseFormat = options.responseFormat || 'verbose_json';
+  const filename = options.filename || 'audio.mp3';
+
+  const result = await callWithRotationHybrid(supabase, 'groq', async (apiKey) => {
+    const formData = new FormData();
+    formData.append('file', audioBlob, filename);
+    formData.append('model', model);
+    formData.append('response_format', responseFormat);
+    if (options.timestampGranularities) {
+      formData.append('timestamp_granularities[]', options.timestampGranularities);
+    }
+
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: formData
+    });
+
+    const data = await response.json();
+    return { data, status: response.status };
+  });
+
+  if (result.error) {
+    return { success: false, data: null, error: result.error };
+  }
+
+  return { success: true, data: result.data };
+}
+
+// ============================================================================
+// Unified LLM Call — ONE function for all text generation
+// ============================================================================
+
+/**
+ * Unified LLM call with automatic provider fallback.
+ *
+ * Default: OpenRouter (PAID, reliable) → Gemini (FREE fallback)
+ * geminiFirst: Gemini (FREE) → OpenRouter (PAID fallback)
+ *
+ * Returns normalized { success, content, provider, error } — no raw API parsing needed.
+ */
+export async function callLLM(
+  supabase: SupabaseClient,
+  messages: Array<{ role: string; content: string }>,
+  options: {
+    temperature?: number;
+    maxTokens?: number;
+    /** OpenRouter model (default: google/gemini-2.5-flash-lite) */
+    model?: string;
+    /** Gemini model (default: gemini-2.0-flash) */
+    geminiModel?: string;
+    /** Try Gemini first, OpenRouter as fallback (default: false) */
+    geminiFirst?: boolean;
+  } = {}
+): Promise<{ success: boolean; content: string | null; provider: string; error?: string }> {
+  const temperature = options.temperature ?? 0.8;
+  const maxTokens = options.maxTokens || 2048;
+  const orModel = options.model || 'google/gemini-2.5-flash-lite';
+  const geminiModel = options.geminiModel || 'gemini-2.0-flash';
+
+  const tryOpenRouter = async () => {
+    const result = await callWithRotationHybrid(supabase, 'openrouter', async (apiKey) => {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://sparkfluence.com',
+          'X-Title': 'Sparkfluence'
+        },
+        body: JSON.stringify({
+          model: orModel,
+          messages,
+          temperature,
+          max_tokens: maxTokens
+        })
+      });
+      const data = await response.json();
+      return { data, status: response.status };
+    });
+
+    const content = result.data?.choices?.[0]?.message?.content || null;
+    return { success: !!content, content, provider: `openrouter:${orModel}`, error: result.error || undefined };
+  };
+
+  const tryGemini = async () => {
+    const systemMsg = messages.find(m => m.role === 'system')?.content || '';
+    const userMsg = messages.find(m => m.role === 'user')?.content || '';
+    const combinedPrompt = systemMsg ? `${systemMsg}\n\n${userMsg}` : userMsg;
+
+    const result = await callWithRotationHybrid(supabase, 'gemini', async (apiKey) => {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: combinedPrompt }] }],
+            generationConfig: { temperature, maxOutputTokens: maxTokens }
+          })
+        }
+      );
+      const data = await response.json();
+      return { data, status: response.status };
+    });
+
+    if (result.data?.error) {
+      return { success: false, content: null, provider: `gemini:${geminiModel}`, error: result.data.error.message };
+    }
+
+    const content = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    return { success: !!content, content, provider: `gemini:${geminiModel}`, error: result.error || undefined };
+  };
+
+  // Execute in priority order
+  const [primary, fallback] = options.geminiFirst
+    ? [tryGemini, tryOpenRouter]
+    : [tryOpenRouter, tryGemini];
+
+  const primaryResult = await primary();
+  if (primaryResult.success && primaryResult.content) {
+    return primaryResult;
+  }
+
+  console.log(`[callLLM] Primary (${primaryResult.provider}) failed: ${primaryResult.error}. Trying fallback...`);
+
+  const fallbackResult = await fallback();
+  if (fallbackResult.success && fallbackResult.content) {
+    return fallbackResult;
+  }
+
+  return {
+    success: false,
+    content: null,
+    provider: 'none',
+    error: `All providers failed. Primary: ${primaryResult.error}, Fallback: ${fallbackResult.error}`
+  };
+}
+

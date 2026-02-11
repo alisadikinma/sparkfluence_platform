@@ -20,7 +20,8 @@ import {
   Shield,
   AlertCircle,
   Sparkles,
-  Mic
+  Mic,
+  RefreshCw
 } from "lucide-react";
 import { PhoneInput } from "../../components/ui/phone-input";
 import { VoiceRecorder } from "../../components/features/VoiceRecorder";
@@ -74,93 +75,6 @@ const dnaOptions = [
   { id: "community-builder", name: "Community Builder", emoji: "🤝" }
 ];
 
-// Niche suggestions based on Interest + Profession (contextual)
-const nichesByInterest: Record<string, string[]> = {
-  "Entertainment": [
-    "Movie Reviews", "Film Analysis", "TV Series Recap", "Celebrity News", "Pop Culture",
-    "Gaming", "Game Reviews", "Esports", "Streaming Tips", "Anime", "K-Pop", "K-Drama",
-    "Music Production", "Song Covers", "Music Reviews", "Concert Vlogs",
-    "Comedy Sketches", "Stand-up Comedy", "Memes & Trends", "Reaction Videos"
-  ],
-  "Travel": [
-    "Travel Vlog", "Budget Travel", "Luxury Travel", "Solo Travel", "Backpacking",
-    "Hidden Gems", "Hotel Reviews", "Flight Hacks", "Travel Tips", "Digital Nomad",
-    "Food Tourism", "Adventure Travel", "Cultural Exploration", "Travel Photography",
-    "Staycation Ideas", "Road Trips", "Beach Destinations", "Mountain Hiking"
-  ],
-  "Culinary": [
-    "Recipe Ideas", "Cooking Tips", "Baking Tutorial", "Food Review", "Restaurant Review",
-    "Street Food", "Cafe Hopping", "Healthy Recipes", "Quick Meals", "Meal Prep",
-    "Food Photography", "Kitchen Hacks", "Traditional Cuisine", "Fusion Food",
-    "Dessert Ideas", "Drinks & Cocktails", "Vegetarian/Vegan", "Diet Recipes"
-  ],
-  "Technology": [
-    "AI Tools", "AI News", "AI Tutorial", "AI for Business", "ChatGPT Tips",
-    "Tech Reviews", "Gadget Unboxing", "Smartphone Tips", "Laptop Reviews",
-    "Coding Tutorial", "Web Development", "App Development", "Programming Tips",
-    "Software Reviews", "Tech News", "Cybersecurity", "Cloud Computing",
-    "Blockchain", "Crypto News", "NFT", "Data Science", "Machine Learning",
-    "Robotics", "IoT", "Automation", "Smart Home", "Drones", "3D Printing",
-    "VR/AR", "Metaverse", "Quantum Computing", "Electric Vehicles", "Tech Startups",
-    "Open Source", "Linux", "DevOps", "API Development", "Database", "SaaS Tools"
-  ],
-  "Fashion": [
-    "OOTD", "Fashion Tips", "Style Guide", "Trend Alert", "Thrift Haul",
-    "Sustainable Fashion", "Streetwear", "Formal Wear", "Casual Style",
-    "Fashion DIY", "Wardrobe Essentials", "Color Coordination", "Accessory Tips",
-    "Seasonal Fashion", "Brand Reviews", "Fashion on Budget", "Vintage Style"
-  ],
-  "Education": [
-    "Study Tips", "Exam Preparation", "Learning Hacks", "Online Courses",
-    "Language Learning", "Math Tutorial", "Science Explained", "History Facts",
-    "Career Guidance", "Scholarship Tips", "University Life", "Student Life",
-    "Teaching Tips", "Homeschooling", "Kids Education", "Skill Development"
-  ],
-  "Beauty": [
-    "Makeup Tutorial", "Skincare Routine", "Beauty Tips", "Product Review",
-    "Hair Care", "Hair Styling", "Natural Beauty", "K-Beauty", "Drugstore Finds",
-    "Luxury Beauty", "Beauty Hacks", "Anti-Aging", "Acne Care", "Men's Grooming",
-    "Nail Art", "Beauty on Budget", "Clean Beauty", "Beauty Trends"
-  ],
-  "Health": [
-    "Fitness Tips", "Home Workout", "Gym Motivation", "Weight Loss", "Muscle Building",
-    "Yoga", "Meditation", "Mental Health", "Stress Management", "Sleep Tips",
-    "Nutrition Tips", "Healthy Eating", "Diet Plans", "Supplements",
-    "Running", "HIIT", "Stretching", "Posture Tips", "Injury Prevention"
-  ],
-  "Finance": [
-    "Investing", "Stock Market", "Crypto Trading", "Financial Literacy",
-    "Budgeting Tips", "Saving Money", "Debt Free", "Passive Income",
-    "Side Hustle", "Entrepreneurship", "Business Tips", "Startup Advice",
-    "Real Estate", "Retirement Planning", "Tax Tips", "Personal Finance"
-  ],
-  "Design": [
-    "Graphic Design", "UI/UX Design", "Logo Design", "Branding",
-    "Digital Art", "Illustration", "Photography", "Photo Editing",
-    "Video Editing", "Motion Graphics", "3D Design", "Interior Design",
-    "Architecture", "Product Design", "Design Tools", "Creative Process"
-  ],
-  "Others": [
-    "Productivity", "Self Improvement", "Life Hacks", "Motivation",
-    "Minimalism", "Organization", "Time Management", "Goal Setting",
-    "Book Reviews", "Podcast Tips", "Public Speaking", "Communication Skills",
-    "Relationship Tips", "Parenting Tips", "Pet Care", "DIY Projects",
-    "Gardening", "Home Decor", "Car Reviews", "Sports News"
-  ]
-};
-
-// Additional niche modifiers based on Profession
-const nichesByProfession: Record<string, string[]> = {
-  "Content Creator": ["Content Creation Tips", "YouTube Growth", "TikTok Trends", "Instagram Strategy", "Viral Content", "Influencer Tips"],
-  "Freelancer": ["Freelance Tips", "Client Management", "Remote Work", "Work From Home", "Freelance Tools", "Pricing Strategy"],
-  "Entrepreneur": ["Startup Tips", "Business Growth", "Leadership", "Team Building", "Funding", "Scaling Business"],
-  "Employee": ["Career Tips", "Office Life", "Work-Life Balance", "Productivity", "Corporate Culture", "Promotion Tips"],
-  "Student": ["Student Life", "Study Motivation", "Campus Vlog", "Part-time Jobs", "Internship Tips", "Student Budget"],
-  "Teacher": ["Teaching Tips", "Classroom Ideas", "Education Tech", "Student Engagement", "Lesson Planning", "Teacher Life"],
-  "Artist": ["Art Process", "Creative Journey", "Art Tips", "Commission Work", "Art Business", "Portfolio Building"],
-  "Other": ["Personal Branding", "Networking", "Skill Sharing", "Community Building"]
-};
-
 // Country options for Google Trends GEO_ID
 const countryOptions = [
   { code: "ID", name: "Indonesia", flag: "🇮🇩" },
@@ -184,16 +98,6 @@ const countryOptions = [
   { code: "SA", name: "Saudi Arabia", flag: "🇸🇦" },
   { code: "NL", name: "Netherlands", flag: "🇳🇱" },
 ];
-
-// Niche suggestions for autocomplete - NOW DYNAMIC based on Interest + Profession
-const getNicheSuggestions = (interest: string, profession: string): string[] => {
-  const interestNiches = nichesByInterest[interest] || nichesByInterest["Others"] || [];
-  const professionNiches = nichesByProfession[profession] || nichesByProfession["Other"] || [];
-  
-  // Combine and dedupe: profession niches first (more specific), then interest niches
-  const combined = [...professionNiches, ...interestNiches];
-  return [...new Set(combined)];
-};
 
 export const Profile = (): JSX.Element => {
   const navigate = useNavigate();
@@ -249,6 +153,11 @@ export const Profile = (): JSX.Element => {
   const [llmNicheSuggestions, setLlmNicheSuggestions] = useState<string[]>([]);
   const [isLoadingNiches, setIsLoadingNiches] = useState(false);
   const nicheDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // AI-generated niche suggestions (browse mode)
+  const [aiNicheSuggestions, setAiNicheSuggestions] = useState<string[]>([]);
+  const [isLoadingAiNiches, setIsLoadingAiNiches] = useState(false);
+  const aiNicheRequestRef = useRef(0);
 
   // Voice State
   const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
@@ -690,30 +599,70 @@ export const Profile = (): JSX.Element => {
     }
   };
 
-  // Debounced LLM call when no base suggestions found
+  // Fetch AI-generated niches when interest/profession changes
+  const fetchAiNichesForInterest = async (interest: string, profession: string) => {
+    if (!interest) {
+      setAiNicheSuggestions([]);
+      return;
+    }
+
+    const requestId = ++aiNicheRequestRef.current;
+    setIsLoadingAiNiches(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-niche-suggestions', {
+        body: {
+          mode: 'browse',
+          interest,
+          profession: profession || 'Content Creator',
+          language,
+          existing_niches: contentPrefs.selected_niches
+        }
+      });
+
+      // Only update if this is still the latest request
+      if (requestId !== aiNicheRequestRef.current) return;
+
+      if (error) throw error;
+      if (data?.success && data?.niches) {
+        setAiNicheSuggestions(data.niches);
+      }
+    } catch (err) {
+      console.error('[Profile] AI niche fetch error:', err);
+      if (requestId === aiNicheRequestRef.current) {
+        setAiNicheSuggestions([]);
+      }
+    } finally {
+      if (requestId === aiNicheRequestRef.current) {
+        setIsLoadingAiNiches(false);
+      }
+    }
+  };
+
+  // Trigger AI niche generation when interest/profession changes
   useEffect(() => {
-    // Clear previous timeout
+    const actualInterest = contentPrefs.interest === 'Others' ? customInterest : contentPrefs.interest;
+    const actualProfession = contentPrefs.profession === 'Other' ? customProfession : contentPrefs.profession;
+
+    if (actualInterest) {
+      fetchAiNichesForInterest(actualInterest, actualProfession);
+    } else {
+      setAiNicheSuggestions([]);
+    }
+  }, [contentPrefs.interest, contentPrefs.profession, customInterest, customProfession]);
+
+  // Debounced LLM call for search-by-query (typing in niche input)
+  useEffect(() => {
     if (nicheDebounceRef.current) {
       clearTimeout(nicheDebounceRef.current);
     }
 
-    // Reset LLM suggestions when input changes
     setLlmNicheSuggestions([]);
 
-    // Only call LLM if:
-    // 1. Input has 2+ characters
-    // 2. No base suggestions found
-    // 3. Not already in selected niches
-    const baseMatches = allNicheSuggestions.filter(
-      niche => 
-        niche.toLowerCase().includes(nicheInput.toLowerCase()) &&
-        !contentPrefs.selected_niches.includes(niche)
-    );
-
-    if (nicheInput.trim().length >= 2 && baseMatches.length === 0) {
+    if (nicheInput.trim().length >= 2) {
       nicheDebounceRef.current = setTimeout(() => {
         generateNicheSuggestionsLLM(nicheInput);
-      }, 600); // 600ms debounce
+      }, 600);
     }
 
     return () => {
@@ -722,18 +671,6 @@ export const Profile = (): JSX.Element => {
       }
     };
   }, [nicheInput, contentPrefs.interest, contentPrefs.profession]);
-
-  // Filter suggestions based on input - NOW CONTEXTUAL
-  const allNicheSuggestions = getNicheSuggestions(contentPrefs.interest, contentPrefs.profession);
-  const filteredNicheSuggestions = nicheInput.trim()
-    ? allNicheSuggestions.filter(
-        niche => 
-          niche.toLowerCase().includes(nicheInput.toLowerCase()) &&
-          !contentPrefs.selected_niches.includes(niche)
-      ).slice(0, 8)
-    : allNicheSuggestions.filter(
-        niche => !contentPrefs.selected_niches.includes(niche)
-      ).slice(0, 6); // Show top 6 when empty
 
   const toggleDNA = (dnaName: string) => {
     setContentPrefs(prev => {
@@ -1038,7 +975,7 @@ export const Profile = (): JSX.Element => {
                           setContentPrefs({ ...contentPrefs, interest: e.target.value });
                           if (e.target.value !== "Others") setCustomInterest("");
                         }}
-                        className="w-full bg-[#1a1a24] border border-[#2b2b38] text-white text-sm lg:text-base h-11 lg:h-12 rounded-lg px-3 lg:px-4 focus:border-[#7c3aed] focus:outline-none"
+                        className="w-full bg-neutral-800 border border-neutral-700 text-white text-sm lg:text-base h-11 lg:h-12 rounded-lg px-3 lg:px-4 focus:border-emerald-500 focus:outline-none"
                       >
                         <option value="">{language === 'id' ? 'Pilih minat' : 'Select interest'}</option>
                         {interestOptions.map(opt => (<option key={opt} value={opt} className="bg-[#1a1a24]">{opt}</option>))}
@@ -1054,7 +991,7 @@ export const Profile = (): JSX.Element => {
                           setContentPrefs({ ...contentPrefs, profession: e.target.value });
                           if (e.target.value !== "Other") setCustomProfession("");
                         }}
-                        className="w-full bg-[#1a1a24] border border-[#2b2b38] text-white text-sm lg:text-base h-11 lg:h-12 rounded-lg px-3 lg:px-4 focus:border-[#7c3aed] focus:outline-none"
+                        className="w-full bg-neutral-800 border border-neutral-700 text-white text-sm lg:text-base h-11 lg:h-12 rounded-lg px-3 lg:px-4 focus:border-emerald-500 focus:outline-none"
                       >
                         <option value="">{language === 'id' ? 'Pilih profesi' : 'Select profession'}</option>
                         {professionOptions.map(opt => (<option key={opt} value={opt} className="bg-[#1a1a24]">{opt}</option>))}
@@ -1068,7 +1005,7 @@ export const Profile = (): JSX.Element => {
                     <select
                       value={profile.country}
                       onChange={(e) => setProfile({ ...profile, country: e.target.value })}
-                      className="w-full bg-[#1a1a24] border border-[#2b2b38] text-white text-sm lg:text-base h-11 lg:h-12 rounded-lg px-3 lg:px-4 focus:border-[#7c3aed] focus:outline-none"
+                      className="w-full bg-neutral-800 border border-neutral-700 text-white text-sm lg:text-base h-11 lg:h-12 rounded-lg px-3 lg:px-4 focus:border-emerald-500 focus:outline-none"
                     >
                       {countryOptions.map(country => (
                         <option key={country.code} value={country.code} className="bg-[#1a1a24]">{country.flag} {country.name}</option>
@@ -1077,111 +1014,18 @@ export const Profile = (): JSX.Element => {
                   </div>
 
                   {/* Niche */}
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <Label className="text-white text-sm lg:text-base font-medium">
-                      Niche <span className="text-[#9ca3af] text-xs lg:text-sm">({language === 'id' ? 'maks 5' : 'max 5'})</span>
+                      Niche <span className="text-neutral-400 text-xs lg:text-sm">({language === 'id' ? 'maks 5' : 'max 5'})</span>
                     </Label>
-                    <div className="relative">
-                      <div className="flex gap-2">
-                        <Input
-                          value={nicheInput}
-                          onChange={(e) => {
-                            setNicheInput(e.target.value);
-                            setShowNicheSuggestions(true);
-                          }}
-                          onFocus={() => setShowNicheSuggestions(true)}
-                          onBlur={() => setTimeout(() => setShowNicheSuggestions(false), 200)}
-                          onKeyDown={handleNicheKeyDown}
-                          placeholder={language === 'id' 
-                          ? `Ketik atau pilih niche ${contentPrefs.interest ? `(${contentPrefs.interest})` : ''}...` 
-                          : `Type or select niche ${contentPrefs.interest ? `(${contentPrefs.interest})` : ''}...`}
-                          className="bg-[#1a1a24] border-[#2b2b38] text-white text-sm lg:text-base h-11 lg:h-12 flex-1"
-                          disabled={contentPrefs.selected_niches.length >= 5}
-                        />
-                        <Button
-                          type="button"
-                          onClick={() => addNiche()}
-                          disabled={!nicheInput.trim() || contentPrefs.selected_niches.length >= 5}
-                          className="bg-[#7c3aed] hover:bg-[#6d28d9] h-11 lg:h-12 px-4"
-                        >
-                          {language === 'id' ? 'Tambah' : 'Add'}
-                        </Button>
-                      </div>
-                      
-                      {/* Suggestions Dropdown */}
-                      {showNicheSuggestions && (filteredNicheSuggestions.length > 0 || llmNicheSuggestions.length > 0 || isLoadingNiches || nicheInput.trim()) && (
-                        <div className="absolute z-50 w-full mt-1 bg-[#1a1a24] border border-[#2b2b38] rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                          {/* Show custom option if user typed something not in list */}
-                          {nicheInput.trim() && !filteredNicheSuggestions.some(s => s.toLowerCase() === nicheInput.toLowerCase()) && !llmNicheSuggestions.some(s => s.toLowerCase() === nicheInput.toLowerCase()) && !contentPrefs.selected_niches.includes(nicheInput.trim()) && (
-                            <button
-                              type="button"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                addNiche(nicheInput.trim());
-                              }}
-                              className="w-full px-4 py-2.5 text-left text-sm text-[#7c3aed] hover:bg-[#7c3aed]/20 transition-colors flex items-center gap-2 border-b border-[#2b2b38]"
-                            >
-                              <span>+</span>
-                              {language === 'id' ? `Tambah "${nicheInput.trim()}"` : `Add "${nicheInput.trim()}"`}
-                            </button>
-                          )}
-                          
-                          {/* Base suggestions */}
-                          {filteredNicheSuggestions.map((suggestion, idx) => (
-                            <button
-                              key={`base-${idx}`}
-                              type="button"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                addNiche(suggestion);
-                              }}
-                              className="w-full px-4 py-2.5 text-left text-sm text-white hover:bg-[#7c3aed]/20 transition-colors flex items-center gap-2"
-                            >
-                              <span className="text-[#9ca3af]">+</span>
-                              {suggestion}
-                            </button>
-                          ))}
-                          
-                          {/* Loading indicator */}
-                          {isLoadingNiches && (
-                            <div className="w-full px-4 py-3 text-center text-sm text-[#9ca3af] flex items-center justify-center gap-2">
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              {language === 'id' ? 'Mencari niche...' : 'Finding niches...'}
-                            </div>
-                          )}
-                          
-                          {/* LLM-generated suggestions */}
-                          {llmNicheSuggestions.length > 0 && (
-                            <>
-                              <div className="px-4 py-2 text-xs text-[#9ca3af] border-t border-[#2b2b38] bg-[#0a0a12]">
-                                ✨ {language === 'id' ? 'Saran AI' : 'AI Suggestions'}
-                              </div>
-                              {llmNicheSuggestions.filter(s => !contentPrefs.selected_niches.includes(s)).map((suggestion, idx) => (
-                                <button
-                                  key={`llm-${idx}`}
-                                  type="button"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    addNiche(suggestion);
-                                  }}
-                                  className="w-full px-4 py-2.5 text-left text-sm text-[#a78bfa] hover:bg-[#7c3aed]/20 transition-colors flex items-center gap-2"
-                                >
-                                  <span className="text-[#7c3aed]">✦</span>
-                                  {suggestion}
-                                </button>
-                              ))}
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    
+
+                    {/* Selected niches */}
                     {contentPrefs.selected_niches.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
+                      <div className="flex flex-wrap gap-2">
                         {contentPrefs.selected_niches.map((niche, idx) => (
                           <span
                             key={idx}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#7c3aed]/20 border border-[#7c3aed]/50 text-[#a78bfa] rounded-full text-sm"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 rounded-full text-sm"
                           >
                             {niche}
                             <button
@@ -1194,8 +1038,131 @@ export const Profile = (): JSX.Element => {
                         ))}
                       </div>
                     )}
-                    {contentPrefs.selected_niches.length === 0 && (
-                      <p className="text-[#9ca3af] text-xs">{language === 'id' ? 'Belum ada niche. Tambahkan niche kontenmu.' : 'No niches yet. Add your content niches.'}</p>
+
+                    {/* AI-generated niche suggestions */}
+                    {contentPrefs.interest && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-neutral-400 text-xs">
+                            {language === 'id' ? `Saran AI untuk ${contentPrefs.interest}:` : `AI suggestions for ${contentPrefs.interest}:`}
+                          </p>
+                          <button
+                            onClick={() => {
+                              const actualInterest = contentPrefs.interest === 'Others' ? customInterest : contentPrefs.interest;
+                              const actualProfession = contentPrefs.profession === 'Other' ? customProfession : contentPrefs.profession;
+                              fetchAiNichesForInterest(actualInterest, actualProfession);
+                            }}
+                            disabled={isLoadingAiNiches}
+                            className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAiNiches ? 'animate-spin' : ''}`} />
+                          </button>
+                        </div>
+
+                        {isLoadingAiNiches ? (
+                          <div className="flex items-center gap-2 py-3">
+                            <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                            <span className="text-neutral-400 text-sm">{language === 'id' ? 'Generating niches...' : 'Generating niches...'}</span>
+                          </div>
+                        ) : aiNicheSuggestions.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {aiNicheSuggestions
+                              .filter(s => !contentPrefs.selected_niches.includes(s))
+                              .map((suggestion, idx) => (
+                                <button
+                                  key={`ai-${idx}`}
+                                  type="button"
+                                  onClick={() => addNiche(suggestion)}
+                                  disabled={contentPrefs.selected_niches.length >= 5}
+                                  className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                                    contentPrefs.selected_niches.length >= 5
+                                      ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
+                                      : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20'
+                                  }`}
+                                >
+                                  + {suggestion}
+                                </button>
+                              ))}
+                          </div>
+                        ) : !isLoadingAiNiches && contentPrefs.interest ? (
+                          <p className="text-neutral-500 text-xs">{language === 'id' ? 'Tidak ada saran. Coba refresh atau ketik manual.' : 'No suggestions. Try refreshing or type manually.'}</p>
+                        ) : null}
+                      </div>
+                    )}
+
+                    {/* Custom niche input */}
+                    <div className="relative">
+                      <div className="flex gap-2">
+                        <Input
+                          value={nicheInput}
+                          onChange={(e) => {
+                            setNicheInput(e.target.value);
+                            setShowNicheSuggestions(true);
+                          }}
+                          onFocus={() => setShowNicheSuggestions(true)}
+                          onBlur={() => setTimeout(() => setShowNicheSuggestions(false), 200)}
+                          onKeyDown={handleNicheKeyDown}
+                          placeholder={language === 'id' ? 'Ketik niche custom...' : 'Type custom niche...'}
+                          className="bg-neutral-800 border-neutral-700 text-white text-sm h-10 flex-1 focus:border-emerald-500"
+                          disabled={contentPrefs.selected_niches.length >= 5}
+                        />
+                        <Button
+                          type="button"
+                          onClick={() => addNiche()}
+                          disabled={!nicheInput.trim() || contentPrefs.selected_niches.length >= 5}
+                          className="bg-emerald-500 hover:bg-emerald-600 h-10 px-4 text-sm"
+                        >
+                          {language === 'id' ? 'Tambah' : 'Add'}
+                        </Button>
+                      </div>
+
+                      {/* Search dropdown (LLM suggestions when typing) */}
+                      {showNicheSuggestions && (llmNicheSuggestions.length > 0 || isLoadingNiches || nicheInput.trim()) && (
+                        <div className="absolute z-50 w-full mt-1 bg-neutral-900 border border-neutral-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {/* Custom add option */}
+                          {nicheInput.trim() && !llmNicheSuggestions.some(s => s.toLowerCase() === nicheInput.toLowerCase()) && !contentPrefs.selected_niches.includes(nicheInput.trim()) && (
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                addNiche(nicheInput.trim());
+                              }}
+                              className="w-full px-4 py-2.5 text-left text-sm text-emerald-400 hover:bg-emerald-500/10 transition-colors flex items-center gap-2 border-b border-neutral-700"
+                            >
+                              <span>+</span>
+                              {language === 'id' ? `Tambah "${nicheInput.trim()}"` : `Add "${nicheInput.trim()}"`}
+                            </button>
+                          )}
+
+                          {/* Loading */}
+                          {isLoadingNiches && (
+                            <div className="w-full px-4 py-3 text-center text-sm text-neutral-400 flex items-center justify-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              {language === 'id' ? 'Mencari niche...' : 'Finding niches...'}
+                            </div>
+                          )}
+
+                          {/* LLM search suggestions */}
+                          {llmNicheSuggestions.filter(s => !contentPrefs.selected_niches.includes(s)).map((suggestion, idx) => (
+                            <button
+                              key={`llm-${idx}`}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                addNiche(suggestion);
+                              }}
+                              className="w-full px-4 py-2.5 text-left text-sm text-emerald-300 hover:bg-emerald-500/10 transition-colors flex items-center gap-2"
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-500" />
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {contentPrefs.selected_niches.length === 0 && !contentPrefs.interest && (
+                      <p className="text-neutral-500 text-xs">{language === 'id' ? 'Pilih interest dulu untuk mendapatkan saran niche AI.' : 'Select an interest first to get AI niche suggestions.'}</p>
                     )}
                   </div>
 
@@ -1210,8 +1177,8 @@ export const Profile = (): JSX.Element => {
                             onClick={() => togglePlatform(platform)}
                             className={`px-3 lg:px-5 py-2 lg:py-2.5 rounded-lg text-sm lg:text-base font-medium transition-all ${
                               contentPrefs.platforms.includes(platform)
-                                ? "bg-[#7c3aed] text-white"
-                                : "bg-[#1a1a24] border border-[#2b2b38] text-[#9ca3af] hover:border-[#7c3aed]"
+                                ? "bg-emerald-500 text-white"
+                                : "bg-neutral-800 border border-neutral-700 text-neutral-400 hover:border-emerald-500"
                             }`}
                           >
                             {platform}
@@ -1229,8 +1196,8 @@ export const Profile = (): JSX.Element => {
                             onClick={() => toggleObjective(objective)}
                             className={`px-3 lg:px-5 py-2 lg:py-2.5 rounded-lg text-sm lg:text-base font-medium transition-all ${
                               contentPrefs.objectives.includes(objective)
-                                ? "bg-[#7c3aed] text-white"
-                                : "bg-[#1a1a24] border border-[#2b2b38] text-[#9ca3af] hover:border-[#7c3aed]"
+                                ? "bg-emerald-500 text-white"
+                                : "bg-neutral-800 border border-neutral-700 text-neutral-400 hover:border-emerald-500"
                             }`}
                           >
                             {objective}
@@ -1251,10 +1218,10 @@ export const Profile = (): JSX.Element => {
                           disabled={!contentPrefs.creative_dna.includes(dna.name) && contentPrefs.creative_dna.length >= 3}
                           className={`px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
                             contentPrefs.creative_dna.includes(dna.name)
-                              ? "bg-[#7c3aed] text-white"
+                              ? "bg-emerald-500 text-white"
                               : contentPrefs.creative_dna.length >= 3
-                              ? "bg-[#1a1a24] border border-[#2b2b38] text-[#9ca3af]/50 cursor-not-allowed"
-                              : "bg-[#1a1a24] border border-[#2b2b38] text-[#9ca3af] hover:border-[#7c3aed]"
+                              ? "bg-neutral-800 border border-neutral-700 text-neutral-500 cursor-not-allowed"
+                              : "bg-neutral-800 border border-neutral-700 text-neutral-400 hover:border-emerald-500"
                           }`}
                         >
                           {dna.emoji} {dna.name}
@@ -1263,7 +1230,7 @@ export const Profile = (): JSX.Element => {
                     </div>
                   </div>
 
-                  <Button onClick={saveContentPreferences} disabled={saving} className="w-full sm:w-auto bg-[#7c3aed] hover:bg-[#6d28d9] h-11 lg:h-12 px-8 lg:px-10 text-sm lg:text-base">
+                  <Button onClick={saveContentPreferences} disabled={saving} className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-600 h-11 lg:h-12 px-8 lg:px-10 text-sm lg:text-base">
                     {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : saveSuccess ? <Check className="w-4 h-4 mr-2" /> : null}
                     {saveSuccess ? (language === 'id' ? 'Tersimpan!' : 'Saved!') : (language === 'id' ? 'Simpan Preferensi' : 'Save Preferences')}
                   </Button>
@@ -1280,10 +1247,10 @@ export const Profile = (): JSX.Element => {
                         disabled={!contentPrefs.creative_dna.includes(dna.name) && contentPrefs.creative_dna.length >= 3}
                         className={`w-full px-4 py-3 rounded-lg text-base font-medium transition-all text-left ${
                           contentPrefs.creative_dna.includes(dna.name)
-                            ? "bg-[#7c3aed] text-white"
+                            ? "bg-emerald-500 text-white"
                             : contentPrefs.creative_dna.length >= 3
-                            ? "bg-[#1a1a24] border border-[#2b2b38] text-[#9ca3af]/50 cursor-not-allowed"
-                            : "bg-[#1a1a24] border border-[#2b2b38] text-[#9ca3af] hover:border-[#7c3aed]"
+                            ? "bg-neutral-800 border border-neutral-700 text-neutral-500 cursor-not-allowed"
+                            : "bg-neutral-800 border border-neutral-700 text-neutral-400 hover:border-emerald-500"
                         }`}
                       >
                         {dna.emoji} {dna.name}
