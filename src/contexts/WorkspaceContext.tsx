@@ -124,8 +124,7 @@ export interface WorkspaceState {
   isGeneratingScript: boolean;
   isRegeneratingScript: boolean;
 
-  // Dashboard (Phase 4)
-  sliderValues: { hookAggressiveness: number; controversyLevel: number; humorDensity: number; pacing: number; emotionalIntensity: number };
+  // Smart Companion
   focusedSegmentId: string | null;
 
   // Dirty flag (unsaved changes)
@@ -165,8 +164,7 @@ export type WorkspaceAction =
   // Segment operations (Phase 2)
   | { type: 'TOGGLE_SEGMENT'; segmentId: string }
   | { type: 'ADJUST_DURATION'; segmentId: string; durationSeconds: number }
-  // Dashboard (Phase 4)
-  | { type: 'SET_SLIDER_VALUES'; values: { hookAggressiveness: number; controversyLevel: number; humorDensity: number; pacing: number; emotionalIntensity: number } }
+  // Smart Companion
   | { type: 'SET_FOCUSED_SEGMENT'; segmentId: string | null }
   // Advanced segment operations (Phase 6)
   | { type: 'MERGE_SEGMENTS'; segmentId1: string; segmentId2: string }
@@ -210,7 +208,6 @@ export const initialWorkspaceState: WorkspaceState = {
   qualityReport: null,
   isGeneratingScript: false,
   isRegeneratingScript: false,
-  sliderValues: { hookAggressiveness: 5, controversyLevel: 3, humorDensity: 4, pacing: 6, emotionalIntensity: 5 },
   focusedSegmentId: null,
   isDirty: false,
 };
@@ -250,16 +247,20 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
     case 'SET_REGENERATING_SCRIPT':
       return { ...state, isRegeneratingScript: action.isRegenerating };
 
-    case 'SET_SCRIPT_DATA':
+    case 'SET_SCRIPT_DATA': {
+      // LOOP-END defaults to disabled (user must explicitly enable)
+      const segsWithLoopEndOff = action.segments.map((seg) =>
+        seg.segmentType === 'LOOP-END' ? { ...seg, isEnabled: false } : seg,
+      );
       return {
         ...state,
-        segments: action.segments,
+        segments: segsWithLoopEndOff,
         hookOptions: action.hookOptions,
         qualityReport: action.qualityReport,
         status: 'script_ready',
         scriptVersions: [{
           version: 1,
-          segments: action.segments,
+          segments: segsWithLoopEndOff,
           hookOptions: action.hookOptions,
           selectedHook: state.selectedHook,
           score: action.qualityReport.final_score,
@@ -268,6 +269,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         selectedVersion: 1,
         isDirty: true,
       };
+    }
 
     case 'SELECT_HOOK': {
       if (state.scriptConfirmed || !state.hookOptions) return state;
@@ -442,9 +444,6 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         isDirty: true,
       };
     }
-
-    case 'SET_SLIDER_VALUES':
-      return { ...state, sliderValues: action.values, isDirty: true };
 
     case 'SET_FOCUSED_SEGMENT':
       return { ...state, focusedSegmentId: action.segmentId };

@@ -1,11 +1,10 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   Video,
   Scissors,
   Volume2,
   Type,
   Sparkles,
-  Plus,
   RefreshCw,
   CheckCircle,
   Lock,
@@ -19,11 +18,22 @@ import {
   GitMerge,
   SplitSquareHorizontal,
   AlertTriangle,
+  ClipboardCopy,
+  Check,
+  Clock,
   type LucideIcon,
 } from 'lucide-react';
 import type { HookOptions, ScoreBreakdown, WorkspaceSegment } from '../../../contexts/WorkspaceContext';
-import { getHookTint } from '../components/HookSelector';
 import { ViralityScore } from '../components/ViralityScore';
+
+function getHookTint(key: string): string {
+  switch (key) {
+    case 'option_a_safe': return 'rgba(34, 197, 94, 0.04)';
+    case 'option_b_negative': return 'rgba(239, 68, 68, 0.04)';
+    case 'option_c_visual': return 'rgba(6, 182, 212, 0.04)';
+    default: return 'transparent';
+  }
+}
 
 // ============================================================================
 // LOCAL TYPES
@@ -76,6 +86,8 @@ interface ScriptStepProps {
   // Segment operations
   onToggleSegment?: (segmentId: string) => void;
   onAdjustDuration?: (segmentId: string, durationSeconds: number) => void;
+  // Regenerate
+  onRegenerateScript?: () => void;
   // Coach focus
   focusedSegmentId?: string | null;
   onFocusSegment?: (segmentId: string) => void;
@@ -739,18 +751,6 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
             );
           })}
 
-          {/* Add chip button */}
-          {!scriptConfirmed && !isDisabled && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full px-3 py-1
-                text-[12px] font-medium text-[#57534E] bg-[#1E1E1E] border border-dashed border-[#3f3f46]
-                hover:border-[#57534E] hover:text-[#78716C] transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              Add
-            </button>
-          )}
         </div>
 
         {/* Merge/Split actions + auto-merge suggestion */}
@@ -893,6 +893,7 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
   onUnconfirm: onUnconfirmProp,
   onToggleSegment: onToggleSegmentProp,
   onAdjustDuration: onAdjustDurationProp,
+  onRegenerateScript: onRegenerateScriptProp,
   focusedSegmentId,
   onFocusSegment,
   onMergeSegments: onMergeSegmentsProp,
@@ -996,14 +997,43 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
     [onAdjustDurationProp],
   );
 
+  // Copy all script text to clipboard
+  const [copySuccess, setCopySuccess] = useState(false);
+  const handleCopyScript = useCallback(() => {
+    const enabledSegments = segments.filter((s) => s.isEnabled !== false);
+    const fullScript = enabledSegments
+      .map((s) => `[${s.segmentType}]\n${s.script}`)
+      .join('\n\n');
+    navigator.clipboard.writeText(fullScript).then(() => {
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    });
+  }, [segments]);
+
   return (
     <div className="space-y-4">
       {/* ================================================================ */}
-      {/* TOP ACTION BAR — Score + Hook Tabs + Confirm                      */}
+      {/* TOP ACTION BAR — Score + Duration + Hook Tabs + Confirm           */}
       {/* ================================================================ */}
       <div className="flex items-center gap-3 flex-wrap">
         {/* Virality Score pill */}
         <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />
+
+        {/* Total Duration pill */}
+        {(() => {
+          const enabledSegs = segments.filter(s => s.isEnabled !== false);
+          const totalSec = enabledSegs.reduce((sum, s) => sum + s.duration, 0);
+          const mins = Math.floor(totalSec / 60);
+          const secs = totalSec % 60;
+          const display = mins > 0 ? `${mins}:${secs.toString().padStart(2, '0')}` : `${totalSec}s`;
+          return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#262626] bg-[#161616] text-xs font-mono text-[#A8A29E]">
+              <Clock className="w-3.5 h-3.5" />
+              {display}
+              <span className="text-[#57534E]">/ {enabledSegs.length} seg</span>
+            </span>
+          );
+        })()}
 
         {/* Hook variant tabs (Safe / Bold / Visual) */}
         {hookOptions && (
@@ -1035,16 +1065,53 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
           </div>
         )}
 
-        {/* Regenerating indicator */}
-        {isRegenerating && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
-            <RefreshCw className="w-3.5 h-3.5 motion-safe:animate-spin" />
-            Generating...
-          </span>
-        )}
-
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Regenerate Script (icon-only + tooltip) */}
+        {isRegenerating ? (
+          <span className="inline-flex items-center justify-center w-8 h-8 text-amber-400" title="Generating new script...">
+            <RefreshCw className="w-4 h-4 motion-safe:animate-spin" />
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={onRegenerateScriptProp}
+            disabled={scriptConfirmed || !onRegenerateScriptProp}
+            className={`
+              inline-flex items-center justify-center w-8 h-8 rounded-lg
+              border transition-all duration-200
+              ${scriptConfirmed || !onRegenerateScriptProp
+                ? 'border-[#262626] bg-[#161616] text-[#57534E] cursor-not-allowed opacity-60'
+                : 'border-[#262626] bg-[#161616] text-[#78716C] hover:text-amber-400 hover:border-amber-500/30 hover:bg-amber-500/10 cursor-pointer'
+              }
+            `}
+            title={scriptConfirmed ? 'Unlock script to regenerate' : 'Regenerate entire script'}
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Copy Script (icon-only + tooltip) */}
+        <button
+          type="button"
+          onClick={handleCopyScript}
+          className={`
+            inline-flex items-center justify-center w-8 h-8 rounded-lg
+            border border-[#262626] bg-[#161616] transition-all duration-200 cursor-pointer
+            ${copySuccess
+              ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+              : 'text-[#78716C] hover:text-[#A8A29E] hover:border-[#3f3f46]'
+            }
+          `}
+          title={copySuccess ? 'Copied!' : 'Copy all script to clipboard'}
+        >
+          {copySuccess ? (
+            <Check className="w-4 h-4" />
+          ) : (
+            <ClipboardCopy className="w-4 h-4" />
+          )}
+        </button>
 
         {/* Confirm / Unlock */}
         {scriptConfirmed ? (

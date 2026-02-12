@@ -2,9 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useOnboarding } from '../../contexts/OnboardingContext';
+import { useOnboardingStatus } from '../../hooks/useOnboardingStatus';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { generateOrderId } from '../../lib/orderIdGenerator';
+import { getScriptLanguageFromCountry } from '../../lib/countryDetection';
 import { ScriptForm, SelectedTopic } from '../ScriptLab/components/ScriptForm';
 import { TopicRecommendations } from '../ScriptLab/components/TopicRecommendations';
 import { TikTokChallenge } from '../../types/topic';
@@ -19,6 +21,7 @@ export const ChatHome: React.FC = () => {
   const location = useLocation();
   const { t, language: uiLanguage } = useLanguage();
   const { updateOnboardingData } = useOnboarding();
+  const { data: onboardingData } = useOnboardingStatus();
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(false);
@@ -27,6 +30,22 @@ export const ChatHome: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<SelectedTopic | null>(null);
   const [selectedChallenge, setSelectedChallenge] = useState<TikTokChallenge | null>(null);
+
+  // Lifted state: script language + DNA toggle (shared between TopicRecommendations & ScriptForm)
+  const [scriptLang, setScriptLang] = useState('en');
+  const [scriptLangInitialized, setScriptLangInitialized] = useState(false);
+  const [useDnaTone, setUseDnaTone] = useState(true);
+
+  const hasDnaTone = !!(onboardingData?.creative_dna && onboardingData.creative_dna.length > 0);
+
+  // Set script language based on user's country (only once when data loads)
+  useEffect(() => {
+    if (!scriptLangInitialized && onboardingData?.country) {
+      const defaultLang = getScriptLanguageFromCountry(onboardingData.country);
+      setScriptLang(defaultLang);
+      setScriptLangInitialized(true);
+    }
+  }, [onboardingData?.country, scriptLangInitialized]);
 
   // Ref to scroll ScriptForm into view when topic selected
   const formRef = useRef<HTMLDivElement>(null);
@@ -380,7 +399,16 @@ export const ChatHome: React.FC = () => {
 
         {/* ── Topics Section (full width, primary focus) ── */}
         <div className={`transition-all duration-500 ${selectedTopic ? 'opacity-60 pointer-events-none max-h-[200px] overflow-hidden' : ''}`}>
-          <TopicRecommendations onSelectTopic={handleSelectTopic} onSelectChallenge={setSelectedChallenge} disabled={loading} />
+          <TopicRecommendations
+            onSelectTopic={handleSelectTopic}
+            onSelectChallenge={setSelectedChallenge}
+            disabled={loading}
+            scriptLang={scriptLang}
+            onScriptLangChange={setScriptLang}
+            useDnaTone={useDnaTone}
+            onDnaToneChange={setUseDnaTone}
+            hasDnaTone={hasDnaTone}
+          />
         </div>
 
         {/* ── Selected Topic Indicator + Expand to collapse topics ── */}
@@ -483,6 +511,8 @@ export const ChatHome: React.FC = () => {
               selectedTopic={selectedTopic}
               onClearTopic={handleClearTopic}
               selectedChallenge={selectedChallenge}
+              scriptLang={scriptLang}
+              useDnaTone={useDnaTone}
             />
           </div>
         </div>

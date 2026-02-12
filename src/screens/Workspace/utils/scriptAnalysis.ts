@@ -1,4 +1,10 @@
-import React, { useMemo, useState, useCallback } from 'react';
+/**
+ * Shared script analysis utilities
+ *
+ * Used by: SmartCompanion (OverviewTab, IssuesTab)
+ * Exports: analyzeSegment, generateQuickFixes, extractFeatures, types, labels
+ */
+
 import {
   scoreSegment,
   SCORING_RULES,
@@ -10,19 +16,36 @@ import {
   hasFirstPersonCta,
   detectPowerWords,
   type SegmentType,
-  type ScoringWeight,
 } from '../../../lib/knowledge/12-scoring-engine';
 import {
   analyzeEmotion,
-  EMOTION_COLORS,
   type EmotionType,
 } from '../../../lib/knowledge/13-emotion-lexicon';
+
+// ============================================================================
+// CROSS-SEGMENT FEATURE CLASSIFICATION
+// ============================================================================
+
+/**
+ * Features whose scores depend on OTHER segments (hook text, all-segment context).
+ * These features still contribute to the virality SCORE but do NOT generate
+ * issue cards in the Issues tab — because changing hook style would cause
+ * downstream segment issues to appear/disappear, making the tab feel unstable.
+ */
+export const CROSS_SEGMENT_FEATURES = new Set([
+  'builds_on_hook',
+  'matches_hook_category',
+  'emotional_match',
+  'mirrors_hook_energy',
+  'payoff_not_revealed',
+  'matches_funnel_stage',
+]);
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
-interface SegmentInput {
+export interface SegmentInput {
   id: string;
   segmentType: string;
   script: string;
@@ -32,29 +55,30 @@ interface SegmentInput {
   isEnabled?: boolean;
 }
 
-interface CoachAnalysis {
+export interface CoachAnalysis {
   segmentType: string;
   score: number;
   strengths: Array<{ key: string; label: string; points: number }>;
-  weaknesses: Array<{ key: string; label: string; weight: number; tip: string }>;
+  weaknesses: Array<{ key: string; label: string; weight: number; tip: string; isStable: boolean }>;
   powerWords: string[];
   emotionDominant: EmotionType;
   emotionIntensity: number;
   flags: string[];
 }
 
-interface AIScriptCoachProps {
-  segments: SegmentInput[];
-  focusedSegmentId: string | null;
-  language?: string;
-  onApplySuggestion?: (segmentId: string, field: 'script' | 'visualDirection', value: string) => void;
+export interface QuickFix {
+  id: string;
+  weaknessKey?: string;
+  label: string;
+  preview: string;
+  field: 'script' | 'visualDirection';
 }
 
 // ============================================================================
-// FEATURE EXTRACTION
+// FEATURE LABELS & TIPS
 // ============================================================================
 
-const FEATURE_LABELS: Record<string, string> = {
+export const FEATURE_LABELS: Record<string, string> = {
   has_question: 'Question hook',
   has_number: 'Number/statistic',
   has_power_word: 'Power word',
@@ -63,6 +87,7 @@ const FEATURE_LABELS: Record<string, string> = {
   under_word_limit: 'Under word limit',
   has_pattern_interrupt: 'Pattern interrupt',
   matches_hook_category: 'Hook category match',
+  payoff_not_revealed: 'Curiosity gap maintained',
   has_foreshadow: 'Foreshadow/open loop',
   has_transition: 'Smooth transition',
   builds_on_hook: 'Builds on hook',
@@ -83,7 +108,7 @@ const FEATURE_LABELS: Record<string, string> = {
   emotional_match: 'Emotion match w/ hook',
 };
 
-const FEATURE_TIPS: Record<string, string> = {
+export const FEATURE_TIPS: Record<string, string> = {
   has_question: 'Add a question to spark curiosity (+23% shares)',
   has_number: 'Include a number or stat (+36% CTR)',
   has_power_word: 'Use emotional/urgency words (+2.3% CTR per word)',
@@ -91,6 +116,7 @@ const FEATURE_TIPS: Record<string, string> = {
   word_density_optimal: 'Aim for 70-90% word density for natural pacing',
   under_word_limit: 'Reduce word count to stay within the time limit',
   has_pattern_interrupt: 'Add a surprise element to reset attention (+17pp retention)',
+  payoff_not_revealed: 'Don\'t reveal tool/product names in HOOK — tease with quantity ("3 AI tools") instead',
   has_foreshadow: 'Add "tunggu..." or "but first..." to create open loops',
   has_transition: 'Smooth the transition from the previous segment',
   builds_on_hook: 'Connect back to what the hook promised',
@@ -111,6 +137,10 @@ const FEATURE_TIPS: Record<string, string> = {
   emotional_match: 'Match emotion tone to hook (within ±0.2 intensity)',
 };
 
+// ============================================================================
+// FEATURE EXTRACTION
+// ============================================================================
+
 /** Extract content word set for cross-segment comparison */
 function contentWords(text: string): Set<string> {
   const stops = new Set([
@@ -125,7 +155,7 @@ function contentWords(text: string): Set<string> {
   );
 }
 
-function extractFeatures(
+export function extractFeatures(
   text: string,
   wordCount: number,
   maxWords: number,
@@ -216,20 +246,56 @@ function extractFeatures(
     emotionalMatch = sameEmotion ? (intensityDiff <= 0.2 ? 1 : 0.7) : 0.2;
   }
 
+  // payoff_not_revealed: check if HOOK reveals content words from BODY/PEAK segments
+  // A good HOOK teases ("3 AI tools") without naming them ("Jasper, CapCut, Pionex")
+  let payoffNotRevealed = 1; // default: no payoff revealed (good)
+  if (allSegments && allSegments.length > 1) {
+    // Get the HOOK segment to check
+    const hookSeg = allSegments.find(s => s.segmentType === 'HOOK');
+    // Only evaluate this feature for the HOOK segment itself
+    if (hookSeg && hookSeg.id === (allSegments[segmentIndex ?? -1]?.id)) {
+      const hookWords = contentWords(hookSeg.script);
+      // Collect content words from BODY + PEAK segments (these contain the "payoff")
+      const bodyPeakWords = new Set<string>();
+      for (const s of allSegments) {
+        if (s.segmentType?.startsWith('BODY') || s.segmentType === 'PEAK') {
+          for (const w of contentWords(s.script)) {
+            bodyPeakWords.add(w);
+          }
+        }
+      }
+      // Find proper nouns / brand names in HOOK that also appear in BODY/PEAK
+      // These are likely tool/product names being revealed prematurely
+      const hookText = hookSeg.script || '';
+      const properNouns = hookText.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [];
+      const revealedNouns = properNouns.filter(noun => {
+        const lower = noun.toLowerCase();
+        return bodyPeakWords.has(lower) && hookWords.has(lower);
+      });
+      // Also check for comma-separated lists of items (pattern: "X, Y, sama/dan/and Z")
+      const listPattern = /\b(\w+),\s*(\w+),?\s*(?:sama|dan|and|aur|or)\s+(\w+)/i;
+      const hasList = listPattern.test(hookText);
+      if (revealedNouns.length >= 2 || (revealedNouns.length >= 1 && hasList)) {
+        payoffNotRevealed = 0; // Bad: reveals multiple tool/product names
+      } else if (revealedNouns.length === 1) {
+        payoffNotRevealed = 0.5; // Warning: reveals one name
+      }
+    }
+  }
+
   // matches_hook_category: basic heuristic based on hook type patterns
   let matchesHookCategory = 0.5;
   if (hookSegment) {
     const hookHasQuestion = hasQuestion(hookSegment.script);
     const hookHasNumber = hasNumber(hookSegment.script);
     const hookHasNegative = hasNegativeFrame(hookSegment.script);
-    // If hook uses a question → later segments should answer/address it
     if (hookHasQuestion && (hasNumber(text) || hasValueDelivery > 0.5)) matchesHookCategory = 1;
     else if (hookHasNumber && hasNumber(text)) matchesHookCategory = 0.8;
     else if (hookHasNegative && hasNegativeFrame(text)) matchesHookCategory = 0.6;
     else matchesHookCategory = 0.4;
   }
 
-  // matches_funnel_stage: basic heuristic — CTA should have action, BODY should have value
+  // matches_funnel_stage: basic heuristic
   const matchesFunnelStage = hasCtaAction(text) || hasValueDelivery > 0.5 ? 0.8 : 0.4;
 
   return {
@@ -239,7 +305,7 @@ function extractFeatures(
     has_negative_frame: hasNegativeFrame(text),
     word_density_optimal: optimalDensity,
     under_word_limit: wordCount <= maxWords,
-    has_pattern_interrupt: hasForeshadow(text),
+    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text),
     has_foreshadow: hasForeshadow(text),
     has_transition: transitionStart ? 1 : hasTransitionWord ? 0.5 : 0,
     builds_on_hook: buildsOnHook,
@@ -255,6 +321,7 @@ function extractFeatures(
     single_focus: singleFocus,
     has_urgency_word: /\b(sekarang|now|segera|today|limited|hurry|अभी|जल्दी)\b/i.test(text),
     matches_funnel_stage: matchesFunnelStage,
+    payoff_not_revealed: payoffNotRevealed,
     matches_hook_category: matchesHookCategory,
     mirrors_hook_energy: mirrorsHookEnergy,
     has_callback: hasCallback,
@@ -266,13 +333,14 @@ function extractFeatures(
 // ANALYSIS
 // ============================================================================
 
-function analyzeSegment(
+export function analyzeSegment(
   segment: SegmentInput,
   language: string,
   allSegments?: SegmentInput[],
 ): CoachAnalysis {
-  const st = segment.segmentType.startsWith('BODY') ? 'BODY' : segment.segmentType as SegmentType;
-  const words = segment.script.trim().split(/\s+/).filter(Boolean);
+  const segType = segment.segmentType || 'BODY';
+  const st = segType.startsWith('BODY') ? 'BODY' : segType as SegmentType;
+  const words = (segment.script || '').trim().split(/\s+/).filter(Boolean);
   const wordCount = words.length;
   const enabledSegments = allSegments?.filter(s => s.isEnabled !== false);
   const hookSegment = enabledSegments?.find(s => s.segmentType === 'HOOK') ?? null;
@@ -298,6 +366,7 @@ function analyzeSegment(
         label: FEATURE_LABELS[key] || key,
         weight: rule.weight,
         tip: FEATURE_TIPS[key] || '',
+        isStable: !CROSS_SEGMENT_FEATURES.has(key),
       });
     }
   }
@@ -322,30 +391,59 @@ function analyzeSegment(
 }
 
 // ============================================================================
+// WORD-LIMIT-AWARE FIX HELPERS
+// ============================================================================
+
+/**
+ * Build a fix preview that respects maxWords.
+ * Combines `prefix` + (trimmed) `core` + `suffix` within the word budget.
+ * If the result would exceed maxWords, trims words from the END of core.
+ */
+function buildFixPreview(
+  prefix: string,
+  core: string,
+  suffix: string,
+  maxWords: number,
+): string {
+  const prefixWords = prefix.trim() ? prefix.trim().split(/\s+/) : [];
+  const suffixWords = suffix.trim() ? suffix.trim().split(/\s+/) : [];
+  const coreWords = core.trim().split(/\s+/).filter(Boolean);
+  const overhead = prefixWords.length + suffixWords.length;
+  const budgetForCore = Math.max(1, maxWords - overhead);
+
+  const trimmedCore =
+    coreWords.length > budgetForCore
+      ? coreWords.slice(0, budgetForCore).join(' ').replace(/[,;]$/, '') + '...'
+      : coreWords.join(' ');
+
+  const parts = [
+    prefix.trim(),
+    trimmedCore,
+    suffix.trim(),
+  ].filter(Boolean);
+
+  return parts.join(' ');
+}
+
+// ============================================================================
 // QUICK-FIX SUGGESTION GENERATOR
 // ============================================================================
 
-interface QuickFix {
-  id: string;
-  weaknessKey?: string;
-  label: string;
-  preview: string;
-  field: 'script' | 'visualDirection';
-}
-
-function generateQuickFixes(
+export function generateQuickFixes(
   segment: SegmentInput,
   analysis: CoachAnalysis,
   language: string,
 ): QuickFix[] {
   const fixes: QuickFix[] = [];
-  const text = segment.script.trim();
+  const text = (segment.script || '').trim();
+  if (text.length === 0) return fixes; // Guard: no text → no fixes to suggest
   const words = text.split(/\s+/).filter(Boolean);
-  const st = segment.segmentType.startsWith('BODY') ? 'BODY' : segment.segmentType;
+  const maxW = segment.maxWords;
+  const segTypeRaw = segment.segmentType || 'BODY';
+  const st = segTypeRaw.startsWith('BODY') ? 'BODY' : segTypeRaw;
 
-  // Weakness: no question → suggest adding one (varied by segment type)
+  // Weakness: no question → suggest adding one
   if (analysis.weaknesses.some(w => w.key === 'has_question')) {
-    // Rotate through different question styles based on text length as pseudo-random seed
     const questionStyles: Record<string, string[][]> = {
       id: [
         ['Lo tau gak', '?'],
@@ -370,11 +468,12 @@ function generateQuickFixes(
     const styleIdx = words.length % styles.length;
     const [prefix, suffix] = styles[styleIdx];
     const core = words.slice(0, Math.min(words.length, 6)).join(' ').replace(/[.!?]$/, '');
+    const qPreview = buildFixPreview(prefix, core.toLowerCase(), suffix, maxW);
     fixes.push({
       id: 'add-question',
       weaknessKey: 'has_question',
       label: 'Add question hook',
-      preview: `${prefix} ${core.toLowerCase()}${suffix}`,
+      preview: qPreview,
       field: 'script',
     });
   }
@@ -385,14 +484,13 @@ function generateQuickFixes(
       id: '3 cara', en: '3 ways', hi: '3 tarike',
     };
     const insert = numberInserts[language] ?? numberInserts.en;
-    // Try to insert a number near the start
     if (words.length > 2) {
-      const newText = `${words[0]} ${insert} ${words.slice(1).join(' ')}`;
+      const preview = buildFixPreview(`${words[0]} ${insert}`, words.slice(1).join(' '), '', maxW);
       fixes.push({
         id: 'add-number',
         weaknessKey: 'has_number',
         label: 'Add number/stat',
-        preview: newText,
+        preview,
         field: 'script',
       });
     }
@@ -403,75 +501,117 @@ function generateQuickFixes(
     const negPrefixes: Record<string, string> = {
       id: 'Jangan pernah', en: "Don't ever", hi: 'Kabhi mat',
     };
-    const prefix = negPrefixes[language] ?? negPrefixes.en;
-    const core = words.slice(0, Math.min(words.length, 8)).join(' ').replace(/^[A-Z]/, (c) => c.toLowerCase());
+    const negPrefix = negPrefixes[language] ?? negPrefixes.en;
+    const core = words.join(' ').replace(/^[A-Z]/, (c) => c.toLowerCase()).replace(/[.!?]$/, '');
+    const negPreview = buildFixPreview(negPrefix, core, '!', maxW);
     fixes.push({
       id: 'add-negative',
       weaknessKey: 'has_negative_frame',
       label: 'Negative reframe',
-      preview: `${prefix} ${core.replace(/[.!?]$/, '')}!`,
+      preview: negPreview,
       field: 'script',
     });
   }
 
-  // Weakness: no urgency word (CTA) → suggest adding urgency
+  // Weakness: no urgency word (CTA)
   if (analysis.weaknesses.some(w => w.key === 'has_urgency_word') && st === 'CTA') {
     const urgencyWords: Record<string, string> = {
       id: 'Sekarang!', en: 'Right now!', hi: 'Abhi!',
     };
+    const urgency = urgencyWords[language] ?? urgencyWords.en;
+    const urgPreview = buildFixPreview('', text.replace(/[.!?]*$/, ''), `— ${urgency}`, maxW);
     fixes.push({
       id: 'add-urgency',
       weaknessKey: 'has_urgency_word',
       label: 'Add urgency',
-      preview: `${text.replace(/[.!?]*$/, '')} — ${urgencyWords[language] ?? urgencyWords.en}`,
+      preview: urgPreview,
       field: 'script',
     });
   }
 
-  // Weakness: no first-person CTA → suggest first-person rewrite
+  // Weakness: no first-person CTA
   if (analysis.weaknesses.some(w => w.key === 'first_person') && st === 'CTA') {
     const fpPrefixes: Record<string, string> = {
       id: 'Gue mau lo', en: 'I want you to', hi: 'Main chahta hoon tum',
     };
-    const core = words.slice(0, Math.min(words.length, 8)).join(' ');
+    const fpPrefix = fpPrefixes[language] ?? fpPrefixes.en;
+    const fpCore = words.join(' ').toLowerCase().replace(/[.!?]*$/, '');
+    const fpPreview = buildFixPreview(fpPrefix, fpCore, '.', maxW);
     fixes.push({
       id: 'add-first-person',
       weaknessKey: 'first_person',
       label: 'First-person CTA',
-      preview: `${fpPrefixes[language] ?? fpPrefixes.en} ${core.toLowerCase().replace(/[.!?]*$/, '')}.`,
+      preview: fpPreview,
       field: 'script',
     });
   }
 
-  // Weakness: no foreshadow → suggest open loop
+  // Weakness: no foreshadow (FORE)
   if (analysis.weaknesses.some(w => w.key === 'has_foreshadow') && st === 'FORE') {
     const foreshadowTails: Record<string, string> = {
       id: 'Tapi tunggu, yang terakhir ini...', en: 'But wait, the last one...', hi: 'Lekin ruko, aakhri wala...',
     };
+    const foreTail = foreshadowTails[language] ?? foreshadowTails.en;
+    const forePreview = buildFixPreview('', text.replace(/[.!?]*$/, '') + '.', foreTail, maxW);
     fixes.push({
       id: 'add-foreshadow',
       weaknessKey: 'has_foreshadow',
       label: 'Add open loop',
-      preview: `${text.replace(/[.!?]*$/, '')}. ${foreshadowTails[language] ?? foreshadowTails.en}`,
+      preview: forePreview,
       field: 'script',
     });
   }
 
-  // Weakness: no callback (LOOP-END) → suggest callback to hook
+  // Weakness: no callback (LOOP-END)
   if (analysis.weaknesses.some(w => w.key === 'has_callback') && segment.segmentType === 'LOOP-END') {
     const callbacks: Record<string, string> = {
       id: 'Inget tadi gue bilang?', en: 'Remember what I said?', hi: 'Yaad hai maine kya kaha?',
     };
+    const cb = callbacks[language] ?? callbacks.en;
+    const cbPreview = buildFixPreview(cb, text, '', maxW);
     fixes.push({
       id: 'add-callback',
       weaknessKey: 'has_callback',
       label: 'Add hook callback',
-      preview: `${callbacks[language] ?? callbacks.en} ${text}`,
+      preview: cbPreview,
       field: 'script',
     });
   }
 
-  // BODY segments: suggest adding transition word
+  // Weakness: builds_on_hook (FORE/BODY) — suggest connecting back to hook
+  if (analysis.weaknesses.some(w => w.key === 'builds_on_hook') && st !== 'HOOK') {
+    const hookPrefix: Record<string, string[]> = {
+      id: ['Nah yang gue bilang tadi, ', 'Balik ke topik, ', 'Soal yang tadi, '],
+      en: ['Like I said, ', 'Back to the point, ', 'About what I mentioned, '],
+      hi: ['Jaise maine kaha, ', 'Wapas topic pe, ', 'Jo maine bataya, '],
+    };
+    const opts = hookPrefix[language] ?? hookPrefix.en;
+    const pick = opts[words.length % opts.length];
+    const trimmedText = text[0].toLowerCase() + text.slice(1);
+    const hookConnPreview = buildFixPreview(pick, trimmedText, '', maxW);
+    fixes.push({
+      id: 'add-hook-connection',
+      weaknessKey: 'builds_on_hook',
+      label: 'Connect back to hook',
+      preview: hookConnPreview,
+      field: 'script',
+    });
+  }
+
+  // Weakness: word_density_optimal (over-dense, >90% density) — suggest trimming
+  if (analysis.weaknesses.some(w => w.key === 'word_density_optimal') && words.length > segment.maxWords * 0.9) {
+    const targetWords = Math.round(segment.maxWords * 0.8);
+    const trimmed = words.slice(0, targetWords).join(' ');
+    fixes.push({
+      id: 'reduce-density',
+      weaknessKey: 'word_density_optimal',
+      label: `Trim to ${targetWords} words`,
+      preview: `${trimmed}...`,
+      field: 'script',
+    });
+  }
+
+  // BODY: suggest adding transition word
   if (analysis.weaknesses.some(w => w.key === 'has_transition_word') && (st === 'BODY' || st === 'FORE')) {
     const transitions: Record<string, string[]> = {
       id: ['Nah', 'Tapi', 'Terus', 'Nah sekarang'],
@@ -482,27 +622,30 @@ function generateQuickFixes(
     const pick = opts[words.length % opts.length];
     const startsWithTransition = /^(tapi|nah|but|so|now|terus|ab|lekin|phir)\b/i.test(text);
     if (!startsWithTransition) {
+      const transCore = text[0].toLowerCase() + text.slice(1);
+      const transPreview = buildFixPreview(pick, transCore, '', maxW);
       fixes.push({
         id: 'add-transition',
         weaknessKey: 'has_transition_word',
         label: 'Add transition word',
-        preview: `${pick} ${text[0].toLowerCase()}${text.slice(1)}`,
+        preview: transPreview,
         field: 'script',
       });
     }
   }
 
-  // PEAK segments: suggest adding twist/reveal
+  // PEAK: suggest adding twist/reveal
   if (analysis.weaknesses.some(w => w.key === 'has_unexpected_twist') && st === 'PEAK') {
     const twists: Record<string, string> = {
       id: 'Tapi ternyata...', en: 'But turns out...', hi: 'Lekin asli mein...',
     };
     const twist = twists[language] ?? twists.en;
+    const twistPreview = buildFixPreview(twist, text, '', maxW);
     fixes.push({
       id: 'add-twist',
       weaknessKey: 'has_unexpected_twist',
       label: 'Add surprise twist',
-      preview: `${twist} ${text}`,
+      preview: twistPreview,
       field: 'script',
     });
   }
@@ -513,31 +656,53 @@ function generateQuickFixes(
       id: '(100 orang udah buktiin)', en: '(100 people have proven it)', hi: '(100 logon ne prove kiya)',
     };
     const proof = proofTemplates[language] ?? proofTemplates.en;
+    const proofPreview = buildFixPreview('', text.replace(/[.!?]*$/, ''), `— ${proof}`, maxW);
     fixes.push({
       id: 'add-proof',
       weaknessKey: 'has_specific_proof',
       label: 'Add social proof',
-      preview: `${text.replace(/[.!?]*$/, '')} — ${proof}`,
+      preview: proofPreview,
       field: 'script',
     });
   }
 
   // Any segment: suggest adding pattern interrupt
-  if (analysis.weaknesses.some(w => w.key === 'has_pattern_interrupt') && st !== 'HOOK' && st !== 'CTA') {
-    const interrupts: Record<string, string[]> = {
-      id: ['Tunggu dulu...', 'Tapi ini yang gila:', 'Dan yang bikin kaget:'],
-      en: ['Wait...', 'But here\'s the crazy part:', 'And what shocked me:'],
-      hi: ['Ruko...', 'Lekin ye dekhlo:', 'Aur jo chaukane wali baat hai:'],
-    };
-    const opts = interrupts[language] ?? interrupts.en;
-    const pick = opts[words.length % opts.length];
-    fixes.push({
-      id: 'add-interrupt',
-      weaknessKey: 'has_pattern_interrupt',
-      label: 'Add pattern interrupt',
-      preview: `${pick} ${text}`,
-      field: 'script',
-    });
+  if (analysis.weaknesses.some(w => w.key === 'has_pattern_interrupt') && st !== 'CTA') {
+    if (st === 'HOOK') {
+      // HOOK-specific: visual shock / scroll-stop opener
+      const hookInterrupts: Record<string, string[]> = {
+        id: ['STOP! ', 'Serius, ', 'Lo HARUS tau: '],
+        en: ['STOP! ', 'Seriously, ', 'You NEED to know: '],
+        hi: ['RUKO! ', 'Suno, ', 'Ye jaanna zaroori hai: '],
+      };
+      const opts = hookInterrupts[language] ?? hookInterrupts.en;
+      const pick = opts[words.length % opts.length];
+      const hookIntCore = text[0].toLowerCase() + text.slice(1);
+      const hookIntPreview = buildFixPreview(pick, hookIntCore, '', maxW);
+      fixes.push({
+        id: 'add-interrupt',
+        weaknessKey: 'has_pattern_interrupt',
+        label: 'Add scroll-stop opener',
+        preview: hookIntPreview,
+        field: 'script',
+      });
+    } else {
+      const interrupts: Record<string, string[]> = {
+        id: ['Tunggu dulu...', 'Tapi ini yang gila:', 'Dan yang bikin kaget:'],
+        en: ['Wait...', 'But here\'s the crazy part:', 'And what shocked me:'],
+        hi: ['Ruko...', 'Lekin ye dekhlo:', 'Aur jo chaukane wali baat hai:'],
+      };
+      const opts = interrupts[language] ?? interrupts.en;
+      const pick = opts[words.length % opts.length];
+      const intPreview = buildFixPreview(pick, text, '', maxW);
+      fixes.push({
+        id: 'add-interrupt',
+        weaknessKey: 'has_pattern_interrupt',
+        label: 'Add pattern interrupt',
+        preview: intPreview,
+        field: 'script',
+      });
+    }
   }
 
   // Word count over limit → suggest trim
@@ -555,11 +720,13 @@ function generateQuickFixes(
   // Word density too low → suggest adding more words
   if (analysis.weaknesses.some(w => w.key === 'word_density_optimal') && words.length < segment.maxWords * 0.7) {
     const targetWords = Math.round(segment.maxWords * 0.8);
+    const wordsToAdd = targetWords - words.length;
     const fillerTemplates: Record<string, string> = {
-      id: `[Tambah ${targetWords - words.length} kata lagi biar pacing pas]`,
-      en: `[Add ${targetWords - words.length} more words for optimal pacing]`,
-      hi: `[${targetWords - words.length} aur shabd jodo pacing ke liye]`,
+      id: `[Tambah ${wordsToAdd} kata lagi biar pacing pas]`,
+      en: `[Add ${wordsToAdd} more words for optimal pacing]`,
+      hi: `[${wordsToAdd} aur shabd jodo pacing ke liye]`,
     };
+    // Low density — text is already under limit, safe to append hint
     fixes.push({
       id: 'improve-density',
       weaknessKey: 'word_density_optimal',
@@ -578,11 +745,12 @@ function generateQuickFixes(
     };
     const pwOpts = powerWordSuggestions[language] ?? powerWordSuggestions.en;
     const pick = pwOpts[words.length % pwOpts.length];
+    const pwPreview = buildFixPreview(`${words[0]} ${pick}`, words.slice(1).join(' '), '', maxW);
     fixes.push({
       id: 'add-power-word',
       weaknessKey: 'has_power_word',
       label: 'Add power word',
-      preview: `${words[0]} ${pick} ${words.slice(1).join(' ')}`,
+      preview: pwPreview,
       field: 'script',
     });
   }
@@ -597,292 +765,32 @@ function generateQuickFixes(
     const opts = intensifiers[language] ?? intensifiers.en;
     const pick = opts[words.length % opts.length];
     if (words.length > 2) {
+      const intensePreview = buildFixPreview(`${words[0]} ${pick}`, words.slice(1).join(' '), '', maxW);
       fixes.push({
         id: 'add-intensity',
         weaknessKey: 'emotional_intensity_high',
         label: 'Boost emotional intensity',
-        preview: `${words[0]} ${pick} ${words.slice(1).join(' ')}`,
+        preview: intensePreview,
         field: 'script',
       });
     }
   }
 
-  // Clear CTA action missing → suggest adding action verb
+  // Clear CTA action missing
   if (analysis.weaknesses.some(w => w.key === 'has_clear_action') && st === 'CTA') {
     const actions: Record<string, string> = {
       id: 'Save & follow gue sekarang.', en: 'Save & follow me now.', hi: 'Save karo aur follow karo abhi.',
     };
+    const ctaAction = actions[language] ?? actions.en;
+    const ctaPreview = buildFixPreview('', text.replace(/[.!?]*$/, '') + '.', ctaAction, maxW);
     fixes.push({
       id: 'add-cta-action',
       weaknessKey: 'has_clear_action',
       label: 'Add clear action',
-      preview: `${text.replace(/[.!?]*$/, '')}. ${actions[language] ?? actions.en}`,
+      preview: ctaPreview,
       field: 'script',
     });
   }
 
   return fixes;
 }
-
-// ============================================================================
-// SCORE BAR
-// ============================================================================
-
-const ScoreBar: React.FC<{ label: string; value: number; max: number }> = ({ label, value, max }) => {
-  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
-  const color = pct >= 70 ? 'bg-emerald-500' : pct >= 40 ? 'bg-amber-500' : 'bg-red-500';
-
-  return (
-    <div className="space-y-0.5">
-      <div className="flex justify-between text-[9px]">
-        <span className="text-[#A8A29E]">{label}</span>
-        <span className="font-mono text-[#78716C]">{value}/{max}</span>
-      </div>
-      <div className="h-1 bg-[#262626] rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-};
-
-// ============================================================================
-// COMPONENT
-// ============================================================================
-
-export const AIScriptCoach: React.FC<AIScriptCoachProps> = ({
-  segments,
-  focusedSegmentId,
-  language = 'id',
-  onApplySuggestion,
-}) => {
-  const [expandedFix, setExpandedFix] = useState<string | null>(null);
-
-  const focusedSegment = useMemo(
-    () => segments.find((s) => s.id === focusedSegmentId),
-    [segments, focusedSegmentId],
-  );
-
-  const analysis = useMemo(() => {
-    if (!focusedSegment) return null;
-    return analyzeSegment(focusedSegment, language, segments);
-  }, [focusedSegment, language, segments]);
-
-  const quickFixes = useMemo(() => {
-    if (!focusedSegment || !analysis) return [];
-    return generateQuickFixes(focusedSegment, analysis, language);
-  }, [focusedSegment, analysis, language]);
-
-  const handleApplyFix = useCallback((fix: QuickFix) => {
-    if (focusedSegment && onApplySuggestion) {
-      onApplySuggestion(focusedSegment.id, fix.field, fix.preview);
-    }
-  }, [focusedSegment, onApplySuggestion]);
-
-  // No segment focused — show overview with segment scores
-  if (!focusedSegment || !analysis) {
-    const enabledSegs = segments.filter(s => s.isEnabled !== false);
-    if (enabledSegs.length === 0) {
-      return (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <p className="text-[11px] text-[#57534E] leading-relaxed px-4">
-            No segments available
-          </p>
-        </div>
-      );
-    }
-
-    // Show per-segment score overview when no segment focused
-    return (
-      <div className="space-y-2">
-        <span className="text-[9px] font-semibold text-[#57534E] uppercase tracking-wider">
-          Segment Scores
-        </span>
-        {enabledSegs.map((seg) => {
-          const segAnalysis = analyzeSegment(seg, language, segments);
-          const scoreColor = segAnalysis.score >= 70 ? 'text-emerald-400' : segAnalysis.score >= 50 ? 'text-amber-400' : 'text-red-400';
-          return (
-            <button
-              key={seg.id}
-              type="button"
-              className="w-full flex items-center gap-2 p-2 rounded-lg bg-[#161616] border border-[#262626] hover:border-[#3f3f46] transition-colors text-left"
-              onClick={() => {/* parent will handle via onApplySuggestion or dispatch */}}
-            >
-              <span className="text-[10px] font-bold text-[#FAFAF9] w-5 text-center">{seg.segmentType.startsWith('BODY') ? 'B' : seg.segmentType[0]}</span>
-              <span className="text-[10px] text-[#78716C] flex-1 truncate">{seg.segmentType}</span>
-              <span className={`text-[11px] font-mono font-bold ${scoreColor}`}>{segAnalysis.score}%</span>
-            </button>
-          );
-        })}
-        <p className="text-[9px] text-[#57534E] text-center pt-1">
-          Click a segment card for detailed coaching
-        </p>
-      </div>
-    );
-  }
-
-  const emotionColors = EMOTION_COLORS[analysis.emotionDominant];
-  const st = analysis.segmentType.startsWith('BODY') ? 'BODY' : analysis.segmentType as SegmentType;
-  const rules = SCORING_RULES[st] || {};
-
-  // Coaching summary text based on score
-  const coachingSummary = analysis.score >= 80
-    ? 'Strong segment! Minor optimizations possible.'
-    : analysis.score >= 60
-      ? 'Good foundation. Focus on the improvements below.'
-      : analysis.score >= 40
-        ? 'Needs work. Apply the quick fixes to boost score.'
-        : 'Weak segment. Consider rewriting with the suggestions below.';
-
-  return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-bold text-emerald-400">
-            {analysis.segmentType}
-          </span>
-          <span className="text-[9px] text-[#57534E]">coaching</span>
-        </div>
-        <span className={`text-[11px] font-mono font-bold ${analysis.score >= 70 ? 'text-emerald-400' : analysis.score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
-          {analysis.score}%
-        </span>
-      </div>
-
-      {/* Coaching summary */}
-      <p className="text-[10px] text-[#A8A29E] leading-relaxed bg-[#161616] rounded-lg p-2 border border-[#262626]">
-        {coachingSummary}
-      </p>
-
-      {/* Emotion chip */}
-      <div className="flex items-center gap-1.5">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded ${emotionColors?.bg ?? 'bg-[#262626]'} ${emotionColors?.text ?? 'text-[#78716C]'}`}>
-          {analysis.emotionDominant}
-        </span>
-        <span className="text-[9px] text-[#57534E]">
-          intensity {Math.round(analysis.emotionIntensity * 100)}%
-        </span>
-      </div>
-
-      {/* Strengths */}
-      {analysis.strengths.length > 0 && (
-        <div>
-          <span className="text-[9px] font-semibold text-emerald-500/70 uppercase tracking-wider">
-            Strengths
-          </span>
-          <div className="mt-1 space-y-0.5">
-            {analysis.strengths.map((s) => (
-              <div key={s.key} className="flex items-start gap-1 text-[10px]">
-                <span className="text-emerald-400 flex-shrink-0 mt-px">&#10003;</span>
-                <span className="text-[#A8A29E]">{s.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Weaknesses — each with inline Fix button when available */}
-      {analysis.weaknesses.length > 0 && (
-        <div>
-          <span className="text-[9px] font-semibold text-amber-500/70 uppercase tracking-wider">
-            Improve
-          </span>
-          <div className="mt-1 space-y-1.5">
-            {analysis.weaknesses.map((w) => {
-              const matchingFix = quickFixes.find(f => f.weaknessKey === w.key);
-              const isExpanded = expandedFix === `weakness-${w.key}`;
-
-              return (
-                <div key={w.key} className="rounded-lg border border-[#262626] bg-[#161616] overflow-hidden">
-                  <div className="px-2.5 py-1.5">
-                    <div className="flex items-center gap-1 text-[10px]">
-                      <span className="text-amber-400 flex-shrink-0">&#9888;</span>
-                      <span className="text-[#A8A29E] flex-1">{w.label}</span>
-                      <span className="text-[8px] text-[#57534E] mr-1">{w.weight}pt</span>
-                      {matchingFix && (
-                        <button
-                          type="button"
-                          onClick={() => setExpandedFix(isExpanded ? null : `weakness-${w.key}`)}
-                          className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors font-medium"
-                        >
-                          Fix
-                        </button>
-                      )}
-                    </div>
-                    {w.tip && (
-                      <p className="text-[9px] text-[#57534E] pl-3.5 leading-relaxed mt-0.5">{w.tip}</p>
-                    )}
-                  </div>
-                  {/* Inline fix preview — shown when Fix button clicked */}
-                  {isExpanded && matchingFix && (
-                    <div className="px-2.5 pb-2 pt-1 border-t border-[#262626] space-y-1.5">
-                      <p className="text-[10px] text-[#78716C] leading-relaxed italic">
-                        &ldquo;{matchingFix.preview}&rdquo;
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => handleApplyFix(matchingFix)}
-                        className="w-full py-1.5 rounded text-[10px] font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors"
-                      >
-                        Apply this fix
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Power Words */}
-      {analysis.powerWords.length > 0 && (
-        <div>
-          <span className="text-[9px] font-semibold text-[#57534E] uppercase tracking-wider">
-            Power Words Found
-          </span>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {analysis.powerWords.map((pw, i) => (
-              <span
-                key={i}
-                className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-              >
-                {pw}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Score Breakdown */}
-      <div>
-        <span className="text-[9px] font-semibold text-[#57534E] uppercase tracking-wider">
-          Score Breakdown
-        </span>
-        <div className="mt-1.5 space-y-1.5">
-          {Object.entries(rules).map(([key, rule]) => (
-            <ScoreBar
-              key={key}
-              label={FEATURE_LABELS[key] || key}
-              value={analysis.strengths.find((s) => s.key === key)?.points ?? 0}
-              max={rule.weight}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Flags */}
-      {analysis.flags.length > 0 && (
-        <div className="border-t border-[#262626] pt-2">
-          <span className="text-[9px] font-semibold text-red-400/70 uppercase tracking-wider">
-            Flags
-          </span>
-          <div className="mt-1 space-y-0.5">
-            {analysis.flags.map((flag, i) => (
-              <p key={i} className="text-[9px] text-[#A8A29E]">{flag}</p>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};

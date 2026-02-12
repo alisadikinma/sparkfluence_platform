@@ -127,8 +127,8 @@ MULTILINE COMMANDS:
 | `08-indonesian-slang-2026.ts` | 152 | **ACTIVE** | Indonesian Gen-Z slang + particles | `prompts/slangValidator.ts` |
 | `09-hindi-slang-2026.ts` | 210 | **ACTIVE** | Hindi/Hinglish slang + particles | `prompts/slangValidator.ts` |
 | `10-global-english-slang-2026.ts` | 203 | **ACTIVE** | English Gen-Z slang | `prompts/slangValidator.ts` |
-| `11-hook-library-2026.ts` | 208 | **ACTIVE** | 100 hooks (5 categories), `HOOK_CATEGORY_META` | `prompts/seefluencerFramework.ts` |
-| `12-scoring-engine.ts` | 570 | **ACTIVE** | Retention scoring, power words, pacing rules, benchmarks | Client-side Retention Curve + AI Coach |
+| `11-hook-library-2026.ts` | 300+ | **ACTIVE** | 100 hooks (5 categories), `HOOK_CATEGORY_META` (incl. `curiosity_principle`), `TOPIC_HOOK_MAP` (28 topics) | `prompts/seefluencerFramework.ts`, `prompts/scoringOptimizer.ts` |
+| `12-scoring-engine.ts` | 580+ | **ACTIVE** | Retention scoring, power words, pacing rules, benchmarks, `payoff_not_revealed` (HOOK curiosity gap) | Client-side SmartCompanion + Retention Curve |
 | `13-emotion-lexicon.ts` | 520 | **ACTIVE** | Word→emotion→intensity (EN/ID/HI, 200+ words each) | Client-side Emotion Arc |
 | `__tests__/validate-scoring-engine.ts` | 360 | **TEST** | Validation: 38 tests, 36/38 passing (94.7%) | `npx tsx` runner |
 | `ad-studio/01-advertising-psychology.ts` | 275 | **RESERVED** | Cialdini's 6 principles, cognitive biases, emotional triggers | Future: `generate-ad-script` |
@@ -155,6 +155,7 @@ MULTILINE COMMANDS:
 | `productNamingRule.ts` | Product name detection rules | `generate-images` |
 | `audioDirective.ts` | Audio/TTS prompt directives | `generate-tts` |
 | `contentTypeDetector.ts` | Content type classification | `generate-script` |
+| `scoringOptimizer.ts` | Component 18: Scoring rules + hook-topic matching for LLM | `generate-script` |
 
 ### Lookups (`supabase/functions/_shared/lookups/`)
 
@@ -177,8 +178,8 @@ MULTILINE COMMANDS:
 
 | File | Mirror Of | Purpose |
 |------|-----------|---------|
-| `12-scoring-engine.ts` | `_shared/knowledge/12-scoring-engine.ts` | Client-side Retention Curve + scoring |
-| `13-emotion-lexicon.ts` | `_shared/knowledge/13-emotion-lexicon.ts` | Client-side Emotion Arc visualization |
+| `12-scoring-engine.ts` | `_shared/knowledge/12-scoring-engine.ts` | Client-side SmartCompanion (scoring, retention curve, analysis) |
+| `13-emotion-lexicon.ts` | `_shared/knowledge/13-emotion-lexicon.ts` | Client-side Emotion Arc visualization + script analysis |
 
 ---
 
@@ -416,23 +417,38 @@ SOURCE_BADGE_CONFIG: Record<TrendingSource, { label, bg, text, border }>
 | `/ad-studio` | AdStudio | Ad script tool |
 | `/ad-studio/:orderId` | Workspace | Active session |
 
-### Workspace 3-Column Layout (1440px+)
+### Workspace 2-Column Layout (1280px+)
 ```
-Left Wing ("The Brain")     │ Center (main workspace)    │ Right Wing ("The Body")
-VelocityMeter               │ StepBar                    │ LiveSimulator
-BrandKit                    │ ScriptStep / ImageStep /   │ (9:16 phone frame)
-PreFlightChecklist           │ VideoStep / StudioStep     │
+Center (main workspace)            │ Right Wing — "Smart Companion" (320px)
+StepBar                            │ Tab: Overview | Issues | Style
+ScriptStep / ImageStep /           │ Overview: ViralityScore + RetentionCurve + EmotionArc
+VideoStep / StudioStep             │ Issues: analyzeSegment() weaknesses + quick fixes
+                                   │ Style: 3 hook variants (Safe/Bold/Visual) + predicted scores
 ```
+
+### Smart Companion Panel
+- Container: `src/screens/Workspace/components/SmartCompanion/SmartCompanion.tsx`
+- 3 tabs with Framer Motion animated transitions (fade + slide, 150ms)
+- **Centralized analysis**: `analysisMap` computed ONCE in SmartCompanion, passed to OverviewTab + IssuesTab
+- **OverviewTab**: Reuses ViralityScore, RetentionCurve, EmotionArc. Issues banner links to Issues tab. Uses `analysisMap` for worst-segment detection. Passes `precomputedScores` to RetentionCurve for score consistency.
+- **IssuesTab**: Shows only **stable** (self-contained) weaknesses — cross-segment features affect scores but NOT issue cards (prevents count flicker on hook switch). Fix preview, Apply Fix, Skip, Fix All. `appliedFixes`/`skippedIssues` state lifted to SmartCompanion (persists across tab switches). `handleFixAll` groups fixes by segment+field, applies only highest-weight fix per group (prevents stale closure overwrites). Calls `onSaveNow()` after every fix for immediate persistence.
+- **StyleTab**: 3 hook variant cards (Safe=emerald, Bold=red, Visual=cyan). Predicted scores via `analyzeSegment()` (independent, scores what-if scenarios).
+- **Cross-segment features** (`CROSS_SEGMENT_FEATURES` set in scriptAnalysis.ts): `builds_on_hook`, `matches_hook_category`, `emotional_match`, `mirrors_hook_energy`, `payoff_not_revealed`, `matches_funnel_stage` — these contribute to scores but don't create issue cards
+- **Feature dedup**: `has_pattern_interrupt` uses its own regex (caps emphasis, direct address) + `hasForeshadow()`. `has_foreshadow` uses only `hasForeshadow()`. They are NOT identical.
+- **RetentionCurve score consistency**: OverviewTab extracts scores from `analysisMap` and passes as `precomputedScores` to RetentionCurve, ensuring bar chart matches IssuesTab scores exactly
+- Shared analysis: `src/screens/Workspace/utils/scriptAnalysis.ts` (analyzeSegment, generateQuickFixes, buildFixPreview)
+- Quick fixes: `buildFixPreview(prefix, core, suffix, maxWords)` — trims core to stay within word limit
 
 ### Workspace State: `WorkspaceContext.tsx`
 - useReducer with 25+ actions (INIT_SESSION, SET_SCRIPT_DATA, SELECT_HOOK, EDIT_SEGMENT, etc.)
 - `isDirty` flag triggers auto-save via `useSessionPersistence` (5s debounce)
 - `scriptConfirmed: true` locks all script editing
+- `focusedSegmentId` used by SmartCompanion for segment focus mode (set only by explicit user actions, NOT auto-focused on mount)
 - Computed helpers: `canProceedToImages`, `canProceedToVideo`, `canProceedToStudio`
 
 ### Session Persistence
 - `useChatSessions` — CRUD operations on `chat_sessions` table
-- `useSessionPersistence` — auto-save (debounce 5s), restore on mount, flush on unmount
+- `useSessionPersistence` — auto-save (debounce 5s), restore on mount, flush on unmount. Connected in `Workspace.tsx` via `useSessionPersistence({ orderId })`. Exposes `saveNow()` for immediate persistence (used by IssuesTab after applying fixes).
 - Sessions identified by `orderId` (not UUID `id`)
 
 ### Database: `chat_sessions` Table
@@ -448,8 +464,13 @@ PreFlightChecklist           │ VideoStep / StudioStep     │
 | Component | Purpose |
 |-----------|---------|
 | `StepBar` | Visual step indicator (script → images → video → studio) |
-| `HookSelector` | 3-hook variant tabs (Safe/Bold/Visual) with tinting |
+| `SmartCompanion` | Right panel container — 3 tabs, centralized `analysisMap` |
+| `OverviewTab` | ViralityScore + RetentionCurve + EmotionArc, uses `analysisMap` |
+| `IssuesTab` | Stable-only weaknesses, word-limit-aware quick fixes, Fix All |
+| `StyleTab` | 3 hook variant cards with predicted scores, hook switching |
 | `ViralityScore` | Compact pill or expanded ring with score breakdown |
+| `RetentionCurve` | SVG bar chart of per-segment retention estimate |
+| `EmotionArc` | SVG line chart of emotion intensity arc + pattern detection |
 | `ScriptComparison` | Word-level LCS diff between script versions |
 | `ScriptStep` | Segment cards with retention borders, director chips, waveform bars |
 | `ImageStep` | Image generation per segment (stub) |
@@ -855,6 +876,12 @@ git log --oneline -10
 | Trending topics empty | Run `fetch_trending.py` or check `expires_at` TTL in `trending_topics` |
 | Workspace not saving | Check `isDirty` flag in WorkspaceContext and `useSessionPersistence` debounce |
 | Script editing locked | `scriptConfirmed: true` blocks edits — user must unconfirm first |
+| Issues tab count flickers | Cross-segment features (`CROSS_SEGMENT_FEATURES`) are filtered out of issue cards — only affect scores. If flicker returns, check `focusedSegmentId` isn't being auto-set. |
+| Quick fix exceeds word limit | All fixes use `buildFixPreview(prefix, core, suffix, maxWords)` which auto-trims core text. Check maxWords value on segment. |
+| Fix All overwrites previous fixes | `handleFixAll` groups by segment+field, only applies highest-weight fix per group. Multiple script fixes on same segment are NOT chained — only best one wins. |
+| Issues reappear after tab switch | `appliedFixes`/`skippedIssues` live in SmartCompanion (NOT IssuesTab). They persist when IssuesTab unmounts on tab switch. |
+| Fixes lost on browser refresh | IssuesTab calls `onSaveNow()` after every fix → triggers `useSessionPersistence.saveNow()` → immediate DB save. Check `orderId` param exists. |
+| RetentionCurve scores differ from IssuesTab | OverviewTab passes `precomputedScores` from `analysisMap` to RetentionCurve. If mismatch, check prop is being passed. |
 | ChatLayout sidebar missing | Ensure route wraps component with `<ChatLayout>` in `index.tsx` |
 
 ---

@@ -39,6 +39,8 @@ interface ScriptFormProps {
   selectedTopic?: SelectedTopic | null;
   onClearTopic?: () => void;
   selectedChallenge?: TikTokChallenge | null;
+  scriptLang?: string;
+  useDnaTone?: boolean;
 }
 
 type InputType = "topic" | "transcript";
@@ -50,6 +52,8 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   selectedTopic,
   onClearTopic,
   selectedChallenge,
+  scriptLang: scriptLangProp,
+  useDnaTone: useDnaToneProp,
 }) => {
   const { t, language: uiLang } = useLanguage();
   const { data: onboardingData } = useOnboardingStatus();
@@ -59,10 +63,15 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
   const [inputType, setInputType] = useState<InputType>("topic");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState("60s");
-  const [useDnaTone, setUseDnaTone] = useState(true);
-  // Script language based on user's country (not UI language)
-  const [scriptLang, setScriptLang] = useState("en");
-  const [scriptLangInitialized, setScriptLangInitialized] = useState(false);
+
+  // Script language & DNA tone are now controlled by parent (ChatHome → TopicRecommendations)
+  // Fallback to local defaults for backward compat if props not provided
+  const [localScriptLang, setLocalScriptLang] = useState("en");
+  const [localScriptLangInitialized, setLocalScriptLangInitialized] = useState(false);
+  const [localUseDnaTone, setLocalUseDnaTone] = useState(true);
+
+  const scriptLang = scriptLangProp ?? localScriptLang;
+  const useDnaTone = useDnaToneProp ?? localUseDnaTone;
 
   // Avatar state
   const [avatarOption, setAvatarOption] = useState<AvatarOption>("profile");
@@ -126,14 +135,14 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const hasDnaTone = onboardingData?.creative_dna && onboardingData.creative_dna.length > 0;
 
-  // Set script language based on user's country (only once when data loads)
+  // Fallback: set local script language from country if prop not provided
   useEffect(() => {
-    if (!scriptLangInitialized && onboardingData?.country) {
+    if (scriptLangProp === undefined && !localScriptLangInitialized && onboardingData?.country) {
       const defaultLang = getScriptLanguageFromCountry(onboardingData.country);
-      setScriptLang(defaultLang);
-      setScriptLangInitialized(true);
+      setLocalScriptLang(defaultLang);
+      setLocalScriptLangInitialized(true);
     }
-  }, [onboardingData?.country, scriptLangInitialized]);
+  }, [scriptLangProp, onboardingData?.country, localScriptLangInitialized]);
 
   // Load profile data and saved avatars on mount
   useEffect(() => {
@@ -506,13 +515,6 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
     { value: "90s", label: "90s" },
   ];
 
-  const languageOptions = [
-    { value: "id", label: "Indonesia" },
-    { value: "en", label: "English" },
-    { value: "hi", label: "हिन्दी" },
-    { value: "fr", label: "Français" },
-  ];
-
   const uiText = {
     topic: uiLang === "id" ? "Topik" : uiLang === "hi" ? "विषय" : "Topic",
     transcript: uiLang === "id" ? "Transkrip" : uiLang === "hi" ? "ट्रांसक्रिप्ट" : "Transcript",
@@ -532,7 +534,6 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
       : "Paste existing video transcript or narration...",
     characters: uiLang === "id" ? "karakter" : uiLang === "hi" ? "अक्षर" : "characters",
     generate: uiLang === "id" ? "Buat Video" : uiLang === "hi" ? "वीडियो बनाएं" : "Generate",
-    scriptLanguageLabel: uiLang === "id" ? "Bahasa Script" : uiLang === "hi" ? "स्क्रिप्ट भाषा" : "Script Language",
   };
 
   const inputTypeOptions: { value: InputType; label: string; icon: React.ReactNode; placeholder: string }[] = [
@@ -675,7 +676,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
               className="hidden"
             />
             
-            <div className="grid grid-cols-4 gap-2 sm:gap-3">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
               {/* Ratio Dropdown */}
               <div className="relative">
                 <select
@@ -700,22 +701,6 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
                   className="w-full appearance-none bg-surface border border-border-default rounded-lg px-2 sm:px-3 py-2 sm:py-2.5 pr-6 sm:pr-8 text-text-primary text-xs sm:text-sm lg:text-base focus:outline-none focus:border-primary cursor-pointer truncate"
                 >
                   {durationOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 sm:right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 sm:w-4 sm:h-4 text-text-secondary pointer-events-none" />
-              </div>
-
-              {/* Language Dropdown */}
-              <div className="relative">
-                <select
-                  value={scriptLang}
-                  onChange={(e) => setScriptLang(e.target.value)}
-                  disabled={loading}
-                  title={uiText.scriptLanguageLabel}
-                  className="w-full appearance-none bg-surface border border-border-default rounded-lg px-2 sm:px-3 py-2 sm:py-2.5 pr-6 sm:pr-8 text-text-primary text-xs sm:text-sm lg:text-base focus:outline-none focus:border-primary cursor-pointer truncate"
-                >
-                  {languageOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
@@ -871,28 +856,7 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
             </div>
 
             {/* Bottom Row */}
-            <div className="flex items-center justify-between gap-3 mt-3 sm:mt-4">
-              <div className="flex items-center gap-3 sm:gap-4">
-                {hasDnaTone && (
-                  <label className="flex items-center gap-2 sm:gap-3 cursor-pointer">
-                    <div className="relative">
-                      <input
-                        type="checkbox"
-                        checked={useDnaTone}
-                        onChange={(e) => setUseDnaTone(e.target.checked)}
-                        disabled={loading}
-                        className="sr-only"
-                      />
-                      <div className={`w-9 h-5 sm:w-11 sm:h-6 rounded-full transition-colors ${useDnaTone ? "bg-primary" : "bg-surface"}`}>
-                        <div className={`absolute top-0.5 sm:top-1 w-4 h-4 rounded-full bg-white transition-transform ${useDnaTone ? "translate-x-4 sm:translate-x-5" : "translate-x-0.5 sm:translate-x-1"}`} />
-                      </div>
-                    </div>
-                    <span className="text-text-primary text-xs sm:text-sm lg:text-base">DNA</span>
-                  </label>
-                )}
-
-              </div>
-
+            <div className="flex items-center justify-end gap-3 mt-3 sm:mt-4">
               <Button
                 type="submit"
                 disabled={loading || (!prompt.trim() && !selectedChallenge)}

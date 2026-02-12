@@ -44,6 +44,7 @@ import {
 } from '../_shared/prompts/visualEnhancer.ts'
 // P0: Product Naming - Entity Check & Fix
 import { injectProductNamingRule } from '../_shared/prompts/productNamingRule.ts'
+import { getScoringOptimizationRules } from '../_shared/prompts/scoringOptimizer.ts'
 import { checkAndFixEntities } from '../_shared/entityCheck.ts'
 // Security: Input sanitization
 import { sanitizePromptInput, sanitizePlatform, sanitizeLanguage, sanitizeDuration } from '../_shared/inputSanitizer.ts'
@@ -898,6 +899,8 @@ ${dnaStyles.map((style: string, i: number) => `${i + 1}. **${style}**`).join('\n
 - CTA should feel authentic to this creator's style
 ` : ''}
 
+${getScoringOptimizationRules(language)}
+
 ═══════════════════════════════════════════════════════════════
 ✅ SELF-VERIFICATION CHECKLIST (Component 17)
 ═══════════════════════════════════════════════════════════════
@@ -905,7 +908,7 @@ ${dnaStyles.map((style: string, i: number) => `${i + 1}. **${style}**`).join('\n
 BEFORE OUTPUTTING, VERIFY ALL:
 □ HOOK OPTIONS: Generated all 3 (safe/negative/visual) in hook_options field?
 □ HOOK: Uses specific psychological trigger? Clickbait-but-Honest?
-□ HOOK: visual_direction has ≥2 editing cues + A-Roll camera manipulation?
+□ HOOK: visual_direction has ≥2 editing cues + A-Roll camera manipulation? Specifies lens (85mm/50mm) + aperture (f/1.8) + lighting ratio?
 □ FORE: Uses matched foreshadow strategy? Creates unfinished loop?
 □ FORE: Contains urgency phrase ("sampai habis/akhir" / "watch till end")?
 □ BODY: Each segment introduces NEW information (deletion test)?
@@ -916,9 +919,20 @@ BEFORE OUTPUTTING, VERIFY ALL:
 □ CTA: Uses engagement strategy (polarize/question/identity/reward)? NOT generic?
 □ POPE IN POOL: Applied if topic is high-friction? (finance/law/coding/medical)
 □ A-ROLL: CREATOR shots use camera manipulation on speaker, not static talking head?
-□ EDITING CUES: Every visual_direction has ≥2 of [SFX/CUT TO/ZOOM/TEXT POP/ACTION/Camera/Visual]?
+□ VISUAL DIRECTION DEPTH: Every visual_direction has ALL 6 parts (Scene/Camera/Lighting/Color/Mood/FX) with 50-80 words?
+□ VISUAL DIRECTION QUALITY: Camera includes specific lens (24mm/35mm/50mm/85mm) + aperture (f/1.8-f/2.8) + movement? Lighting includes pattern (Rembrandt/butterfly/split) + ratio (2:1/4:1/8:1) + Kelvin? Color includes film stock reference (Portra 400/CineStill 800T/Vision3)?
+□ B-ROLL SPECIFICITY: B-Roll visual_direction describes CONCRETE objects/scenes (not "AI dashboard" but "holographic trading terminal with green candlestick charts, multi-monitor setup, dark room")?
+□ EDITING CUES: CREATOR visual_direction has ≥2 of [SFX/TEXT POP/ACTION/Camera movement]?
 □ WORD COUNT: Every segment ≤ MAX WORDS from structure table?
 □ LOOP-END: Mirrors HOOK visually + creates curiosity loop?
+□ SCORING: HOOK category matches topic? (education→negative_bias, food/travel→visual_shock, lifestyle→relatability, story→curiosity_gap, tutorial→speed_value)
+□ SCORING: Every HOOK has at least 3 of: question(?), number, power word, negative frame? (match hook category, always include power word)
+□ SCORING: Every FORE has foreshadow/open loop phrase? (+41% watch time when done right)
+□ SCORING: Every BODY has pattern interrupt + specific detail + transition word? (interrupts every 5-8s = +17pp retention)
+□ SCORING: PEAK is highest-intensity segment with unexpected twist + specific proof? (drives SHARES — 3x more valuable than likes)
+□ SCORING: CTA has SINGLE focus + clear action verb + first-person + urgency? (single CTA = +371% clicks)
+□ SCORING: LOOP-END mirrors HOOK energy exactly + has callback reference? (seamless loop = 100%+ retention)
+□ SCORING: Emotion arc follows roller coaster pattern (high→dip→build→climax→warm)? NOT flat/monotone?
 □ [Placeholder] REPLACED: ALL template placeholders replaced with actual topic content?
 
 DO NOT deviate from this structure. Output ONLY the JSON.`;
@@ -1010,7 +1024,12 @@ CRITICAL REMINDERS:
 1. Generate ALL 3 hook options in "hook_options" field (safe/negative/visual)
 2. HOOK segment in "segments" uses Option A (safe) by default
 3. Each visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
-4. CREATOR shots: include editing cues [Camera:], [ACTION:], [SFX:], [TEXT POP:]
+4. VISUAL DIRECTION QUALITY — this directly drives image/video generation:
+   - Camera MUST include lens (24/35/50/85mm) + aperture (f/1.8-f/2.8) + movement (dolly/track/orbit/static)
+   - Lighting MUST include pattern (Rembrandt/butterfly/split/loop) + ratio (2:1 to 8:1) + temp (3200K-6500K)
+   - Color MUST include film stock (Portra 400/CineStill 800T/Vision3 500T) + grade style
+   - Scene MUST describe SPECIFIC objects/environment (not "AI dashboard" but "holographic trading terminal with green candlestick charts rising")
+   - CREATOR shots: include editing cues [Camera:], [ACTION:], [SFX:], [TEXT POP:]
 5. ALL script_text MUST be in ${langConfig.name} ONLY - NO mixing languages!
 6. Return ONLY valid JSON, no other text
 ${itemCount ? `7. ⚠️ COVER ALL ${itemCount} ITEMS - Do NOT skip any! Each item gets its own BODY segment.
@@ -1324,6 +1343,8 @@ LANGUAGE: ${langConfig.name} - ${langConfig.style}
 
 CRITICAL:
 - visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
+- Camera: include lens (50mm/85mm) + aperture (f/1.8) + movement. Lighting: include pattern + ratio + Kelvin. Color: include film stock reference.
+- Scene: describe SPECIFIC concrete objects, not generic placeholders
 - script_text in ${langConfig.name} Gen-Z style
 - Output ONLY valid JSON`
 

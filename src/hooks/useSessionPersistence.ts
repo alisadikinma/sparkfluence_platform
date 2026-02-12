@@ -270,6 +270,47 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     };
   }, [state.isDirty, orderId, performSave]);
 
+  // ── Save on page unload (prevents data loss on refresh/close) ──
+  useEffect(() => {
+    if (!enabled || !orderId) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (state.isDirty) {
+        // Flush pending debounce timer
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+        }
+        // Trigger save — performSave is async but we try our best
+        performSave();
+        // Show browser "unsaved changes" warning so user can cancel if needed
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [enabled, orderId, state.isDirty, performSave]);
+
+  // ── Save on tab visibility change (more reliable than beforeunload for async) ──
+  useEffect(() => {
+    if (!enabled || !orderId) return;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden' && state.isDirty) {
+        // Tab is being hidden (switched away, minimized, or closing)
+        // This fires reliably even when beforeunload doesn't complete async saves
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+        }
+        performSave();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [enabled, orderId, state.isDirty, performSave]);
+
   // ── Manual save trigger ──
   const saveNow = useCallback(async () => {
     if (saveTimerRef.current) {

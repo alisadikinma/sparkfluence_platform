@@ -310,7 +310,9 @@ ${visHook.visual_cue ? `KEEP the visual cue prefix (${visHook.visual_cue}) and a
 2. **Replace ALL [Placeholder]s** with ACTUAL topic-specific content.
 3. **2-Stage Hook/Rehook:** Visual action in first 1s, verbal hook in next 2s.
 4. **The HOOK segment in "segments" array uses Option A by default.**
-5. **Each option must have DIFFERENT script_text** — not just rephrased versions of the same hook.`;
+5. **Each option must have DIFFERENT script_text** — not just rephrased versions of the same hook.
+6. **CURIOSITY GAP (CRITICAL):** NEVER reveal the answer, tool name, product name, solution, or payoff in the HOOK. The HOOK creates the question — BODY/PEAK delivers the answer. If someone reads ONLY the HOOK, they should NOT know what the specific tools/answers/solutions are. Instead of naming specific items, use quantity + category teasers: "3 AI tools yang gila" NOT "Jasper, CapCut, Pionex".
+   **BUT IMPORTANT:** The BODY segments MUST name the specific tools/products/answers. That's the payoff! Each BODY segment reveals ONE item by name (e.g., BODY-1: "Pertama: Jasper AI..."). Hiding names in BODY = broken promise = viewer leaves.`;
 }
 
 // ============================================================================
@@ -395,9 +397,12 @@ ${itemCount >= 3 ? '- Item #3: Stakes raise → "no way..."' : ''}
 ${itemCount >= 4 ? '- Item #4: Mind-blown → "this is insane"' : ''}
 - Final Item (PEAK): The BEST → "I NEED to share this"
 
-**Per-Item Formula:** [Name] + [Why it matters] + [One specific detail]
+**Per-Item Formula:** [SPECIFIC Name] + [Why it matters] + [One concrete detail/stat]
+Example: "Pertama: Jasper AI buat copywriting. 50 artikel per hari, satu klik."
 
 **Rules:**
+- ✅ ALWAYS name the specific tool/product/answer in EACH body segment — this IS the payoff.
+- ❌ NEVER hide or vaguely describe items in BODY ("AI copywriting tool" instead of "Jasper AI" = BAD).
 - ❌ NEVER skip items. ALL ${itemCount} must be covered.
 - ❌ NEVER waste a BODY segment on filler/reactions only.
 - ✅ Each item introduces NEW information.
@@ -410,13 +415,14 @@ ${itemCount >= 4 ? '- Item #4: Mind-blown → "this is insane"' : ''}
 
 - BODY-1 (PROBLEM): State the problem. Make viewer nod "that's me."
 - BODY-2 (AGITATE): Make the problem WORSE. Show consequences of NOT solving it.
-- BODY-3+ (SOLUTION): Deliver concrete steps. Each step = 1 segment.
+- BODY-3+ (SOLUTION): Deliver concrete steps. Each step = 1 segment. NAME specific tools/methods.
 - PEAK: Show the RESULT of applying the solution. Proof it works.
 
 **Rules:**
 - PROBLEM must be relatable (80%+ of audience has this)
 - AGITATE creates urgency (financial loss, wasted time, embarrassment)
-- SOLUTION must be specific and actionable (not "just work harder")`;
+- SOLUTION must be specific and actionable — NAME the exact tool/method/product (not "just use an AI tool")
+- ✅ BODY is where the HOOK's curiosity gap gets resolved. Deliver the actual answer here.`;
   }
 
   return `

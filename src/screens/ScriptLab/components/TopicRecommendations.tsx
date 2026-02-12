@@ -5,7 +5,7 @@ import { useRateLimit } from "../../../hooks/useRateLimit";
 import { supabase } from "../../../lib/supabase";
 import { useAuth } from "../../../contexts/AuthContext";
 import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
-import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle, Hash, TrendingUp, Check, Plus, Search, X } from "lucide-react";
+import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle, Hash, TrendingUp, Check, Plus, Search, X, ChevronDown, Globe } from "lucide-react";
 import { Topic, TikTokChallenge, SOURCE_BADGE_CONFIG } from "../../../types/topic";
 import { getFallbackTopics } from "../../../constants/fallbackTopics";
 
@@ -13,6 +13,11 @@ interface TopicRecommendationsProps {
   onSelectTopic: (topic: Topic) => void;
   onSelectChallenge?: (challenge: TikTokChallenge | null) => void;
   disabled?: boolean;
+  scriptLang?: string;
+  onScriptLangChange?: (lang: string) => void;
+  useDnaTone?: boolean;
+  onDnaToneChange?: (enabled: boolean) => void;
+  hasDnaTone?: boolean;
 }
 
 // Cache settings - v5: invalidated for directive trending-source prompt + post-processing
@@ -23,6 +28,11 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   onSelectTopic,
   onSelectChallenge,
   disabled = false,
+  scriptLang,
+  onScriptLangChange,
+  useDnaTone,
+  onDnaToneChange,
+  hasDnaTone,
 }) => {
   const { t, language } = useLanguage();
   const { user } = useAuth();
@@ -710,6 +720,54 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
           </span>
         </button>
       </div>
+
+      {/* Language + DNA Controls */}
+      {(scriptLang !== undefined || hasDnaTone) && (
+        <div className="flex items-center gap-3 mb-4">
+          {/* Language Selector */}
+          {scriptLang !== undefined && onScriptLangChange && (
+            <div className="relative">
+              <div className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-text-muted" />
+                <select
+                  value={scriptLang}
+                  onChange={(e) => onScriptLangChange(e.target.value)}
+                  disabled={disabled}
+                  className="appearance-none bg-[#12121a] border border-[#262626] rounded-lg px-3 py-1.5 pr-7 text-xs sm:text-sm text-[#FAFAF9] focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+                >
+                  <option value="id">Indonesia</option>
+                  <option value="en">English</option>
+                  <option value="hi">हिन्दी</option>
+                  <option value="fr">Français</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#78716C] pointer-events-none" />
+              </div>
+            </div>
+          )}
+
+          {/* DNA Toggle */}
+          {hasDnaTone && onDnaToneChange && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={useDnaTone ?? true}
+                  onChange={(e) => onDnaToneChange(e.target.checked)}
+                  disabled={disabled}
+                  className="sr-only"
+                />
+                <div className={`w-9 h-5 rounded-full transition-colors ${useDnaTone ? "bg-emerald-500" : "bg-[#161616] border border-[#262626]"}`}>
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useDnaTone ? "translate-x-4" : "translate-x-0.5"}`} />
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <Dna className="w-3.5 h-3.5 text-[#ec4899]" />
+                <span className="text-[#FAFAF9] text-xs sm:text-sm">DNA</span>
+              </div>
+            </label>
+          )}
+        </div>
+      )}
 
       {/* Rate Limit Warning */}
       {rateLimited && (
