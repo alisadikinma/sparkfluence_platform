@@ -576,9 +576,10 @@ export const Workspace: React.FC = () => {
     }
   }, [state.segments, state.settings?.language, dispatch]);
 
-  // Use backend report if available, else client-side
-  const effectiveScore = state.qualityReport?.final_score ?? clientScore?.final_score ?? 0;
-  const effectiveBreakdown = state.qualityReport?.breakdown ?? clientScore?.breakdown;
+  // Always prefer client-side virality score (analyzeSegment-based, same as StyleTab/OverviewTab)
+  // Backend qualityReport.final_score is a validation score (slang + format), NOT virality
+  const effectiveScore = clientScore?.final_score ?? 0;
+  const effectiveBreakdown = clientScore?.breakdown;
 
   return (
     <div className="h-full bg-[#0B0E14] flex flex-col">

@@ -496,6 +496,16 @@ export const POWER_WORDS: Record<string, PowerWord[]> = {
     { word: 'insane', category: 'emotional', impact: 0.7, source: '[A]' },
     { word: 'epic', category: 'emotional', impact: 0.6, source: '[A]' },
     { word: 'fatal', category: 'negative', impact: 0.8, source: '[H]' },
+    { word: 'mantap', category: 'emotional', impact: 0.55, source: '[L]' },
+    { word: 'canggih', category: 'emotional', impact: 0.6, source: '[L]' },
+    { word: 'powerful', category: 'emotional', impact: 0.65, source: '[A]' },
+    { word: 'game changer', category: 'value', impact: 0.75, source: '[E]' },
+    { word: 'next level', category: 'emotional', impact: 0.65, source: '[E]' },
+    { word: 'auto', category: 'value', impact: 0.5, source: '[L]' },
+    { word: 'anti', category: 'negative', impact: 0.6, source: '[L]' },
+    { word: 'wajib', category: 'urgency', impact: 0.7, source: '[L]' },
+    { word: 'kesalahan', category: 'negative', impact: 0.75, source: '[H]' },
+    { word: 'ketinggalan', category: 'negative', impact: 0.7, source: '[H]' },
   ],
 
   hi: [
@@ -857,9 +867,9 @@ export function hasForeshadow(text: string): boolean {
  */
 export function hasCtaAction(text: string): boolean {
   const ctaPatterns = [
-    /\b(tap|click|follow|save|share|subscribe|comment|download|get|try|join|shop|buy|start)\b/i,
-    /\b(follow|save|share|comment|klik|cek|cobain|beli|ikutin)\b/i,
-    /\b(follow|save|share|comment|देखो|करो|लो|जुड़ो)\b/,
+    /\b(tap|click|follow|save|share|subscribe|comment|download|get|try|join|shop|buy|start|check|drop|repost|duet|stitch|tag|dm|send)\b/i,
+    /\b(follow|save|share|comment|klik|cek|cobain|beli|ikutin|tulis|ketik|kirim|drop|tag|mention|repost|duet|stitch)\b/i,
+    /\b(follow|save|share|comment|देखो|करो|लो|जुड़ो|भेजो|लिखो)\b/,
   ];
   return ctaPatterns.some(p => p.test(text));
 }

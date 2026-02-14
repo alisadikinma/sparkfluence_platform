@@ -378,12 +378,16 @@ ${segmentBlocks}
 ${hookGuideText}
 
 SCORING IS ADDITIVE: Each feature (question, number, power word, negative frame) earns bonus points.
-The MORE features you include, the HIGHER the score. But not all hooks need all 4.
-- Power words are ALWAYS beneficial (any category)
-- Numbers boost ANY hook (+36% CTR) — use them when natural
-- Questions create open loops (+23.3% shares) — great but not always needed
+The MORE features you include, the HIGHER the score.
+- Power words are ALWAYS beneficial (any category) — EVERY hook MUST have at least 1
+- Numbers boost ANY hook (+36% CTR) — EVERY hook MUST include a number
+- Questions create open loops (+23.3% shares) — STRONGLY recommended for 90%+ score
 - Negative frames trigger loss aversion (+63% CTR) — powerful for education/warning topics
-For 90+ score: include at least 3 of the 4 features, matching your hook category's strengths.
+
+⚠️ FOR 90+ HOOK SCORE (MANDATORY):
+HOOK needs ALL of these: number + power word + pattern interrupt + under word limit + good density (70-90%)
+PLUS at least 2 of: question(?), negative frame, curiosity gap (no payoff revealed)
+Example: "3 KESALAHAN fatal yang bikin brand lo GAGAL di Metaverse 2026?" = number(3) + power word(FATAL/GAGAL) + negative frame(KESALAHAN/GAGAL) + question(?) + pattern interrupt(ALL CAPS) = 90%+ score
 
 ═══════════════════════════════════════════════════════════════
 🎯 TOPIC → HOOK CATEGORY MATCHING (CRITICAL — choose the RIGHT hook for the topic):
@@ -422,24 +426,55 @@ The IDEAL emotion arc is "ROLLER COASTER": High energy → dip → build → CLI
 This pattern has the highest completion rate across all platforms.
 
 ═══════════════════════════════════════════════════════════════
-✅ MANDATORY SCORING CHECKLIST (every script must pass ALL):
+✅ MANDATORY 90%+ SCORING CHECKLIST (every script MUST pass ALL):
 ═══════════════════════════════════════════════════════════════
-1. HOOK: Category matches topic (see TOPIC → HOOK CATEGORY MATCHING above)
-2. HOOK: Has at least 3 of: question(?), number, power word, negative frame — match your hook category
-3. HOOK: ALWAYS has at least 1 power word (ALWAYS beneficial regardless of category)
-4. HOOK: Readable in under 3 seconds (short, punchy, no long sentences)
-5. FORE: Contains foreshadow/open loop phrase that creates "must watch" anticipation
-6. FORE: Specific detail/number that builds on hook's promise
-7. BODY: Pattern interrupt phrase every segment ("Tapi tunggu..." / "But here's the thing...")
-8. BODY: Specific, concrete detail (name, number, %) — NEVER vague generalizations
-9. BODY: Value ESCALATES — each body segment more valuable than the previous one
-10. PEAK: Highest emotional intensity of entire script — use CAPS, superlatives, extreme language
-11. PEAK: Contains unexpected twist + specific proof/data (this drives SHARES)
-12. CTA: ONE action only (single focus = +371% clicks vs multiple CTAs)
-13. CTA: First-person framing + clear verb + urgency word
-14. LOOP-END: Energy level matches HOOK exactly — seamless transition for auto-loop
-15. LOOP-END: Contains callback reference to HOOK ("Remember what I said...?")
-16. ALL: Word density 70-90% of max words — not too sparse, not too packed
-17. ALL: Emotion arc follows "roller coaster" pattern (high→dip→build→climax→warm)
+
+🎯 HOOK (target: 90+, this decides EVERYTHING — 30% of overall score):
+□ Contains a SPECIFIC NUMBER ("3 cara", "5 tips", "24 jam") — worth 15pts
+□ Contains a QUESTION mark or question word ("tau gak?", "gimana?", "pernah?") — worth 12pts
+□ Contains at least 1 POWER WORD in CAPS or emotional ("GILA", "SHOCKING", "FATAL", "literally") — worth 10pts
+□ Does NOT reveal tool/product names (tease with "3 AI tools", not "Jasper, CapCut") — worth 10pts
+□ Word density 70-90% of max words (use enough words, not too few) — worth 10pts
+□ Under word limit — worth 8pts
+□ Has pattern interrupt element (ALL CAPS word, "But wait...", or direct address "Lo bakal...") — worth 7pts
+
+🔮 FORE (target: 85+, locks viewer in — 10% of overall):
+□ Contains foreshadow/open loop phrase ("tapi yang terakhir ini...", "but the best part...") — worth 15pts
+□ Keywords from HOOK appear (references the promise) — worth 12pts
+□ Specific detail: number, name, or measurement — worth 10pts
+□ Word density 70-90% — worth 10pts
+□ Starts with transition ("Nah", "Tapi", "Jadi gini") — worth 8pts
+
+📦 BODY (target: 85+ each, main value delivery — 20% per segment):
+□ Pattern interrupt EVERY segment ("Tapi tunggu...", ALL CAPS word, "ini yang gila...") — worth 15pts
+□ Actionable value verb ("cara", "bikin", "ciptain", "step", "use", "buat") — worth 13pts
+□ Specific concrete detail (tool NAME, percentage, measurement) — NEVER vague — worth 12pts
+□ Word density 70-90% — worth 10pts
+□ Transition word ("Pertama:", "Kedua:", "Tapi", "Nah", "Selanjutnya") — worth 5pts
+
+🏔️ PEAK (target: 85+, the share-trigger moment — 20% of overall):
+□ HIGHEST emotional intensity of entire script — use CAPS + superlatives ("PALING GILA", "MIND-BLOWING") — worth 18pts
+□ Unexpected twist/reveal phrase ("ternyata...", "ini dia...", "yang bikin beda...") — worth 15pts
+□ High emotional intensity words throughout — worth 12pts
+□ Social proof with specific numbers ("100K orang udah buktiin", "40% profit") — worth 10pts
+□ Word density 70-90% — worth 8pts
+
+📣 CTA (target: 85+, conversion point — 15% of overall):
+□ SINGLE focus — ONE action only, never multiple CTAs — worth 18pts
+□ Clear action VERB ("follow", "save", "comment", "cek", "share") — worth 12pts
+□ Under word limit (CTA must be concise) — worth 10pts
+□ First-person framing ("Gue mau lo...", "Get my...") — worth 10pts
+□ Urgency word ("sekarang", "today", "limited") — worth 8pts
+
+🔄 LOOP-END (if present — 5% of overall):
+□ Energy/emotion matches HOOK exactly — worth 20pts
+□ Callback reference to HOOK ("Nah itu tadi...", "Ingat yang gue bilang?") — worth 15pts
+□ Word density 70-90% — worth 10pts
+□ Same emotion type as HOOK — worth 10pts
+
+📏 ALL SEGMENTS:
+□ Word density 70-90% of max words — not too sparse, not too packed
+□ Emotion arc follows "roller coaster" pattern (high→dip→build→CLIMAX→warm)
+□ Each BODY segment more intense/valuable than the previous (stakes escalation)
 `;
 }

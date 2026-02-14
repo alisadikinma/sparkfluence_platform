@@ -203,7 +203,7 @@ export function extractFeatures(
 
   // has_transition: check for transition words/phrases at start of text
   const transitionStart = /^(tapi|nah|but|however|terus|lalu|nah\s+sekarang|so|meanwhile|ok\s+jadi|next|then|now|sekarang|kedua|ketiga|pertama|लेकिन|फिर|अब)\b/i.test(text.trim());
-  const hasTransitionWord = /\b(tapi|nah|but|however|terus|dan|lalu|next|then|so|meanwhile|लेकिन|फिर)\b/i.test(text);
+  const hasTransitionWord = /\b(tapi|nah|but|however|terus|dan|lalu|next|then|so|meanwhile|pertama|kedua|ketiga|selanjutnya|terakhir|first|second|third|finally|लेकिन|फिर)\b/i.test(text);
 
   // has_specific_detail: numbers, percentages, proper nouns, specific measurements
   const hasSpecificDetail = hasNumber(text) || /\d+%|\d+[kmKM]\b|\$\d/.test(text)
@@ -211,20 +211,33 @@ export function extractFeatures(
     : /\b[A-Z][a-z]{2,}\b/.test(text) ? 0.7 : 0.3;
 
   // has_value_delivery: instructional/actionable language
-  const valuePatterns = /\b(cara|step|langkah|try|use|pakai|download|click|buka|search|cari|create|bikin|make|get|dapet|learn|pelajari|tip|trick|तरीका|करो|बनाओ)\b/i;
+  const valuePatterns = /\b(cara|step|langkah|try|use|pakai|download|click|buka|search|cari|create|bikin|buat|ciptain|ciptakan|gunakan|pasang|aktifin|setup|daftar|edit|upload|install|tambahin|setting|atur|make|get|dapet|learn|pelajari|tip|trick|तरीका|करो|बनाओ|सीखो|इस्तेमाल)\b/i;
   const hasValueDelivery = valuePatterns.test(text) ? 1 : hasNumber(text) ? 0.6 : 0.2;
 
   // has_emotional_climax: compare intensity vs average of all segments
+  // Also check for explicit climax indicators (ALL CAPS, exclamation clusters, superlatives)
   let emotionalClimax = currentEmotion.intensity;
+  const hasClimaxIndicator = /[A-Z]{3,}/.test(text) || /!{2,}/.test(text) ||
+    /\b(paling|paling\s+\w+|paling\s+gila|terbesar|terbaik|terparah|tergila|most|biggest|best|worst|greatest|insane|GILA|GOKIL|AMAZING|INCREDIBLE)\b/i.test(text);
   if (allSegments && allSegments.length > 1) {
     const avgIntensity = allSegments.reduce((sum, s) => {
       return sum + analyzeEmotion(s.script, language).intensity;
     }, 0) / allSegments.length;
-    emotionalClimax = currentEmotion.intensity > avgIntensity + 0.1 ? 1 : currentEmotion.intensity > avgIntensity ? 0.7 : 0.3;
+    if (currentEmotion.intensity > avgIntensity + 0.1) {
+      emotionalClimax = 1;
+    } else if (currentEmotion.intensity > avgIntensity || hasClimaxIndicator) {
+      emotionalClimax = 0.7;
+    } else if (hasClimaxIndicator) {
+      emotionalClimax = 0.5;
+    } else {
+      emotionalClimax = 0.3;
+    }
+  } else if (hasClimaxIndicator) {
+    emotionalClimax = Math.max(emotionalClimax, 0.7);
   }
 
-  // has_unexpected_twist: contrast/reveal words
-  const twistPatterns = /\b(tapi\s+ternyata|ternyata|actually|turns?\s+out|plot\s+twist|surprise|gak\s+nyangka|unexpected|wait|padahal|लेकिन\s+असल|सच\s+में)\b/i;
+  // has_unexpected_twist: contrast/reveal words and reveal phrases
+  const twistPatterns = /\b(tapi\s+ternyata|ternyata|actually|turns?\s+out|plot\s+twist|surprise|gak\s+nyangka|unexpected|wait|padahal|ini\s+dia|dan\s+ini|the\s+thing\s+is|here's\s+the|mind\s+blown|this\s+changes|yang\s+bikin\s+beda|kuncinya|rahasianya|the\s+kicker|the\s+catch|लेकिन\s+असल|सच\s+में|असल\s+में)\b/i;
   const hasUnexpectedTwist = twistPatterns.test(text) ? 1 : 0;
 
   // has_specific_proof: social proof patterns (numbers + people/users/views)
@@ -316,7 +329,7 @@ export function extractFeatures(
     has_negative_frame: hasNegativeFrame(text),
     word_density_optimal: optimalDensity,
     under_word_limit: wordCount <= maxWords,
-    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text) || /\b(tapi tunggu|nah ini|dan yang bikin|here's the|but wait|but here|yang bikin kaget|plot twist|ternyata)\b/i.test(text),
+    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text) || /\b(tapi tunggu|nah ini|dan yang bikin|here's the|but wait|but here|yang bikin kaget|plot twist|ternyata|lo bakal|gue kasih tau|ini yang|coba bayangin|imagine|listen|dengerin|check this|the crazy part)\b/i.test(text),
     has_foreshadow: hasForeshadow(text),
     has_transition: transitionStart ? 1 : hasTransitionWord ? 0.5 : 0,
     builds_on_hook: buildsOnHook,

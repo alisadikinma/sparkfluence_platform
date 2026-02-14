@@ -926,13 +926,15 @@ BEFORE OUTPUTTING, VERIFY ALL:
 □ WORD COUNT: Every segment ≤ MAX WORDS from structure table?
 □ LOOP-END: Mirrors HOOK visually + creates curiosity loop?
 □ SCORING: HOOK category matches topic? (education→negative_bias, food/travel→visual_shock, lifestyle→relatability, story→curiosity_gap, tutorial→speed_value)
-□ SCORING: Every HOOK has at least 3 of: question(?), number, power word, negative frame? (match hook category, always include power word)
-□ SCORING: Every FORE has foreshadow/open loop phrase? (+41% watch time when done right)
-□ SCORING: Every BODY has pattern interrupt + specific detail + transition word? (interrupts every 5-8s = +17pp retention)
-□ SCORING: PEAK is highest-intensity segment with unexpected twist + specific proof? (drives SHARES — 3x more valuable than likes)
+□ SCORING: Every HOOK has ALL of: number + power word (CAPS) + pattern interrupt + under word limit? PLUS question(?) or negative frame? (aim for 90%+ score)
+□ SCORING: HOOK does NOT reveal product/tool names? (tease with "3 tools", reveal in BODY)
+□ SCORING: Every FORE has foreshadow/open loop phrase + specific detail + transition start? (+41% watch time)
+□ SCORING: Every BODY has pattern interrupt + actionable value verb + specific detail + transition word? (ALL 5 features needed for 85%+)
+□ SCORING: BODY word density is 70-90%? (not too sparse — fill the segment with value, avoid 3-word sentences)
+□ SCORING: PEAK is highest-intensity segment with unexpected twist ("ternyata/ini dia") + specific proof? (drives SHARES — 3x > likes)
 □ SCORING: CTA has SINGLE focus + clear action verb + first-person + urgency? (single CTA = +371% clicks)
 □ SCORING: LOOP-END mirrors HOOK energy exactly + has callback reference? (seamless loop = 100%+ retention)
-□ SCORING: Emotion arc follows roller coaster pattern (high→dip→build→climax→warm)? NOT flat/monotone?
+□ SCORING: Emotion arc follows roller coaster pattern (high→dip→build→CLIMAX→warm)? NOT flat/monotone?
 □ [Placeholder] REPLACED: ALL template placeholders replaced with actual topic content?
 
 DO NOT deviate from this structure. Output ONLY the JSON.`;
