@@ -523,7 +523,7 @@ export const Dashboard = (): JSX.Element => {
 
   if (loading) {
     return (
-      <div className="flex w-full min-h-screen bg-page items-center justify-center">
+      <div className="flex w-full h-full bg-page items-center justify-center">
         <div className="text-text-primary text-xl">{t.common.loading}</div>
       </div>
     );

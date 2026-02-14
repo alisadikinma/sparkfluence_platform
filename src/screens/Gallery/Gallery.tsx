@@ -79,7 +79,7 @@ export const Gallery: React.FC = () => {
 
 
   return (
-    <div className="flex w-full min-h-screen bg-page">
+    <div className="flex w-full h-full bg-page">
       {/* Mobile Overlay */}
       {sidebarOpen && (
         <div
@@ -91,7 +91,7 @@ export const Gallery: React.FC = () => {
       {/* Sidebar - Collapsible on mobile */}
       <aside className={`
         fixed lg:sticky top-0 left-0 z-50
-        w-[240px] h-screen bg-card border-r border-border-default
+        w-[240px] h-full bg-card border-r border-border-default
         transform transition-transform duration-300 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         p-4 sm:p-6 flex flex-col

@@ -367,8 +367,8 @@ export const ChatHome: React.FC = () => {
 
   // ── Main Layout: Topic-first (Gemini-style) ──
   return (
-    <div className="w-full h-screen flex flex-col bg-[#0B0E14] overflow-hidden">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full flex-1 flex flex-col min-h-0">
+    <div className="w-full min-h-full bg-[#0B0E14]">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full pb-6">
         {/* ── Greeting Section ── */}
         <div className={`pt-3 pb-2 text-center shrink-0 transition-all duration-500 ${selectedTopic ? 'pt-2 pb-1' : ''}`}>
           <h1 className={`font-bold text-[#FAFAF9] transition-all duration-500 ${selectedTopic ? 'text-lg sm:text-xl' : 'text-xl sm:text-2xl'}`}>
@@ -393,7 +393,7 @@ export const ChatHome: React.FC = () => {
         )}
 
         {/* ── Topics Section (full width, primary focus) ── */}
-        <div className={`flex-1 min-h-0 overflow-hidden flex flex-col transition-all duration-500 ${selectedTopic ? 'opacity-60 pointer-events-none !max-h-[200px] !flex-none' : ''}`}>
+        <div className={`transition-all duration-500 ${selectedTopic ? 'max-h-[200px] overflow-hidden opacity-60 pointer-events-none' : ''}`}>
           <TopicRecommendations
             onSelectTopic={handleSelectTopic}
             onSelectChallenge={setSelectedChallenge}
@@ -426,7 +426,7 @@ export const ChatHome: React.FC = () => {
           ref={formRef}
           className={`transition-all duration-500 ease-out ${
             (selectedTopic || selectedChallenge)
-              ? 'opacity-100 translate-y-0 flex-1 min-h-0 overflow-y-auto'
+              ? 'opacity-100 translate-y-0'
               : 'opacity-0 translate-y-8 h-0 overflow-hidden pointer-events-none'
           }`}
         >

@@ -2,12 +2,21 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import Lenis from 'lenis';
 
-// Routes that use their own nested scroll containers (overflow-y-auto)
-// Lenis hijacks wheel events at document level, breaking scroll in these layouts
+// Routes wrapped by ChatLayout use <main overflow-y-auto> as scroll container.
+// Lenis hijacks wheel events at document level targeting <html>/<body>, which
+// breaks scroll in ChatLayout because <html> has h-screen overflow-hidden.
+// Disable Lenis for ALL ChatLayout routes.
 const LENIS_DISABLED_PATTERNS = [
-  /^\/script-gen\/[^/]+/,   // Workspace routes
-  /^\/creator-lab\/[^/]+/,
-  /^\/ad-studio\/[^/]+/,
+  /^\/script-gen/,
+  /^\/creator-lab/,
+  /^\/ad-studio/,
+  /^\/dashboard/,
+  /^\/planner/,
+  /^\/gallery/,
+  /^\/history/,
+  /^\/settings/,
+  /^\/billing/,
+  /^\/app\/billing/,
 ];
 
 export const useSmoothScroll = () => {

@@ -505,7 +505,6 @@ export const ScriptForm: React.FC<ScriptFormProps> = ({
 
   const ratioOptions = [
     { value: "9:16", label: "9:16" },
-    { value: "16:9", label: "16:9" },
   ];
 
   const durationOptions = [

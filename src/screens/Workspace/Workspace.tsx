@@ -653,7 +653,7 @@ export const Workspace: React.FC = () => {
         {/* Only visible during Script step, hidden < 1280px             */}
         {/* ============================================================ */}
         {isScriptStep && (
-          <aside className="hidden xl:flex flex-col w-[460px] flex-shrink-0 border-l border-[#262626] bg-[#0B0E14]">
+          <aside className="hidden xl:flex flex-col w-[460px] flex-shrink-0 border-l border-[#262626] bg-[#0B0E14] overflow-y-auto">
             <SmartCompanion
               segments={state.segments}
               language={state.settings?.language || 'id'}

@@ -619,8 +619,8 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     };
 
     return (
-      <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between mb-2 shrink-0">
+      <div className="w-full">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
             <h3 className="text-sm sm:text-lg font-semibold text-text-primary">
@@ -650,7 +650,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
           </div>
         </div>
         {/* Desktop skeleton */}
-        <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-1 min-h-0 overflow-hidden">
+        <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           {Array.from({ length: 10 }).map((_, i) => (
             <div
               key={i}
@@ -685,7 +685,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   };
 
   return (
-    <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div className="w-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-2 shrink-0">
         <div className="flex items-center gap-2">
@@ -1122,7 +1122,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       </div>
 
       {/* Desktop Grid - Sorted by source */}
-      <div className="hidden sm:flex sm:flex-col flex-1 min-h-0 overflow-hidden">
+      <div className="hidden sm:block">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           {[...topics].sort((a, b) => {
             const order: Record<string, number> = { google: 0, tiktok: 1, youtube: 2, news: 3, ai_creative: 4, ai: 5 };
