@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -96,7 +96,7 @@ function createMockWorkspaceSegments(): WorkspaceSegment[] {
     { ...base, id: '8', segmentId: '8', segmentNumber: 8, segmentType: 'LOOP-END', shotType: 'CREATOR' as const, durationSeconds: 5, maxWords: 9,
       script: 'Inget tadi gue bilang bahaya? Gue lupa satu...',
       visualDirection: 'Scene: Creator tuang kopi lagi persis mirror HOOK, raised eyebrow teasing expression | Camera: MCU eye-level, 85mm f/1.8, same push-in angle as HOOK | Lighting: Golden hour side key 4:1, identical warm setup as HOOK | Color: Same warm amber grade as HOOK, Vision3 500T | Mood: Teasing cliffhanger, curiosity loop | FX: [SFX: Same Whoosh as HOOK] Seamless visual match for auto-loop',
-      emotion: 'teasing', isEnabled: false },
+      emotion: 'teasing', loopEndEnabled: false, isEnabled: true },
   ];
 }
 
@@ -110,7 +110,7 @@ function mapEdgeSegments(rawSegments: any[]): WorkspaceSegment[] {
     id: s.id || s.segment_id || `seg-${index}`,
     segmentId: s.segment_id || s.segmentId || `VIDEO-${String(index + 1).padStart(3, '0')}`,
     segmentNumber: s.segment_number ?? s.segmentNumber ?? (index + 1),
-    segmentType: s.segmentType || (s.type || '').toUpperCase(),
+    segmentType: s.segment_type || s.segmentType || (s.type || '').toUpperCase(),
     shotType: (s.shot_type || s.shotType || 'B-ROLL').toUpperCase() as 'CREATOR' | 'B-ROLL',
     timing: s.timing || '0:00',
     durationSeconds: s.duration_seconds || s.durationSeconds || s.duration || 5,
@@ -127,8 +127,8 @@ function mapEdgeSegments(rawSegments: any[]): WorkspaceSegment[] {
     videoUrl: null,
     isGeneratingVideo: false,
     videoError: null,
-    loopEndEnabled: s.loopEndEnabled ?? true,
-    isEnabled: s.isEnabled ?? true,
+    loopEndEnabled: s.loopEndEnabled ?? ((s.segment_type || s.segmentType || '').toUpperCase() !== 'LOOP-END'),
+    isEnabled: s.isEnabled ?? ((s.segment_type || s.segmentType || s.type || '').toUpperCase() !== 'LOOP-END'),
     includeCreatorFace: s.includeCreatorFace,
     referenceImageUrl: s.referenceImageUrl,
   }));
@@ -276,11 +276,43 @@ function buildSteps(
 
 
 // ============================================================================
+// LOCATION STATE — data passed from ChatHome via navigate()
+// ============================================================================
+
+interface LocationNavigationState {
+  orderId: string;
+  topic: string;
+  segments: any[];
+  hookOptions: HookOptions | null;
+  qualityReport: any | null;
+  videoSettings: {
+    duration: string;
+    aspectRatio: string;
+    language: string;
+    model: string;
+  };
+  characterDescription?: string | null;
+  avatarOption?: string;
+  avatarId?: string | null;
+  avatarUrl?: string | null;
+  sessionType?: 'script_gen' | 'creator_lab' | 'ad_studio';
+}
+
+// Reverse-map: ChatHome sends full names ('indonesian'), WorkspaceSettings uses short codes ('id')
+const LANG_REVERSE_MAP: Record<string, string> = {
+  indonesian: 'id',
+  english: 'en',
+  hindi: 'hi',
+};
+
+// ============================================================================
 // WORKSPACE CONTAINER
 // ============================================================================
 
 export const Workspace: React.FC = () => {
   const { orderId, step } = useParams<{ orderId: string; step?: string }>();
+  const location = useLocation();
+  const locationState = location.state as LocationNavigationState | null;
   const {
     state,
     dispatch,
@@ -290,8 +322,14 @@ export const Workspace: React.FC = () => {
     canProceedToStudio,
   } = useWorkspace();
 
+  // Determine session type from URL path
+  const sessionType: 'script_gen' | 'creator_lab' | 'ad_studio' =
+    locationState?.sessionType ||
+    (location.pathname.startsWith('/creator-lab') ? 'creator_lab' :
+     location.pathname.startsWith('/ad-studio') ? 'ad_studio' : 'script_gen');
+
   // Session persistence — auto-save on changes, restore on mount
-  const { saveNow } = useSessionPersistence({ orderId });
+  const { isRestoring, saveNow } = useSessionPersistence({ orderId, sessionType });
 
   // Derive active step from URL param or context state
   const activeStep = step || state.activeStep || 'script';
@@ -371,34 +409,73 @@ export const Workspace: React.FC = () => {
   // Determine which wings to show
   const isScriptStep = activeStep === 'script';
 
-  // Initialize context with mock data so ALL features work (edit, hook switch, split, merge, AI Coach)
-  const mockInitRef = useRef(false);
+  // Initialize workspace — priority: DB restore (handled by useSessionPersistence) → location.state → mock data
+  const initRef = useRef(false);
   useEffect(() => {
-    if (!mockInitRef.current && state.segments.length === 0 && !state.isGeneratingScript) {
-      mockInitRef.current = true;
+    // Wait for DB restore attempt to complete before initializing
+    if (isRestoring) return;
+    // Only init once, when segments are empty and not generating
+    if (initRef.current || state.segments.length > 0 || state.isGeneratingScript) return;
+    initRef.current = true;
+
+    // Priority 1: Real data from ChatHome navigation (location.state)
+    if (locationState?.segments?.length) {
+      const vs = locationState.videoSettings;
+      const langCode = LANG_REVERSE_MAP[vs?.language || ''] || vs?.language || 'id';
       dispatch({
         type: 'RESTORE_SESSION',
+        markDirty: true, // Triggers auto-save so data persists to DB
         state: {
-          segments: createMockWorkspaceSegments(),
-          hookOptions: MOCK_WS_HOOK_OPTIONS,
+          orderId: locationState.orderId || orderId,
+          sessionType,
+          topic: locationState.topic,
+          title: locationState.topic,
+          segments: mapEdgeSegments(locationState.segments),
+          hookOptions: locationState.hookOptions || null,
+          qualityReport: locationState.qualityReport || null,
           selectedHook: 'option_a_safe',
-          topic: '3 AI Tools Bikin Passive Income',
-          title: '3 AI Tools Bikin Passive Income',
           settings: {
-            duration: '60s',
-            aspectRatio: '9:16',
-            language: 'id',
-            model: 'auto',
-            avatarOption: 'none',
-            avatarId: null,
-            avatarUrl: null,
-            characterDescription: null,
+            duration: (vs?.duration || '60s') as '30s' | '45s' | '60s' | '90s',
+            aspectRatio: (vs?.aspectRatio || '9:16') as '9:16' | '16:9',
+            language: langCode,
+            model: vs?.model || 'auto',
+            avatarOption: (locationState.avatarOption || 'none') as 'none' | 'profile' | 'saved' | 'upload',
+            avatarId: locationState.avatarId || null,
+            avatarUrl: locationState.avatarUrl || null,
+            characterDescription: locationState.characterDescription || null,
             useDnaTone: false,
           },
         },
       });
+      // Trigger immediate save so data persists to DB (don't rely on 5s debounce)
+      saveNow();
+      return;
     }
-  }, [state.segments.length, state.isGeneratingScript, dispatch]);
+
+    // Priority 2: Mock data fallback (dev/demo — no ChatHome data, no DB session)
+    dispatch({
+      type: 'RESTORE_SESSION',
+      state: {
+        segments: createMockWorkspaceSegments(),
+        hookOptions: MOCK_WS_HOOK_OPTIONS,
+        selectedHook: 'option_a_safe',
+        topic: '3 AI Tools Bikin Passive Income',
+        title: '3 AI Tools Bikin Passive Income',
+        settings: {
+          duration: '60s',
+          aspectRatio: '9:16',
+          language: 'id',
+          model: 'auto',
+          avatarOption: 'none',
+          avatarId: null,
+          avatarUrl: null,
+          characterDescription: null,
+          useDnaTone: false,
+        },
+      },
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- saveNow is stable (useCallback), locationState checked once via initRef
+  }, [isRestoring, state.segments.length, state.isGeneratingScript, dispatch, locationState, orderId, sessionType, saveNow]);
 
   // NOTE: Auto-focus removed — was causing IssuesTab flicker (focusedSegmentId filters
   // the issue list, creating a visible drop from N to 1-2 issues on mount).

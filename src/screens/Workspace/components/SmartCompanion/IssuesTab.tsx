@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { ChevronLeft, Check, Zap } from 'lucide-react';
+import { ChevronLeft, Check, Zap, Undo2 } from 'lucide-react';
 import { generateQuickFixes, type SegmentInput, type CoachAnalysis, type QuickFix } from '../../utils/scriptAnalysis';
 
 // ============================================================================
@@ -12,9 +12,9 @@ interface IssuesTabProps {
   focusedSegmentId: string | null;
   analysisMap: Map<string, CoachAnalysis>;
   // Lifted state from SmartCompanion (persists across tab switches)
-  appliedFixes: Set<string>;
+  appliedFixes: Map<string, { originalText: string }>;
   skippedIssues: Set<string>;
-  onSetAppliedFixes: React.Dispatch<React.SetStateAction<Set<string>>>;
+  onSetAppliedFixes: React.Dispatch<React.SetStateAction<Map<string, { originalText: string }>>>;
   onSetSkippedIssues: React.Dispatch<React.SetStateAction<Set<string>>>;
   onApplyFix: (segmentId: string, field: 'script' | 'visualDirection', value: string) => void;
   onFocusSegment: (id: string | null) => void;
@@ -118,18 +118,57 @@ export const IssuesTab: React.FC<IssuesTabProps> = ({
   const handleApplyFix = useCallback(
     (issue: IssueItem) => {
       if (!issue.fix) return;
+      // Store original text before applying fix (for undo)
+      // NOTE: All fixes currently target 'script' field only.
+      // If visualDirection fixes are added, update SegmentInput to include it.
+      const originalSegment = segments.find(s => s.id === issue.segmentId);
+      const originalText = originalSegment
+        ? (issue.fix.field === 'script' ? originalSegment.script : '')
+        : '';
       onApplyFix(issue.segmentId, issue.fix.field, issue.fix.preview);
-      onSetAppliedFixes((prev) => new Set(prev).add(`${issue.segmentId}-${issue.weaknessKey}`));
+      const fixKey = `${issue.segmentId}-${issue.weaknessKey}`;
+      onSetAppliedFixes((prev) => {
+        const next = new Map(prev);
+        next.set(fixKey, { originalText });
+        return next;
+      });
       setExpandedIssue(null);
       // Trigger immediate save so fix persists through browser refresh
       onSaveNow?.();
     },
-    [onApplyFix, onSetAppliedFixes, onSaveNow],
+    [segments, onApplyFix, onSetAppliedFixes, onSaveNow],
   );
 
   const handleSkip = useCallback((issue: IssueItem) => {
     onSetSkippedIssues((prev) => new Set(prev).add(`${issue.segmentId}-${issue.weaknessKey}`));
   }, [onSetSkippedIssues]);
+
+  const handleUndoFix = useCallback(
+    (issue: IssueItem) => {
+      const fixKey = `${issue.segmentId}-${issue.weaknessKey}`;
+      const fixData = appliedFixes.get(fixKey);
+      if (!fixData) return;
+      // Restore original text
+      const field = issue.fix?.field || 'script';
+      onApplyFix(issue.segmentId, field as 'script' | 'visualDirection', fixData.originalText);
+      // Remove ALL applied fixes for this segment+field group (from Fix All)
+      // This prevents inconsistency where one fix is undone but others
+      // for the same segment still show as "applied" with stale text
+      onSetAppliedFixes((prev) => {
+        const next = new Map(prev);
+        const segPrefix = `${issue.segmentId}-`;
+        for (const key of next.keys()) {
+          if (key.startsWith(segPrefix)) {
+            next.delete(key);
+          }
+        }
+        return next;
+      });
+      // Persist the undo immediately
+      onSaveNow?.();
+    },
+    [appliedFixes, onApplyFix, onSetAppliedFixes, onSaveNow],
+  );
 
   const handleFixAll = useCallback(() => {
     const fixableIssues = visibleIssues.filter(
@@ -155,15 +194,22 @@ export const IssuesTab: React.FC<IssuesTabProps> = ({
       if (best.fix) {
         onApplyFix(best.segmentId, best.fix.field, best.fix.preview);
       }
-      // Mark ALL issues in this group as applied (the best fix addresses the core problem)
+      // Mark ALL issues in this group as applied, storing original text for undo
       for (const issue of issues) {
-        onSetAppliedFixes((prev) => new Set(prev).add(`${issue.segmentId}-${issue.weaknessKey}`));
+        const seg = segments.find(s => s.id === issue.segmentId);
+        const origText = seg?.script || '';
+        const fixKey = `${issue.segmentId}-${issue.weaknessKey}`;
+        onSetAppliedFixes((prev) => {
+          const next = new Map(prev);
+          next.set(fixKey, { originalText: origText });
+          return next;
+        });
       }
     }
 
     // Trigger immediate save so fixes persist through browser refresh
     onSaveNow?.();
-  }, [visibleIssues, appliedFixes, skippedIssues, onApplyFix, onSetAppliedFixes, onSaveNow]);
+  }, [segments, visibleIssues, appliedFixes, skippedIssues, onApplyFix, onSetAppliedFixes, onSaveNow]);
 
   // Focused segment info
   const focusedSeg = focusedSegmentId ? segments.find((s) => s.id === focusedSegmentId) : null;
@@ -305,6 +351,41 @@ export const IssuesTab: React.FC<IssuesTabProps> = ({
           })}
         </div>
       )}
+
+      {/* Applied fixes with undo option */}
+      {(() => {
+        const appliedIssues = visibleIssues.filter(i => appliedFixes.has(`${i.segmentId}-${i.weaknessKey}`));
+        if (appliedIssues.length === 0) return null;
+        return (
+        <div className="space-y-2 pt-2 border-t border-[#262626]">
+          <span className="text-xs text-[#78716C] font-medium">Applied fixes</span>
+          {appliedIssues.map(issue => {
+              const issueKey = `${issue.segmentId}-${issue.weaknessKey}`;
+              return (
+                <div key={issueKey} className="flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span className="text-xs text-[#A8A29E] truncate">{issue.label}</span>
+                    {!focusedSegmentId && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${segmentBadgeColor(issue.segmentType)}`}>
+                        {issue.segmentType}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUndoFix(issue)}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded text-[#78716C] hover:text-amber-400 hover:bg-amber-500/10 transition-colors flex-shrink-0"
+                  >
+                    <Undo2 className="w-3 h-3" />
+                    Undo
+                  </button>
+                </div>
+              );
+            })}
+        </div>
+        );
+      })()}
 
       {/* Fix All button */}
       {activeIssues.filter((i) => i.fix).length > 1 && (

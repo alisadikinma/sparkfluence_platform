@@ -1020,6 +1020,35 @@ ${numberedTopicInstructions}
 ⚡ GENERATE NOW - OUTPUT JSON ONLY
 ═══════════════════════════════════════════════════════════════
 
+🏆 SCORING CHEAT SHEET (auto-scored by regex — MUST hit ALL features):
+
+TITLE: Max 8 words. Number + power word. "3 AI Tools Yang GILA" ✅
+HOOK — MUST include ALL 4 (not 3, ALL 4):
+  1. Question with ? mark: "Lo tau gak...?" or "Pernah kepikiran...?"
+  2. Number/digit: "3 tools", "50 orang", "100 juta"
+  3. POWER WORD (caps): GILA, PARAH, RAHASIA, SHOCKING, literally
+  4. Negative frame word: "Jangan", "Stop", "Salah", "Gagal", "Rugi"
+  Example: "3 KESALAHAN fatal yang bikin konten lo gak pernah viral — tau gak kenapa?"
+  ↑ has number(3) + CAPS(KESALAHAN) + negative(gak pernah) + question(?)
+  NEVER reveal tool/product names in HOOK.
+FORE — MUST contain foreshadow trigger word:
+  Use EXACTLY one of: "tunggu", "tapi", "yang paling", "nanti", "tonton sampai habis"
+  Example: "Tapi tunggu, yang terakhir ini yang paling gila..."
+BODY — Each segment MUST have:
+  1. Pattern interrupt: "Tapi tunggu...", "Nah ini dia...", "Dan yang bikin kaget..."
+  2. Specific name + number: "Jasper AI bikin 50 artikel per hari" (NOT "AI tool bikin banyak")
+  3. Transition word at start: "Nah", "Tapi", "Terus", "Kedua", "Ketiga"
+PEAK — MUST have ALL:
+  1. "ternyata" or "actually" or "plot twist" (unexpected twist trigger)
+  2. Number + "orang/people/users/%" (proof): "100 orang buktiin, 40% profit"
+  3. CAPS word for intensity: "PALING GILA", "INSANE"
+CTA — MUST have ALL:
+  1. Action verb: "Save", "Follow", "Comment", "Klik"
+  2. First person: "gue", "gw", "I"
+  3. Urgency word: "sekarang", "now", "segera"
+  ONE action only. "Save sekarang, follow gue" ✅ (max 2 verbs)
+LOOP-END: "Inget tadi gue bilang...?" (callback) + mirror HOOK energy
+
 CRITICAL REMINDERS:
 1. Generate ALL 3 hook options in "hook_options" field (safe/negative/visual)
 2. HOOK segment in "segments" uses Option A (safe) by default
@@ -1237,6 +1266,8 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
       // Build result object
       const result: any = {
         segments,
+        title: parsed.title || null,
+        hook_options: parsed.hook_options || null,
         metadata: parsed.metadata || {
           total_duration: parseInt(duration),
           language: language || 'english',

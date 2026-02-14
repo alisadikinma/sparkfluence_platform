@@ -42,6 +42,17 @@ export const CROSS_SEGMENT_FEATURES = new Set([
 ]);
 
 // ============================================================================
+// FILLER WORDS (for smart condensing)
+// ============================================================================
+
+/** Language-specific filler/hedge words safe to strip when condensing */
+const FILLER_WORDS: Record<string, Set<string>> = {
+  id: new Set(['ini', 'itu', 'tuh', 'sih', 'gitu', 'dong', 'deh', 'lho', 'kan', 'nih', 'ya', 'literally']),
+  en: new Set(['literally', 'basically', 'actually', 'really', 'just', 'very', 'quite']),
+  hi: new Set(['literally', 'basically', 'actually', 'matlab', 'bilkul']),
+};
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -305,7 +316,7 @@ export function extractFeatures(
     has_negative_frame: hasNegativeFrame(text),
     word_density_optimal: optimalDensity,
     under_word_limit: wordCount <= maxWords,
-    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text),
+    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text) || /\b(tapi tunggu|nah ini|dan yang bikin|here's the|but wait|but here|yang bikin kaget|plot twist|ternyata)\b/i.test(text),
     has_foreshadow: hasForeshadow(text),
     has_transition: transitionStart ? 1 : hasTransitionWord ? 0.5 : 0,
     builds_on_hook: buildsOnHook,
@@ -391,38 +402,95 @@ export function analyzeSegment(
 }
 
 // ============================================================================
-// WORD-LIMIT-AWARE FIX HELPERS
+// SMART CONDENSE (sentence-aware fix preview)
 // ============================================================================
 
+/** Score a sentence's impact for smart condensing. Higher = more impactful. */
+function scoreSentenceImpact(sentence: string, language: string): number {
+  let score = 0;
+  const numbers = sentence.match(/\d+/g);
+  if (numbers) score += numbers.length * 2;
+  score += detectPowerWords(sentence, language).length;
+  if (/\b(yang\s+ketiga|rahasia|bahaya|terakhir|secret|dangerous|last|third|final)\b/i.test(sentence)) score += 1;
+  if (hasNegativeFrame(sentence)) score += 1;
+  if (hasQuestion(sentence)) score += 0.5;
+  return score;
+}
+
 /**
- * Build a fix preview that respects maxWords.
- * Combines `prefix` + (trimmed) `core` + `suffix` within the word budget.
- * If the result would exceed maxWords, trims words from the END of core.
+ * Smart condense: produces a fix preview that respects maxWords while
+ * preserving the most impactful content. Unlike buildFixPreview (which
+ * blindly truncates from the end), this function:
+ * 1. Strips filler words
+ * 2. Splits into sentences and picks the most impactful one(s)
+ * 3. Falls back to filler-stripped truncation only as last resort
  */
-function buildFixPreview(
+function smartCondense(
   prefix: string,
-  core: string,
+  originalText: string,
   suffix: string,
   maxWords: number,
+  language: string,
 ): string {
   const prefixWords = prefix.trim() ? prefix.trim().split(/\s+/) : [];
   const suffixWords = suffix.trim() ? suffix.trim().split(/\s+/) : [];
-  const coreWords = core.trim().split(/\s+/).filter(Boolean);
   const overhead = prefixWords.length + suffixWords.length;
-  const budgetForCore = Math.max(1, maxWords - overhead);
+  const budget = Math.max(1, maxWords - overhead);
 
-  const trimmedCore =
-    coreWords.length > budgetForCore
-      ? coreWords.slice(0, budgetForCore).join(' ').replace(/[,;]$/, '') + '...'
-      : coreWords.join(' ');
+  const origWords = originalText.trim().split(/\s+/).filter(Boolean);
 
-  const parts = [
-    prefix.trim(),
-    trimmedCore,
-    suffix.trim(),
-  ].filter(Boolean);
+  // If original fits within budget, no condensing needed
+  if (origWords.length <= budget) {
+    return [prefix.trim(), originalText.trim(), suffix.trim()].filter(Boolean).join(' ');
+  }
 
-  return parts.join(' ');
+  // Step 1: Strip filler words
+  const fillers = FILLER_WORDS[language] ?? FILLER_WORDS.en;
+  const stripped = origWords.filter(w => !fillers.has(w.toLowerCase()));
+  if (stripped.length <= budget) {
+    return [prefix.trim(), stripped.join(' '), suffix.trim()].filter(Boolean).join(' ');
+  }
+
+  // Step 2: Split into sentences, pick best combination
+  const sentences = originalText.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
+  if (sentences.length > 1) {
+    const scored = sentences.map(s => {
+      const cleaned = s.trim().replace(/[.!?]+$/, '');
+      return {
+        text: cleaned,
+        words: cleaned.split(/\s+/).filter(Boolean),
+        impact: scoreSentenceImpact(s, language),
+      };
+    });
+    scored.sort((a, b) => b.impact - a.impact);
+
+    // Try best sentence with fillers stripped
+    const bestStripped = scored[0].words.filter(w => !fillers.has(w.toLowerCase()));
+    if (bestStripped.length <= budget) {
+      return [prefix.trim(), bestStripped.join(' '), suffix.trim()].filter(Boolean).join(' ');
+    }
+
+    // Try best sentence raw
+    if (scored[0].words.length <= budget) {
+      return [prefix.trim(), scored[0].words.join(' '), suffix.trim()].filter(Boolean).join(' ');
+    }
+
+    // Combine key phrases: start of best + end of second-best
+    if (scored.length >= 2 && budget >= 4) {
+      const halfBudget = Math.floor((budget - 1) / 2); // -1 for the em dash
+      const startWords = scored[0].words.slice(0, halfBudget);
+      const endBudget = budget - 1 - startWords.length; // -1 for the em dash
+      const endWords = scored[1].words.slice(-Math.max(1, endBudget));
+      const combined = [...startWords, '—', ...endWords];
+      if (combined.length <= budget) {
+        return [prefix.trim(), combined.join(' '), suffix.trim()].filter(Boolean).join(' ');
+      }
+    }
+  }
+
+  // Step 3: Fallback — strip fillers and truncate
+  const truncated = stripped.slice(0, budget).join(' ').replace(/[,;]$/, '') + '...';
+  return [prefix.trim(), truncated, suffix.trim()].filter(Boolean).join(' ');
 }
 
 // ============================================================================
@@ -467,8 +535,8 @@ export function generateQuickFixes(
     const styles = questionStyles[language] ?? questionStyles.en;
     const styleIdx = words.length % styles.length;
     const [prefix, suffix] = styles[styleIdx];
-    const core = words.slice(0, Math.min(words.length, 6)).join(' ').replace(/[.!?]$/, '');
-    const qPreview = buildFixPreview(prefix, core.toLowerCase(), suffix, maxW);
+    const core = text.replace(/[.!?]+$/, '');
+    const qPreview = smartCondense(prefix, core.toLowerCase(), suffix, maxW, language);
     fixes.push({
       id: 'add-question',
       weaknessKey: 'has_question',
@@ -485,7 +553,7 @@ export function generateQuickFixes(
     };
     const insert = numberInserts[language] ?? numberInserts.en;
     if (words.length > 2) {
-      const preview = buildFixPreview(`${words[0]} ${insert}`, words.slice(1).join(' '), '', maxW);
+      const preview = smartCondense(`${words[0]} ${insert}`, words.slice(1).join(' '), '', maxW, language);
       fixes.push({
         id: 'add-number',
         weaknessKey: 'has_number',
@@ -502,8 +570,8 @@ export function generateQuickFixes(
       id: 'Jangan pernah', en: "Don't ever", hi: 'Kabhi mat',
     };
     const negPrefix = negPrefixes[language] ?? negPrefixes.en;
-    const core = words.join(' ').replace(/^[A-Z]/, (c) => c.toLowerCase()).replace(/[.!?]$/, '');
-    const negPreview = buildFixPreview(negPrefix, core, '!', maxW);
+    const core = text.replace(/^[A-Z]/, (c) => c.toLowerCase()).replace(/[.!?]+$/, '');
+    const negPreview = smartCondense(negPrefix, core, '!', maxW, language);
     fixes.push({
       id: 'add-negative',
       weaknessKey: 'has_negative_frame',
@@ -519,7 +587,7 @@ export function generateQuickFixes(
       id: 'Sekarang!', en: 'Right now!', hi: 'Abhi!',
     };
     const urgency = urgencyWords[language] ?? urgencyWords.en;
-    const urgPreview = buildFixPreview('', text.replace(/[.!?]*$/, ''), `— ${urgency}`, maxW);
+    const urgPreview = smartCondense('', text.replace(/[.!?]*$/, ''), `— ${urgency}`, maxW, language);
     fixes.push({
       id: 'add-urgency',
       weaknessKey: 'has_urgency_word',
@@ -535,8 +603,8 @@ export function generateQuickFixes(
       id: 'Gue mau lo', en: 'I want you to', hi: 'Main chahta hoon tum',
     };
     const fpPrefix = fpPrefixes[language] ?? fpPrefixes.en;
-    const fpCore = words.join(' ').toLowerCase().replace(/[.!?]*$/, '');
-    const fpPreview = buildFixPreview(fpPrefix, fpCore, '.', maxW);
+    const fpCore = text.toLowerCase().replace(/[.!?]*$/, '');
+    const fpPreview = smartCondense(fpPrefix, fpCore, '.', maxW, language);
     fixes.push({
       id: 'add-first-person',
       weaknessKey: 'first_person',
@@ -552,7 +620,7 @@ export function generateQuickFixes(
       id: 'Tapi tunggu, yang terakhir ini...', en: 'But wait, the last one...', hi: 'Lekin ruko, aakhri wala...',
     };
     const foreTail = foreshadowTails[language] ?? foreshadowTails.en;
-    const forePreview = buildFixPreview('', text.replace(/[.!?]*$/, '') + '.', foreTail, maxW);
+    const forePreview = smartCondense('', text.replace(/[.!?]*$/, '') + '.', foreTail, maxW, language);
     fixes.push({
       id: 'add-foreshadow',
       weaknessKey: 'has_foreshadow',
@@ -568,7 +636,7 @@ export function generateQuickFixes(
       id: 'Inget tadi gue bilang?', en: 'Remember what I said?', hi: 'Yaad hai maine kya kaha?',
     };
     const cb = callbacks[language] ?? callbacks.en;
-    const cbPreview = buildFixPreview(cb, text, '', maxW);
+    const cbPreview = smartCondense(cb, text, '', maxW, language);
     fixes.push({
       id: 'add-callback',
       weaknessKey: 'has_callback',
@@ -588,7 +656,7 @@ export function generateQuickFixes(
     const opts = hookPrefix[language] ?? hookPrefix.en;
     const pick = opts[words.length % opts.length];
     const trimmedText = text[0].toLowerCase() + text.slice(1);
-    const hookConnPreview = buildFixPreview(pick, trimmedText, '', maxW);
+    const hookConnPreview = smartCondense(pick, trimmedText, '', maxW, language);
     fixes.push({
       id: 'add-hook-connection',
       weaknessKey: 'builds_on_hook',
@@ -623,7 +691,7 @@ export function generateQuickFixes(
     const startsWithTransition = /^(tapi|nah|but|so|now|terus|ab|lekin|phir)\b/i.test(text);
     if (!startsWithTransition) {
       const transCore = text[0].toLowerCase() + text.slice(1);
-      const transPreview = buildFixPreview(pick, transCore, '', maxW);
+      const transPreview = smartCondense(pick, transCore, '', maxW, language);
       fixes.push({
         id: 'add-transition',
         weaknessKey: 'has_transition_word',
@@ -640,7 +708,7 @@ export function generateQuickFixes(
       id: 'Tapi ternyata...', en: 'But turns out...', hi: 'Lekin asli mein...',
     };
     const twist = twists[language] ?? twists.en;
-    const twistPreview = buildFixPreview(twist, text, '', maxW);
+    const twistPreview = smartCondense(twist, text, '', maxW, language);
     fixes.push({
       id: 'add-twist',
       weaknessKey: 'has_unexpected_twist',
@@ -656,7 +724,7 @@ export function generateQuickFixes(
       id: '(100 orang udah buktiin)', en: '(100 people have proven it)', hi: '(100 logon ne prove kiya)',
     };
     const proof = proofTemplates[language] ?? proofTemplates.en;
-    const proofPreview = buildFixPreview('', text.replace(/[.!?]*$/, ''), `— ${proof}`, maxW);
+    const proofPreview = smartCondense('', text.replace(/[.!?]*$/, ''), `— ${proof}`, maxW, language);
     fixes.push({
       id: 'add-proof',
       weaknessKey: 'has_specific_proof',
@@ -678,7 +746,7 @@ export function generateQuickFixes(
       const opts = hookInterrupts[language] ?? hookInterrupts.en;
       const pick = opts[words.length % opts.length];
       const hookIntCore = text[0].toLowerCase() + text.slice(1);
-      const hookIntPreview = buildFixPreview(pick, hookIntCore, '', maxW);
+      const hookIntPreview = smartCondense(pick, hookIntCore, '', maxW, language);
       fixes.push({
         id: 'add-interrupt',
         weaknessKey: 'has_pattern_interrupt',
@@ -694,7 +762,7 @@ export function generateQuickFixes(
       };
       const opts = interrupts[language] ?? interrupts.en;
       const pick = opts[words.length % opts.length];
-      const intPreview = buildFixPreview(pick, text, '', maxW);
+      const intPreview = smartCondense(pick, text, '', maxW, language);
       fixes.push({
         id: 'add-interrupt',
         weaknessKey: 'has_pattern_interrupt',
@@ -705,14 +773,14 @@ export function generateQuickFixes(
     }
   }
 
-  // Word count over limit → suggest trim
+  // Word count over limit → suggest smart trim
   if (analysis.weaknesses.some(w => w.key === 'under_word_limit') || words.length > segment.maxWords) {
-    const trimmed = words.slice(0, segment.maxWords).join(' ');
+    const trimPreview = smartCondense('', text, '', segment.maxWords, language);
     fixes.push({
       id: 'trim-words',
       weaknessKey: 'under_word_limit',
       label: `Trim to ${segment.maxWords} words`,
-      preview: `${trimmed}...`,
+      preview: trimPreview,
       field: 'script',
     });
   }
@@ -745,7 +813,7 @@ export function generateQuickFixes(
     };
     const pwOpts = powerWordSuggestions[language] ?? powerWordSuggestions.en;
     const pick = pwOpts[words.length % pwOpts.length];
-    const pwPreview = buildFixPreview(`${words[0]} ${pick}`, words.slice(1).join(' '), '', maxW);
+    const pwPreview = smartCondense(`${words[0]} ${pick}`, words.slice(1).join(' '), '', maxW, language);
     fixes.push({
       id: 'add-power-word',
       weaknessKey: 'has_power_word',
@@ -765,7 +833,7 @@ export function generateQuickFixes(
     const opts = intensifiers[language] ?? intensifiers.en;
     const pick = opts[words.length % opts.length];
     if (words.length > 2) {
-      const intensePreview = buildFixPreview(`${words[0]} ${pick}`, words.slice(1).join(' '), '', maxW);
+      const intensePreview = smartCondense(`${words[0]} ${pick}`, words.slice(1).join(' '), '', maxW, language);
       fixes.push({
         id: 'add-intensity',
         weaknessKey: 'emotional_intensity_high',
@@ -782,7 +850,7 @@ export function generateQuickFixes(
       id: 'Save & follow gue sekarang.', en: 'Save & follow me now.', hi: 'Save karo aur follow karo abhi.',
     };
     const ctaAction = actions[language] ?? actions.en;
-    const ctaPreview = buildFixPreview('', text.replace(/[.!?]*$/, '') + '.', ctaAction, maxW);
+    const ctaPreview = smartCondense('', text.replace(/[.!?]*$/, '') + '.', ctaAction, maxW, language);
     fixes.push({
       id: 'add-cta-action',
       weaknessKey: 'has_clear_action',

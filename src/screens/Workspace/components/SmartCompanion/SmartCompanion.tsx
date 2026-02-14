@@ -72,7 +72,8 @@ export const SmartCompanion: React.FC<SmartCompanionProps> = ({
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
   // Lifted from IssuesTab so they persist across tab switches (IssuesTab unmounts)
-  const [appliedFixes, setAppliedFixes] = useState<Set<string>>(new Set());
+  // Map key = "segmentId-weaknessKey", value = { originalText } for undo support
+  const [appliedFixes, setAppliedFixes] = useState<Map<string, { originalText: string }>>(new Map());
   const [skippedIssues, setSkippedIssues] = useState<Set<string>>(new Set());
 
   // Convert WorkspaceSegments to SegmentInput for analysis

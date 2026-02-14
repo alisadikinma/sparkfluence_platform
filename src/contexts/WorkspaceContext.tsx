@@ -137,7 +137,7 @@ export interface WorkspaceState {
 
 export type WorkspaceAction =
   | { type: 'INIT_SESSION'; orderId: string; sessionType: WorkspaceState['sessionType']; topic: string; settings: WorkspaceSettings }
-  | { type: 'RESTORE_SESSION'; state: Partial<WorkspaceState> }
+  | { type: 'RESTORE_SESSION'; state: Partial<WorkspaceState>; markDirty?: boolean }
   | { type: 'SET_TITLE'; title: string }
   | { type: 'SET_STATUS'; status: WorkspaceState['status'] }
   | { type: 'SET_ACTIVE_STEP'; step: WorkspaceState['activeStep'] }
@@ -230,7 +230,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       };
 
     case 'RESTORE_SESSION':
-      return { ...state, ...action.state, isDirty: false };
+      return { ...state, ...action.state, isDirty: action.markDirty ?? false };
 
     case 'SET_TITLE':
       return { ...state, title: action.title, isDirty: true };

@@ -233,23 +233,30 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       setAutocompleteSuggestions([]);
       return;
     }
+    const q = query.trim().toLowerCase();
+    const localFallback = () => {
+      const filtered = trendingChips
+        .filter(chip => chip.keyword.toLowerCase().includes(q))
+        .map(chip => chip.keyword);
+      return filtered.length > 0 ? filtered : trendingChips.slice(0, 8).map(c => c.keyword);
+    };
+
     try {
       const langCode = language === 'id' ? 'id' : language === 'hi' ? 'hi' : 'en';
       const { data, error } = await supabase.functions.invoke('autocomplete-keywords', {
         body: { query: query.trim(), lang: langCode }
       });
       if (error) throw error;
-      if (data?.suggestions) {
-        setAutocompleteSuggestions(data.suggestions.slice(0, 8));
+      const suggestions = data?.data?.suggestions ?? data?.suggestions;
+      if (Array.isArray(suggestions) && suggestions.length > 0) {
+        setAutocompleteSuggestions(suggestions.slice(0, 8));
+      } else {
+        // Edge function succeeded but returned empty — fall back to local filtering
+        setAutocompleteSuggestions(localFallback());
       }
     } catch (err) {
       console.error('[Autocomplete] Error:', err);
-      // Fallback: filter trending chips locally
-      const q = query.trim().toLowerCase();
-      const fallback = trendingChips
-        .filter(chip => chip.keyword.toLowerCase().includes(q))
-        .map(chip => chip.keyword);
-      setAutocompleteSuggestions(fallback.length > 0 ? fallback : trendingChips.map(c => c.keyword));
+      setAutocompleteSuggestions(localFallback());
     }
   }, [language, trendingChips]);
 
@@ -612,8 +619,8 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     };
 
     return (
-      <div className="mb-6 sm:mb-8 w-full">
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
+      <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between mb-2 shrink-0">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
             <h3 className="text-sm sm:text-lg font-semibold text-text-primary">
@@ -623,7 +630,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         </div>
 
         {/* Loading Message */}
-        <div className="mb-4 flex items-center justify-center gap-3 py-3">
+        <div className="mb-2 flex items-center justify-center gap-3 py-2 shrink-0">
           <Loader2 className="w-5 h-5 text-primary animate-spin" />
           <div className="text-center">
             <p className="text-text-secondary text-sm font-medium">{loadingText.generating}</p>
@@ -643,7 +650,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
           </div>
         </div>
         {/* Desktop skeleton */}
-        <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-1 min-h-0 overflow-hidden">
           {Array.from({ length: 10 }).map((_, i) => (
             <div
               key={i}
@@ -678,9 +685,9 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   };
 
   return (
-    <div className="mb-6 sm:mb-8 w-full">
+    <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 sm:mb-5">
+      <div className="flex items-center justify-between mb-2 shrink-0">
         <div className="flex items-center gap-2">
           <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />
           <h3 className="text-sm sm:text-lg font-semibold text-[#FAFAF9]">
@@ -723,7 +730,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
       {/* Language + DNA Controls */}
       {(scriptLang !== undefined || hasDnaTone) && (
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-3 mb-2 shrink-0">
           {/* Language Selector */}
           {scriptLang !== undefined && onScriptLangChange && (
             <div className="relative">
@@ -781,7 +788,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
       {/* Context Badges - Show user's personalization ABOVE search bar */}
       {!activeKeyword && (onboardingData?.interest || onboardingData?.selected_niches || onboardingData?.creative_dna) && (
-        <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="flex flex-wrap items-center gap-2 mb-2 shrink-0">
           <span className="text-text-muted text-xs">
             {uiText.basedOn}
           </span>
@@ -816,7 +823,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       )}
 
       {/* Search Bar */}
-      <div className="mb-3 sm:mb-4" ref={searchContainerRef}>
+      <div className="mb-2 shrink-0" ref={searchContainerRef}>
         <div className="relative">
           {searchLoading ? (
             <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />
@@ -847,7 +854,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
           {/* Autocomplete Dropdown - Google-like suggestions */}
           {showSuggestions && autocompleteSuggestions.length > 0 && (
-            <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-card border border-border-default rounded-lg shadow-lg overflow-hidden max-h-[320px] overflow-y-auto">
+            <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-[#181824] border border-[#2D2D3F] rounded-lg shadow-lg overflow-hidden max-h-[320px] overflow-y-auto">
               {autocompleteSuggestions.map((suggestion, i) => {
                 // Highlight the part that matches user input
                 const query = searchKeyword.trim().toLowerCase();
@@ -856,18 +863,18 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
                   <button
                     key={i}
                     onClick={() => { handleKeywordSearch(suggestion); setShowSuggestions(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-text-secondary hover:bg-surface hover:text-text-primary transition-colors"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-[#94A3B8] hover:bg-[#232334] hover:text-[#FAFAF9] transition-colors"
                   >
-                    <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+                    <Search className="w-3.5 h-3.5 text-[#64748B] flex-shrink-0" />
                     <span className="flex-1 truncate">
                       {idx >= 0 ? (
                         <>
                           {suggestion.slice(0, idx)}
-                          <span className="text-text-muted">{suggestion.slice(idx, idx + query.length)}</span>
-                          <span className="font-medium text-text-primary">{suggestion.slice(idx + query.length)}</span>
+                          <span className="text-[#64748B]">{suggestion.slice(idx, idx + query.length)}</span>
+                          <span className="font-medium text-[#FAFAF9]">{suggestion.slice(idx + query.length)}</span>
                         </>
                       ) : (
-                        <span className="font-medium text-text-primary">{suggestion}</span>
+                        <span className="font-medium text-[#FAFAF9]">{suggestion}</span>
                       )}
                     </span>
                   </button>
@@ -1115,7 +1122,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       </div>
 
       {/* Desktop Grid - Sorted by source */}
-      <div className="hidden sm:block">
+      <div className="hidden sm:flex sm:flex-col flex-1 min-h-0 overflow-hidden">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           {[...topics].sort((a, b) => {
             const order: Record<string, number> = { google: 0, tiktok: 1, youtube: 2, news: 3, ai_creative: 4, ai: 5 };

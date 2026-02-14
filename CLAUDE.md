@@ -431,24 +431,35 @@ VideoStep / StudioStep             │ Issues: analyzeSegment() weaknesses + qui
 - 3 tabs with Framer Motion animated transitions (fade + slide, 150ms)
 - **Centralized analysis**: `analysisMap` computed ONCE in SmartCompanion, passed to OverviewTab + IssuesTab
 - **OverviewTab**: Reuses ViralityScore, RetentionCurve, EmotionArc. Issues banner links to Issues tab. Uses `analysisMap` for worst-segment detection. Passes `precomputedScores` to RetentionCurve for score consistency.
-- **IssuesTab**: Shows only **stable** (self-contained) weaknesses — cross-segment features affect scores but NOT issue cards (prevents count flicker on hook switch). Fix preview, Apply Fix, Skip, Fix All. `appliedFixes`/`skippedIssues` state lifted to SmartCompanion (persists across tab switches). `handleFixAll` groups fixes by segment+field, applies only highest-weight fix per group (prevents stale closure overwrites). Calls `onSaveNow()` after every fix for immediate persistence.
+- **IssuesTab**: Shows only **stable** (self-contained) weaknesses — cross-segment features affect scores but NOT issue cards (prevents count flicker on hook switch). Fix preview, Apply Fix, Skip, Fix All, **Undo**. `appliedFixes: Map<string, {originalText}>` / `skippedIssues: Set` state lifted to SmartCompanion (persists across tab switches). `handleFixAll` groups fixes by segment+field, applies only highest-weight fix per group. Undo restores original text and removes ALL applied fixes for that segment (group-aware). Calls `onSaveNow()` after every fix/undo for immediate persistence.
 - **StyleTab**: 3 hook variant cards (Safe=emerald, Bold=red, Visual=cyan). Predicted scores via `analyzeSegment()` (independent, scores what-if scenarios).
 - **Cross-segment features** (`CROSS_SEGMENT_FEATURES` set in scriptAnalysis.ts): `builds_on_hook`, `matches_hook_category`, `emotional_match`, `mirrors_hook_energy`, `payoff_not_revealed`, `matches_funnel_stage` — these contribute to scores but don't create issue cards
 - **Feature dedup**: `has_pattern_interrupt` uses its own regex (caps emphasis, direct address) + `hasForeshadow()`. `has_foreshadow` uses only `hasForeshadow()`. They are NOT identical.
 - **RetentionCurve score consistency**: OverviewTab extracts scores from `analysisMap` and passes as `precomputedScores` to RetentionCurve, ensuring bar chart matches IssuesTab scores exactly
-- Shared analysis: `src/screens/Workspace/utils/scriptAnalysis.ts` (analyzeSegment, generateQuickFixes, buildFixPreview)
-- Quick fixes: `buildFixPreview(prefix, core, suffix, maxWords)` — trims core to stay within word limit
+- Shared analysis: `src/screens/Workspace/utils/scriptAnalysis.ts` (analyzeSegment, generateQuickFixes, smartCondense)
+- Quick fixes: `smartCondense(prefix, originalText, suffix, maxWords, language)` — sentence-aware condensing that preserves meaning (strips fillers → picks best sentence → combines → fallback truncate). Replaces old `buildFixPreview` which blindly truncated from the end.
 
 ### Workspace State: `WorkspaceContext.tsx`
 - useReducer with 25+ actions (INIT_SESSION, SET_SCRIPT_DATA, SELECT_HOOK, EDIT_SEGMENT, etc.)
 - `isDirty` flag triggers auto-save via `useSessionPersistence` (5s debounce)
+- `RESTORE_SESSION` action accepts optional `markDirty: boolean` (default false) — used by location.state init to trigger auto-save
 - `scriptConfirmed: true` locks all script editing
 - `focusedSegmentId` used by SmartCompanion for segment focus mode (set only by explicit user actions, NOT auto-focused on mount)
 - Computed helpers: `canProceedToImages`, `canProceedToVideo`, `canProceedToStudio`
 
+### Workspace Initialization (Priority Chain)
+- **DB restore** (via `useSessionPersistence`) → **location.state** (from ChatHome navigation) → **mock data** (dev/demo fallback)
+- ChatHome passes real data via `navigate(path, { state: { topic, segments, hookOptions, qualityReport, videoSettings, ... } })`
+- Workspace reads `location.state` via `useLocation()` — uses `mapEdgeSegments()` to convert snake_case → camelCase
+- `LANG_REVERSE_MAP` converts full names ('indonesian') to short codes ('id') for WorkspaceSettings
+- `isRestoring` guard (initialized `true`) prevents mock data from loading before DB check completes
+- `initRef` prevents double-initialization
+- `saveNow()` called immediately after location.state init for persistence
+
 ### Session Persistence
 - `useChatSessions` — CRUD operations on `chat_sessions` table
-- `useSessionPersistence` — auto-save (debounce 5s), restore on mount, flush on unmount. Connected in `Workspace.tsx` via `useSessionPersistence({ orderId })`. Exposes `saveNow()` for immediate persistence (used by IssuesTab after applying fixes).
+- `useSessionPersistence` — auto-save (debounce 5s), restore on mount, flush on unmount. Connected in `Workspace.tsx` via `useSessionPersistence({ orderId, sessionType })`. Exposes `saveNow()` for immediate persistence (used by IssuesTab after applying/undoing fixes, and by Workspace after location.state init). Uses `needsImmediateSave` ref + useEffect to solve React closure race condition (dispatch + saveNow in same tick).
+- **New session creation:** When `fetchSession(orderId)` returns null, `useSessionPersistence` auto-creates the DB row via `createSession()` so future `updateSession` calls work. `hasRestoredRef` prevents duplicate creation.
 - Sessions identified by `orderId` (not UUID `id`)
 
 ### Database: `chat_sessions` Table
@@ -874,13 +885,17 @@ git log --oneline -10
 | Stock image search failing | Check `api_keys_pool` for `pexels` + `unsplash` providers. All 8 keys exhausted? Run `reset_exhausted_api_keys('pexels')` |
 | Groq transcription failing | Check `api_keys_pool` for `groq` provider. Python backend also falls back to `GROQ_API_KEY` env var if pool empty |
 | Trending topics empty | Run `fetch_trending.py` or check `expires_at` TTL in `trending_topics` |
-| Workspace not saving | Check `isDirty` flag in WorkspaceContext and `useSessionPersistence` debounce |
+| Workspace not saving | Check `isDirty` flag in WorkspaceContext and `useSessionPersistence` debounce. For new sessions, verify DB row was created (check `hasRestoredRef` and `createSession` flow). |
+| Workspace shows wrong topic | Check `location.state` from ChatHome navigation. Priority chain: DB restore → location.state → mock data. If DB has stale data, it wins over location.state. |
+| New session shows 'Untitled' in sidebar | User navigated away before auto-save completed. `saveNow()` is called after location.state init but is async — check if it completed. |
 | Script editing locked | `scriptConfirmed: true` blocks edits — user must unconfirm first |
 | Issues tab count flickers | Cross-segment features (`CROSS_SEGMENT_FEATURES`) are filtered out of issue cards — only affect scores. If flicker returns, check `focusedSegmentId` isn't being auto-set. |
-| Quick fix exceeds word limit | All fixes use `buildFixPreview(prefix, core, suffix, maxWords)` which auto-trims core text. Check maxWords value on segment. |
+| Quick fix exceeds word limit | All fixes use `smartCondense(prefix, text, suffix, maxWords, language)` which sentence-aware condenses. Check maxWords value on segment. |
 | Fix All overwrites previous fixes | `handleFixAll` groups by segment+field, only applies highest-weight fix per group. Multiple script fixes on same segment are NOT chained — only best one wins. |
-| Issues reappear after tab switch | `appliedFixes`/`skippedIssues` live in SmartCompanion (NOT IssuesTab). They persist when IssuesTab unmounts on tab switch. |
-| Fixes lost on browser refresh | IssuesTab calls `onSaveNow()` after every fix → triggers `useSessionPersistence.saveNow()` → immediate DB save. Check `orderId` param exists. |
+| Issues reappear after tab switch | `appliedFixes` Map / `skippedIssues` Set live in SmartCompanion (NOT IssuesTab). They persist when IssuesTab unmounts on tab switch. |
+| Fixes lost on browser refresh | IssuesTab calls `onSaveNow()` after every fix/undo → `needsImmediateSave` ref + useEffect ensures save happens after React state update (solves closure race). Check `orderId` param exists. |
+| Quick fix destroys meaning | `smartCondense` strips fillers → picks best sentence by impact score → combines. If still bad, check `FILLER_WORDS` list and `scoreSentenceImpact` weights in scriptAnalysis.ts. |
+| Undo restores wrong text | Undo removes ALL `appliedFixes` entries for that segment (group-aware). Check `handleUndoFix` deletes by segment prefix. |
 | RetentionCurve scores differ from IssuesTab | OverviewTab passes `precomputedScores` from `analysisMap` to RetentionCurve. If mismatch, check prop is being passed. |
 | ChatLayout sidebar missing | Ensure route wraps component with `<ChatLayout>` in `index.tsx` |
 

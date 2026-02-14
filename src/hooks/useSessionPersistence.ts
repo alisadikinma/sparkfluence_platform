@@ -9,6 +9,7 @@ import type { WorkspaceState, WorkspaceSegment } from '../contexts/WorkspaceCont
 
 export interface UseSessionPersistenceOptions {
   orderId: string | undefined;  // From URL params
+  sessionType?: 'script_gen' | 'creator_lab' | 'ad_studio';  // For new session creation
   autoSaveInterval?: number;    // Default: 5000ms (5 seconds)
   enabled?: boolean;            // Default: true
 }
@@ -111,8 +112,8 @@ function dbRowToWorkspaceState(row: ChatSessionRow): Partial<WorkspaceState> {
         transition: s.transition,
         maxWords: s.maxWords,
         layout: s.layout || 'full',
-        loopEndEnabled: s.loopEndEnabled ?? true,
-        isEnabled: s.isEnabled ?? true,
+        loopEndEnabled: s.loopEndEnabled ?? ((s.segmentType || '').toUpperCase() !== 'LOOP-END'),
+        isEnabled: s.isEnabled ?? ((s.segmentType || '').toUpperCase() !== 'LOOP-END'),
         includeCreatorFace: s.includeCreatorFace,
         referenceImageUrl: s.referenceImageUrl,
         // Image fields
@@ -158,14 +159,16 @@ function dbRowToWorkspaceState(row: ChatSessionRow): Partial<WorkspaceState> {
 export function useSessionPersistence(options: UseSessionPersistenceOptions): UseSessionPersistenceReturn {
   const {
     orderId,
+    sessionType = 'script_gen',
     autoSaveInterval = 5000,
     enabled = true,
   } = options;
 
   const { state, dispatch } = useWorkspace();
-  const { fetchSession, saveWorkspaceState } = useChatSessions();
+  const { fetchSession, saveWorkspaceState, createSession } = useChatSessions();
 
-  const [isRestoring, setIsRestoring] = useState(false);
+  // Start as true when orderId is present — blocks Workspace init effect until DB query completes
+  const [isRestoring, setIsRestoring] = useState(!!orderId && enabled);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -173,10 +176,13 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
   // Refs to avoid stale closures
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastStateRef = useRef<WorkspaceState | null>(null);
+  const needsImmediateSave = useRef(false);
+  const hasRestoredRef = useRef(false);
 
   // ── Restore session from DB on mount ──
   useEffect(() => {
-    if (!enabled || !orderId) return;
+    if (hasRestoredRef.current || !enabled || !orderId) return;
+    hasRestoredRef.current = true;
 
     const restoreSession = async () => {
       setIsRestoring(true);
@@ -188,6 +194,13 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
           const restoredState = dbRowToWorkspaceState(row);
           dispatch({ type: 'RESTORE_SESSION', state: restoredState });
           setLastSavedAt(new Date(row.updated_at));
+        } else {
+          // New session — create DB row so future updateSession calls work
+          await createSession({
+            orderId,
+            sessionType,
+            title: 'Untitled',
+          });
         }
       } catch (err: any) {
         console.error('[useSessionPersistence] Restore error:', err);
@@ -198,7 +211,7 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     };
 
     restoreSession();
-  }, [orderId, enabled, fetchSession, dispatch]);
+  }, [orderId, enabled, fetchSession, createSession, sessionType, dispatch]);
 
   // ── Save function ──
   const performSave = useCallback(async () => {
@@ -256,6 +269,19 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
       }
     };
   }, [enabled, orderId, state.isDirty, state, autoSaveInterval, performSave]);
+
+  // ── Immediate save after state update (for saveNow calls) ──
+  // When saveNow() is called right after dispatch, the state may not have updated
+  // yet (React batching). This effect runs AFTER the re-render with updated state.
+  useEffect(() => {
+    if (needsImmediateSave.current && state.isDirty) {
+      needsImmediateSave.current = false;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      performSave();
+    }
+  }, [state, performSave]);
 
   // ── Flush pending save on unmount ──
   useEffect(() => {
@@ -316,6 +342,9 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
     }
+    // Set flag so the useEffect above catches the save after state updates
+    needsImmediateSave.current = true;
+    // Also try saving now in case state already includes the change
     await performSave();
   }, [performSave]);
 

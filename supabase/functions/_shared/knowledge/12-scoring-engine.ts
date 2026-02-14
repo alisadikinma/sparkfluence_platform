@@ -488,6 +488,14 @@ export const POWER_WORDS: Record<string, PowerWord[]> = {
     { word: 'anjir', category: 'emotional', impact: 0.7, source: '[L]' },
     { word: 'gokil', category: 'emotional', impact: 0.7, source: '[L]' },
     { word: 'shocking', category: 'emotional', impact: 0.8, source: '[A]' },
+    { word: 'merinding', category: 'emotional', impact: 0.75, source: '[L]' },
+    { word: 'ngilu', category: 'emotional', impact: 0.65, source: '[L]' },
+    { word: 'keren', category: 'emotional', impact: 0.55, source: '[L]' },
+    { word: 'dahsyat', category: 'emotional', impact: 0.7, source: '[L]' },
+    { word: 'brutal', category: 'emotional', impact: 0.75, source: '[L]' },
+    { word: 'insane', category: 'emotional', impact: 0.7, source: '[A]' },
+    { word: 'epic', category: 'emotional', impact: 0.6, source: '[A]' },
+    { word: 'fatal', category: 'negative', impact: 0.8, source: '[H]' },
   ],
 
   hi: [
@@ -825,9 +833,9 @@ export function hasNumber(text: string): boolean {
  */
 export function hasNegativeFrame(text: string): boolean {
   const negativePatterns = [
-    /\b(stop|don't|never|worst|avoid|mistake|fail|wrong|warning|losing|dead)\b/i,  // EN
-    /\b(jangan|bahaya|salah|gagal|rugi|bukan|gak boleh|gak|ngeri|ancur)\b/i,       // ID
-    /\b(मत|गलती|खतरा|बकवास|फालतू|नहीं|गलत)\b/,                                     // HI
+    /\b(stop|don't|never|worst|avoid|mistake|fail|wrong|warning|losing|dead|kill|hate|toxic|scam|terrible|horrible|disaster)\b/i,  // EN
+    /\b(jangan|bahaya|salah|gagal|rugi|bukan|gak boleh|gak pernah|gak|ngeri|ancur|toxic|scam|fatal|mati|hancur|parah)\b/i,       // ID
+    /\b(मत|गलती|खतरा|बकवास|फालतू|नहीं|गलत|scam|toxic)\b/,                                     // HI
   ];
   return negativePatterns.some(p => p.test(text));
 }
@@ -837,9 +845,9 @@ export function hasNegativeFrame(text: string): boolean {
  */
 export function hasForeshadow(text: string): boolean {
   const patterns = [
-    /\b(wait until|but first|here's the thing|the best part)\b/i,     // EN
-    /\b(tunggu|tapi|yang paling|nanti|plot twist)\b/i,                // ID
-    /\b(रुको|लेकिन|सबसे बड़ा|अभी तो|देखो)\b/,                            // HI
+    /\b(wait until|but first|here's the thing|the best part|stay until|watch till|don't skip|keep watching)\b/i,     // EN
+    /\b(tunggu|tapi|yang paling|nanti|plot twist|tonton sampai|sampai habis|sampai akhir|yang terakhir|yang ketiga|simak|stay)\b/i,  // ID
+    /\b(रुको|लेकिन|सबसे बड़ा|अभी तो|देखो|अंत तक)\b/,                            // HI
   ];
   return patterns.some(p => p.test(text));
 }
