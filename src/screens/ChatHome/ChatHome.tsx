@@ -248,7 +248,7 @@ export const ChatHome: React.FC = () => {
     const currentTopic = selectedTopic?.title || (selectedChallenge ? `${selectedChallenge.name} Challenge` : '');
 
     return (
-      <div className="w-full min-h-screen bg-[#0B0E14] flex flex-col items-center justify-center px-4">
+      <div className="w-full h-full bg-[#0B0E14] flex flex-col items-center justify-center px-4">
         <div className="flex flex-col items-center gap-8 max-w-md w-full">
           {/* Animated Icon */}
           <div className="relative">
@@ -353,7 +353,7 @@ export const ChatHome: React.FC = () => {
 
   // ── Main Layout: Topic-first (Gemini-style) ──
   return (
-    <div className="w-full min-h-screen bg-[#0B0E14] overflow-x-hidden">
+    <div className="w-full min-h-full bg-[#0B0E14]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* ── Greeting Section ── */}
         <div className={`pt-8 sm:pt-12 pb-6 sm:pb-8 text-center transition-all duration-500 ${selectedTopic ? 'pt-4 sm:pt-6 pb-3 sm:pb-4' : ''}`}>

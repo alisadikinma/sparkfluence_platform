@@ -33,7 +33,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   const activeSessionId: string | null = null; // Will be set by route param
 
   return (
-    <div className="flex h-screen bg-[#0B0E14] overflow-hidden">
+    <div className="flex h-dvh bg-[#0B0E14] overflow-hidden">
       {/* Sidebar */}
       <ChatSidebar
         menuItems={menuItems}
@@ -52,8 +52,8 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
         onToggleCollapse={() => setCollapsed(!collapsed)}
       />
 
-      {/* Main content area */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden">
+      {/* Main content area — scrollable, full height */}
+      <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
         {children}
       </main>
     </div>

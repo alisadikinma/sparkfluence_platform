@@ -4,10 +4,15 @@ import Lenis from 'lenis';
 
 // Routes that use their own nested scroll containers (overflow-y-auto)
 // Lenis hijacks wheel events at document level, breaking scroll in these layouts
+// Include both base routes (ChatHome) and workspace routes (with orderId)
 const LENIS_DISABLED_PATTERNS = [
-  /^\/script-gen\/[^/]+/,   // Workspace routes
-  /^\/creator-lab\/[^/]+/,
-  /^\/ad-studio\/[^/]+/,
+  /^\/script-gen/,          // ChatHome + Workspace routes
+  /^\/creator-lab/,         // ChatHome + Workspace routes
+  /^\/ad-studio/,           // AdStudio + Workspace routes
+  /^\/dashboard/,
+  /^\/planner/,
+  /^\/gallery/,
+  /^\/settings/,
 ];
 
 export const useSmoothScroll = () => {

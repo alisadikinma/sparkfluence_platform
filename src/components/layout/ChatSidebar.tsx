@@ -122,7 +122,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   return (
     <aside
       className={`
-        flex flex-col h-screen
+        flex flex-col h-full
         ${collapsed ? 'w-[72px]' : 'w-[260px]'}
         bg-[#0B0E14] border-r border-[#262626]
         transition-all duration-200 ease-in-out
