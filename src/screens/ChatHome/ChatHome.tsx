@@ -262,7 +262,7 @@ export const ChatHome: React.FC = () => {
     const currentTopic = selectedTopic?.title || (selectedChallenge ? `${selectedChallenge.name} Challenge` : '');
 
     return (
-      <div className="w-full min-h-screen bg-[#0B0E14] flex flex-col items-center justify-center px-4">
+      <div className="w-full h-full bg-[#0B0E14] flex flex-col items-center justify-center px-4">
         <div className="flex flex-col items-center gap-8 max-w-md w-full">
           {/* Animated Icon */}
           <div className="relative">

@@ -197,6 +197,7 @@
 
   html {
     scroll-behavior: smooth;
+    height: 100%;
   }
 
   body {
@@ -206,6 +207,12 @@
     transition: background-color 0.3s ease, color 0.3s ease;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #app {
+    height: 100%;
   }
 }
 
