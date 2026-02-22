@@ -128,7 +128,7 @@ MULTILINE COMMANDS:
 | `09-hindi-slang-2026.ts` | 210 | **ACTIVE** | Hindi/Hinglish slang + particles | `prompts/slangValidator.ts` |
 | `10-global-english-slang-2026.ts` | 203 | **ACTIVE** | English Gen-Z slang | `prompts/slangValidator.ts` |
 | `11-hook-library-2026.ts` | 300+ | **ACTIVE** | 100 hooks (5 categories), `HOOK_CATEGORY_META` (incl. `curiosity_principle`), `TOPIC_HOOK_MAP` (28 topics) | `prompts/seefluencerFramework.ts`, `prompts/scoringOptimizer.ts` |
-| `12-scoring-engine.ts` | 580+ | **ACTIVE** | Retention scoring, power words, pacing rules, benchmarks, `payoff_not_revealed` (HOOK curiosity gap) | Client-side SmartCompanion + Retention Curve |
+| `12-scoring-engine.ts` | 900+ | **ACTIVE** | Retention scoring, power words (EN/ID/HI), pacing rules, benchmarks, `algorithmThresholds`, `SEGMENT_WEIGHT_IN_OVERALL`, sources [A]-[R]. **Recalibrated 2026-02-22:** word density optimal 60-95%, `hasForeshadow()` expanded, cross-segment defaults raised. | Client-side SmartCompanion + Retention Curve |
 | `13-emotion-lexicon.ts` | 520 | **ACTIVE** | Word→emotion→intensity (EN/ID/HI, 200+ words each) | Client-side Emotion Arc |
 | `__tests__/validate-scoring-engine.ts` | 360 | **TEST** | Validation: 38 tests, 36/38 passing (94.7%) | `npx tsx` runner |
 | `ad-studio/01-advertising-psychology.ts` | 275 | **RESERVED** | Cialdini's 6 principles, cognitive biases, emotional triggers | Future: `generate-ad-script` |
@@ -144,7 +144,7 @@ MULTILINE COMMANDS:
 
 | File | Content | Used By |
 |------|---------|---------|
-| `viralScriptKnowledge.ts` | PROJECT_INSTRUCTION — viral DNA principles | `generate-script` |
+| `viralScriptKnowledge.ts` | PROJECT_INSTRUCTION — structural spec (output format, word limits, segment structure tables, CINEMATIC_VISUAL_GUIDE) | `generate-script` |
 | `seefluencerFramework.ts` | Hook/Foreshadow/Body/CTA/PEAK strategies | `generate-script` |
 | `beastMoziLayer.ts` | MrBeast pacing + Hormozi density + editing cues | `generate-script` |
 | `slangValidator.ts` | Slang validation (imports 08/09/10 knowledge) | `generate-script` |
@@ -155,7 +155,7 @@ MULTILINE COMMANDS:
 | `productNamingRule.ts` | Product name detection rules | `generate-images` |
 | `audioDirective.ts` | Audio/TTS prompt directives | `generate-tts` |
 | `contentTypeDetector.ts` | Content type classification | `generate-script` |
-| `scoringOptimizer.ts` | Component 18: Scoring rules + hook-topic matching for LLM | `generate-script` |
+| `scoringOptimizer.ts` | Scoring rules + hook-topic matching + ANTI_PATTERNS (3 failure modes) + TOPIC_HOOK_SELECTION_RULES + **Power Word Bank** (top words per language) + **Builds-on-hook Rule** (FORE must reference HOOK keywords) + **Triple Hook Coherence Rule** (all 3 hooks must share core topic keywords so FORE connects with any variant) for LLM | `generate-script` |
 
 ### Lookups (`supabase/functions/_shared/lookups/`)
 
@@ -419,7 +419,7 @@ SOURCE_BADGE_CONFIG: Record<TrendingSource, { label, bg, text, border }>
 
 ### Workspace 2-Column Layout (1280px+)
 ```
-Center (main workspace)            │ Right Wing — "Smart Companion" (320px)
+Center (main workspace)            │ Right Wing — "Smart Companion" (460px)
 StepBar                            │ Tab: Overview | Issues | Style
 ScriptStep / ImageStep /           │ Overview: ViralityScore + RetentionCurve + EmotionArc
 VideoStep / StudioStep             │ Issues: analyzeSegment() weaknesses + quick fixes
@@ -436,8 +436,8 @@ VideoStep / StudioStep             │ Issues: analyzeSegment() weaknesses + qui
 - **Cross-segment features** (`CROSS_SEGMENT_FEATURES` set in scriptAnalysis.ts): `builds_on_hook`, `matches_hook_category`, `emotional_match`, `mirrors_hook_energy`, `payoff_not_revealed`, `matches_funnel_stage` — these contribute to scores but don't create issue cards
 - **Feature dedup**: `has_pattern_interrupt` uses its own regex (caps emphasis, direct address) + `hasForeshadow()`. `has_foreshadow` uses only `hasForeshadow()`. They are NOT identical.
 - **RetentionCurve score consistency**: OverviewTab extracts scores from `analysisMap` and passes as `precomputedScores` to RetentionCurve, ensuring bar chart matches IssuesTab scores exactly
-- Shared analysis: `src/screens/Workspace/utils/scriptAnalysis.ts` (analyzeSegment, generateQuickFixes, smartCondense)
-- Quick fixes: `smartCondense(prefix, originalText, suffix, maxWords, language)` — sentence-aware condensing that preserves meaning (strips fillers → picks best sentence → combines → fallback truncate). Replaces old `buildFixPreview` which blindly truncated from the end.
+- Shared analysis: `src/screens/Workspace/utils/scriptAnalysis.ts` — exports: `analyzeSegment`, `generateQuickFixes`, `extractFeatures`, `CROSS_SEGMENT_FEATURES`
+- Quick fixes: internal `smartCondense(prefix, originalText, suffix, maxWords, language)` — sentence-aware condensing that preserves meaning (strips fillers → picks best sentence → combines → fallback truncate)
 
 ### Workspace State: `WorkspaceContext.tsx`
 - useReducer with 25+ actions (INIT_SESSION, SET_SCRIPT_DATA, SELECT_HOOK, EDIT_SEGMENT, etc.)
@@ -580,7 +580,7 @@ ai_creative: bg-amber-500/10   text-amber-400   border-amber-500/20
 ### Layout & Animation
 - **Desktop-first**: 1440px+ primary, responsive to 1024px
 - **9:16 portrait ratio**: All media previews
-- **3-column workspace**: Left (240px) | Center (flex-1) | Right (320px) at 1440px+
+- **2-column workspace**: Center (flex-1) | Right (460px) at 1280px+
 - **Dark-only**: No light mode toggle
 - **Animation**: Framer Motion, 200-300ms, no bounce/spring
 - **Icons**: lucide-react (SVG, not emoji)
@@ -898,6 +898,7 @@ git log --oneline -10
 | Undo restores wrong text | Undo removes ALL `appliedFixes` entries for that segment (group-aware). Check `handleUndoFix` deletes by segment prefix. |
 | RetentionCurve scores differ from IssuesTab | OverviewTab passes `precomputedScores` from `analysisMap` to RetentionCurve. If mismatch, check prop is being passed. |
 | ChatLayout sidebar missing | Ensure route wraps component with `<ChatLayout>` in `index.tsx` |
+| Virality score too low (< 70%) | **Scoring recalibrated 2026-02-22.** Check: (1) `extractFeatures` in scriptAnalysis.ts for feature detection thresholds, (2) word density optimal range is 60-95%, (3) cross-segment defaults raised (builds_on_hook 0.6, matches_hook_category 0.6). LLM: check `scoringOptimizer.ts` power word bank + builds-on-hook rule + scoring cheat sheet in generate-script. |
 
 ---
 

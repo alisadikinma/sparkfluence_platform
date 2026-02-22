@@ -566,20 +566,20 @@ export const WORD_DENSITY = {
 
   /** Density score thresholds */
   thresholds: {
-    optimal_min: 70,    // Below 70% = too sparse, feels empty
-    optimal_max: 90,    // Above 90% = too packed, feels rushed
-    warning: 100,       // At 100% = at absolute limit
-    critical: 110,      // Above 110% = over limit, will be cut off
+    optimal_min: 60,    // Below 60% = too sparse, feels empty
+    optimal_max: 95,    // Above 95% = too packed, feels rushed
+    warning: 105,       // At 105% = at limit
+    critical: 115,      // Above 115% = over limit, will be cut off
   },
 
   /** Score based on density percentage */
   densityScore: (densityPercent: number): number => {
-    if (densityPercent >= 70 && densityPercent <= 90) return 1.0;  // Optimal
-    if (densityPercent >= 60 && densityPercent < 70) return 0.7;   // Slightly sparse
-    if (densityPercent > 90 && densityPercent <= 100) return 0.8;  // Slightly packed
-    if (densityPercent > 100 && densityPercent <= 110) return 0.4; // Over limit
-    if (densityPercent > 110) return 0.1;                          // Critical
-    if (densityPercent < 60) return 0.5;                           // Too empty
+    if (densityPercent >= 60 && densityPercent <= 95) return 1.0;  // Optimal (widened)
+    if (densityPercent >= 55 && densityPercent < 60) return 0.7;   // Slightly sparse
+    if (densityPercent > 95 && densityPercent <= 105) return 0.7;  // Slightly packed
+    if (densityPercent > 105 && densityPercent <= 115) return 0.4; // Over limit
+    if (densityPercent > 115) return 0.1;                          // Critical
+    if (densityPercent < 55) return 0.5;                           // Too empty
     return 0.5;
   },
 };
@@ -855,9 +855,9 @@ export function hasNegativeFrame(text: string): boolean {
  */
 export function hasForeshadow(text: string): boolean {
   const patterns = [
-    /\b(wait until|but first|here's the thing|the best part|stay until|watch till|don't skip|keep watching)\b/i,     // EN
-    /\b(tunggu|tapi|yang paling|nanti|plot twist|tonton sampai|sampai habis|sampai akhir|yang terakhir|yang ketiga|simak|stay)\b/i,  // ID
-    /\b(रुको|लेकिन|सबसे बड़ा|अभी तो|देखो|अंत तक)\b/,                            // HI
+    /\b(wait until|but first|here's the thing|the best part|stay until|watch till|don't skip|keep watching|here it comes|brace yourself|prepare|you won't believe)\b/i,     // EN
+    /\b(tunggu|tapi|yang paling|nanti|plot twist|tonton sampai|sampai habis|sampai akhir|yang terakhir|yang ketiga|simak|stay|ini dia|yang bikin|siapin diri|jangan skip)\b/i,  // ID
+    /\b(रुको|लेकिन|सबसे बड़ा|अभी तो|देखो|अंत तक|तैयार रहो)\b/,                            // HI
   ];
   return patterns.some(p => p.test(text));
 }

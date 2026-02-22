@@ -312,7 +312,16 @@ ${visHook.visual_cue ? `KEEP the visual cue prefix (${visHook.visual_cue}) and a
 4. **The HOOK segment in "segments" array uses Option A by default.**
 5. **Each option must have DIFFERENT script_text** — not just rephrased versions of the same hook.
 6. **CURIOSITY GAP (CRITICAL):** NEVER reveal the answer, tool name, product name, solution, or payoff in the HOOK. The HOOK creates the question — BODY/PEAK delivers the answer. If someone reads ONLY the HOOK, they should NOT know what the specific tools/answers/solutions are. Instead of naming specific items, use quantity + category teasers: "3 AI tools yang gila" NOT "Jasper, CapCut, Pionex".
-   **BUT IMPORTANT:** The BODY segments MUST name the specific tools/products/answers. That's the payoff! Each BODY segment reveals ONE item by name (e.g., BODY-1: "Pertama: Jasper AI..."). Hiding names in BODY = broken promise = viewer leaves.`;
+   **BUT IMPORTANT:** The BODY segments MUST name the specific tools/products/answers. That's the payoff! Each BODY segment reveals ONE item by name (e.g., BODY-1: "Pertama: Jasper AI..."). Hiding names in BODY = broken promise = viewer leaves.
+7. **TOPIC KEYWORD COHERENCE (CRITICAL):** All 3 hook options MUST share the same core topic keywords so that FORE/BODY/PEAK connect with ANY hook variant. The user can switch between hooks — FORE must still make sense.
+   **Rule:** Extract 2-3 core topic keywords from the TOPIC (e.g., topic "3 kesalahan branding" → keywords: "kesalahan", "branding"). ALL 3 hooks MUST contain these same topic keywords, just framed differently (safe/negative/visual angle).
+   **Example:**
+   - Topic: "3 kesalahan branding pribadi"
+   - ✅ Option A: "3 KESALAHAN branding pribadi yang bikin lo gagal..."
+   - ✅ Option B: "STOP! 3 KESALAHAN branding pribadi ini FATAL..."
+   - ✅ Option C: "[Camera: extreme close-up] 3 KESALAHAN branding pribadi yang gak ada yang berani bilang..."
+   - ❌ Option B: "Lo masih lakuin ini? Karir lo dalam BAHAYA..." (missing "kesalahan", "branding" → FORE won't connect)
+   **Why:** FORE is written ONCE and says "kesalahan yang terakhir ini paling fatal..." — if Option B doesn't mention "kesalahan", switching to it breaks the narrative flow.`;
 }
 
 // ============================================================================

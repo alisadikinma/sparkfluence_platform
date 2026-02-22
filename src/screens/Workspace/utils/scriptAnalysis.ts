@@ -177,18 +177,18 @@ export function extractFeatures(
 ): Record<string, boolean | number> {
   const density = maxWords > 0 ? wordCount / maxWords : 0;
   const optimalDensity =
-    density >= 0.7 && density <= 0.9
+    density >= 0.6 && density <= 0.95
       ? 1
-      : density > 0.9
-        ? Math.max(0, 1 - (density - 0.9) * 5)
-        : density / 0.7;
+      : density > 0.95
+        ? Math.max(0, 1 - (density - 0.95) * 3.3)
+        : density / 0.6;
 
   // Cross-segment: emotion analysis for current + hook
   const currentEmotion = analyzeEmotion(text, language);
   const hookEmotion = hookSegment ? analyzeEmotion(hookSegment.script, language) : null;
 
   // builds_on_hook: keyword overlap between current text and hook
-  let buildsOnHook = 0.5;
+  let buildsOnHook = 0.6; // raised default — most content naturally relates to its hook
   if (hookSegment && hookSegment.script) {
     const hookWords = contentWords(hookSegment.script);
     const currentWordSet = contentWords(text);
@@ -197,7 +197,10 @@ export function extractFeatures(
       for (const w of currentWordSet) {
         if (hookWords.has(w)) overlap++;
       }
-      buildsOnHook = Math.min(1, overlap / Math.max(1, Math.min(hookWords.size, 3)));
+      // Lowered threshold: 2 keyword matches = full score (was 3)
+      buildsOnHook = Math.min(1, overlap / Math.max(1, Math.min(hookWords.size, 2)));
+      // Floor at 0.6 if there's any overlap at all (thematic connection)
+      if (overlap > 0 && buildsOnHook < 0.6) buildsOnHook = 0.6;
     }
   }
 
@@ -205,35 +208,43 @@ export function extractFeatures(
   const transitionStart = /^(tapi|nah|but|however|terus|lalu|nah\s+sekarang|so|meanwhile|ok\s+jadi|next|then|now|sekarang|kedua|ketiga|pertama|लेकिन|फिर|अब)\b/i.test(text.trim());
   const hasTransitionWord = /\b(tapi|nah|but|however|terus|dan|lalu|next|then|so|meanwhile|pertama|kedua|ketiga|selanjutnya|terakhir|first|second|third|finally|लेकिन|फिर)\b/i.test(text);
 
-  // has_specific_detail: numbers, percentages, proper nouns, specific measurements
+  // has_specific_detail: numbers, percentages, proper nouns, concrete nouns, techniques
   const hasSpecificDetail = hasNumber(text) || /\d+%|\d+[kmKM]\b|\$\d/.test(text)
     ? 1
-    : /\b[A-Z][a-z]{2,}\b/.test(text) ? 0.7 : 0.3;
+    : /\b[A-Z][a-z]{2,}\b/.test(text) ? 0.8  // proper noun (brand, name, tool)
+    : /\b(strategi|teknik|metode|formula|framework|system|prinsip|aturan|konsep|taktik|strategy|technique|method|principle|rule|concept|pattern|approach)\b/i.test(text) ? 0.65  // concrete noun / technique name
+    : 0.45;
 
-  // has_value_delivery: instructional/actionable language
+  // has_value_delivery: instructional/actionable language + explanatory patterns
   const valuePatterns = /\b(cara|step|langkah|try|use|pakai|download|click|buka|search|cari|create|bikin|buat|ciptain|ciptakan|gunakan|pasang|aktifin|setup|daftar|edit|upload|install|tambahin|setting|atur|make|get|dapet|learn|pelajari|tip|trick|तरीका|करो|बनाओ|सीखो|इस्तेमाल)\b/i;
-  const hasValueDelivery = valuePatterns.test(text) ? 1 : hasNumber(text) ? 0.6 : 0.2;
+  const explanatoryPatterns = /\b(karena|jadi|artinya|yang bikin|makanya|soalnya|because|so that|which means|the reason|that's why|इसलिए|क्योंकि|मतलब)\b/i;
+  const examplePatterns = /\b(contoh|example|misalnya|kayak|seperti|like when|for instance|jadinya|hasilnya|result|misal|sebut aja)\b/i;
+  const hasValueDelivery = valuePatterns.test(text) ? 1
+    : explanatoryPatterns.test(text) ? 0.8
+    : examplePatterns.test(text) ? 0.75
+    : hasNumber(text) ? 0.7
+    : 0.4;
 
   // has_emotional_climax: compare intensity vs average of all segments
   // Also check for explicit climax indicators (ALL CAPS, exclamation clusters, superlatives)
   let emotionalClimax = currentEmotion.intensity;
-  const hasClimaxIndicator = /[A-Z]{3,}/.test(text) || /!{2,}/.test(text) ||
-    /\b(paling|paling\s+\w+|paling\s+gila|terbesar|terbaik|terparah|tergila|most|biggest|best|worst|greatest|insane|GILA|GOKIL|AMAZING|INCREDIBLE)\b/i.test(text);
+  const hasClimaxIndicator = /[A-Z]{3,}/.test(text) || /!{1,}/.test(text) ||
+    /\b(paling|paling\s+\w+|paling\s+gila|terbesar|terbaik|terparah|tergila|most|biggest|best|worst|greatest|insane|GILA|GOKIL|AMAZING|INCREDIBLE|dahsyat|brutal|epic|game\s*changer|next\s*level)\b/i.test(text);
   if (allSegments && allSegments.length > 1) {
     const avgIntensity = allSegments.reduce((sum, s) => {
       return sum + analyzeEmotion(s.script, language).intensity;
     }, 0) / allSegments.length;
-    if (currentEmotion.intensity > avgIntensity + 0.1) {
+    if (currentEmotion.intensity > avgIntensity + 0.05) {
       emotionalClimax = 1;
     } else if (currentEmotion.intensity > avgIntensity || hasClimaxIndicator) {
-      emotionalClimax = 0.7;
+      emotionalClimax = 0.8;
     } else if (hasClimaxIndicator) {
-      emotionalClimax = 0.5;
+      emotionalClimax = 0.6;
     } else {
-      emotionalClimax = 0.3;
+      emotionalClimax = 0.35;
     }
   } else if (hasClimaxIndicator) {
-    emotionalClimax = Math.max(emotionalClimax, 0.7);
+    emotionalClimax = Math.max(emotionalClimax, 0.8);
   }
 
   // has_unexpected_twist: contrast/reveal words and reveal phrases
@@ -244,18 +255,20 @@ export function extractFeatures(
   const proofPatterns = /\d+\s*(orang|people|users?|views?|followers?|subscribers?|juta|ribu|million|k\b|%)/i;
   const hasSpecificProof = proofPatterns.test(text) ? 1 : hasNumber(text) ? 0.5 : 0;
 
-  // emotional_intensity_high: directly from lexicon analysis
-  const emotionalIntensityHigh = currentEmotion.intensity >= 0.6 ? 1 : currentEmotion.intensity >= 0.4 ? 0.6 : 0.2;
+  // emotional_intensity_high: lexicon analysis + power word boost
+  const powerWordBoost = detectPowerWords(text, language).length * 0.15;
+  const boostedIntensity = Math.min(1, currentEmotion.intensity + powerWordBoost);
+  const emotionalIntensityHigh = boostedIntensity >= 0.5 ? 1 : boostedIntensity >= 0.35 ? 0.7 : boostedIntensity >= 0.25 ? 0.5 : 0.3;
 
   // single_focus: count imperative verbs / action items (more = less focused)
   const actionVerbs = text.match(/\b(follow|save|click|share|comment|subscribe|like|download|buy|join|tap|swipe|ikutin|simpan|klik|beli)\b/gi) || [];
   const singleFocus = actionVerbs.length <= 1 ? 1 : actionVerbs.length === 2 ? 0.5 : 0;
 
   // mirrors_hook_energy: compare emotion intensity of current vs hook (for LOOP-END)
-  let mirrorsHookEnergy = 0.5;
+  let mirrorsHookEnergy = 0.6; // raised default
   if (hookEmotion) {
     const intensityDiff = Math.abs(currentEmotion.intensity - hookEmotion.intensity);
-    mirrorsHookEnergy = intensityDiff <= 0.15 ? 1 : intensityDiff <= 0.3 ? 0.6 : 0.2;
+    mirrorsHookEnergy = intensityDiff <= 0.2 ? 1 : intensityDiff <= 0.35 ? 0.65 : 0.3;
   }
 
   // has_callback: references to earlier content ("remember", "tadi", "yang gue bilang")
@@ -263,11 +276,11 @@ export function extractFeatures(
   const hasCallback = callbackPatterns.test(text) ? 1 : 0;
 
   // emotional_match: emotion similarity between current segment and hook
-  let emotionalMatch = 0.5;
+  let emotionalMatch = 0.6; // raised default — related content shares emotional tone
   if (hookEmotion) {
     const sameEmotion = currentEmotion.dominant === hookEmotion.dominant;
     const intensityDiff = Math.abs(currentEmotion.intensity - hookEmotion.intensity);
-    emotionalMatch = sameEmotion ? (intensityDiff <= 0.2 ? 1 : 0.7) : 0.2;
+    emotionalMatch = sameEmotion ? (intensityDiff <= 0.25 ? 1 : 0.75) : intensityDiff <= 0.2 ? 0.6 : 0.35;
   }
 
   // payoff_not_revealed: check if HOOK reveals content words from BODY/PEAK segments
@@ -308,19 +321,19 @@ export function extractFeatures(
   }
 
   // matches_hook_category: basic heuristic based on hook type patterns
-  let matchesHookCategory = 0.5;
+  let matchesHookCategory = 0.6; // raised default — most hooks naturally align with content
   if (hookSegment) {
     const hookHasQuestion = hasQuestion(hookSegment.script);
     const hookHasNumber = hasNumber(hookSegment.script);
     const hookHasNegative = hasNegativeFrame(hookSegment.script);
     if (hookHasQuestion && (hasNumber(text) || hasValueDelivery > 0.5)) matchesHookCategory = 1;
-    else if (hookHasNumber && hasNumber(text)) matchesHookCategory = 0.8;
-    else if (hookHasNegative && hasNegativeFrame(text)) matchesHookCategory = 0.6;
-    else matchesHookCategory = 0.4;
+    else if (hookHasNumber && hasNumber(text)) matchesHookCategory = 0.85;
+    else if (hookHasNegative && hasNegativeFrame(text)) matchesHookCategory = 0.7;
+    else matchesHookCategory = 0.55;
   }
 
   // matches_funnel_stage: basic heuristic
-  const matchesFunnelStage = hasCtaAction(text) || hasValueDelivery > 0.5 ? 0.8 : 0.4;
+  const matchesFunnelStage = hasCtaAction(text) ? 1.0 : hasValueDelivery > 0.5 ? 0.8 : 0.5;
 
   return {
     has_question: hasQuestion(text),
@@ -329,7 +342,7 @@ export function extractFeatures(
     has_negative_frame: hasNegativeFrame(text),
     word_density_optimal: optimalDensity,
     under_word_limit: wordCount <= maxWords,
-    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text) || /\b(tapi tunggu|nah ini|dan yang bikin|here's the|but wait|but here|yang bikin kaget|plot twist|ternyata|lo bakal|gue kasih tau|ini yang|coba bayangin|imagine|listen|dengerin|check this|the crazy part)\b/i.test(text),
+    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /!/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text) || /\b(tapi tunggu|nah ini|dan yang bikin|here's the|but wait|but here|yang bikin kaget|plot twist|ternyata|lo bakal|gue kasih tau|ini yang|coba bayangin|imagine|listen|dengerin|check this|the crazy part|serius nih|ini penting|perhatiin|liat nih|tau gak|eh|oi|bro|guys)\b/i.test(text) || /\b(lo|gue|kamu|bro|guys|sis|you)\b.*\b(harus|wajib|perlu|mesti|must|need)\b/i.test(text),
     has_foreshadow: hasForeshadow(text),
     has_transition: transitionStart ? 1 : hasTransitionWord ? 0.5 : 0,
     builds_on_hook: buildsOnHook,
@@ -378,7 +391,7 @@ export function analyzeSegment(
 
   for (const [key, rule] of Object.entries(rules)) {
     const points = result.breakdown[key] ?? 0;
-    if (points > 0 && points >= rule.weight * 0.5) {
+    if (points > 0 && points >= rule.weight * 0.4) {
       strengths.push({
         key,
         label: FEATURE_LABELS[key] || key,

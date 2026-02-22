@@ -50,7 +50,7 @@ const FEATURE_EXAMPLES: Record<string, Record<string, string>> = {
     builds_on_hook: 'Reference what HOOK promised — deliver on curiosity gap',
     matches_hook_category: 'Match content style to hook type used',
     matches_funnel_stage: 'Awareness→"Learn more", Consideration→"Get guide"',
-    word_density_optimal: '70-90% of max words — not too sparse, not too packed',
+    word_density_optimal: '60-95% of max words — not too sparse, not too packed',
     under_word_limit: 'Stay within word count limit for duration',
   },
   english: {
@@ -79,7 +79,7 @@ const FEATURE_EXAMPLES: Record<string, Record<string, string>> = {
     builds_on_hook: 'Reference what HOOK promised — deliver on curiosity gap',
     matches_hook_category: 'Match content style to hook type used',
     matches_funnel_stage: 'Awareness→"Learn more", Consideration→"Get guide"',
-    word_density_optimal: '70-90% of max words — not too sparse, not too packed',
+    word_density_optimal: '60-95% of max words — not too sparse, not too packed',
     under_word_limit: 'Stay within word count limit for duration',
   },
   hindi: {
@@ -108,7 +108,7 @@ const FEATURE_EXAMPLES: Record<string, Record<string, string>> = {
     builds_on_hook: 'Reference what HOOK promised — deliver on curiosity gap',
     matches_hook_category: 'Match content style to hook type used',
     matches_funnel_stage: 'Awareness→"Learn more", Consideration→"Get guide"',
-    word_density_optimal: '70-90% of max words — not too sparse, not too packed',
+    word_density_optimal: '60-95% of max words — not too sparse, not too packed',
     under_word_limit: 'Stay within word count limit for duration',
   },
 };
@@ -282,7 +282,7 @@ const FEATURE_NAMES: Record<string, string> = {
   has_number: 'Number/Statistic',
   has_power_word: 'Power Word',
   has_negative_frame: 'Negative Framing',
-  word_density_optimal: 'Word Density (70-90%)',
+  word_density_optimal: 'Word Density (60-95%)',
   under_word_limit: 'Under Word Limit',
   has_pattern_interrupt: 'Pattern Interrupt',
   matches_hook_category: 'Hook Category Match',
@@ -385,7 +385,7 @@ The MORE features you include, the HIGHER the score.
 - Negative frames trigger loss aversion (+63% CTR) — powerful for education/warning topics
 
 ⚠️ FOR 90+ HOOK SCORE (MANDATORY):
-HOOK needs ALL of these: number + power word + pattern interrupt + under word limit + good density (70-90%)
+HOOK needs ALL of these: number + power word + pattern interrupt + under word limit + good density (60-95%)
 PLUS at least 2 of: question(?), negative frame, curiosity gap (no payoff revealed)
 Example: "3 KESALAHAN fatal yang bikin brand lo GAGAL di Metaverse 2026?" = number(3) + power word(FATAL/GAGAL) + negative frame(KESALAHAN/GAGAL) + question(?) + pattern interrupt(ALL CAPS) = 90%+ score
 
@@ -426,6 +426,70 @@ The IDEAL emotion arc is "ROLLER COASTER": High energy → dip → build → CLI
 This pattern has the highest completion rate across all platforms.
 
 ═══════════════════════════════════════════════════════════════
+⚡ POWER WORD BANK — Use 3-5 per script minimum (scorer DETECTS these):
+═══════════════════════════════════════════════════════════════
+
+${lang === 'indonesian' ? `🇮🇩 Indonesian Power Words (HIGH IMPACT — use in CAPS for max score):
+  Urgency: SEKARANG, BURUAN, WAJIB, terakhir, habis
+  Negative: JANGAN, BAHAYA, FATAL, SALAH, GAGAL, RUGI, toxic, scam, KESALAHAN
+  Curiosity: RAHASIA, ternyata, tau gak, baru tau, sebenarnya
+  Value: GRATIS, terbukti, hack, game changer
+  Emotional: GILA, PARAH, SHOCKING, brutal, dahsyat, gokil, merinding, epic, INSANE` :
+lang === 'hindi' ? `🇮🇳 Hindi Power Words (HIGH IMPACT — use in CAPS for max score):
+  Urgency: ABHI, JALDI, AAKHRI, limited
+  Negative: GALTI, DHOKHA, KHATARA, MAT, scam
+  Curiosity: SACH, RAAZ, ASLI, pata hai
+  Value: FREE, JUGAAD, hack, tarika
+  Emotional: SHOCKING, INSANE, FADU, JHAKKAS, sach mein` :
+`🇺🇸 English Power Words (HIGH IMPACT — use in CAPS for max score):
+  Urgency: NOW, TODAY, LIMITED, last chance, deadline
+  Negative: NEVER, WORST, STOP, WARNING, MISTAKE, FAIL, DEAD
+  Curiosity: SECRET, HIDDEN, TRUTH, EXPOSED, actually, INSANE
+  Value: FREE, PROVEN, GUARANTEED, HACK, save
+  Emotional: SHOCKING, CRAZY, UNBELIEVABLE, literally`}
+
+The scorer regex-detects these EXACT words. Using them = guaranteed points.
+Scatter 3-5 power words across the script (at least 1 per HOOK, BODY, PEAK).
+
+═══════════════════════════════════════════════════════════════
+🔗 BUILDS-ON-HOOK RULE — FORE/BODY MUST reference HOOK keywords:
+═══════════════════════════════════════════════════════════════
+
+The scorer checks KEYWORD OVERLAP between HOOK text and FORE/BODY text.
+FORE and each BODY segment MUST contain at least 1-2 keywords from the HOOK.
+
+Examples:
+  HOOK: "3 KESALAHAN branding yang bikin lo GAGAL"
+  → FORE must contain "kesalahan" OR "branding" OR "gagal"
+  → BODY must contain "kesalahan" OR "branding" (delivering on the promise)
+
+  HOOK: "5 AI tools yang LITERALLY ganti kerjaan gue"
+  → FORE must contain "AI" OR "tools" OR "kerjaan"
+  → BODY must name specific tools (payoff)
+
+If FORE/BODY don't reference HOOK keywords, the "builds_on_hook" score drops to 0.
+
+═══════════════════════════════════════════════════════════════
+🔀 TRIPLE HOOK COHERENCE — All 3 hooks MUST share topic keywords:
+═══════════════════════════════════════════════════════════════
+
+FORE/BODY/PEAK/CTA are written ONCE but the user can switch between 3 hook options.
+If hooks use completely different keywords, FORE won't connect → score drops.
+
+RULE: Extract 2-3 CORE TOPIC KEYWORDS from the topic. ALL 3 hooks must contain these SAME keywords.
+Each hook just frames them differently (safe angle, negative angle, visual angle).
+
+Example — Topic: "3 kesalahan branding pribadi"
+  Core keywords: "kesalahan", "branding"
+  ✅ Safe:    "3 KESALAHAN branding pribadi yang bikin lo gagal..."
+  ✅ Negative: "STOP! 3 KESALAHAN branding pribadi ini FATAL..."
+  ✅ Visual:   "[Close-up] 3 KESALAHAN branding pribadi yang gak ada yang berani bilang..."
+  ❌ Bad B:    "Lo masih lakuin ini? Karir lo dalam BAHAYA..." (missing topic keywords!)
+
+Why: FORE says "kesalahan yang terakhir ini paling fatal" — if hook B doesn't mention
+"kesalahan", switching to it breaks the narrative. User sees disconnected script.
+
+═══════════════════════════════════════════════════════════════
 ✅ MANDATORY 90%+ SCORING CHECKLIST (every script MUST pass ALL):
 ═══════════════════════════════════════════════════════════════
 
@@ -434,7 +498,7 @@ This pattern has the highest completion rate across all platforms.
 □ Contains a QUESTION mark or question word ("tau gak?", "gimana?", "pernah?") — worth 12pts
 □ Contains at least 1 POWER WORD in CAPS or emotional ("GILA", "SHOCKING", "FATAL", "literally") — worth 10pts
 □ Does NOT reveal tool/product names (tease with "3 AI tools", not "Jasper, CapCut") — worth 10pts
-□ Word density 70-90% of max words (use enough words, not too few) — worth 10pts
+□ Word density 60-95% of max words (use enough words, not too few) — worth 10pts
 □ Under word limit — worth 8pts
 □ Has pattern interrupt element (ALL CAPS word, "But wait...", or direct address "Lo bakal...") — worth 7pts
 
@@ -442,14 +506,14 @@ This pattern has the highest completion rate across all platforms.
 □ Contains foreshadow/open loop phrase ("tapi yang terakhir ini...", "but the best part...") — worth 15pts
 □ Keywords from HOOK appear (references the promise) — worth 12pts
 □ Specific detail: number, name, or measurement — worth 10pts
-□ Word density 70-90% — worth 10pts
+□ Word density 60-95% — worth 10pts
 □ Starts with transition ("Nah", "Tapi", "Jadi gini") — worth 8pts
 
 📦 BODY (target: 85+ each, main value delivery — 20% per segment):
 □ Pattern interrupt EVERY segment ("Tapi tunggu...", ALL CAPS word, "ini yang gila...") — worth 15pts
 □ Actionable value verb ("cara", "bikin", "ciptain", "step", "use", "buat") — worth 13pts
 □ Specific concrete detail (tool NAME, percentage, measurement) — NEVER vague — worth 12pts
-□ Word density 70-90% — worth 10pts
+□ Word density 60-95% — worth 10pts
 □ Transition word ("Pertama:", "Kedua:", "Tapi", "Nah", "Selanjutnya") — worth 5pts
 
 🏔️ PEAK (target: 85+, the share-trigger moment — 20% of overall):
@@ -457,7 +521,7 @@ This pattern has the highest completion rate across all platforms.
 □ Unexpected twist/reveal phrase ("ternyata...", "ini dia...", "yang bikin beda...") — worth 15pts
 □ High emotional intensity words throughout — worth 12pts
 □ Social proof with specific numbers ("100K orang udah buktiin", "40% profit") — worth 10pts
-□ Word density 70-90% — worth 8pts
+□ Word density 60-95% — worth 8pts
 
 📣 CTA (target: 85+, conversion point — 15% of overall):
 □ SINGLE focus — ONE action only, never multiple CTAs — worth 18pts
@@ -469,11 +533,11 @@ This pattern has the highest completion rate across all platforms.
 🔄 LOOP-END (if present — 5% of overall):
 □ Energy/emotion matches HOOK exactly — worth 20pts
 □ Callback reference to HOOK ("Nah itu tadi...", "Ingat yang gue bilang?") — worth 15pts
-□ Word density 70-90% — worth 10pts
+□ Word density 60-95% — worth 10pts
 □ Same emotion type as HOOK — worth 10pts
 
 📏 ALL SEGMENTS:
-□ Word density 70-90% of max words — not too sparse, not too packed
+□ Word density 60-95% of max words for ALL segments
 □ Emotion arc follows "roller coaster" pattern (high→dip→build→CLIMAX→warm)
 □ Each BODY segment more intense/valuable than the previous (stakes escalation)
 `;
