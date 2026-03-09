@@ -1397,7 +1397,165 @@ export function getEmotionSpecsWithOverride(emotion: string, segmentType: string
   if (segmentType.toUpperCase() === 'CTA' || segmentType.toUpperCase() === 'ENDING_CTA') {
     return CTA_EMOTION_OVERRIDE;
   }
-  
+
   // Other segments use specified emotion
   return getEmotionSpecs(emotion);
+}
+
+// ============================================================================
+// HOOK EXPRESSION MAP (2026-03-09)
+// Maps hook category → anatomical expression spec for video HOOK segments
+// Unlike EMOTION_MAP (general), these are calibrated specifically for:
+//   - 9:16 portrait framing
+//   - 5-second sustained expression (not just 1 freeze frame)
+//   - Creator-facing camera (direct address)
+// ============================================================================
+
+export interface HookExpressionSpec {
+  eyes: string;         // Eye shape, direction, intensity
+  mouth: string;        // Mouth position, tension, movement
+  head: string;         // Head angle, tilt, position
+  body: string;         // Shoulder/torso/posture disposition
+  gesture: string;      // Hand/arm movement in frame
+  promptPhrase: string; // Ready-to-paste phrase for image/video prompt
+}
+
+export const HOOK_EXPRESSION_MAP: Record<string, HookExpressionSpec> = {
+  visual_shock: {
+    eyes:       'eyes blown open to maximum width, pupils dilated, whites visible all around iris, eyebrows raised to hairline',
+    mouth:      'jaw dropped open 2-3 cm, lips parted, corners slightly drawn back in shock reflex',
+    head:       'micro-recoil backward, chin slightly tucked — the "did I just see that" involuntary flinch',
+    body:       'shoulders raised, spine straight, slight backward lean — full-body freeze response',
+    gesture:    'hands raised to chest or face level, open palms forward — involuntary "stop" gesture',
+    promptPhrase: 'eyes blown wide with shock, jaw dropped open, micro-recoil backward, hands raised to chest level in frozen disbelief — sustained across 5 seconds',
+  },
+  negative_bias: {
+    eyes:       'narrowed intense stare, heavy lower lids, slight squint — "I know something you don\'t" look',
+    mouth:      'lips pressed together in tight line or one corner pulled down in serious displeasure, no smile',
+    head:       'slight chin-down tilt, head angled 10-15 degrees — makes gaze feel more authoritative and threatening',
+    body:       'shoulders square to camera, chest slightly forward — power stance, no retreat',
+    gesture:    'one index finger raised as warning point, or arms crossed over chest, or hand palm-flat in "stop" signal',
+    promptPhrase: 'intense narrowed stare with heavy lids, lips pressed tight, chin slightly down, shoulders squared and forward — serious warning energy held for 5 seconds',
+  },
+  curiosity_gap: {
+    eyes:       'bright wide eyes with slight upward squint — the "I know a secret" sparkle, one eyebrow raised higher than the other',
+    mouth:      'asymmetric smile — one side raised into knowing smirk, corner twitching with suppressed excitement',
+    head:       'subtle head tilt 20 degrees to one side — the universal "interesting..." lean',
+    body:       'slight forward lean toward camera, shoulders relaxed — conspiratorial closeness',
+    gesture:    'hand raised with one finger pointed upward as if about to reveal something, or fingers touching lips as if holding back information',
+    promptPhrase: 'one eyebrow arched with knowing sparkle in eyes, asymmetric smirk pulling one corner, slight head tilt toward camera, finger raised as if about to share a secret — held for 5 seconds',
+  },
+  relatability: {
+    eyes:       'warm crinkled eyes — the "I\'ve been there too" look, slightly soft focus at outer corners indicating genuine connection',
+    mouth:      'soft natural smile, relaxed lips, slight upward curve — authentic not performative, teeth optionally visible',
+    head:       'slight nod or level gaze — equal eye contact, not looking up or down, peer-to-peer connection',
+    body:       'relaxed open shoulders, slight lean back into comfort — non-threatening, approachable, like talking to a friend',
+    gesture:    'open palm toward viewer or gentle finger-point as if saying "you know how it is" — inclusive body language',
+    promptPhrase: 'warm crinkled eyes with genuine smile, relaxed open posture, level eye contact, open palm gesture toward camera — sustained authentic connection energy for 5 seconds',
+  },
+  speed_value: {
+    eyes:       'bright focused eyes, slightly wider than neutral — high-energy alertness, the "pay attention, this is good" look',
+    mouth:      'confident smile with energy, slightly open as if about to deliver rapid information, jaw slightly forward',
+    head:       'head level, direct engagement — no tilt, straight-on power position for authority delivery',
+    body:       'upright energized posture, shoulders back and down — ready stance, kinetic energy contained',
+    gesture:    'both hands active and visible — counting gesture, pointing forward, or chopping motion to emphasize points',
+    promptPhrase: 'bright alert focused eyes, confident energized smile, upright direct posture, hands active with pointing or counting gestures — high-energy value-delivery expression held for 5 seconds',
+  },
+};
+
+/**
+ * Get expression spec for a given hook category.
+ * Returns visual_shock spec as default fallback.
+ */
+export function getHookExpression(hookCategory: string): HookExpressionSpec {
+  return HOOK_EXPRESSION_MAP[hookCategory] ?? HOOK_EXPRESSION_MAP['visual_shock'];
+}
+
+// ============================================================================
+// HOOK LIGHTING MAP (2026-03-09)
+// Maps hook category → specific lighting recipe for video HOOK segments
+// Each recipe reinforces the psychological intent of the hook category.
+// Calibrated for 9:16 portrait, creator-facing, 5-second sustained.
+// ============================================================================
+
+export interface HookLightingSpec {
+  pattern: string;      // Lighting pattern name (Rembrandt, butterfly, etc.)
+  ratio: string;        // Key:fill ratio (e.g., "4:1")
+  keyTemp: string;      // Key light color temperature
+  fill: string;         // Fill light description
+  rim: string;          // Rim/hair light description
+  accent: string;       // Accent/background light color
+  mood: string;         // One-line mood description
+  promptPhrase: string; // Ready-to-paste phrase for image/video prompt
+}
+
+export const HOOK_LIGHTING_MAP: Record<string, HookLightingSpec> = {
+  visual_shock: {
+    pattern:    'Rembrandt hard shadow',
+    ratio:      '4:1',
+    keyTemp:    '3200K warm tungsten',
+    fill:       'Minimal cold fill (CTB-gelled, 1/4 power) — creates hard shadow triangle under eye',
+    rim:        'Sharp rim light from directly behind, no diffusion — creates separation halo',
+    accent:     'None or deep red/orange backlight for tension',
+    mood:       'Dramatic chiaroscuro — harsh contrast that visually amplifies the shock moment',
+    promptPhrase: 'Rembrandt 4:1 ratio, 3200K warm key light, hard shadows creating triangle under eye, sharp rim halo, deep contrast chiaroscuro — dramatic urgent lighting',
+  },
+  negative_bias: {
+    pattern:    'Short-side loop lighting',
+    ratio:      '3:1',
+    keyTemp:    '3800K neutral-warm',
+    fill:       'Gentle warm fill from opposite side (2:1 max) — retains shadow depth without harsh black',
+    rim:        'Subtle warm rim from behind-left or behind-right — defines silhouette without glow',
+    accent:     'Red-amber gel on background: deepens the warning/threat energy subconsciously',
+    mood:       'Authoritative and slightly ominous — you will listen to this person',
+    promptPhrase: 'Short-side 3:1 loop lighting, 3800K neutral-warm key, gentle warm fill, red-amber background accent — authoritative with subtle threat undertone',
+  },
+  curiosity_gap: {
+    pattern:    'Soft Rembrandt (diffused)',
+    ratio:      '3:1 soft',
+    keyTemp:    '3200K warm golden',
+    fill:       'Warm soft fill that wraps shadows rather than killing them — mystery preserved',
+    rim:        'Warm hair/rim light adds depth and intrigue — slight golden halo effect',
+    accent:     'Deep teal or blue-purple background gel — creates cinematic mystery atmosphere',
+    mood:       'Intimate and mysterious — golden warm light with deep shadow pools inviting exploration',
+    promptPhrase: 'Soft Rembrandt 3:1, 3200K warm golden key, wrapping warm fill, golden rim halo, deep teal-blue background — cinematic mystery inviting atmosphere',
+  },
+  relatability: {
+    pattern:    'Soft loop (window-like)',
+    ratio:      '2:1',
+    keyTemp:    '3500K natural daylight',
+    fill:       'Large soft fill matching key temp — minimizes shadows, maximizes approachability',
+    rim:        'Very soft or no rim — natural look, not theatrical',
+    accent:     'Natural warm tones, no dramatic color gels — familiar daytime living space feel',
+    mood:       'Natural and approachable — soft even light that says "I\'m just like you"',
+    promptPhrase: 'Soft loop 2:1 ratio, 3500K natural daylight, large even fill, no dramatic rim — natural approachable window light feel',
+  },
+  speed_value: {
+    pattern:    'Clean butterfly (Paramount)',
+    ratio:      '2:1',
+    keyTemp:    '4000K neutral-warm',
+    fill:       'Clean fill maintaining brightness without shadows — high clarity, professional look',
+    rim:        'Clean separation light from directly behind — crisp definition, broadcast quality',
+    accent:     'Neutral or subtle green-teal background — slight tech/forward-thinking energy',
+    mood:       'Bright, clean, and credible — high-energy clarity that says "this information is valuable"',
+    promptPhrase: 'Butterfly Paramount 2:1, 4000K neutral-warm, clean bright fill, crisp separation rim, neutral background — clean broadcast-quality professional energy',
+  },
+};
+
+/**
+ * Get lighting spec for a given hook category.
+ * Returns speed_value spec as default fallback (clean, safe).
+ */
+export function getHookLighting(hookCategory: string): HookLightingSpec {
+  return HOOK_LIGHTING_MAP[hookCategory] ?? HOOK_LIGHTING_MAP['speed_value'];
+}
+
+/**
+ * Build a combined expression + lighting prompt phrase for HOOK segments.
+ * Merges the promptPhrase from both maps for direct use in image prompts.
+ */
+export function buildHookVisualPrompt(hookCategory: string): string {
+  const expr = getHookExpression(hookCategory);
+  const light = getHookLighting(hookCategory);
+  return `${expr.promptPhrase}. Lighting: ${light.promptPhrase}.`;
 }

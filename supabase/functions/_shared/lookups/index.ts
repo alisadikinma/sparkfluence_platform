@@ -33,8 +33,13 @@ export {
   COSTUME_CATEGORIES,       // NEW 2026-01-15: Constrained outfit categories for LLM
   LANGUAGE_ETHNICITY_MAP,   // NEW 2026-01-15: Language → Ethnicity for B-ROLL
   CTA_EMOTION_OVERRIDE,     // NEW 2026-01-15: Friendly expression for CTA
+  HOOK_EXPRESSION_MAP,      // NEW 2026-03-09: Hook category → expression spec
+  HOOK_LIGHTING_MAP,        // NEW 2026-03-09: Hook category → lighting spec
   getEmotionSpecs,
   getEmotionSpecsWithOverride,  // NEW 2026-01-15: CTA always gets smile
+  getHookExpression,        // NEW 2026-03-09: Hook category → expression spec
+  getHookLighting,          // NEW 2026-03-09: Hook category → lighting spec
+  buildHookVisualPrompt,    // NEW 2026-03-09: Combined expression+lighting prompt phrase
   getLightingPattern,
   getShotType,
   getMoodSetup,
@@ -51,6 +56,8 @@ export {
   getVisualSpecs,
   getBRollNegativePrompt,   // Moved from metaphorLookup.ts (2026-01-11)
   type EmotionSpecs,
+  type HookExpressionSpec,  // NEW 2026-03-09
+  type HookLightingSpec,    // NEW 2026-03-09
   type FullPromptParams,
   type LightingPattern,
   type LightingRatio,

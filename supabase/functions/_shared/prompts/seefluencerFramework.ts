@@ -15,6 +15,8 @@
 import {
   HOOK_LIBRARY,
   HOOK_CATEGORY_META,
+  VISUAL_ACTION_BANK,
+  getVisualActionsForHookCategory,
   type HookCategory,
   type HookTemplate
 } from '../knowledge/11-hook-library-2026.ts'
@@ -224,6 +226,9 @@ export function getLocalizedHookStrategy(contentType: ContentType, language: str
   const negHook = pickRandom(HOOK_LIBRARY.negative_bias, 1)[0] || HOOK_LIBRARY.negative_bias[0];
   const visHook = pickRandom(HOOK_LIBRARY.visual_shock, 1)[0] || HOOK_LIBRARY.visual_shock[0];
 
+  // Get top visual actions for Option C based on primary hook category
+  const visualActions = getVisualActionsForHookCategory(mapping.primary).slice(0, 3);
+
   const formatHook = (h: HookTemplate, i: number) => {
     const prefix = h.visual_cue ? `${h.visual_cue} ` : '';
     return `   ${i + 1}. ${prefix}"${h.script}"`;
@@ -295,6 +300,16 @@ Adapt this concept with urgency. Make viewer think "wait, am I doing this wrong?
 Source concept: ${visHook.visual_cue ? `${visHook.visual_cue} "${visHook.script}"` : `"${visHook.script}"`}
 Goal: Physical action or camera trick stops scroll BEFORE words register.
 ${visHook.visual_cue ? `KEEP the visual cue prefix (${visHook.visual_cue}) and adapt the spoken text.` : 'Add a visual cue prefix: [Camera:], [Action:], or [Visual:].'}
+
+**VISUAL ACTION LIBRARY — Choose ONE for the visual_direction field:**
+${visualActions.map(a => `• **${a.name}:** ${a.videoAction}
+  → Prompt: "${a.promptFragment}"`).join('\n')}
+
+**Option C visual_direction MUST describe:**
+1. What the creator physically does in the first 0.5 seconds (from the actions above or similar)
+2. The expression at that moment (shock, smirk, intensity — matching the video action)
+3. Camera framing (extreme close-up, medium shot, POV — to reinforce the action)
+Example: "Creator frozen mid-bite eating raw onion, eyes snap to camera wide-open | Extreme close-up face | Rembrandt hard shadow lighting"
 
 ### HOOK OUTPUT FORMAT:
 \`\`\`json
