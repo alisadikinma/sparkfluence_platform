@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWorkspace } from '../contexts/WorkspaceContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useChatSessions, ChatSessionRow } from './useChatSessions';
 import type { WorkspaceState, WorkspaceSegment } from '../contexts/WorkspaceContext';
 
@@ -17,6 +18,7 @@ export interface UseSessionPersistenceOptions {
 export interface UseSessionPersistenceReturn {
   isRestoring: boolean;         // True while loading session from DB
   isSaving: boolean;            // True during save operation
+  sessionFound: boolean;        // True if DB had an existing session (even if empty)
   lastSavedAt: Date | null;     // Last successful save timestamp
   saveNow: () => Promise<void>; // Manual save trigger
   error: string | null;
@@ -97,13 +99,15 @@ function dbRowToWorkspaceState(row: ChatSessionRow): Partial<WorkspaceState> {
       const imageInfo = imageData.segments?.find((img: any) => img.id === s.id);
       // Find corresponding video data
       const videoInfo = videoData.segments?.find((vid: any) => vid.id === s.id);
+      // Ensure HOOK/CTA/LOOP-END are always CREATOR (fix legacy data saved as B-ROLL)
+      const segType = (s.segmentType || '').toUpperCase();
 
       return {
         id: s.id || s.segmentId,
         segmentId: s.segmentId,
         segmentNumber: s.segmentNumber,
         segmentType: s.segmentType,
-        shotType: s.shotType,
+        shotType: ['HOOK', 'CTA', 'LOOP-END'].includes(segType) ? 'CREATOR' : (s.shotType || 'B-ROLL'),
         timing: s.timing,
         durationSeconds: s.durationSeconds,
         script: s.script,
@@ -165,11 +169,14 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
   } = options;
 
   const { state, dispatch } = useWorkspace();
+  const { user, loading: authLoading } = useAuth();
   const { fetchSession, saveWorkspaceState, createSession } = useChatSessions();
 
   // Start as true when orderId is present — blocks Workspace init effect until DB query completes
+  // Also keep restoring while auth is still loading (user not yet available)
   const [isRestoring, setIsRestoring] = useState(!!orderId && enabled);
   const [isSaving, setIsSaving] = useState(false);
+  const [sessionFound, setSessionFound] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,8 +187,13 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
   const hasRestoredRef = useRef(false);
 
   // ── Restore session from DB on mount ──
+  // IMPORTANT: Wait for auth to load (user !== null) before attempting DB fetch.
+  // Without this, fetchSession returns null (no user), hasRestoredRef gets set to true,
+  // and the restore never retries after auth loads — causing mock data to appear on refresh.
   useEffect(() => {
     if (hasRestoredRef.current || !enabled || !orderId) return;
+    // Wait for auth to finish loading before attempting restore
+    if (authLoading || !user) return;
     hasRestoredRef.current = true;
 
     const restoreSession = async () => {
@@ -193,6 +205,7 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
         if (row) {
           const restoredState = dbRowToWorkspaceState(row);
           dispatch({ type: 'RESTORE_SESSION', state: restoredState });
+          setSessionFound(true);
           setLastSavedAt(new Date(row.updated_at));
         } else {
           // New session — create DB row so future updateSession calls work
@@ -211,7 +224,7 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     };
 
     restoreSession();
-  }, [orderId, enabled, fetchSession, createSession, sessionType, dispatch]);
+  }, [orderId, enabled, authLoading, user, fetchSession, createSession, sessionType, dispatch]);
 
   // ── Save function ──
   const performSave = useCallback(async () => {
@@ -351,6 +364,7 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
   return {
     isRestoring,
     isSaving,
+    sessionFound,
     lastSavedAt,
     saveNow,
     error,

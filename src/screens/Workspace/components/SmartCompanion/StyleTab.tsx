@@ -102,9 +102,11 @@ export const StyleTab: React.FC<StyleTabProps> = ({
       const option = hookOptions[preset.key];
       if (!option) continue;
 
-      // Build segment list with this hook variant swapped in
+      // For the ACTIVE hook, use actual segment text (may have been edited by user)
+      // For non-active hooks, swap in the hook option's script_text
+      const isActiveHook = preset.key === selectedHook;
       const modifiedSegments = enabledSegments.map((s, i) =>
-        i === hookIndex ? { ...s, script: option.script_text } : s,
+        i === hookIndex && !isActiveHook ? { ...s, script: option.script_text } : s,
       );
 
       // Score all segments and compute weighted overall (same as Workspace.tsx clientScore)

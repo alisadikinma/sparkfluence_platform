@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -106,12 +106,18 @@ function createMockWorkspaceSegments(): WorkspaceSegment[] {
 // ============================================================================
 
 function mapEdgeSegments(rawSegments: any[]): WorkspaceSegment[] {
-  return rawSegments.map((s: any, index: number) => ({
+  return rawSegments.map((s: any, index: number) => {
+    const segType = (s.segment_type || s.segmentType || s.type || '').toUpperCase();
+    // HOOK/CTA/LOOP-END are always CREATOR — edge function may send wrong value
+    const shotType = ['HOOK', 'CTA', 'LOOP-END'].includes(segType)
+      ? 'CREATOR'
+      : ((s.shot_type || s.shotType || 'B-ROLL').toUpperCase() as 'CREATOR' | 'B-ROLL');
+    return {
     id: s.id || s.segment_id || `seg-${index}`,
     segmentId: s.segment_id || s.segmentId || `VIDEO-${String(index + 1).padStart(3, '0')}`,
     segmentNumber: s.segment_number ?? s.segmentNumber ?? (index + 1),
-    segmentType: s.segment_type || s.segmentType || (s.type || '').toUpperCase(),
-    shotType: (s.shot_type || s.shotType || 'B-ROLL').toUpperCase() as 'CREATOR' | 'B-ROLL',
+    segmentType: segType,
+    shotType,
     timing: s.timing || '0:00',
     durationSeconds: s.duration_seconds || s.durationSeconds || s.duration || 5,
     script: s.script || s.script_text || '',
@@ -127,11 +133,11 @@ function mapEdgeSegments(rawSegments: any[]): WorkspaceSegment[] {
     videoUrl: null,
     isGeneratingVideo: false,
     videoError: null,
-    loopEndEnabled: s.loopEndEnabled ?? ((s.segment_type || s.segmentType || '').toUpperCase() !== 'LOOP-END'),
-    isEnabled: s.isEnabled ?? ((s.segment_type || s.segmentType || s.type || '').toUpperCase() !== 'LOOP-END'),
+    loopEndEnabled: s.loopEndEnabled ?? (segType !== 'LOOP-END'),
+    isEnabled: s.isEnabled ?? (segType !== 'LOOP-END'),
     includeCreatorFace: s.includeCreatorFace,
     referenceImageUrl: s.referenceImageUrl,
-  }));
+  };});
 }
 
 // ============================================================================
@@ -306,11 +312,44 @@ const LANG_REVERSE_MAP: Record<string, string> = {
 };
 
 // ============================================================================
-// WORKSPACE CONTAINER
+// RESIZABLE RIGHT PANEL HOOK
+// Drag handle between main and aside — min 240px, max 700px
 // ============================================================================
+
+function useResizablePanel(defaultWidth = 360) {
+  const [rightWidth, setRightWidth] = useState(defaultWidth);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = rightWidth;
+    e.preventDefault();
+  }, [rightWidth]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = startX.current - e.clientX;
+      setRightWidth(Math.min(Math.max(startWidth.current + delta, 240), 700));
+    };
+    const onUp = () => { isDragging.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  return { rightWidth, handleDragStart };
+}
 
 export const Workspace: React.FC = () => {
   const { orderId, step } = useParams<{ orderId: string; step?: string }>();
+  const navigate = useNavigate();
   const location = useLocation();
   const locationState = location.state as LocationNavigationState | null;
   const {
@@ -329,10 +368,15 @@ export const Workspace: React.FC = () => {
      location.pathname.startsWith('/ad-studio') ? 'ad_studio' : 'script_gen');
 
   // Session persistence — auto-save on changes, restore on mount
-  const { isRestoring, saveNow } = useSessionPersistence({ orderId, sessionType });
+  const { isRestoring, sessionFound, saveNow } = useSessionPersistence({ orderId, sessionType });
+
+  // Resizable right panel — default ~30% at 1200px content width
+  const { rightWidth, handleDragStart } = useResizablePanel(360);
 
   // Derive active step from URL param or context state
   const activeStep = step || state.activeStep || 'script';
+
+
 
   // Build step data
   const steps = buildSteps(
@@ -343,12 +387,29 @@ export const Workspace: React.FC = () => {
     state.segments,
   );
 
+  // Build base path for step navigation (e.g. /creator-lab/SF-xxx)
+  const basePath = useMemo(() => {
+    const pathParts = location.pathname.split('/').filter(Boolean);
+    // Pattern: /<session-type>/<orderId>[/<step>]
+    // Keep first 2 parts: session-type + orderId
+    return '/' + pathParts.slice(0, 2).join('/');
+  }, [location.pathname]);
+
+  // Navigate to a step by updating both context state and URL
+  const navigateToStep = useCallback(
+    (stepId: 'script' | 'images' | 'video' | 'studio') => {
+      setActiveStep(stepId);
+      navigate(`${basePath}/${stepId}`, { replace: true });
+    },
+    [setActiveStep, navigate, basePath],
+  );
+
   // Handlers
   const handleStepClick = useCallback(
     (stepId: string) => {
-      setActiveStep(stepId as 'script' | 'images' | 'video' | 'studio');
+      navigateToStep(stepId as 'script' | 'images' | 'video' | 'studio');
     },
-    [setActiveStep],
+    [navigateToStep],
   );
 
   const handleTitleSave = useCallback(
@@ -452,30 +513,43 @@ export const Workspace: React.FC = () => {
       return;
     }
 
-    // Priority 2: Mock data fallback (dev/demo — no ChatHome data, no DB session)
-    dispatch({
-      type: 'RESTORE_SESSION',
-      state: {
-        segments: createMockWorkspaceSegments(),
-        hookOptions: MOCK_WS_HOOK_OPTIONS,
-        selectedHook: 'option_a_safe',
-        topic: '3 AI Tools Bikin Passive Income',
-        title: '3 AI Tools Bikin Passive Income',
-        settings: {
-          duration: '60s',
-          aspectRatio: '9:16',
-          language: 'id',
-          model: 'auto',
-          avatarOption: 'none',
-          avatarId: null,
-          avatarUrl: null,
-          characterDescription: null,
-          useDnaTone: false,
+    // If DB had a session (even with empty segments), don't load mock data
+    if (sessionFound) return;
+
+    // If there's an orderId in the URL, don't load mock data — wait for DB restore
+    // This prevents mock data from appearing on refresh when auth/DB is slow
+    if (orderId) {
+      console.warn('[Workspace] orderId present but no session found and no location.state — skipping mock data');
+      return;
+    }
+
+    // Mock data fallback (dev only — no orderId, no ChatHome data, no DB session)
+    if (import.meta.env.DEV) {
+      console.warn('[Workspace] Loading mock data — no orderId, no location.state, no DB session');
+      dispatch({
+        type: 'RESTORE_SESSION',
+        state: {
+          segments: createMockWorkspaceSegments(),
+          hookOptions: MOCK_WS_HOOK_OPTIONS,
+          selectedHook: 'option_a_safe',
+          topic: '3 AI Tools Bikin Passive Income',
+          title: '3 AI Tools Bikin Passive Income',
+          settings: {
+            duration: '60s',
+            aspectRatio: '9:16',
+            language: 'id',
+            model: 'auto',
+            avatarOption: 'none',
+            avatarId: null,
+            avatarUrl: null,
+            characterDescription: null,
+            useDnaTone: false,
+          },
         },
-      },
-    });
+      });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- saveNow is stable (useCallback), locationState checked once via initRef
-  }, [isRestoring, state.segments.length, state.isGeneratingScript, dispatch, locationState, orderId, sessionType, saveNow]);
+  }, [isRestoring, sessionFound, state.segments.length, state.isGeneratingScript, dispatch, locationState, orderId, sessionType, saveNow]);
 
   // NOTE: Auto-focus removed — was causing IssuesTab flicker (focusedSegmentId filters
   // the issue list, creating a visible drop from N to 1-2 issues on mount).
@@ -619,9 +693,10 @@ export const Workspace: React.FC = () => {
         {/* CENTER — main content area (scrollable)                      */}
         {/* ============================================================ */}
         <main className="flex-1 min-h-0 overflow-y-auto hide-scrollbar">
-          <div className="max-w-4xl mx-auto p-4 lg:p-6">
+          <div className={`p-4 lg:p-6 ${isScriptStep ? 'max-w-4xl mx-auto' : 'max-w-[1600px] mx-auto'}`}>
             {activeStep === 'script' && (
               <ScriptStep
+                topic={state.topic || state.title || ''}
                 workspaceSegments={state.segments.length > 0 ? state.segments : undefined}
                 hookOptions={state.hookOptions}
                 selectedHook={state.selectedHook}
@@ -629,7 +704,11 @@ export const Workspace: React.FC = () => {
                 viralityScore={effectiveScore}
                 scoreBreakdown={effectiveBreakdown}
                 scriptConfirmed={state.scriptConfirmed}
-                onConfirm={() => dispatch({ type: 'CONFIRM_SCRIPT' })}
+                onConfirm={() => {
+                  dispatch({ type: 'CONFIRM_SCRIPT' });
+                  // Auto-navigate to Images step after confirming
+                  navigateToStep('images');
+                }}
                 onUnconfirm={() => dispatch({ type: 'UNCONFIRM_SCRIPT' })}
                 isRegenerating={state.isRegeneratingScript}
                 onRegenerateScript={handleRegenerateScript}
@@ -643,7 +722,7 @@ export const Workspace: React.FC = () => {
                 onSplitSegment={(id, idx) => dispatch({ type: 'SPLIT_SEGMENT', segmentId: id, splitIndex: idx })}
               />
             )}
-            {activeStep === 'images' && <ImageStep />}
+            {activeStep === 'images' && <ImageStep saveNow={saveNow} />}
             {activeStep === 'video' && <VideoStep />}
             {activeStep === 'studio' && <StudioStep />}
           </div>
@@ -654,22 +733,41 @@ export const Workspace: React.FC = () => {
         {/* Only visible during Script step, hidden < 1280px             */}
         {/* ============================================================ */}
         {isScriptStep && (
-          <aside className="hidden xl:flex flex-col w-[460px] flex-shrink-0 border-l border-[#262626] bg-[#0B0E14] overflow-y-auto">
-            <SmartCompanion
-              segments={state.segments}
-              language={state.settings?.language || 'id'}
-              hookOptions={state.hookOptions}
-              selectedHook={state.selectedHook}
-              scoreBreakdown={effectiveBreakdown ?? null}
-              viralityScore={effectiveScore}
-              focusedSegmentId={state.focusedSegmentId ?? null}
-              scriptConfirmed={state.scriptConfirmed}
-              onSelectHook={(key) => dispatch({ type: 'SELECT_HOOK', key })}
-              onEditSegment={(id, field, value) => dispatch({ type: 'EDIT_SEGMENT', segmentId: id, field, value })}
-              onFocusSegment={(id) => dispatch({ type: 'SET_FOCUSED_SEGMENT', segmentId: id })}
-              onSaveNow={saveNow}
-            />
-          </aside>
+          <>
+            {/* Drag handle */}
+            <div
+              onMouseDown={handleDragStart}
+              className="hidden xl:flex flex-col items-center justify-center w-1.5 flex-shrink-0 cursor-col-resize bg-[#262626] hover:bg-emerald-500/40 transition-colors group select-none"
+              title="Drag to resize"
+            >
+              <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="w-0.5 h-3 bg-emerald-400 rounded-full" />
+                <div className="w-0.5 h-3 bg-emerald-400 rounded-full" />
+                <div className="w-0.5 h-3 bg-emerald-400 rounded-full" />
+              </div>
+            </div>
+
+            {/* Right panel */}
+            <aside
+              className="hidden xl:flex flex-col flex-shrink-0 bg-[#0B0E14] overflow-y-auto"
+              style={{ width: rightWidth }}
+            >
+              <SmartCompanion
+                segments={state.segments}
+                language={state.settings?.language || 'id'}
+                hookOptions={state.hookOptions}
+                selectedHook={state.selectedHook}
+                scoreBreakdown={effectiveBreakdown ?? null}
+                viralityScore={effectiveScore}
+                focusedSegmentId={state.focusedSegmentId ?? null}
+                scriptConfirmed={state.scriptConfirmed}
+                onSelectHook={(key) => dispatch({ type: 'SELECT_HOOK', key })}
+                onEditSegment={(id, field, value) => dispatch({ type: 'EDIT_SEGMENT', segmentId: id, field, value })}
+                onFocusSegment={(id) => dispatch({ type: 'SET_FOCUSED_SEGMENT', segmentId: id })}
+                onSaveNow={saveNow}
+              />
+            </aside>
+          </>
         )}
       </div>
     </div>

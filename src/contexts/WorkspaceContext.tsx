@@ -80,6 +80,16 @@ export interface WorkspaceSegment {
   isEnabled: boolean;
   includeCreatorFace?: boolean;
   referenceImageUrl?: string;
+  // Image generation extras (ported from old ImageGeneration)
+  creatorCostume?: string;
+  creatorAppearance?: string;
+  structuredVD?: { scene: string; camera: string; lighting: string; color: string; mood: string; fx: string };
+  additionalNotes?: string;
+  optionsApplied?: boolean;
+  previousScript?: string;
+  shortenedByAI?: boolean;
+  jobId?: string;
+  referenceImageSource?: 'unsplash' | 'pexels' | 'upload';
 }
 
 export interface WorkspaceSettings {
@@ -157,6 +167,9 @@ export type WorkspaceAction =
   | { type: 'SET_SEGMENT_IMAGE'; segmentId: string; imageUrl: string; imageEntry?: WorkspaceSegment['images'][0] }
   | { type: 'SET_SEGMENT_IMAGE_ERROR'; segmentId: string; error: string }
   | { type: 'SET_SEGMENT_LAYOUT'; segmentId: string; layout: WorkspaceSegment['layout'] }
+  | { type: 'UPDATE_SEGMENT_IMAGES'; segmentId: string; images: WorkspaceSegment['images']; selectedImageUrl?: string }
+  | { type: 'SET_SEGMENT_OPTIONS'; segmentId: string; options: Partial<Pick<WorkspaceSegment, 'additionalNotes' | 'includeCreatorFace' | 'referenceImageUrl' | 'referenceImageSource' | 'optionsApplied' | 'layout'>> }
+  | { type: 'BATCH_UPDATE_SEGMENTS'; updates: Array<{ segmentId: string; changes: Partial<WorkspaceSegment> }> }
   // Video actions
   | { type: 'SET_SEGMENT_GENERATING_VIDEO'; segmentId: string; isGenerating: boolean }
   | { type: 'SET_SEGMENT_VIDEO'; segmentId: string; videoUrl: string }
@@ -387,6 +400,43 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
             ? { ...seg, layout: action.layout }
             : seg
         ),
+        isDirty: true,
+      };
+
+    case 'UPDATE_SEGMENT_IMAGES':
+      return {
+        ...state,
+        segments: state.segments.map(seg =>
+          seg.id === action.segmentId
+            ? {
+                ...seg,
+                images: action.images,
+                imageUrl: action.selectedImageUrl ?? seg.imageUrl,
+                isGeneratingImage: action.images.some(img => img.status === 1),
+              }
+            : seg
+        ),
+        isDirty: true,
+      };
+
+    case 'SET_SEGMENT_OPTIONS':
+      return {
+        ...state,
+        segments: state.segments.map(seg =>
+          seg.id === action.segmentId
+            ? { ...seg, ...action.options }
+            : seg
+        ),
+        isDirty: true,
+      };
+
+    case 'BATCH_UPDATE_SEGMENTS':
+      return {
+        ...state,
+        segments: state.segments.map(seg => {
+          const update = action.updates.find(u => u.segmentId === seg.id);
+          return update ? { ...seg, ...update.changes } : seg;
+        }),
         isDirty: true,
       };
 
