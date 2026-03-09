@@ -1067,9 +1067,9 @@ export function buildVeoPrompt(params: ExtendedPromptParams): string {
     audioDirective = getCreatorAudioDirective(language, dialogue, segmentType);
   } else {
     const brollCategory = detectBRollCategoryAudio(visualDirection || backgroundDescription || '');
-    audioDirective = getBRollAudioDirective(brollCategory, emotion.toLowerCase());
+    audioDirective = getBRollAudioDirective(language, brollCategory, emotion.toLowerCase());
   }
-  
+
   return `[VEO 3.1 PROMPT — ${segmentId}.${segmentNumber}]
 
 DURATION: ${Math.min(duration, 8)} seconds
@@ -1249,9 +1249,9 @@ export function buildSoraPrompt(params: ExtendedPromptParams): string {
     audioDirective = getCreatorAudioDirective(language, dialogue, segmentType);
   } else {
     const brollCategory = detectBRollCategoryAudio(visualDirection || backgroundDescription || '');
-    audioDirective = getBRollAudioDirective(brollCategory, emotion.toLowerCase());
+    audioDirective = getBRollAudioDirective(language, brollCategory, emotion.toLowerCase());
   }
-  
+
   return `[SORA 2 PROMPT — ${segmentId}.${segmentNumber}]
 
 DURATION: ${Math.min(duration, 10)} seconds
@@ -1381,6 +1381,17 @@ export function validateDialogueLength(dialogue: string, platform: VideoModelKey
 // 8. First 20-30 words matter most — front-load primary action
 // ============================================================================
 
+// Compact language tag for Grok Speech: syntax (minimal word cost)
+function getGrokLanguageTag(language?: string): string {
+  const tags: Record<string, string> = {
+    'indonesian': 'Indonesian',
+    'hindi': 'Hindi',
+    'english': 'English',
+    'spanish': 'Spanish',
+  };
+  return tags[language?.toLowerCase() ?? ''] ?? 'English';
+}
+
 // ONE simple expression per emotion (max 1 for lip-sync compliance)
 const GROK_CREATOR_EXPRESSIONS: Record<string, string> = {
   'authority': 'Steady eye contact, confident posture, subtle chin lift',
@@ -1488,6 +1499,14 @@ export interface GrokPromptParams {
   hasTextOverlay?: boolean;
   language?: string;
   creatorGender?: 'male' | 'female';
+  voiceCharacter?: {
+    gender: string;
+    age: string;
+    accent: string;
+    tone: string;
+    pace: string;
+    description?: string;
+  };
 }
 
 /**
@@ -1501,6 +1520,8 @@ export function buildGrokCreatorPrompt(params: GrokPromptParams): string {
     duration = 6,
     dialogue = '',
     environment = 'studio',
+    language,
+    voiceCharacter,
   } = params;
 
   const segTypeUpper = segmentType.toUpperCase();
@@ -1514,12 +1535,20 @@ export function buildGrokCreatorPrompt(params: GrokPromptParams): string {
     ?? 'Camera stays locked and static, face clearly visible throughout';
 
   // Dialogue: truncate to Grok word limits (10/6s, 15/10s, 25/15s)
+  // Language tag ensures correct spoken language (e.g. "Speech (Indonesian): ...")
   let speechSection = '';
   if (dialogue && dialogue.trim().length > 0) {
     const maxWords = duration <= 6 ? 10 : duration <= 10 ? 15 : 25;
     const words = dialogue.trim().split(/\s+/);
     const truncated = words.slice(0, maxWords).join(' ');
-    speechSection = `Speech: ${truncated}.`;
+    const langTag = getGrokLanguageTag(language);
+    speechSection = `Speech (${langTag}): ${truncated}.`;
+  }
+
+  // Voice anchor: describe voice character for consistency across segments
+  let voiceSection = '';
+  if (voiceCharacter) {
+    voiceSection = `Voice: ${voiceCharacter.gender}, ${voiceCharacter.age}, ${voiceCharacter.accent}. ${voiceCharacter.tone}, ${voiceCharacter.pace}.`;
   }
 
   // SFX: 2-3 ambient sounds (no background music for talking heads)
@@ -1530,6 +1559,7 @@ export function buildGrokCreatorPrompt(params: GrokPromptParams): string {
     `${expression}.`,
     `${camera}.`,
     speechSection,
+    voiceSection,
     `${sfx}.`,
   ].filter(Boolean);
 
@@ -1548,6 +1578,7 @@ export function buildGrokBrollPrompt(params: GrokPromptParams): string {
     visualDirection = '',
     environment = 'studio',
     hasTextOverlay = false,
+    voiceCharacter,
   } = params;
 
   const segTypeUpper = segmentType.toUpperCase();
@@ -1571,11 +1602,18 @@ export function buildGrokBrollPrompt(params: GrokPromptParams): string {
   // SFX: 2-3 specific named sounds matching environment
   const sfx = getGrokBrollSfx(environment, visualDirection, segmentType);
 
+  // Voice anchor for off-screen narration consistency
+  let voiceSection = '';
+  if (voiceCharacter) {
+    voiceSection = `Off-screen narrator: ${voiceCharacter.gender}, ${voiceCharacter.age}, ${voiceCharacter.accent}. ${voiceCharacter.tone}, ${voiceCharacter.pace}.`;
+  }
+
   const parts = [
     `${primaryMotion}.`,
     `${ambientTone}.`,
     `${camera}.`,
     textLine,
+    voiceSection,
     `${sfx}.`,
   ].filter(Boolean);
 

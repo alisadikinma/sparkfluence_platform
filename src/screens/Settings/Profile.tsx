@@ -162,6 +162,17 @@ export const Profile = (): JSX.Element => {
   // Voice State
   const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
   const [voiceDuration, setVoiceDuration] = useState(0);
+  const [voiceAnalysis, setVoiceAnalysis] = useState<{
+    gender: string;
+    age_range: string;
+    tone: string;
+    accent: string;
+    pace: string;
+    language: string;
+    distinguishing_features: string;
+  } | null>(null);
+  const [analyzingVoice, setAnalyzingVoice] = useState(false);
+  const [voiceAnalysisError, setVoiceAnalysisError] = useState("");
 
   // Password State
   const [passwords, setPasswords] = useState({
@@ -263,6 +274,60 @@ export const Profile = (): JSX.Element => {
       console.error("Error fetching profile:", err);
     } finally {
       setLoading(false);
+    }
+
+    // Also fetch existing voice analysis
+    fetchVoiceAnalysis();
+  };
+
+  const fetchVoiceAnalysis = async () => {
+    if (!user) return;
+    try {
+      const { data } = await supabase
+        .from('voice_prompts')
+        .select('gender, voice_age, voice_tone, voice_accent, voice_pace, language, voice_description')
+        .eq('user_id', user.id)
+        .eq('is_profile_avatar', true)
+        .is('avatar_id', null)
+        .single();
+
+      if (data) {
+        setVoiceAnalysis({
+          gender: data.gender || '',
+          age_range: data.voice_age || '',
+          tone: data.voice_tone || '',
+          accent: data.voice_accent || '',
+          pace: data.voice_pace || '',
+          language: data.language || '',
+          distinguishing_features: data.voice_description || '',
+        });
+      }
+    } catch {
+      // No existing analysis — that's fine
+    }
+  };
+
+  const analyzeVoice = async (url: string) => {
+    if (!user) return;
+    setAnalyzingVoice(true);
+    setVoiceAnalysisError("");
+
+    try {
+      const { data, error } = await supabase.functions.invoke('analyze-voice', {
+        body: { voice_url: url, language: profile.language },
+      });
+
+      if (error || !data?.success) {
+        const msg = data?.error?.message || error?.message || 'Analysis failed';
+        setVoiceAnalysisError(msg);
+        return;
+      }
+
+      setVoiceAnalysis(data.data);
+    } catch (err: any) {
+      setVoiceAnalysisError(err.message || 'Unexpected error');
+    } finally {
+      setAnalyzingVoice(false);
     }
   };
 
@@ -1264,14 +1329,14 @@ export const Profile = (): JSX.Element => {
             {/* Voice Tab */}
             {activeTab === "voice" && (
               <div className="max-w-lg space-y-4">
-                <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-xl p-4">
+                <div className="bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border border-emerald-500/30 rounded-xl p-4">
                   <h3 className="text-white font-medium mb-2">
-                    {language === 'id' ? 'Untuk Model WAN 2.5' : 'For WAN 2.5 Model'}
+                    {language === 'id' ? 'Voice Anchor untuk Video' : 'Voice Anchor for Video'}
                   </h3>
                   <p className="text-white/70 text-sm">
                     {language === 'id'
-                      ? 'Rekaman suara ini akan digunakan untuk clone suara kamu di video yang menggunakan model WAN 2.5 dengan fitur voice integration.'
-                      : 'This voice recording will be used to clone your voice in videos using WAN 2.5 model with voice integration feature.'}
+                      ? 'Upload suara kamu dan AI akan menganalisa karakteristik voice — digunakan untuk menjaga konsistensi suara di semua segment video.'
+                      : 'Upload your voice and AI will analyze its characteristics — used to maintain voice consistency across all video segments.'}
                   </p>
                 </div>
 
@@ -1282,9 +1347,99 @@ export const Profile = (): JSX.Element => {
                   onVoiceSaved={(url, duration) => {
                     setVoiceUrl(url);
                     setVoiceDuration(duration);
+                    analyzeVoice(url);
                   }}
                   language={language as 'id' | 'en'}
                 />
+
+                {/* Voice Analysis Loading */}
+                {analyzingVoice && (
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex items-center gap-3">
+                    <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                    <span className="text-neutral-300 text-sm">
+                      {language === 'id' ? 'Menganalisa karakteristik suara...' : 'Analyzing voice characteristics...'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Voice Analysis Error */}
+                {voiceAnalysisError && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-red-400 text-sm">{voiceAnalysisError}</p>
+                      <button
+                        onClick={() => voiceUrl && analyzeVoice(voiceUrl)}
+                        className="text-red-300 text-xs underline mt-1 hover:text-red-200"
+                      >
+                        {language === 'id' ? 'Coba lagi' : 'Try again'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Voice Analysis Results */}
+                {voiceAnalysis && !analyzingVoice && (
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-white text-sm font-medium">
+                        {language === 'id' ? 'Voice Anchor' : 'Voice Anchor'}
+                      </h4>
+                      <button
+                        onClick={() => voiceUrl && analyzeVoice(voiceUrl)}
+                        disabled={analyzingVoice}
+                        className="text-neutral-400 hover:text-emerald-400 transition-colors"
+                        title={language === 'id' ? 'Analisa ulang' : 'Re-analyze'}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {voiceAnalysis.gender && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          {voiceAnalysis.gender === 'male' ? (language === 'id' ? 'Pria' : 'Male') : (language === 'id' ? 'Wanita' : 'Female')}
+                        </span>
+                      )}
+                      {voiceAnalysis.age_range && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          {voiceAnalysis.age_range}
+                        </span>
+                      )}
+                      {voiceAnalysis.language && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          {voiceAnalysis.language.charAt(0).toUpperCase() + voiceAnalysis.language.slice(1)}
+                        </span>
+                      )}
+                      {voiceAnalysis.pace && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                          {voiceAnalysis.pace}
+                        </span>
+                      )}
+                    </div>
+
+                    {voiceAnalysis.tone && (
+                      <div>
+                        <p className="text-neutral-500 text-xs mb-1">{language === 'id' ? 'Nada' : 'Tone'}</p>
+                        <p className="text-neutral-300 text-sm">{voiceAnalysis.tone}</p>
+                      </div>
+                    )}
+
+                    {voiceAnalysis.accent && (
+                      <div>
+                        <p className="text-neutral-500 text-xs mb-1">{language === 'id' ? 'Aksen' : 'Accent'}</p>
+                        <p className="text-neutral-300 text-sm">{voiceAnalysis.accent}</p>
+                      </div>
+                    )}
+
+                    {voiceAnalysis.distinguishing_features && (
+                      <div>
+                        <p className="text-neutral-500 text-xs mb-1">{language === 'id' ? 'Karakteristik' : 'Characteristics'}</p>
+                        <p className="text-neutral-300 text-sm">{voiceAnalysis.distinguishing_features}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

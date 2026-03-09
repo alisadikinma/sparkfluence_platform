@@ -53,11 +53,15 @@ function rowToSummary(row: ChatSessionRow): ChatSessionSummary {
   const imagesCompleted = segments.filter((s: any) => s.imageUrl || s.image_url).length;
   const videosCompleted = segments.filter((s: any) => s.videoUrl || s.video_url).length;
 
+  // Also check image_data and video_data columns for progress
+  const hasImageData = row.image_data && Object.keys(row.image_data).length > 0;
+  const hasVideoData = row.video_data && Object.keys(row.video_data).length > 0;
+
   let currentStep: 'script' | 'images' | 'video' | 'studio' = 'script';
   if (row.status === 'complete') currentStep = 'studio';
-  else if (row.status === 'video_ready' || videosCompleted > 0) currentStep = 'video';
-  else if (row.status === 'images_ready' || imagesCompleted > 0) currentStep = 'images';
-  else if (row.status === 'script_ready') currentStep = 'images';
+  else if (row.status === 'video_ready' || videosCompleted > 0 || hasVideoData) currentStep = 'video';
+  else if (row.status === 'images_ready' || imagesCompleted > 0 || hasImageData) currentStep = 'images';
+  else if (row.status === 'script_ready' || totalSegments > 0) currentStep = 'images';
 
   return {
     orderId: row.order_id,

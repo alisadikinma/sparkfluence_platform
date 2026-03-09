@@ -30,6 +30,7 @@ import {
   generateFaceAnchor,
   getCreatorAudioDirective,
   getBRollAudioDirective,
+  getLanguageLabel,
   detectBRollCategory,
   type VoiceCharacterInfo,
 } from '../_shared/prompts/audioDirective.ts'
@@ -641,6 +642,7 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
     profile_image_url = null,       // URL to profile image (if use_profile or saved)
     creator_gender = 'male',        // 'male' | 'female' - from user profile
     character_description = '',     // Text description of creator (fallback if no image)
+    regenerate_all = false,         // If true, reset completed/failed jobs to pending
   } = requestBody
 
   if (!user_id || !session_id || !segments || !Array.isArray(segments)) {
@@ -816,6 +818,21 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
       prompt: null
     }
   })
+
+  // If regenerate_all, reset ALL existing jobs (completed/failed/processing) to pending
+  if (regenerate_all) {
+    const { data: resetData, error: resetError } = await supabase
+      .from('video_generation_jobs')
+      .update({ status: 0, error_message: null, veo_uuid: null, video_url: null, prompt: null, platform: null })
+      .eq('session_id', session_id)
+      .eq('user_id', user_id)
+      .in('status', [1, 2, 3]) // processing, completed, failed → pending
+      .select()
+
+    if (!resetError && resetData?.length > 0) {
+      console.log(`[CREATE_JOBS] 🔄 regenerate_all: Reset ${resetData.length} existing jobs to pending`)
+    }
+  }
 
   // Check if jobs already exist for this session
   const { data: existingJobs } = await supabase
@@ -1146,8 +1163,33 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
 
     const modelSpecs = VIDEO_MODELS[selectedPlatform]
 
-    // Build prompt - voice character generated dynamically in buildCinematicVideoPrompt
-    // Also pass Face Anchor params from job record (2026)
+    // ========================================================================
+    // VOICE ANCHOR: Load from voice_prompts table via voice_prompt_id
+    // This ensures consistent voice across ALL segments in a session
+    // ========================================================================
+    let voiceCharacterJson = ''
+    if (job.voice_prompt_id) {
+      const { data: voicePromptData } = await supabase
+        .from('voice_prompts')
+        .select('gender, voice_age, voice_accent, voice_tone, voice_pace, voice_description, voice_prompt_block')
+        .eq('id', job.voice_prompt_id)
+        .single()
+
+      if (voicePromptData) {
+        // Build VoiceCharacter JSON from structured fields
+        voiceCharacterJson = JSON.stringify({
+          gender: voicePromptData.gender || 'male',
+          age: voicePromptData.voice_age || '25-30 years old',
+          accent: voicePromptData.voice_accent || 'native speaker',
+          tone: voicePromptData.voice_tone || 'warm, engaging',
+          pace: voicePromptData.voice_pace || 'medium',
+          description: voicePromptData.voice_description || voicePromptData.voice_prompt_block || ''
+        })
+        console.log(`[PROCESS_SINGLE] 🎤 Loaded voice anchor from voice_prompts (id: ${job.voice_prompt_id})`)
+      }
+    }
+
+    // Build prompt with voice anchor + Face Anchor params
     const videoPrompt = buildCinematicVideoPrompt({
       segment: {
         ...job,
@@ -1162,8 +1204,9 @@ async function handleProcessSingle(supabase: any, requestBody: any) {
       platform: selectedPlatform,
       duration: Math.min(duration, modelSpecs.maxDuration),
       topic: job.topic || '',
+      voiceCharacter: voiceCharacterJson || undefined,
       // ========================================================================
-      // NEW: Face Anchor params from job record (2026)
+      // Face Anchor params from job record (2026)
       // ========================================================================
       hasProfileImage: job.has_profile_image || false,
       profileImageUrl: job.profile_image_url || '',
@@ -2656,6 +2699,7 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
       hasTextOverlay: false,
       language: detectedLanguage,
       creatorGender: actualCreatorGender,
+      voiceCharacter: voiceChar,
     }
 
     if (isCreatorSegment) {
@@ -2694,17 +2738,31 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     )
     
     // Build the custom prompt with anchors
+    const { label: langLabel, name: langName } = getLanguageLabel(detectedLanguage)
+
     let prompt = `[${platformLabel} PROMPT — ${segmentTypeUpper}.${segmentNumber}]
+
+═══════════════════════════════════════
+LANGUAGE: ${langLabel}
+ALL speech in this video MUST be in ${langName}.
+Do NOT switch to other languages even if technical terms appear.
+Pronounce technical terms with ${langName} phonetics.
+═══════════════════════════════════════
+
+═══════════════════════════════════════
+VOICE ANCHOR (MANDATORY — identical voice for ALL segments)
+${voiceAnchor}
+CRITICAL: This EXACT voice must sound IDENTICAL to every other
+segment in this video series. Same pitch, same accent, same age,
+same speaking style. Do NOT vary the voice between segments.
+═══════════════════════════════════════
 
 DURATION: ${safeDuration} seconds
 RESOLUTION: ${resolution}
 ASPECT: ${aspectRatio}
 
 `
-    
-    // Add VOICE ANCHOR
-    prompt += voiceAnchor + '\n\n'
-    
+
     // Add FACE ANCHOR if available
     if (faceAnchorBlock) {
       prompt += faceAnchorBlock + '\n\n'
@@ -2778,11 +2836,12 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
     outputIntent,
     transition: transitionType,
     platform,
+    language: detectedLanguage,
     scriptText,
     visualBrief,
     contextualMotions,
     topic,
-    voiceCharacter: voiceChar  // Keep for voice consistency, audio directive now handles off-screen narration
+    voiceCharacter: voiceChar
   })
   
   return brollPrompt
@@ -2793,9 +2852,9 @@ No text overlays, no subtitles, no morphing, no identity changes, no artifacts.`
 // Uses Visual Brief extraction for contextual, specific motion descriptions
 // ============================================================================
 
-// SIMPLIFIED (2026): Removed unused params - backgroundDescription, soundEffects, language
 // FIX (2026-01-17): voiceCharacter kept for voice consistency, but audio directive now
 // explicitly states OFF-SCREEN NARRATION to prevent people appearing in B-ROLL
+// FIX (2026-03-09): Added language for explicit language enforcement in prompts
 interface EnhancedBrollPromptParams {
   segmentId: string
   segmentNumber: number
@@ -2811,6 +2870,7 @@ interface EnhancedBrollPromptParams {
   outputIntent?: string
   transition: string
   platform: VideoModelKey
+  language: string  // For explicit language enforcement in audio directives
   scriptText?: string  // Used for voiceover text (off-screen narration)
   visualBrief: VisualBrief
   contextualMotions: {
@@ -2838,6 +2898,7 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
     outputIntent,
     transition,
     platform,
+    language: detectedLanguage,
     scriptText = '',
     visualBrief,
     contextualMotions,
@@ -2868,6 +2929,7 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
     description: voiceCharacter.description
   } : undefined
   const brollAudioDirective = getBRollAudioDirective(
+    detectedLanguage,
     brollCategory,
     emotion,
     hasVoiceover,
@@ -2884,8 +2946,17 @@ function buildEnhancedBrollVideoPrompt(params: EnhancedBrollPromptParams): strin
   // SIMPLIFIED PROMPT FORMAT (2026) - ~30 lines vs ~60 lines before
   // Removed: PHYSICS section, verbose SUBJECT/AMBIENT MOTION, redundant exclusions
   // FIX (2026-01-17): Added explicit NO PEOPLE instruction in STARTING FRAME
+  // FIX (2026-03-09): Added explicit LANGUAGE block for language consistency
   // ============================================================================
+  const { label: langLabel, name: langName } = getLanguageLabel(detectedLanguage)
+
   return `[${platformBase} - ${segmentLabel} B-ROLL]
+
+═══════════════════════════════════════
+LANGUAGE: ${langLabel}
+ALL narration in this video MUST be in ${langName}.
+Do NOT switch to other languages.
+═══════════════════════════════════════
 
 ⚠️ THIS IS B-ROLL FOOTAGE: NO lip-sync, NO talking, NO speaking to camera. Voiceover is OFF-SCREEN only.
 

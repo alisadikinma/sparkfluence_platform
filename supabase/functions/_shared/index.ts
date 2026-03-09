@@ -92,6 +92,7 @@ export {
   generateSegmentAnchors,
   getCreatorAudioDirective,
   getBRollAudioDirective,
+  getLanguageLabel,
   applyAnchorsToSegments,
   detectBRollCategory,
 } from './prompts/audioDirective.ts';

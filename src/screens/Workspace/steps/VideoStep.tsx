@@ -123,7 +123,7 @@ const FullCard: React.FC<{
         {/* Info */}
         <div className="flex-1 min-w-0 flex flex-col gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-[#A8A29E]">Segment {index + 1}</span>
+            <span className="text-xs text-[#A8A29E]">{index + 1}</span>
             <span className={`px-2 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
               {seg.segmentType}
             </span>
@@ -192,7 +192,7 @@ const CompactRow: React.FC<{
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-xs text-[#A8A29E]">Seg {index + 1}</span>
+            <span className="text-xs text-[#A8A29E]">{index + 1}</span>
             <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
               {seg.segmentType}
             </span>
@@ -248,7 +248,7 @@ const GridCard: React.FC<{
           {/* Header */}
           <div className="p-2.5 border-b border-[#262626] bg-[#161616]/90 backdrop-blur-sm z-10">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-[#A8A29E]">Seg {index + 1}</span>
+              <span className="text-xs text-[#A8A29E]">{index + 1}</span>
               <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
                 {seg.segmentType}
               </span>
@@ -305,11 +305,17 @@ const VideoStep: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [videoModel, setVideoModel] = useState<'veo-3.1-fast-hd' | 'veo-3.1-fast-fhd' | 'veo-3.1-hd' | 'veo-3.1-fhd' | 'grok-3'>('veo-3.1-fast-hd');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showGenerateDropdown, setShowGenerateDropdown] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const generateDropdownRef = useRef<HTMLDivElement>(null);
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingJobQueueRef = useRef<Array<{ id: string; segment_number: number }>>([]);
+  const activeJobCountRef = useRef(0);
+  const nextSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submitNextJobRef = useRef<() => Promise<void>>();
+  const MAX_CONCURRENT = 3;
+  const SUBMIT_GAP_MS = 60_000; // 1 minute between each submission
 
   const segments = state.segments;
   const settings = state.settings;
@@ -321,17 +327,20 @@ const VideoStep: React.FC = () => {
   const canGenerateVideo = enabledSegments.length > 0 && enabledSegments.every(s => s.imageUrl);
   const isAnyGenerating = segments.some(s => s.isGeneratingVideo) || isSubmitting;
 
-  // ── Close model dropdown on outside click ────────────────────────────────────
+  // ── Close dropdowns on outside click ─────────────────────────────────────────
   useEffect(() => {
-    if (!showModelDropdown) return;
+    if (!showModelDropdown && !showGenerateDropdown) return;
     const handler = (e: MouseEvent) => {
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+      if (showModelDropdown && modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
         setShowModelDropdown(false);
+      }
+      if (showGenerateDropdown && generateDropdownRef.current && !generateDropdownRef.current.contains(e.target as Node)) {
+        setShowGenerateDropdown(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showModelDropdown]);
+  }, [showModelDropdown, showGenerateDropdown]);
 
   // ── Sync job status from DB (on mount + manual refresh) ─────────────────────
   const syncJobStatusFromDB = useCallback(async () => {
@@ -395,8 +404,11 @@ const VideoStep: React.FC = () => {
             );
             if (seg) {
               dispatch({ type: 'SET_SEGMENT_VIDEO', segmentId: seg.id, videoUrl: job.video_url });
-              console.log(`[VideoStep] ✅ Video ready: ${seg.segmentType} → ${job.video_url.substring(0, 60)}`);
+              console.log(`[VideoStep] ✅ Video ready: ${seg.segmentType}`);
             }
+            // Free a slot → scheduleNextSubmit handles the 1-min delay
+            activeJobCountRef.current = Math.max(0, activeJobCountRef.current - 1);
+            console.log(`[VideoStep] 📊 Active: ${activeJobCountRef.current}/${MAX_CONCURRENT}, queue: ${pendingJobQueueRef.current.length}`);
             submitNextJobRef.current?.();
           } else if (job.status === 3) {
             const seg = currentSegments.find(
@@ -406,6 +418,8 @@ const VideoStep: React.FC = () => {
               dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId: seg.id, error: job.error_message || 'Generation failed' });
               console.error(`[VideoStep] ❌ Video failed: ${seg.segmentType}`);
             }
+            // Free a slot → schedule next
+            activeJobCountRef.current = Math.max(0, activeJobCountRef.current - 1);
             submitNextJobRef.current?.();
           }
         }
@@ -514,36 +528,70 @@ const VideoStep: React.FC = () => {
       visual_direction: seg.visualDirection,
     })), []);
 
-  // ── Submit pending jobs sequentially via process_single ──────────────────────
-  // Submit next job from queue (called after each job completes/fails via Realtime)
-  const submitNextJob = useCallback(async () => {
-    const next = pendingJobQueueRef.current.shift();
-    if (!next) return;
+  // ── Submit pending jobs with concurrency control ────────────────────────────
+  // Max 3 concurrent, 1-minute gap between each submission.
+  // When one finishes and active < 3, schedule next after 1-min delay.
 
-    const seg = segments.find(s => s.segmentNumber === next.segment_number);
+  // Submit a single job to the edge function
+  const submitOneJob = useCallback(async (job: { id: string; segment_number: number }) => {
+    const seg = segments.find(s => s.segmentNumber === job.segment_number);
     if (seg) dispatch({ type: 'SET_SEGMENT_GENERATING_VIDEO', segmentId: seg.id, isGenerating: true });
+
+    activeJobCountRef.current += 1;
+    console.log(`[VideoStep] 🚀 Submitted seg ${job.segment_number} — active: ${activeJobCountRef.current}/${MAX_CONCURRENT}, queue: ${pendingJobQueueRef.current.length}`);
 
     try {
       const { data } = await supabase.functions.invoke('generate-videos', {
-        body: { mode: 'process_single', job_id: next.id },
+        body: { mode: 'process_single', job_id: job.id },
       });
-      console.log(`[VideoStep] ✅ Submitted job ${next.id}: ${data?.data?.job?.veo_uuid || 'no uuid yet'}`);
-      // Next job will be triggered by Realtime callback when this one completes
+      console.log(`[VideoStep] ✅ Job ${job.id}: ${data?.data?.job?.veo_uuid || 'submitted'}`);
     } catch (err) {
-      console.error(`[VideoStep] ❌ Failed to submit job ${next.id}:`, err);
+      console.error(`[VideoStep] ❌ Failed job ${job.id}:`, err);
+      activeJobCountRef.current = Math.max(0, activeJobCountRef.current - 1);
       if (seg) dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId: seg.id, error: 'Submit failed' });
-      // On submit error, proceed to next job immediately
-      await submitNextJobRef.current?.();
     }
   }, [segments, dispatch]);
+
+  // Schedule next job submission with 1-min delay (if eligible)
+  const scheduleNextSubmit = useCallback(() => {
+    // Already have a pending timer — don't double-schedule
+    if (nextSubmitTimerRef.current) return;
+    // At concurrency limit — wait for a job to complete first
+    if (activeJobCountRef.current >= MAX_CONCURRENT) return;
+    // Nothing left in queue
+    if (pendingJobQueueRef.current.length === 0) return;
+
+    console.log(`[VideoStep] ⏳ Next job in ${SUBMIT_GAP_MS / 1000}s (active: ${activeJobCountRef.current}/${MAX_CONCURRENT}, queue: ${pendingJobQueueRef.current.length})`);
+
+    nextSubmitTimerRef.current = setTimeout(async () => {
+      nextSubmitTimerRef.current = null;
+      // Re-check conditions (may have changed during the wait)
+      if (activeJobCountRef.current >= MAX_CONCURRENT) return;
+      const next = pendingJobQueueRef.current.shift();
+      if (!next) return;
+      await submitOneJob(next);
+      // Schedule the one after that
+      scheduleNextSubmit();
+    }, SUBMIT_GAP_MS);
+  }, [submitOneJob]);
+
+  // Called by Realtime when a job completes or fails — frees a slot
+  const submitNextJob = useCallback(async () => {
+    scheduleNextSubmit();
+  }, [scheduleNextSubmit]);
 
   // Keep ref in sync so Realtime callback always calls latest version
   useEffect(() => { submitNextJobRef.current = submitNextJob; }, [submitNextJob]);
 
-  // Load pending jobs into queue and trigger first one
-  // Also resets failed (status=3) jobs back to pending so they get retried
+  // Load pending jobs into queue and start the submission chain
   const submitPendingJobs = useCallback(async (sessionId: string) => {
     if (!user) return;
+
+    // Clear any existing timer
+    if (nextSubmitTimerRef.current) {
+      clearTimeout(nextSubmitTimerRef.current);
+      nextSubmitTimerRef.current = null;
+    }
 
     // Reset any failed jobs to pending so they're included
     await supabase
@@ -551,6 +599,14 @@ const VideoStep: React.FC = () => {
       .update({ status: 0, error_message: null })
       .eq('session_id', sessionId)
       .eq('status', 3);
+
+    // Count currently processing jobs (status=1) to set correct active count
+    const { data: processingData } = await supabase
+      .from('video_generation_jobs')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('status', 1);
+    activeJobCountRef.current = processingData?.length || 0;
 
     const { data: pendingData } = await supabase
       .from('video_generation_jobs')
@@ -560,18 +616,35 @@ const VideoStep: React.FC = () => {
       .order('segment_number', { ascending: true });
 
     const pending = pendingData || [];
-    console.log(`[VideoStep] Queued ${pending.length} jobs (sequential)`);
     pendingJobQueueRef.current = pending;
-    await submitNextJobRef.current?.();
-  }, [user]);
 
-  // ── Generate All ─────────────────────────────────────────────────────────────
-  const handleGenerateAll = useCallback(async () => {
+    console.log(`[VideoStep] 📋 Queue: ${pending.length} pending, ${activeJobCountRef.current} active (max ${MAX_CONCURRENT}, ${SUBMIT_GAP_MS / 1000}s gap)`);
+
+    if (pending.length === 0) return;
+
+    // Submit first job immediately (if under concurrency limit)
+    if (activeJobCountRef.current < MAX_CONCURRENT) {
+      const first = pendingJobQueueRef.current.shift();
+      if (first) {
+        await submitOneJob(first);
+        // Schedule subsequent jobs with 1-min gap
+        scheduleNextSubmit();
+      }
+    }
+  }, [user, submitOneJob, scheduleNextSubmit]);
+
+  // ── Generate videos (all or remaining only) ─────────────────────────────────
+  const handleGenerateVideos = useCallback(async (mode: 'all' | 'remaining') => {
     if (!user || !orderId || isSubmitting) return;
     setIsSubmitting(true);
+    setShowGenerateDropdown(false);
 
     try {
-      const segmentsPayload = buildSegmentsPayload(enabledSegments);
+      const targetSegments = mode === 'remaining'
+        ? enabledSegments.filter(s => !s.videoUrl)
+        : enabledSegments;
+
+      const segmentsPayload = buildSegmentsPayload(targetSegments);
       const { data, error } = await supabase.functions.invoke('generate-videos', {
         body: {
           mode: 'create_jobs',
@@ -582,19 +655,22 @@ const VideoStep: React.FC = () => {
           language: settings?.language || 'indonesian',
           aspect_ratio: settings?.aspectRatio || '9:16',
           preferred_platform: videoModel,
+          regenerate_all: mode === 'all',
         },
       });
 
       if (error) throw error;
-      console.log(`[VideoStep] Created ${data?.data?.total_jobs} jobs (model: ${videoModel})`);
+      console.log(`[VideoStep] Created ${data?.data?.total_jobs} jobs (model: ${videoModel}, mode: ${mode})`);
 
       await submitPendingJobs(orderId);
     } catch (err) {
-      console.error('[VideoStep] handleGenerateAll error:', err);
+      console.error('[VideoStep] handleGenerateVideos error:', err);
     } finally {
       setIsSubmitting(false);
     }
-  }, [user, orderId, isSubmitting, enabledSegments, settings, state.topic, buildSegmentsPayload, submitPendingJobs]);
+  }, [user, orderId, isSubmitting, enabledSegments, settings, state.topic, buildSegmentsPayload, submitPendingJobs, videoModel]);
+
+  const remainingCount = enabledSegments.filter(s => !s.videoUrl).length;
 
   // ── Generate / Regenerate Single ─────────────────────────────────────────────
   const handleGenerate = useCallback(async (segmentId: string) => {
@@ -646,8 +722,8 @@ const VideoStep: React.FC = () => {
         </div>
       )}
 
-      {/* ─── Header (same pattern as ImageStep) ─── */}
-      <div className="mb-4">
+      {/* ─── Header (sticky on scroll) ─── */}
+      <div className="sticky top-0 z-30 bg-[#0B0E14]/95 backdrop-blur-sm pb-4 -mx-1 px-1">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div className="flex-1">
             <h1 className="text-xl font-bold text-white mb-1 line-clamp-2">
@@ -755,20 +831,69 @@ const VideoStep: React.FC = () => {
             <RefreshCw className="w-4 h-4" />
           </button>
 
-          {/* Generate All button */}
-          <button
-            onClick={handleGenerateAll}
-            disabled={!canGenerateVideo || isAnyGenerating}
-            className="h-10 px-5 font-medium flex items-center gap-2 rounded-lg text-white transition-colors disabled:opacity-40 bg-emerald-500 hover:bg-emerald-600 disabled:cursor-not-allowed"
-          >
+          {/* Generate button with dropdown */}
+          <div className="relative" ref={generateDropdownRef}>
             {isAnyGenerating ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /><span>Generating...</span></>
+              <button
+                disabled
+                className="h-10 px-5 font-medium flex items-center gap-2 rounded-lg text-white bg-emerald-500 opacity-60 cursor-not-allowed"
+              >
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Generating...</span>
+              </button>
             ) : allHaveVideos ? (
-              <><RefreshCw className="w-4 h-4" /><span>Regenerate All</span></>
+              /* All done — simple regenerate all button */
+              <button
+                onClick={() => handleGenerateVideos('all')}
+                disabled={!canGenerateVideo}
+                className="h-10 px-5 font-medium flex items-center gap-2 rounded-lg text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>Regenerate All</span>
+              </button>
+            ) : remainingCount < enabledSegments.length && remainingCount > 0 ? (
+              /* Some done, some remaining — show dropdown */
+              <>
+                <button
+                  onClick={() => setShowGenerateDropdown(v => !v)}
+                  disabled={!canGenerateVideo}
+                  className="h-10 px-5 font-medium flex items-center gap-2 rounded-lg text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Clapperboard className="w-4 h-4" />
+                  <span>Generate All ({remainingCount})</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showGenerateDropdown ? 'rotate-180' : ''}`} />
+                </button>
+                {showGenerateDropdown && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-[#1E1E1E] border border-[#262626] rounded-xl shadow-xl z-[200] p-2">
+                    <button
+                      onClick={() => handleGenerateVideos('remaining')}
+                      className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 transition-colors flex flex-col gap-0.5"
+                    >
+                      <span className="font-medium">Generate Remaining ({remainingCount})</span>
+                      <span className="text-xs text-neutral-500">Only segments without video</span>
+                    </button>
+                    <button
+                      onClick={() => handleGenerateVideos('all')}
+                      className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 transition-colors flex flex-col gap-0.5"
+                    >
+                      <span className="font-medium">Regenerate All ({enabledSegments.length})</span>
+                      <span className="text-xs text-neutral-500">Re-generate everything from start</span>
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
-              <><Clapperboard className="w-4 h-4" /><span>Generate All ({enabledSegments.length - videosGenerated})</span></>
+              /* None done yet — simple generate all button */
+              <button
+                onClick={() => handleGenerateVideos('all')}
+                disabled={!canGenerateVideo}
+                className="h-10 px-5 font-medium flex items-center gap-2 rounded-lg text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Clapperboard className="w-4 h-4" />
+                <span>Generate All ({enabledSegments.length})</span>
+              </button>
             )}
-          </button>
+          </div>
           </div>
         </div>
       </div>

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ChatSidebar } from './ChatSidebar';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useChatSessions } from '../../hooks/useChatSessions';
 
 interface ChatLayoutProps {
   children: React.ReactNode;
@@ -12,6 +13,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   const location = useLocation();
   const { user, signOut } = useAuth();
   const [collapsed, setCollapsed] = useState(true);
+  const { sessions, deleteSession, renameSession } = useChatSessions();
 
   // Menu items (NO Settings — lives in user profile area at sidebar bottom)
   const menuItems = [
@@ -26,11 +28,44 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   // Determine active menu from current path
   const activeMenuId = menuItems.find(item => location.pathname.startsWith(item.path))?.id || null;
 
-  // TODO: Replace with real sessions from useChatSessions hook
-  const sessions: any[] = [];
+  // Extract active session orderId from URL (e.g. /script-gen/:orderId)
+  const activeSessionId = useMemo(() => {
+    const parts = location.pathname.split('/');
+    // Routes like /script-gen/:orderId or /creator-lab/:orderId
+    if (parts.length >= 3 && ['script-gen', 'creator-lab', 'ad-studio'].includes(parts[1])) {
+      return parts[2] || null;
+    }
+    return null;
+  }, [location.pathname]);
 
-  // Determine active session from URL
-  const activeSessionId: string | null = null; // Will be set by route param
+  // Map session status to the correct workspace step
+  const statusToStep = (status: string, progress?: { currentStep: string }): string => {
+    // Use progress.currentStep if available (more granular)
+    if (progress?.currentStep) return progress.currentStep;
+    // Fallback to status-based mapping
+    switch (status) {
+      case 'video_ready': return 'video';
+      case 'images_ready': return 'images';
+      case 'script_ready': return 'images';
+      case 'complete': return 'studio';
+      default: return 'script';
+    }
+  };
+
+  // Navigate to the correct route based on session type + current step
+  const handleSessionClick = (orderId: string) => {
+    const session = sessions.find(s => s.orderId === orderId);
+    if (!session) return;
+
+    const routeMap: Record<string, string> = {
+      script_gen: '/script-gen',
+      creator_lab: '/creator-lab',
+      ad_studio: '/ad-studio',
+    };
+    const basePath = routeMap[session.sessionType] || '/script-gen';
+    const step = statusToStep(session.status, session.progress);
+    navigate(`${basePath}/${orderId}/${step}`);
+  };
 
   return (
     <div className="flex h-dvh bg-[#0B0E14] overflow-hidden">
@@ -41,9 +76,9 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
         onMenuClick={(path) => navigate(path)}
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onSessionClick={(orderId) => navigate(`/script-gen/${orderId}`)}
-        onDeleteSession={() => {}}
-        onRenameSession={() => {}}
+        onSessionClick={handleSessionClick}
+        onDeleteSession={(orderId) => deleteSession(orderId)}
+        onRenameSession={(orderId, newTitle) => renameSession(orderId, newTitle)}
         userName={user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User'}
         userAvatarUrl={user?.user_metadata?.avatar_url || null}
         onSettingsClick={() => navigate('/settings')}

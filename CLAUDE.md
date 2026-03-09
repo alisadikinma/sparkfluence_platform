@@ -153,7 +153,7 @@ MULTILINE COMMANDS:
 | `cinematicVideoKnowledge.ts` | Video generation prompt knowledge. Grok 3: `buildGrokCreatorPrompt()` (motion-only, `Speech:` lip-sync, ONE camera move) + `buildGrokBrollPrompt()` (environment motion, ambient SFX). VEO: structured cinematic prompt builder. | `generate-videos` |
 | `visualEnhancer.ts` | Visual direction enhancement | `generate-images` |
 | `productNamingRule.ts` | Product name detection rules | `generate-images` |
-| `audioDirective.ts` | Audio/TTS prompt directives | `generate-tts` |
+| `audioDirective.ts` | Audio/TTS prompt directives + `getLanguageLabel()` (language enforcement) + `getBRollAudioDirective(language, ...)` (off-screen narration + ZERO lip-sync) + `getCreatorAudioDirective()` (lip-sync REQUIRED) | `generate-tts`, `generate-videos` |
 | `contentTypeDetector.ts` | Content type classification | `generate-script` |
 | `scoringOptimizer.ts` | Scoring rules + hook-topic matching + ANTI_PATTERNS (3 failure modes) + TOPIC_HOOK_SELECTION_RULES + **Power Word Bank** (top words per language) + **Builds-on-hook Rule** (FORE must reference HOOK keywords) + **Triple Hook Coherence Rule** (all 3 hooks must share core topic keywords so FORE connects with any variant) for LLM | `generate-script` |
 
@@ -201,6 +201,7 @@ MULTILINE COMMANDS:
 │  │   ├── generate-videos (Kling 2.5 / Wan 2.5)             │
 │  │   ├── generate-tts (Chatterbox Turbo)                   │
 │  │   ├── generate-music (Minimax Music v2)                 │
+│  │   ├── analyze-voice (Gemini multimodal → voice anchor)  │
 │  │   └── autocomplete-keywords (Google Suggest proxy)      │
 │  ├── PostgreSQL + pgvector (RAG)                           │
 │  └── Storage Buckets                                        │
@@ -282,7 +283,7 @@ await pool.mark_exhausted(key_id)     # On 429/402
 429 (Rate Limit) → markExhausted → try next key → restore after all exhausted
 402 (Payment)    → markExhausted → try next key → daily reset
 403 (Leaked)     → deactivateKey → NEVER use again
-401/403 (Other)  → skip key, don't mark exhausted
+401/403 (Other)  → markExhausted → try next key → restore after all exhausted
 200 (Success)    → incrementUsage → return result
 ```
 
@@ -617,6 +618,7 @@ D:\Projects\sparkfluence_platform\
 │   │   ├── generate-videos\
 │   │   ├── generate-tts\
 │   │   ├── generate-music\
+│   │   ├── analyze-voice\               # Voice anchor analysis (Gemini multimodal)
 │   │   ├── generate-topic-suggestions\  # LLM + trending
 │   │   └── fetch-trending-data\         # 5-source collector
 │   └── migrations\
@@ -725,10 +727,17 @@ B-ROLL:  fal-seedream-v4 → fal-qwen-image → flux-schnell
    ├── CREATOR (HOOK/CTA/LOOP-END) → nano-banana-2/edit [default $0.08] | qwen-image-2/pro/edit [$0.075] | seedream-v5/lite/edit [$0.035]
    └── B-ROLL (FORE/BODY/PEAK)     → seedream-v4 [default $0.03] | seedream-v4.5 [$0.04] | qwen-image-2 [$0.035]
    
-3. TTS GENERATION (Optional)
+3. VOICE ANALYSIS (Profile → once per voice upload)
+   └── analyze-voice edge fn → Gemini multimodal → voice_prompts table (voice anchor)
+
+3b. TTS GENERATION (Optional)
    └── Chatterbox Turbo → Voice audio per segment
-   
+
 4. VIDEO GENERATION (GeminiGen.AI — sequential queue, 1 at a time)
+   ├── Voice anchor: loaded from voice_prompts (profile or avatar)
+   ├── Language: detectScriptLanguage() → explicit LANGUAGE block in every prompt
+   ├── CREATOR segments: lip-sync REQUIRED, voice anchor in prompt
+   ├── B-ROLL segments: off-screen narration ONLY (ZERO visible speech)
    ├── create_jobs    → create video_generation_jobs DB records
    ├── process_single → submit job to GeminiGen API
    ├── webhook        → GeminiGen → Supabase webhook → update job status
@@ -764,6 +773,7 @@ B-ROLL:  fal-seedream-v4 → fal-qwen-image → flux-schnell
 | `trending_challenges` | Content challenge formats (8 base + AI), 24h TTL, upsert on (slug, source, fetch_date) |
 | `user_topic_history` | Per-user topic selections for dedup (30-day window) |
 | `topic_outfit_cache` | LLM outfit category cache (topic_hash unique) |
+| `voice_prompts` | Voice anchor per user/avatar — `voice_prompt_block` (cached prompt), `gender`, `voice_age`, `voice_tone`, `voice_accent`, `voice_pace`. Unique: `(user_id) WHERE is_profile_avatar=true AND avatar_id IS NULL` |
 | `video_jobs` | VPS video processing jobs |
 | `video_generation_jobs` | GeminiGen video job tracking: status 0=pending 1=processing 2=completed 3=failed, Realtime-enabled |
 
@@ -933,6 +943,10 @@ git log --oneline -10
 | Video play/download not working | Check `videoUrl` is set on segment. `VideoPreviewModal` opens on thumbnail click. Download uses `<a href download>` |
 | Failed jobs not retried on Generate All | `submitPendingJobs` resets `status=3` → `status=0` before queuing. If still not picked up, check `video_generation_jobs` filter |
 | GeminiGen webhook not updating DB | Check `generate-videos/webhook` edge function. Verify GeminiGen webhook URL points to correct Supabase edge function URL |
+| Video speaks wrong language (e.g. English instead of Indonesian) | `detectScriptLanguage()` in generate-videos analyzes script text. Check LANGUAGE block in prompt output. If B-ROLL, verify `getBRollAudioDirective(language, ...)` has language as first param. |
+| Voice inconsistent across video segments | Check `voice_prompts` table has a profile entry (`is_profile_avatar=true`). If missing, user hasn't uploaded/analyzed voice in Profile > Voice tab. Fallback: `generateVoiceCharacter()` creates one on-the-fly. |
+| Voice analysis fails in Profile | Check `analyze-voice` edge function deployed. Needs `gemini` keys in `api_keys_pool`. Audio must be accessible URL (Supabase storage public bucket). |
+| B-Roll shows lip-sync / talking faces | `getBRollAudioDirective()` enforces "ZERO visible human speech". Check prompt includes the off-screen narration block. If using Grok, lip-sync control is limited (known limitation). |
 
 ---
 

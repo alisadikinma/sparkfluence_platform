@@ -378,6 +378,24 @@ Approachable and authentic presence.`,
 }
 
 // ============================================================================
+// LANGUAGE LABEL HELPER
+// ============================================================================
+
+/**
+ * Get human-readable language label for video prompt enforcement.
+ * Used by both VEO and audio directives to enforce consistent language.
+ */
+export function getLanguageLabel(language: string): { label: string; name: string } {
+  const map: Record<string, { label: string; name: string }> = {
+    'indonesian': { label: 'INDONESIAN (Bahasa Indonesia)', name: 'Indonesian' },
+    'hindi': { label: 'HINDI (Hinglish)', name: 'Hindi' },
+    'english': { label: 'ENGLISH', name: 'English' },
+    'spanish': { label: 'SPANISH (Latin American)', name: 'Spanish' },
+  };
+  return map[language?.toLowerCase()] ?? { label: 'ENGLISH', name: 'English' };
+}
+
+// ============================================================================
 // SEGMENT-SPECIFIC AUDIO DIRECTIVES (Enhanced 2026)
 // ============================================================================
 
@@ -437,11 +455,17 @@ export function getCreatorAudioDirective(
     voiceDesc = `${voiceCharacter.gender} voice, ${voiceCharacter.age}, ${voiceCharacter.accent}. ${voiceCharacter.tone}, ${voiceCharacter.pace}`;
   }
 
-  // SIMPLIFIED: Compact audio directive with voice consistency
+  const { label: langLabel, name: langName } = getLanguageLabel(language);
+
+  // SIMPLIFIED: Compact audio directive with voice consistency + language enforcement
   return `
+⚠️ LANGUAGE: ${langLabel}
+ALL dialogue MUST be spoken in ${langName}. Do NOT switch languages.
+
 AUDIO:
 Dialogue: "${dialogueText}"
-Word count: ${wordCount} words | Lip-sync required
+Word count: ${wordCount} words
+Lip-sync: REQUIRED — creator's mouth MUST move matching every word of the dialogue.
 Voice: ${voiceDesc}
 Delivery: ${sfx.voice_quality}
 Ambient: Subtle room tone, close-mic quality
@@ -467,6 +491,7 @@ export interface BRollVoiceCharacter {
 }
 
 export function getBRollAudioDirective(
+  language: string,
   category: string,
   emotion: string = 'neutral',
   hasVoiceover: boolean = false,
@@ -498,6 +523,8 @@ export function getBRollAudioDirective(
   // 3. Keep voice character for consistency but clarify it's invisible narrator
   // ============================================================================
 
+  const { label: langLabel, name: langName } = getLanguageLabel(language);
+
   if (hasVoiceover && voiceoverText) {
     // Build voice description from character info for consistency
     let voiceDesc = 'Natural narrator voice';
@@ -506,6 +533,9 @@ export function getBRollAudioDirective(
     }
 
     return `
+⚠️ LANGUAGE: ${langLabel}
+ALL narration MUST be spoken in ${langName}. Do NOT switch languages.
+
 AUDIO:
 OFF-SCREEN NARRATION (voice NOT visible in video): "${voiceoverText}"
 
@@ -515,12 +545,9 @@ ${voiceCharacter ? `Accent: ${voiceCharacter.accent} | Tone: ${voiceCharacter.to
 Voice quality: Close-mic, dry recording, no reverb
 Ambient: ${ambient} (ducked under voice)
 
-⚠️ CRITICAL EXCLUSIONS:
-- NO lip-sync or mouths moving
-- NO on-screen speakers or talking
-- NO one speaking to camera
-- The narrator voice is COMPLETELY OFF-SCREEN (like documentary narration)
-- If people appear, they must NOT be talking or lip-syncing
+⚠️ CRITICAL: ZERO visible human speech on screen.
+Voice is 100% off-camera narration (like documentary voiceover).
+If any person appears on screen, their mouth MUST remain CLOSED.
 `;
   }
 
@@ -581,6 +608,7 @@ export function generateSegmentAnchors(config: AnchorConfig): string {
     ));
   } else {
     blocks.push(getBRollAudioDirective(
+      config.language,
       config.brollCategory || 'default',
       config.emotion || 'neutral',
       config.hasVoiceover || false,

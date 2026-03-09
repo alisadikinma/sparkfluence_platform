@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard, Calendar, Sparkles, Clapperboard, Target, Image,
   Settings, LogOut, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Trash2,
-  Check
+  Check, Clock
 } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -204,15 +204,27 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
 
       {/* History Section — Scrollable */}
       <div className="flex-1 overflow-y-auto px-2 py-3">
-        {!collapsed && (
+        {!collapsed ? (
           <p className="text-[11px] font-semibold text-[#78716C] uppercase tracking-wider px-3 mb-2">
             History
           </p>
+        ) : (
+          /* Collapsed: history icon with count badge */
+          <div className="flex flex-col items-center mb-2">
+            <div className="relative">
+              <Clock className="w-[18px] h-[18px] text-[#78716C]" />
+              {sessions.length > 0 && (
+                <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-bold bg-[#10B981] text-white rounded-full px-1">
+                  {sessions.length > 99 ? '99+' : sessions.length}
+                </span>
+              )}
+            </div>
+          </div>
         )}
 
         {collapsed ? (
-          // Collapsed: just show dots for recent sessions
-          <div className="flex flex-col items-center gap-2 mt-2">
+          // Collapsed: show recent session icons below the history indicator
+          <div className="flex flex-col items-center gap-2">
             {sessions.slice(0, 5).map((session) => {
               const typeConfig = SESSION_TYPE_CONFIG[session.sessionType];
               return (

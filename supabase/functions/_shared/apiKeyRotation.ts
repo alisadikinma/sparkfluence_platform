@@ -310,11 +310,16 @@ export async function callWithRotationHybrid<T>(
         const errorMsg = (result.data as any)?.error?.message || '';
         console.warn(`[ApiKeyRotation] ${keyResult.keyName} returned AUTH ERROR (${result.status}): ${errorMsg}`);
 
-        // 403 with "leaked" = permanently broken key → deactivate
-        if (result.status === 403 && (errorMsg.toLowerCase().includes('leaked') || errorMsg.toLowerCase().includes('compromised'))) {
-          console.warn(`[ApiKeyRotation] Key ${keyResult.keyName} reported as LEAKED - deactivating permanently`);
-          if (keyResult.keyId) {
+        if (keyResult.keyId) {
+          // 403 with "leaked"/"compromised" = permanently broken → deactivate
+          if (result.status === 403 && (errorMsg.toLowerCase().includes('leaked') || errorMsg.toLowerCase().includes('compromised'))) {
+            console.warn(`[ApiKeyRotation] Key ${keyResult.keyName} reported as LEAKED - deactivating permanently`);
             await deactivateKey(supabase, keyResult.keyId);
+          } else {
+            // 401/403 (suspended, invalid, etc.) → mark exhausted so rotation skips to next key
+            console.warn(`[ApiKeyRotation] Key ${keyResult.keyName} auth failed - marking exhausted to rotate`);
+            await markExhausted(supabase, keyResult.keyId);
+            rateLimitedKeyIds.push(keyResult.keyId);
           }
         }
 
