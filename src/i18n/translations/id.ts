@@ -1370,4 +1370,18 @@ export const id: TranslationKeys = {
     'content-tips': 'Tips Konten',
     'video-tips': 'Tips Video',
   },
+
+  // ============================================
+  // WORKSPACE NAV
+  // ============================================
+  workspaceNav: {
+    chooseNewTopic: 'Pilih Topic Baru',
+    scrollToTop: 'Scroll ke atas',
+    backConfirmTitle: 'Kembali ke Pilih Topic?',
+    backConfirmBody: 'Script "{topic}" akan tetap tersimpan di riwayat session kamu. Kamu bisa lanjutkan kapan saja.',
+    backConfirmCancel: 'Batal',
+    backConfirmConfirm: 'Ya, Pilih Topic Baru',
+    navNext: 'NEXT',
+    navPrev: 'PREVIOUS',
+  },
 };

@@ -1366,3 +1366,247 @@ export function validateDialogueLength(dialogue: string, platform: VideoModelKey
   
   return { valid: true, wordCount, maxWords };
 }
+
+// ============================================================================
+// GROK 3 (AURORA ENGINE) VIDEO PROMPT BUILDER
+// ============================================================================
+// KEY RULES (hard-enforced in output):
+// 1. MOTION-ONLY — never re-describe static image elements (subject, background, colors)
+// 2. POSITIVE language only — no "avoid", "no blur", "no distortion"
+// 3. ONE camera movement per prompt
+// 4. Specific SFX names — never "add sound" or "add music"
+// 5. Speech: syntax for lip-sync (creator shots only, single character)
+// 6. Dialogue word limits: 10 words/6s, 15 words/10s, 25 words/15s
+// 7. 50-100 words total prompt (max ~150; >200 dilutes priority)
+// 8. First 20-30 words matter most — front-load primary action
+// ============================================================================
+
+// ONE simple expression per emotion (max 1 for lip-sync compliance)
+const GROK_CREATOR_EXPRESSIONS: Record<string, string> = {
+  'authority': 'Steady eye contact, confident posture, subtle chin lift',
+  'hook': 'Eyebrows raise in invitation, warm half-smile, natural forward lean',
+  'excited': 'Bright smile, slight forward lean, open hand gesture toward camera',
+  'worried': 'Brows furrow gently, slow head shake, eyes widen slightly',
+  'neutral': 'Calm composed expression, natural relaxed posture',
+  'warm': 'Warm genuine smile, slight head tilt, open posture',
+  'urgent': 'Serious direct expression, pointed gesture, intense eye contact',
+  'surprising': 'Wide eyes, slight backward lean, eyebrows rise sharply',
+  'curious': 'Head tilts to one side, one eyebrow raises, leans slightly forward',
+  'satisfied': 'Proud smile, relaxed posture, slow approving nod',
+  'empathy': 'Soft expression, gentle nod, warm understanding in the eyes',
+};
+
+// Camera movement for creator shots (MUST be static or very slow push-in for lip-sync)
+const GROK_CREATOR_CAMERA: Record<string, string> = {
+  'HOOK': 'Camera very slowly pushes in from medium close-up toward tight close-up',
+  'CTA': 'Camera stays locked and static',
+  'LOOP-END': 'Camera stays locked and static',
+  'ENDING': 'Camera stays locked and static',
+  'ENDING_CTA': 'Camera stays locked and static',
+};
+
+// Camera movement for B-roll (ONE natural movement per segment type)
+const GROK_BROLL_CAMERA: Record<string, string> = {
+  'FORE': 'Camera slowly pushes in toward the subject',
+  'FORESHADOW': 'Camera slowly pushes in, building anticipation',
+  'BODY': 'Camera gently drifts to the right',
+  'BODY-1': 'Camera gently drifts to the right',
+  'BODY-2': 'Camera slowly pans across the scene',
+  'BODY-3': 'Camera stays locked and static',
+  'BODY-4': 'Camera slowly tilts upward',
+  'BODY-5': 'Camera slowly pulls back revealing scale',
+  'PEAK': 'Camera slowly pulls back revealing the full scale of the scene',
+  'TWIST': 'Camera slowly reveals from tight frame outward',
+  'ENDING': 'Camera gently pulls back with slow drift',
+};
+
+// B-roll ambient motion tone per emotion
+const GROK_BROLL_AMBIENT: Record<string, string> = {
+  'awe': 'light shifts gently across the scene with atmospheric depth',
+  'authority': 'steady operational motion, systematic and purposeful',
+  'excited': 'energetic motion ripples through the frame with momentum',
+  'worried': 'slow tense movement, uneasy atmospheric shift',
+  'curious': 'gradual revealing motion, subtle discovery energy',
+  'neutral': 'calm natural movement, ambient scene breathing',
+  'warm': 'soft gentle organic rhythm, comfortable steady motion',
+  'dramatic': 'powerful sweeping motion with cinematic weight',
+  'surprising': 'sudden shift in motion, unexpected energy change',
+  'empathy': 'slow warm motion, gentle human-scale movement',
+};
+
+// SFX by detected environment (2-3 specific named sounds)
+function getGrokBrollSfx(environment: string, visualDirection: string, segmentType: string): string {
+  const combined = (environment + ' ' + visualDirection).toLowerCase();
+  const segUpper = segmentType.toUpperCase();
+
+  if (segUpper === 'PEAK') return 'dramatic orchestral crescendo, cinematic bass swell, impact accent at climax';
+  if (segUpper === 'FORE' || segUpper === 'FORESHADOW') return 'tension-building low drone, subtle atmospheric hum, faint mystery undertone';
+
+  if (/tech|digital|data|screen|computer|ai|cyber|code|software|app/.test(combined))
+    return 'subtle electronic hum, data processing beeps, digital interface whoosh';
+  if (/outdoor|nature|forest|mountain|beach|sky|park|garden/.test(combined))
+    return 'environmental ambience, soft wind through foliage, distant natural sounds';
+  if (/urban|city|street|building|office|downtown|traffic/.test(combined))
+    return 'city ambient hum, distant traffic drone, urban atmospheric texture';
+  if (/medical|hospital|health|doctor|clinic|lab/.test(combined))
+    return 'clinical ambient hum, soft equipment tone, quiet professional atmosphere';
+  if (/finance|money|bank|invest|crypto|stock|chart/.test(combined))
+    return 'professional office ambient, subtle keyboard typing, refined atmospheric hum';
+  if (/sport|gym|fitness|athlete|field|court|workout/.test(combined))
+    return 'ambient crowd energy, movement rhythm, athletic atmospheric pulse';
+  if (/food|kitchen|cook|restaurant|eat|cafe/.test(combined))
+    return 'warm kitchen ambient, soft sizzle and clatter, inviting atmospheric warmth';
+  if (/fashion|cloth|style|wear|dress|runway/.test(combined))
+    return 'soft ambient tone, fabric movement sound, refined atmospheric texture';
+
+  return 'warm room tone, soft ambient atmosphere, subtle environmental hum';
+}
+
+// SFX for creator talking-head shots (no music, 2-3 ambient only)
+function getGrokCreatorSfx(emotion: string, environment: string): string {
+  const envTone = environment === 'outdoor' ? 'soft outdoor ambience' : 'warm room tone';
+  const extras: Record<string, string> = {
+    'excited': 'light energetic vocal dynamics in the room air',
+    'urgent': 'heartbeat pulse undertone, slight tension in the air',
+    'hook': 'subtle intrigue undertone, soft tension building',
+    'worried': 'quiet tense undertone, subtle unease in the atmosphere',
+    'dramatic': 'cinematic low drone under the voice',
+  };
+  const extra = extras[emotion.toLowerCase()] || 'soft HVAC hum in background';
+  return `${envTone}, natural breath sounds, ${extra}`;
+}
+
+export interface GrokPromptParams {
+  segmentType: string;
+  emotion: string;
+  duration: number;   // 6, 10, or 15
+  aspectRatio?: string;
+  visualDirection?: string;
+  dialogue?: string;
+  environment?: string;
+  isCreatorShot?: boolean;
+  hasTextOverlay?: boolean;
+  language?: string;
+  creatorGender?: 'male' | 'female';
+}
+
+/**
+ * Build Grok 3 (Aurora) video prompt — creator talking-head shot
+ * Lip-sync via Speech: syntax. ONE expression. Static or slow push-in camera.
+ */
+export function buildGrokCreatorPrompt(params: GrokPromptParams): string {
+  const {
+    segmentType = 'HOOK',
+    emotion = 'authority',
+    duration = 6,
+    dialogue = '',
+    environment = 'studio',
+  } = params;
+
+  const segTypeUpper = segmentType.toUpperCase();
+
+  // ONE simple expression (Grok lip-sync rule: stacking expressions breaks sync)
+  const expression = GROK_CREATOR_EXPRESSIONS[emotion.toLowerCase()]
+    ?? GROK_CREATOR_EXPRESSIONS['neutral'];
+
+  // Camera: must be static or very slow push-in for lip-sync accuracy
+  const camera = GROK_CREATOR_CAMERA[segTypeUpper]
+    ?? 'Camera stays locked and static, face clearly visible throughout';
+
+  // Dialogue: truncate to Grok word limits (10/6s, 15/10s, 25/15s)
+  let speechSection = '';
+  if (dialogue && dialogue.trim().length > 0) {
+    const maxWords = duration <= 6 ? 10 : duration <= 10 ? 15 : 25;
+    const words = dialogue.trim().split(/\s+/);
+    const truncated = words.slice(0, maxWords).join(' ');
+    speechSection = `Speech: ${truncated}.`;
+  }
+
+  // SFX: 2-3 ambient sounds (no background music for talking heads)
+  const sfx = getGrokCreatorSfx(emotion.toLowerCase(), environment);
+
+  // Build prompt (motion-first, positive language only, 50-100 words)
+  const parts = [
+    `${expression}.`,
+    `${camera}.`,
+    speechSection,
+    `${sfx}.`,
+  ].filter(Boolean);
+
+  return parts.join(' ');
+}
+
+/**
+ * Build Grok 3 (Aurora) video prompt — B-roll shot
+ * Motion-only description. Never re-describes what's already in the image.
+ */
+export function buildGrokBrollPrompt(params: GrokPromptParams): string {
+  const {
+    segmentType = 'BODY',
+    emotion = 'neutral',
+    duration = 6,
+    visualDirection = '',
+    environment = 'studio',
+    hasTextOverlay = false,
+  } = params;
+
+  const segTypeUpper = segmentType.toUpperCase();
+
+  // Ambient motion tone from emotion (how the scene MOVES, not what it looks like)
+  const ambientTone = GROK_BROLL_AMBIENT[emotion.toLowerCase()]
+    ?? GROK_BROLL_AMBIENT['neutral'];
+
+  // Primary motion: segment-type-aware, duration-scaled
+  const primaryMotion = getGrokBrollPrimaryMotion(segTypeUpper, emotion, duration);
+
+  // Camera: ONE movement matching segment type
+  const camera = GROK_BROLL_CAMERA[segTypeUpper]
+    ?? 'Camera gently drifts to the right';
+
+  // Text preservation (only if image has text overlays)
+  const textLine = hasTextOverlay
+    ? 'All text, headlines, and overlays remain sharp and readable throughout.'
+    : '';
+
+  // SFX: 2-3 specific named sounds matching environment
+  const sfx = getGrokBrollSfx(environment, visualDirection, segmentType);
+
+  const parts = [
+    `${primaryMotion}.`,
+    `${ambientTone}.`,
+    `${camera}.`,
+    textLine,
+    `${sfx}.`,
+  ].filter(Boolean);
+
+  return parts.join(' ');
+}
+
+function getGrokBrollPrimaryMotion(segTypeUpper: string, emotion: string, duration: number): string {
+  // For longer clips (10s/15s), use arc language — setup→develop→payoff
+  const isLong = duration >= 10;
+
+  const motionMap: Record<string, string> = {
+    'FORE': isLong
+      ? 'Scene elements shift inward slowly; focus tightens as anticipation builds toward the center subject'
+      : 'Scene elements shift subtly inward, focus drawing toward the central subject',
+    'FORESHADOW': 'Atmospheric motion builds slowly; light and shadow shift with growing tension',
+    'BODY': isLong
+      ? 'Primary subject moves with deliberate purpose; scene develops naturally through a complete motion arc'
+      : 'Primary subject engages in natural purposeful motion as the scene breathes',
+    'BODY-1': 'Subject establishes clear deliberate action, setting the visual foundation',
+    'BODY-2': 'Motion deepens and develops; scene elements interact with natural rhythm',
+    'BODY-3': 'Energy builds through the scene; primary subject motion gains weight and clarity',
+    'BODY-4': 'Scene reaches visual development peak; motion carries meaning and forward momentum',
+    'BODY-5': 'Climactic motion approaches; subject action intensifies toward the peak moment',
+    'PEAK': isLong
+      ? 'Maximum energy releases through the scene; action builds from tension through explosive motion to dramatic resolution'
+      : 'Maximum energy releases through the scene; dramatic action reaches its apex',
+    'TWIST': 'Sudden motion shift reveals the unexpected; scene transforms with sharp energy',
+    'ENDING': 'Motion resolves gently into natural conclusion; scene settles with satisfying calm',
+    'CTA': 'Inviting forward motion; warm purposeful energy radiates through the scene',
+    'LOOP-END': 'Motion returns smoothly to origin point; seamless circular completion',
+  };
+
+  return motionMap[segTypeUpper] ?? motionMap['BODY'];
+}

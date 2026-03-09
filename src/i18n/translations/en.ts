@@ -1371,6 +1371,20 @@ export const en = {
     'content-tips': 'Content Tips',
     'video-tips': 'Video Tips',
   },
+
+  // ============================================
+  // WORKSPACE NAV
+  // ============================================
+  workspaceNav: {
+    chooseNewTopic: 'Choose New Topic',
+    scrollToTop: 'Scroll to top',
+    backConfirmTitle: 'Return to Topic Selection?',
+    backConfirmBody: 'Your script "{topic}" will remain saved in your session history. You can continue anytime.',
+    backConfirmCancel: 'Cancel',
+    backConfirmConfirm: 'Yes, Choose New Topic',
+    navNext: 'NEXT',
+    navPrev: 'PREVIOUS',
+  },
 };
 
 export type TranslationKeys = typeof en;

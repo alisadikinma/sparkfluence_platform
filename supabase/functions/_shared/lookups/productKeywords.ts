@@ -81,7 +81,43 @@ const TECH_BRANDS: Record<string, { category: string; variations: string[] }> = 
   // Crypto Hardware
   'ledger': { category: 'hardware_wallet', variations: ['ledger', 'ledger nano'] },
   'trezor': { category: 'hardware_wallet', variations: ['trezor'] },
-  
+
+  // SaaS / Productivity Tools
+  'notion': { category: 'productivity_software', variations: ['notion ai', 'notion'] },
+  'miro': { category: 'collaboration_software', variations: ['miro'] },
+  'figma': { category: 'design_software', variations: ['figma'] },
+  'canva': { category: 'design_software', variations: ['canva'] },
+  'loom': { category: 'productivity_software', variations: ['loom'] },
+  'clickup': { category: 'productivity_software', variations: ['clickup', 'click up'] },
+  'trello': { category: 'productivity_software', variations: ['trello'] },
+  'asana': { category: 'productivity_software', variations: ['asana'] },
+  'linear': { category: 'productivity_software', variations: ['linear'] },
+  'slack': { category: 'collaboration_software', variations: ['slack'] },
+  'webflow': { category: 'no_code_tools', variations: ['webflow'] },
+  'shopify': { category: 'ecommerce_software', variations: ['shopify'] },
+  'stripe': { category: 'payment_software', variations: ['stripe'] },
+  'vercel': { category: 'dev_tools', variations: ['vercel'] },
+  'supabase': { category: 'dev_tools', variations: ['supabase'] },
+  'airtable': { category: 'productivity_software', variations: ['airtable'] },
+  'hubspot': { category: 'crm_software', variations: ['hubspot'] },
+  'salesforce': { category: 'crm_software', variations: ['salesforce'] },
+  'notion ai': { category: 'ai_tools', variations: ['notion ai'] },
+
+  // AI Tools
+  'chatgpt': { category: 'ai_tools', variations: ['chatgpt', 'chat gpt', 'gpt-4', 'gpt4', 'openai'] },
+  'claude': { category: 'ai_tools', variations: ['claude ai', 'claude'] },
+  'gemini': { category: 'ai_tools', variations: ['gemini ai', 'google gemini'] },
+  'midjourney': { category: 'ai_image_tools', variations: ['midjourney', 'mid journey'] },
+  'runway': { category: 'ai_video_tools', variations: ['runway ml', 'runway'] },
+  'elevenlabs': { category: 'ai_audio_tools', variations: ['elevenlabs', 'eleven labs'] },
+  'cursor': { category: 'ai_dev_tools', variations: ['cursor ai', 'cursor'] },
+  'codium': { category: 'ai_dev_tools', variations: ['codium ai', 'codium', 'codeium'] },
+  'copilot': { category: 'ai_dev_tools', variations: ['github copilot', 'copilot'] },
+  'perplexity': { category: 'ai_tools', variations: ['perplexity'] },
+  'grok': { category: 'ai_tools', variations: ['grok ai', 'grok'] },
+  'bolt': { category: 'ai_dev_tools', variations: ['bolt.new', 'bolt ai'] },
+  'v0': { category: 'ai_dev_tools', variations: ['v0.dev', 'vercel v0'] },
+
   // Gaming
   'playstation': { category: 'gaming', variations: ['playstation', 'ps5', 'ps4', 'dualshock', 'dualsense'] },
   'xbox': { category: 'gaming', variations: ['xbox', 'series x', 'series s'] },
@@ -326,6 +362,42 @@ const BRAND_SEARCH_QUERIES: Record<string, string> = {
   'playstation': 'PlayStation PS5 console',
   'xbox': 'Xbox console',
   'nintendo': 'Nintendo Switch',
+
+  // SaaS / Productivity
+  'notion': 'Notion workspace app',
+  'notion ai': 'Notion AI workspace',
+  'miro': 'Miro collaboration whiteboard',
+  'figma': 'Figma design tool',
+  'canva': 'Canva design',
+  'loom': 'Loom video recording',
+  'clickup': 'ClickUp project management',
+  'trello': 'Trello kanban board',
+  'asana': 'Asana project management',
+  'linear': 'Linear issue tracker',
+  'slack': 'Slack team communication',
+  'webflow': 'Webflow website builder',
+  'shopify': 'Shopify ecommerce store',
+  'stripe': 'Stripe payment dashboard',
+  'vercel': 'Vercel deployment',
+  'supabase': 'Supabase database',
+  'airtable': 'Airtable spreadsheet',
+  'hubspot': 'HubSpot CRM',
+  'salesforce': 'Salesforce CRM dashboard',
+
+  // AI Tools
+  'chatgpt': 'ChatGPT AI chat interface',
+  'claude': 'Claude AI assistant',
+  'gemini': 'Google Gemini AI',
+  'midjourney': 'Midjourney AI art',
+  'runway': 'Runway AI video',
+  'elevenlabs': 'ElevenLabs voice AI',
+  'cursor': 'Cursor AI code editor',
+  'codium': 'Codium AI coding assistant',
+  'copilot': 'GitHub Copilot coding',
+  'perplexity': 'Perplexity AI search',
+  'grok': 'Grok AI chatbot',
+  'bolt': 'Bolt AI app builder',
+  'v0': 'v0 Vercel UI generator',
 };
 
 /**

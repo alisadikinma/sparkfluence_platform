@@ -1379,5 +1379,19 @@ export const hi = {
     "tips-tricks": "टिप्स और ट्रिक्स",
     "content-tips": "कंटेंट टिप्स",
     "video-tips": "वीडियो टिप्स"
+  },
+
+  // ============================================
+  // WORKSPACE NAV
+  // ============================================
+  workspaceNav: {
+    chooseNewTopic: 'नया टॉपिक चुनें',
+    scrollToTop: 'ऊपर जाएं',
+    backConfirmTitle: 'टॉपिक चयन पर वापस जाएं?',
+    backConfirmBody: 'आपकी स्क्रिप्ट "{topic}" आपके सेशन हिस्ट्री में सेव रहेगी। आप कभी भी जारी रख सकते हैं।',
+    backConfirmCancel: 'रद्द करें',
+    backConfirmConfirm: 'हाँ, नया टॉपिक चुनें',
+    navNext: 'NEXT',
+    navPrev: 'PREVIOUS',
   }
 };

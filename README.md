@@ -48,8 +48,8 @@ Transform content ideas into viral-ready videos in minutes with cutting-edge AI
 The platform leverages state-of-the-art AI technologies to automate the entire content creation workflow:
 
 - **Script Generation** with RAG (Retrieval-Augmented Generation) using viral content psychology
-- **Cinematic Visual Generation** with dual-provider image AI (FLUX.1 FREE / DALL-E 3 Premium / GPT-Image-1)
-- **Professional Video Generation** with VEO 3.1 including built-in AI voiceover
+- **Cinematic Visual Generation** with fal.ai: nano-banana-2/edit (CREATOR shots) + seedream-v4 (B-ROLL)
+- **Professional Video Generation** with GeminiGen.AI: VEO 3.1 Fast HD (default) + Grok 3 Aurora
 - **Multi-Language Support** (Indonesian Gen-Z with code-mixing, English, Hindi/Hinglish)
 - **Complete Publishing Workflow** from ideation to content calendar management
 
@@ -70,14 +70,14 @@ The platform leverages state-of-the-art AI technologies to automate the entire c
 
 | Feature | Description | AI Provider |
 |---------|-------------|-------------|
-| **Topic Generation** | Generate 5 personalized content ideas based on niche, interests, and objectives | OpenAI GPT-3.5-turbo |
-| **RAG-Enhanced Script Writing** | Viral scripts grounded in knowledge base of 16 expert documents (10 script + 6 visual) | Google Gemini 2.0 Flash + OpenRouter Llama 3.3-70b |
+| **Topic Generation** | Generate personalized content ideas based on niche, interests, and trending data | OpenRouter gemini-2.5-flash-lite (PRIMARY) → Gemini 2.0 Flash (fallback) |
+| **RAG-Enhanced Script Writing** | Viral scripts grounded in knowledge base with hook frameworks and platform-specific optimization | OpenRouter google/gemini-2.5-flash-lite (PAID) → Gemini 2.0 Flash (FREE fallback) |
 | **Vector Embeddings** | 768-dimensional semantic search for RAG context retrieval | Google Gemini text-embedding-004 |
-| **Image Generation** | Dual-provider: FLUX.1-schnell (FREE B-ROLL) / GPT-Image-1 (CREATOR shots with face consistency) / DALL-E 3 (Premium) | HuggingFace FLUX / OpenAI GPT-Image-1 / OpenAI DALL-E 3 |
-| **Video Generation** | Professional 720p/1080p vertical videos (9:16) with AI voiceover | VEO 3.1 |
-| **Music Integration** | Background music mixing with volume control | Python FFmpeg |
-| **Niche Recommendations** | AI-suggested content niches based on user profile | OpenAI GPT-3.5-turbo |
-| **Creative DNA Profiling** | Style assessment and personality matching | OpenAI GPT-3.5-turbo |
+| **Image Generation** | CREATOR shots (face consistency) + B-ROLL (illustrative visuals) | fal.ai: nano-banana-2/edit (CREATOR, $0.08) + seedream-v4 (B-ROLL, $0.03) |
+| **Video Generation** | Sequential queue: 1 video at a time, webhook + Realtime updates | GeminiGen.AI: VEO 3.1 Fast HD (default, $0.015) / VEO 3.1 FHD (premium, $0.50) / Grok 3 Aurora ($0.015, 6–15s) |
+| **Music Integration** | Background music mixing with volume control | fal.ai Minimax Music v2 + Python FFmpeg |
+| **Niche Recommendations** | AI-suggested content niches based on user profile | OpenRouter gemini-2.5-flash-lite → Gemini 2.0 Flash fallback |
+| **Creative DNA Profiling** | Style assessment and personality matching | OpenRouter gemini-2.5-flash-lite → Gemini 2.0 Flash fallback |
 
 ### 🎨 Content Creation Workflow
 
@@ -145,14 +145,15 @@ Sparkfluence follows a **hybrid architecture** with three main components workin
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
 │  │                    EDGE FUNCTIONS (Deno/TypeScript)                    │ │
-│  │  • generate-script (RAG: Gemini 2.0 Flash + Llama 3.3-70b)            │ │
-│  │  • generate-images (FLUX.1 FREE / GPT-Image-1 / DALL-E 3 Premium)     │ │
-│  │  • generate-videos (VEO 3.1 with voiceover)                           │ │
-│  │  • check-video-status (VEO polling)                                   │ │
-│  │  • generate-topic-suggestions (GPT-3.5-turbo)                         │ │
-│  │  • generate-niche-recommendations (GPT-3.5-turbo)                     │ │
-│  │  • send-whatsapp-otp / verify-whatsapp-otp                            │ │
-│  │  • recommend-styles, analyze-avatar, test-env                         │ │
+│  │  • generate-script (OpenRouter gemini-2.5-flash-lite + RAG)            │ │
+│  │  • generate-images (fal.ai: nano-banana-2/edit CREATOR + seedream-v4) │ │
+│  │  • generate-videos (GeminiGen.AI VEO 3.1 / Grok 3 — sequential queue │ │
+│  │    + webhook + Supabase Realtime)                                      │ │
+│  │  • generate-tts (fal.ai Chatterbox Turbo — voice cloning)             │ │
+│  │  • generate-music (fal.ai Minimax Music v2)                           │ │
+│  │  • generate-topic-suggestions (OpenRouter + trending DB)              │ │
+│  │  • search-stock-images (Pexels primary + Unsplash fallback)           │ │
+│  │  • autocomplete-keywords (Google Suggest proxy)                       │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
@@ -243,18 +244,18 @@ Sparkfluence follows a **hybrid architecture** with three main components workin
 
 | Function Name | Purpose | AI Service Used |
 |---------------|---------|-----------------|
-| `generate-script` | RAG-enhanced viral script generation | Gemini 2.0 Flash / Llama 3.3-70b |
-| `generate-images` | Cinematic image generation (dual provider) | FLUX.1 / GPT-Image-1 / DALL-E 3 |
-| `generate-videos` | Video generation with AI voiceover | VEO 3.1 |
-| `check-video-status` | VEO status polling with retry logic | VEO API |
-| `generate-topic-suggestions` | AI topic generation | OpenAI GPT-3.5-turbo |
-| `generate-niche-recommendations` | Niche suggestions based on profile | OpenAI GPT-3.5-turbo |
-| `generate-niche-suggestions` | Alternative niche generation | OpenAI GPT-3.5-turbo |
-| `recommend-styles` | Creative style recommendations | OpenAI GPT-3.5-turbo |
-| `analyze-avatar` | Avatar analysis for character description | OpenAI GPT-4 Vision |
+| `generate-script` | RAG-enhanced viral script generation | OpenRouter gemini-2.5-flash-lite → Gemini 2.0 Flash fallback |
+| `generate-images` | Cinematic image generation (CREATOR + B-ROLL) | fal.ai nano-banana-2/edit / seedream-v4 |
+| `generate-videos` | Sequential queue video generation + webhook handler | GeminiGen.AI VEO 3.1 / Grok 3 Aurora |
+| `generate-tts` | Voice synthesis with cloning | fal.ai Chatterbox Turbo |
+| `generate-music` | AI background music generation | fal.ai Minimax Music v2 |
+| `generate-topic-suggestions` | AI topic generation + trending data | OpenRouter gemini-2.5-flash-lite → Gemini fallback |
+| `generate-niche-recommendations` | Niche suggestions based on profile | OpenRouter gemini-2.5-flash-lite → Gemini fallback |
+| `generate-niche-suggestions` | Alternative niche generation | OpenRouter gemini-2.5-flash-lite → Gemini fallback |
+| `search-stock-images` | Stock image search (pool rotation) | Pexels (primary) + Unsplash (fallback) |
+| `autocomplete-keywords` | Keyword autocomplete suggestions | Google Suggest API proxy |
 | `send-whatsapp-otp` | Send OTP via WhatsApp | WhatsApp Business API |
 | `verify-whatsapp-otp` | Verify WhatsApp OTP code | Internal verification |
-| `test-env` | Environment variable validation | N/A |
 
 ### Python Backend (FastAPI)
 
@@ -278,33 +279,38 @@ Sparkfluence follows a **hybrid architecture** with three main components workin
 
 | Service | Model | Purpose | Cost Tier |
 |---------|-------|---------|-----------|
-| **Google Gemini** | 2.0 Flash Experimental | Primary script generation | 🆓 FREE |
-| **OpenRouter** | Llama 3.3-70b Instruct | Fallback script generation | 🆓 FREE |
+| **OpenRouter** | google/gemini-2.5-flash-lite | Primary script/topic/niche generation | 💰 PAID (PRIMARY) |
+| **Google Gemini** | gemini-2.0-flash | Fallback script generation | 🆓 FREE (FALLBACK) |
 | **Google Gemini** | text-embedding-004 | RAG embeddings (768D) | 🆓 FREE |
-| **HuggingFace** | FLUX.1-schnell | B-ROLL image generation | 🆓 FREE |
-| **OpenAI** | GPT-Image-1 | CREATOR shots (face consistency) | 💰 PAID |
-| **OpenAI** | DALL-E 3 | Premium image generation | 💰 PAID |
-| **OpenAI** | GPT-3.5-turbo | Topic/niche generation | 💰 PAID |
-| **OpenAI** | GPT-4 Vision | Avatar analysis | 💰 PAID |
-| **VEO** | 3.1 (Fast/Standard) | Video gen with voiceover | 💰 PAID |
-| **Pexels** | API | Stock image sourcing | 🆓 FREE |
+| **fal.ai** | nano-banana-2/edit | CREATOR shots (face consistency, $0.08) | 💰 PAID |
+| **fal.ai** | seedream-v4 | B-ROLL image generation ($0.03) | 💰 PAID |
+| **GeminiGen.AI** | VEO 3.1 Fast HD | Video generation 720p ($0.015, 8s) | 💰 PAID (DEFAULT) |
+| **GeminiGen.AI** | VEO 3.1 FHD | Video generation 1080p premium ($0.50, 8s) | 💰 PAID |
+| **GeminiGen.AI** | Grok 3 Aurora | Video generation 720p ($0.015, 6–15s) | 💰 PAID |
+| **fal.ai** | Chatterbox Turbo | TTS with voice cloning | 💰 PAID |
+| **fal.ai** | Minimax Music v2 | AI background music generation | 💰 PAID |
+| **Pexels / Unsplash** | API | Stock image sourcing (pool rotation) | 🆓 FREE |
 
 **Hybrid Provider Strategy:**
 
 The platform uses a **smart cost-optimization strategy**:
 
 1. **CREATOR Shots** (Hook, CTA with creator's face):
-   - Uses **GPT-Image-1** with `character_ref_png` for face consistency
-   - Ensures creator's face remains consistent across multiple videos
+   - Uses **fal.ai nano-banana-2/edit** ($0.08) with reference images for face consistency
+   - Fallback: qwen-image-2/pro/edit ($0.075) → seedream-v5/lite/edit ($0.035)
 
 2. **B-ROLL Shots** (Foreshadow, Body, Peak without faces):
-   - Uses **FLUX.1-schnell** (FREE) for cost efficiency
-   - High-quality cinematic visuals for illustrative content
+   - Uses **fal.ai seedream-v4** ($0.03) — no reference image, pure cinematic
+   - Fallback: seedream-v4.5 ($0.04) → qwen-image-2 ($0.035)
 
 3. **Script Generation**:
-   - Primary: **Gemini 2.0 Flash** (FREE, 1M context window)
-   - Fallback: **OpenRouter Llama 3.3-70b** (FREE)
-   - Rate limiting: 1 request/second to avoid 429 errors
+   - Primary: **OpenRouter google/gemini-2.5-flash-lite** (PAID — always try first)
+   - Fallback: **Gemini 2.0 Flash direct** (FREE — strict rate limits)
+   - Key rotation: api_keys_pool table (NOT env vars)
+
+4. **Video Generation**:
+   - Sequential queue: 1 job at a time via `pendingJobQueueRef`
+   - GeminiGen webhook → updates `video_generation_jobs` → Supabase Realtime → next job
 
 ---
 
@@ -338,17 +344,17 @@ The complete video creation pipeline consists of 6 automated stages:
            │            Aspect ratio: 9:16 vertical
            ▼            Output: Image URLs stored in Supabase 'generated-images'
   ┌──────────────────┐
-  │  4. VIDEO GEN    │  VEO 3.1 video generation with voiceover
-  │  VEO 3.1         │  Input: image (I2V), script_text, language (id/en/hi)
-  │  Fast/Standard   │  Duration: 8 seconds per segment
-  └────────┬─────────┘  Quality: 720p/1080p, 9:16 vertical
-           │            Output: VEO job UUIDs for status tracking
+  │  4. VIDEO GEN    │  GeminiGen.AI — sequential queue (1 job at a time)
+  │  GeminiGen.AI    │  create_jobs → process_single (submit to GeminiGen)
+  │  VEO 3.1 / Grok3 │  Duration: 8s (VEO) / 6–15s (Grok 3 Aurora)
+  └────────┬─────────┘  Quality: 720p (default) / 1080p (premium)
+           │            Output: video_generation_jobs DB records
            ▼
   ┌──────────────────┐
-  │  5. STATUS POLL  │  VEO job status polling with retry
-  │  check-video-    │  Poll interval: 5 seconds
-  │  status          │  Status codes: 1=processing, 2=completed, 3=failed
-  └────────┬─────────┘  Retry on network errors (max 3 retries)
+  │  5. WEBHOOK +    │  GeminiGen calls Supabase webhook on completion
+  │  REALTIME        │  webhook → updates video_generation_jobs status
+  │                  │  Supabase Realtime → VideoStep UI → submit next job
+  └────────┬─────────┘  Status: 0=pending 1=processing 2=completed 3=failed
            │            Output: video_url when status = 2
            ▼
   ┌──────────────────┐

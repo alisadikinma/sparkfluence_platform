@@ -62,11 +62,17 @@ export interface EnrichmentResult {
 const KEYWORD_EXTRACTION_PROMPT = `You are a visual keyword extraction AI for stock image search. Extract the BEST search keywords from the given text.
 
 RULES:
-1. Extract the MOST SPECIFIC location mentioned (if any)
-2. Extract scene objects, props, activities that would make good stock image searches
-3. Use the TOPIC for context — keywords should be relevant to the video's subject
-4. Return valid JSON only, no markdown
-5. If no location found, set "found": false but still return searchKeywords
+1. HIGHEST PRIORITY: If the text mentions a SPECIFIC product name, app, tool, brand, or person's name — extract the EXACT name as-is. Do NOT generalize to category.
+   - "Notion AI. Otomatis bikin notulen" → searchKeywords: ["Notion AI", "Notion workspace"]
+   - "Miro. Tool kolaborasi" → searchKeywords: ["Miro", "Miro whiteboard"]
+   - "Codium AI bisa generate code" → searchKeywords: ["Codium AI", "AI code editor"]
+   - "Elon Musk says..." → searchKeywords: ["Elon Musk", "Tesla CEO"]
+   - "NEVER generalize: 'AI tool' is WRONG if script says 'Notion AI'"
+2. Extract the MOST SPECIFIC location mentioned (if any)
+3. Extract scene objects, props, activities that would make good stock image searches
+4. Use the TOPIC for context — keywords should be relevant to the video's subject
+5. Return valid JSON only, no markdown
+6. If no location found, set "found": false but still return searchKeywords
 
 OUTPUT FORMAT:
 {
@@ -84,6 +90,7 @@ OUTPUT FORMAT:
 TYPE OPTIONS: natural, city, landmark, attraction, area, unknown
 CONFIDENCE: high (explicitly named), medium (implied), low (uncertain)
 searchKeywords: 2-4 short English phrases ideal for stock image search (always English, even if text is Indonesian/Hindi)
+CRITICAL: If a named product/app/brand is mentioned at the start of the text, it MUST be in searchKeywords[0].
 
 `
 

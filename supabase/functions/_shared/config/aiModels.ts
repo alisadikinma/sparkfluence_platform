@@ -78,6 +78,8 @@ export interface VideoModelConfig {
   enabled: boolean;
   /** Supports audio_url parameter for TTS integration */
   supportsAudio?: boolean;
+  /** Extra static form params to always include (e.g. mode=custom for Grok) */
+  extraFormParams?: Record<string, string>;
   /** Notes/comments */
   notes?: string;
 }
@@ -151,7 +153,67 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
   // ==========================================================================
   // VEO 3.1 HD (GeminiGen.AI) - Best lip-sync, highest quality
   // PRIMARY for talking head / CREATOR segments
-  // Docs: https://docs.geminigen.ai - Duration 8s fixed, 9:16 only 720p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 720p, $0.015/video
+  // ==========================================================================
+  'veo-3.1-fast-hd': {
+    key: 'veo-3.1-fast-hd',
+    displayName: 'VEO 3.1 Fast HD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1-fast',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '16:9': { apiValue: '16:9', maxResolution: '720p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.015,
+    strengths: ['Fast generation', 'Good lip-sync', 'Budget-friendly ($0.015)', 'Native audio'],
+    weaknesses: ['720p only', '8s fixed duration'],
+    bestFor: ['High volume production', 'Most segments', 'Budget-conscious projects'],
+    enabled: true,
+    notes: 'DEFAULT model. Fast + 720p at $0.015/video.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 FAST FULL HD (GeminiGen.AI) - Fast + 1080p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 1080p, $0.015/video
+  // ==========================================================================
+  'veo-3.1-fast-fhd': {
+    key: 'veo-3.1-fast-fhd',
+    displayName: 'VEO 3.1 Fast FHD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1-fast',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '1080p' },
+      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.015,
+    strengths: ['Fast + 1080p Full HD', 'Good lip-sync', 'Budget-friendly ($0.015)', 'Native audio'],
+    weaknesses: ['8s fixed duration'],
+    bestFor: ['Full HD output at low cost', 'CREATOR segments'],
+    enabled: true,
+    notes: 'Fast variant + 1080p at $0.015/video.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 HD (GeminiGen.AI) - Premium quality, 720p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 720p, $0.50/video
   // ==========================================================================
   'veo-3.1-hd': {
     key: 'veo-3.1-hd',
@@ -163,31 +225,92 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     defaultDuration: 8,
     maxDuration: 8,
     resolutions: {
-      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
       '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
     },
     aspectRatios: {
       '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '16:9': { apiValue: '16:9', maxResolution: '720p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.50,
+    strengths: ['Premium lip-sync quality', 'Native audio', 'Best voice consistency'],
+    weaknesses: ['Expensive ($0.50)', '8s fixed', '720p only'],
+    bestFor: ['Premium CREATOR shots', 'Hero content', 'High-value segments'],
+    enabled: true,
+    notes: 'Premium VEO 3.1 + 720p at $0.50/video.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 FULL HD (GeminiGen.AI) - Premium quality, 1080p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 1080p, $0.50/video
+  // ==========================================================================
+  'veo-3.1-fhd': {
+    key: 'veo-3.1-fhd',
+    displayName: 'VEO 3.1 FHD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '1080p' },
       '16:9': { apiValue: '16:9', maxResolution: '1080p' },
     },
     refImageParam: 'ref_images',
     dialogueLimits: { 8: 14 },
     costPerVideo: 0.50,
-    strengths: ['Best lip-sync quality', 'Native audio generation', 'Voice consistency', 'HD 1080p output'],
-    weaknesses: ['More expensive ($0.50)', '8s fixed duration', '9:16 only 720p'],
-    bestFor: ['CREATOR segments (HOOK, CTA)', 'Talking head videos', 'Premium quality production'],
+    strengths: ['Best quality', '1080p Full HD', 'Premium lip-sync', 'Native audio'],
+    weaknesses: ['Most expensive ($0.50)', '8s fixed'],
+    bestFor: ['Top-tier production', 'Hero HOOK/CTA shots', 'Premium content'],
     enabled: true,
-    notes: 'PRIMARY for lip-sync quality. Uses webhook for status updates via GeminiGen.AI.',
+    notes: 'Premium VEO 3.1 + 1080p at $0.50/video.',
   },
 
   // ==========================================================================
-  // VEO 3.1 FAST (GeminiGen.AI) - Fast generation, good lip-sync
-  // DEFAULT model for cost-effective production
-  // Docs: https://docs.geminigen.ai - Duration 8s fixed
+  // GROK 3 (GeminiGen.AI) - Aurora engine, flexible durations
+  // Endpoint: POST https://api.geminigen.ai/uapi/v1/video-gen/grok
+  // Durations: 6s, 10s, 15s | Resolution: 480p, 720p | $0.015/video
+  // ==========================================================================
+  'grok-3': {
+    key: 'grok-3',
+    displayName: 'Grok 3',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/grok',
+    apiModelName: 'grok-3',
+    supportedDurations: [6, 10, 15],
+    defaultDuration: 6,
+    maxDuration: 15,
+    resolutions: {
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+      '480p': { apiValue: '480p', dimensions: { width: 854, height: 480 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: 'portrait',   maxResolution: '720p' },
+      '16:9': { apiValue: 'landscape',  maxResolution: '720p' },
+      '1:1':  { apiValue: 'square',     maxResolution: '720p' },
+    },
+    refImageParam: 'file_urls',
+    dialogueLimits: { 6: 10, 10: 15, 15: 25 },
+    costPerVideo: 0.015,
+    strengths: ['Flexible duration (6/10/15s)', 'Native SFX + audio', 'Fast generation', 'Budget-friendly ($0.015)'],
+    weaknesses: ['Max 720p', 'Motion-only prompts required'],
+    bestFor: ['B-ROLL segments', 'Dynamic motion', 'Flexible duration needs'],
+    enabled: true,
+    extraFormParams: { mode: 'custom' },
+    notes: 'Grok 3 Aurora engine via GeminiGen.AI. $0.015/video. Uses webhook.',
+  },
+
+  // ==========================================================================
+  // LEGACY ALIAS — kept for backward compatibility
   // ==========================================================================
   'veo-3.1-fast': {
     key: 'veo-3.1-fast',
-    displayName: 'VEO 3.1 Fast',
+    displayName: 'VEO 3.1 Fast HD',
     provider: 'geminigen',
     endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
     apiModelName: 'veo-3.1-fast',
@@ -195,21 +318,20 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     defaultDuration: 8,
     maxDuration: 8,
     resolutions: {
-      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
       '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
     },
     aspectRatios: {
       '9:16': { apiValue: '9:16', maxResolution: '720p' },
-      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+      '16:9': { apiValue: '16:9', maxResolution: '720p' },
     },
     refImageParam: 'ref_images',
     dialogueLimits: { 8: 14 },
-    costPerVideo: 0.19,
-    strengths: ['Fast generation', 'Good lip-sync', 'Cost effective ($0.19)', 'Native audio'],
-    weaknesses: ['Max 720p for 9:16', '8s fixed duration'],
-    bestFor: ['High volume production', 'B-ROLL with voiceover', 'Quick turnaround', 'Budget-conscious projects'],
+    costPerVideo: 0.015,
+    strengths: ['Fast generation', 'Budget-friendly ($0.015)'],
+    weaknesses: ['720p only', '8s fixed'],
+    bestFor: ['General use'],
     enabled: true,
-    notes: 'DEFAULT model for cost-effective production. Good lip-sync at lower cost.',
+    notes: 'Legacy alias → use veo-3.1-fast-hd.',
   },
 };
 
@@ -1166,7 +1288,14 @@ export function buildVideoFormData(
   if (params.referenceImageUrl && model.refImageParam) {
     formData.append(model.refImageParam, params.referenceImageUrl);
   }
-  
+
+  // Add any extra static params defined in model config (e.g. mode=custom for Grok)
+  if (model.extraFormParams) {
+    for (const [k, v] of Object.entries(model.extraFormParams)) {
+      formData.append(k, v);
+    }
+  }
+
   return formData;
 }
 
@@ -1233,8 +1362,8 @@ export function selectVideoModel(params: {
     return VIDEO_MODELS['sora-2'];
   }
   
-  // Default: VEO 3.1 Fast (best lip-sync, up to 8s)
-  return VIDEO_MODELS['veo-3.1-fast'];
+  // Default: VEO 3.1 Fast HD (best value, $0.015/video)
+  return VIDEO_MODELS['veo-3.1-fast-hd'];
 }
 
 /**

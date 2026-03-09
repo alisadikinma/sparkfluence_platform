@@ -1,313 +1,817 @@
-import React from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
-  Plane,
-  CheckCircle,
-  AlertTriangle,
-  XCircle,
-  Clock,
-  Play,
-  ArrowLeft,
-  ArrowRight,
-  Loader2,
-  Video,
+  Play, Loader2, Video, RefreshCw, AlertTriangle,
+  CheckCircle2, LayoutList, List, LayoutGrid, Columns2,
+  Clapperboard, ChevronDown, Sparkles, Download,
 } from 'lucide-react';
+import { useWorkspace, type WorkspaceSegment } from '../../../contexts/WorkspaceContext';
+import { useAuth } from '../../../contexts/AuthContext';
+import { useParams } from 'react-router-dom';
+import { supabase } from '../../../lib/supabase';
 
-// Types
-interface PreFlightItem {
-  id: string;
-  label: string;
-  status: 'pass' | 'warn' | 'fail' | 'pending';
-  detail: string;
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-interface VideoSegment {
-  id: string;
-  segmentNumber: number;
-  segmentType: string;
-  hasVideo: boolean;
-  progress: number;
-}
-
-interface VideoStepShellProps {
-  segmentCount?: number;
-  videosGenerated?: number;
-  onGenerateAll?: () => void;
-  isGenerating?: boolean;
-  canGenerate?: boolean;
-  preFlightItems?: PreFlightItem[];
-  allPreFlightPassed?: boolean;
-  children?: React.ReactNode;
-  onPrevStep?: () => void;
-  onNextStep?: () => void;
-  canNext?: boolean;
-}
-
-// Mock data
-const MOCK_PREFLIGHT: PreFlightItem[] = [
-  { id: 'hook', label: 'Hook', status: 'pass', detail: 'Strong' },
-  { id: 'pacing', label: 'Pacing', status: 'pass', detail: 'Fast' },
-  { id: 'cta', label: 'CTA', status: 'pass', detail: 'Included' },
-  { id: 'images', label: 'Images', status: 'pass', detail: '7/7' },
-  { id: 'duration', label: 'Duration', status: 'pass', detail: '60s' },
-  { id: 'script', label: 'Script', status: 'pass', detail: 'Confirmed' },
-];
-
-const MOCK_VIDEO_SEGMENTS: VideoSegment[] = [
-  { id: '1', segmentNumber: 1, segmentType: 'HOOK', hasVideo: true, progress: 100 },
-  { id: '2', segmentNumber: 2, segmentType: 'FORE', hasVideo: true, progress: 100 },
-  { id: '3', segmentNumber: 3, segmentType: 'BODY-1', hasVideo: false, progress: 65 },
-  { id: '4', segmentNumber: 4, segmentType: 'BODY-2', hasVideo: false, progress: 0 },
-  { id: '5', segmentNumber: 5, segmentType: 'PEAK', hasVideo: false, progress: 0 },
-  { id: '6', segmentNumber: 6, segmentType: 'CTA', hasVideo: false, progress: 0 },
-  { id: '7', segmentNumber: 7, segmentType: 'LOOP-END', hasVideo: false, progress: 0 },
-];
-
-// Pre-Flight Badge Component
-const PreFlightBadge: React.FC<{ item: PreFlightItem }> = ({ item }) => {
-  const getStatusStyles = () => {
-    switch (item.status) {
-      case 'pass':
-        return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-      case 'warn':
-        return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-      case 'fail':
-        return 'bg-red-500/10 text-red-400 border-red-500/20';
-      case 'pending':
-        return 'bg-[#262626] text-[#57534E] border-[#262626]';
-      default:
-        return 'bg-[#262626] text-[#57534E] border-[#262626]';
-    }
-  };
-
-  const getStatusIcon = () => {
-    switch (item.status) {
-      case 'pass':
-        return <CheckCircle className="w-3.5 h-3.5" />;
-      case 'warn':
-        return <AlertTriangle className="w-3.5 h-3.5" />;
-      case 'fail':
-        return <XCircle className="w-3.5 h-3.5" />;
-      case 'pending':
-        return <Clock className="w-3.5 h-3.5" />;
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <div
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border ${getStatusStyles()}`}
-    >
-      {getStatusIcon()}
-      <span className="font-semibold">{item.label}:</span>
-      <span>{item.detail}</span>
-    </div>
-  );
+const segmentTypeColor = (segmentType: string) => {
+  if (segmentType === 'HOOK' || segmentType === 'PEAK')
+    return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+  if (segmentType === 'CTA')
+    return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+  if (segmentType === 'LOOP-END')
+    return 'bg-neutral-700/50 text-neutral-400 border-neutral-700';
+  return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
 };
 
-// Video Segment Card Component
-const VideoSegmentCard: React.FC<{ segment: VideoSegment }> = ({ segment }) => {
-  return (
-    <div className="bg-[#161616] rounded-xl border border-[#262626] overflow-hidden group hover:border-emerald-500/30 transition-colors">
-      {/* 9:16 Aspect Ratio Container */}
-      <div className="relative w-full" style={{ paddingBottom: '177.78%' }}>
-        {/* Content positioned absolutely */}
-        <div className="absolute inset-0 flex flex-col">
-          {/* Header */}
-          <div className="p-3 border-b border-[#262626]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-[#A8A29E]">
-                Segment {segment.segmentNumber}
-              </span>
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                {segment.segmentType}
-              </span>
-            </div>
-          </div>
+// ─── Shared: video/image thumbnail ───────────────────────────────────────────
 
-          {/* Video Preview Area */}
-          <div className="flex-1 relative bg-gradient-to-br from-[#1E1E1E] via-[#161616] to-[#0B0E14] flex items-center justify-center">
-            {segment.hasVideo ? (
-              <>
-                {/* Play Button Overlay */}
-                <button className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition-all transform hover:scale-105 group-hover:shadow-emerald-500/40">
-                  <Play className="w-7 h-7 text-white fill-white ml-1" />
-                </button>
-                <div className="absolute top-3 right-3">
-                  <CheckCircle className="w-5 h-5 text-emerald-400" />
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-col items-center gap-2">
-                <Video className="w-10 h-10 text-[#57534E]" />
-                <span className="text-xs text-[#78716C]">
-                  {segment.progress > 0 ? 'Generating...' : 'Not generated'}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Progress Bar */}
-          {segment.progress > 0 && (
-            <div className="h-1 bg-[#262626]">
-              <div
-                className="h-full bg-emerald-500 transition-all duration-300"
-                style={{ width: `${segment.progress}%` }}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Main Component
-const VideoStep: React.FC<VideoStepShellProps> = ({
-  segmentCount = 7,
-  videosGenerated = 2,
-  onGenerateAll,
-  isGenerating = false,
-  canGenerate = true,
-  preFlightItems = MOCK_PREFLIGHT,
-  allPreFlightPassed = true,
-  children,
-  onPrevStep,
-  onNextStep,
-  canNext = false,
-}) => {
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-[#FAFAF9]">Video Generation</h2>
-          <span className="px-3 py-1 rounded-full bg-[#161616] border border-[#262626] text-sm font-medium text-[#A8A29E]">
-            {videosGenerated}/{segmentCount} done
-          </span>
-        </div>
-
-        <button
-          onClick={onGenerateAll}
-          disabled={!canGenerate || !allPreFlightPassed || isGenerating}
-          className="px-6 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-[#262626] disabled:text-[#57534E] disabled:cursor-not-allowed text-white font-medium transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 disabled:shadow-none"
-        >
-          {isGenerating ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Video className="w-4 h-4" />
-              Generate All
-            </>
-          )}
-        </button>
-      </div>
-
-      {/* Pre-Flight Checklist Banner */}
-      <div className="bg-[#161616] rounded-xl border border-[#262626] p-5 mb-6">
-        <div className="flex items-start gap-4">
-          <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-            <Plane className="w-5 h-5 text-emerald-400" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-[#FAFAF9] mb-3">
-              Ready to Generate?
-            </h3>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {preFlightItems.map((item) => (
-                <PreFlightBadge key={item.id} item={item} />
-              ))}
-            </div>
-            {allPreFlightPassed && (
-              <div className="flex items-center gap-2 text-sm font-medium text-emerald-400">
-                <CheckCircle className="w-4 h-4" />
-                <span className="drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-                  All checks passed!
-                </span>
-              </div>
-            )}
-            {!allPreFlightPassed && (
-              <div className="flex items-center gap-2 text-sm font-medium text-amber-400">
-                <AlertTriangle className="w-4 h-4" />
-                <span>Please resolve issues before generating videos</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Scrollable Content Area */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Skeleton Video Preview (when generating) */}
-        {isGenerating && (
-          <div className="mb-6 bg-[#161616] rounded-xl border border-[#262626] p-6">
-            <div className="flex flex-col items-center gap-4">
-              {/* 9:16 Preview Container */}
-              <div
-                className="relative bg-gradient-to-br from-[#1E1E1E] via-emerald-500/5 to-[#0B0E14] rounded-lg overflow-hidden border border-emerald-500/20"
-                style={{ width: '280px', height: '497px' }}
-              >
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center">
-                    <Loader2 className="w-12 h-12 text-emerald-500 animate-spin mx-auto mb-3" />
-                    <p className="text-sm font-medium text-[#A8A29E]">
-                      Storyboard Preview
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress Info */}
-              <div className="w-full max-w-md">
-                <p className="text-sm font-medium text-[#FAFAF9] mb-2 text-center">
-                  Currently generating: Segment 3 of {segmentCount}
-                </p>
-                <div className="h-2 bg-[#262626] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
-                    style={{ width: '43%' }}
-                  />
-                </div>
-              </div>
-            </div>
+const SegmentThumbnail: React.FC<{
+  seg: WorkspaceSegment;
+  className?: string;
+  onPlay?: () => void;
+}> = ({ seg, className = '', onPlay }) => {
+  if (seg.imageUrl) {
+    return (
+      <div className={`relative overflow-hidden ${className}`}>
+        <img src={seg.imageUrl} alt="" className="w-full h-full object-cover" />
+        {seg.isGeneratingVideo && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <Loader2 className="w-7 h-7 text-emerald-400 animate-spin" />
           </div>
         )}
+        {seg.videoUrl && !seg.isGeneratingVideo && (
+          <button
+            onClick={onPlay}
+            className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/55 transition-colors"
+          >
+            <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg">
+              <Play className="w-3.5 h-3.5 text-white fill-white ml-0.5" />
+            </div>
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (seg.isGeneratingVideo) {
+    return (
+      <div className={`bg-gradient-to-br from-[#1E1E1E] via-emerald-500/5 to-[#0B0E14] flex items-center justify-center ${className}`}>
+        <Loader2 className="w-6 h-6 text-emerald-500 animate-spin" />
+      </div>
+    );
+  }
+  return (
+    <div className={`bg-gradient-to-br from-[#1E1E1E] to-[#0B0E14] flex items-center justify-center ${className}`}>
+      <Video className="w-5 h-5 text-[#3D3D3D]" />
+    </div>
+  );
+};
 
-        {/* Video Segment Cards Grid */}
-        {children || (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pb-6">
-            {MOCK_VIDEO_SEGMENTS.map((segment) => (
-              <VideoSegmentCard key={segment.id} segment={segment} />
+// ─── Video preview modal ──────────────────────────────────────────────────────
+const VideoPreviewModal: React.FC<{
+  videoUrl: string;
+  onClose: () => void;
+}> = ({ videoUrl, onClose }) => (
+  <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
+    <div className="relative max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
+      <video
+        src={videoUrl}
+        controls
+        autoPlay
+        className="w-full rounded-xl shadow-2xl"
+        style={{ maxHeight: '80vh' }}
+      />
+      <div className="flex gap-2 mt-3">
+        <a
+          href={videoUrl}
+          download
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-medium transition-colors"
+        >
+          <Download className="w-4 h-4" /> Download
+        </a>
+        <button
+          onClick={onClose}
+          className="px-4 py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-sm transition-colors"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
+// ─── Full view card ───────────────────────────────────────────────────────────
+
+const FullCard: React.FC<{
+  seg: WorkspaceSegment;
+  index: number;
+  twoCol: boolean;
+  onGenerate: (id: string) => void;
+}> = ({ seg, index, twoCol, onGenerate }) => {
+  const isDone = !!seg.videoUrl;
+  const isGen = seg.isGeneratingVideo;
+  const hasImage = !!seg.imageUrl;
+
+  return (
+    <div className={`bg-[#161616] border rounded-xl overflow-hidden transition-colors ${
+      isDone ? 'border-emerald-500/20' : isGen ? 'border-emerald-500/30' : 'border-[#262626]'
+    }`}>
+      <div className={`flex gap-4 p-4 ${twoCol ? 'flex-col' : 'flex-col sm:flex-row'}`}>
+        {/* Thumbnail */}
+        <SegmentThumbnail
+          seg={seg}
+          className={`rounded-lg flex-shrink-0 ${twoCol ? 'w-full aspect-video' : 'w-28 h-[198px]'}`}
+        />
+
+        {/* Info */}
+        <div className="flex-1 min-w-0 flex flex-col gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-[#A8A29E]">Segment {index + 1}</span>
+            <span className={`px-2 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
+              {seg.segmentType}
+            </span>
+            <span className="text-xs text-[#57534E]">{seg.durationSeconds}s</span>
+          </div>
+
+          <p className="text-sm text-[#FAFAF9] line-clamp-3">{seg.script || '—'}</p>
+
+          {/* Status row */}
+          <div className="flex items-center gap-2 mt-auto pt-1 flex-wrap">
+            {isDone && (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Generated
+              </span>
+            )}
+            {isGen && (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium animate-pulse">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating...
+              </span>
+            )}
+            {!hasImage && !isGen && (
+              <span className="text-xs text-[#57534E]">Generate gambar dulu di step Images</span>
+            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              {isDone && (
+                <button
+                  onClick={() => onGenerate(seg.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#262626] bg-[#1E1E1E] hover:bg-[#262626] text-neutral-400 text-xs font-medium transition-colors"
+                >
+                  <RefreshCw className="w-3 h-3" /> Regenerate
+                </button>
+              )}
+              {!isDone && !isGen && hasImage && (
+                <button
+                  onClick={() => onGenerate(seg.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium transition-colors"
+                >
+                  <Video className="w-3 h-3" /> Generate
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Compact view row ─────────────────────────────────────────────────────────
+
+const CompactRow: React.FC<{
+  seg: WorkspaceSegment;
+  index: number;
+  onGenerate: (id: string) => void;
+}> = ({ seg, index, onGenerate }) => {
+  const isDone = !!seg.videoUrl;
+  const isGen = seg.isGeneratingVideo;
+  const [showPreview, setShowPreview] = useState(false);
+
+  return (
+    <>
+      <div className={`flex items-center gap-3 bg-[#161616] border rounded-xl px-4 py-2.5 transition-colors ${
+        isDone ? 'border-emerald-500/20' : isGen ? 'border-emerald-500/30' : 'border-[#262626] hover:border-neutral-600'
+      }`}>
+        <SegmentThumbnail seg={seg} className="w-9 h-[64px] rounded-lg flex-shrink-0" onPlay={() => setShowPreview(true)} />
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-xs text-[#A8A29E]">Seg {index + 1}</span>
+            <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
+              {seg.segmentType}
+            </span>
+            <span className="text-xs text-[#57534E]">{seg.durationSeconds}s</span>
+          </div>
+          <p className="text-sm text-[#FAFAF9] truncate">{seg.script || '—'}</p>
+        </div>
+
+        <div className="flex-shrink-0 flex items-center gap-2">
+          {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+          {isGen && <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />}
+          {isDone && seg.videoUrl && (
+            <a href={seg.videoUrl} download className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors" title="Download">
+              <Download className="w-3.5 h-3.5" />
+            </a>
+          )}
+          {isDone && (
+            <button onClick={() => onGenerate(seg.id)} className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors" title="Regenerate">
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!isDone && !isGen && seg.imageUrl && (
+            <button onClick={() => onGenerate(seg.id)} className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-medium transition-colors flex items-center gap-1.5">
+              <Video className="w-3 h-3" /> Generate
+            </button>
+          )}
+          {!isDone && !isGen && !seg.imageUrl && (
+            <span className="text-xs text-[#57534E]">No image</span>
+          )}
+        </div>
+      </div>
+      {showPreview && seg.videoUrl && <VideoPreviewModal videoUrl={seg.videoUrl} onClose={() => setShowPreview(false)} />}
+    </>
+  );
+};
+
+// ─── Grid view card ───────────────────────────────────────────────────────────
+
+const GridCard: React.FC<{
+  seg: WorkspaceSegment;
+  index: number;
+  onGenerate: (id: string) => void;
+}> = ({ seg, index, onGenerate }) => {
+  const isDone = !!seg.videoUrl;
+  const isGen = seg.isGeneratingVideo;
+
+  return (
+    <div className={`bg-[#161616] rounded-xl border overflow-hidden group transition-colors ${
+      isDone ? 'border-emerald-500/30' : isGen ? 'border-emerald-500/40' : 'border-[#262626] hover:border-neutral-600'
+    }`}>
+      <div className="relative w-full" style={{ paddingBottom: '177.78%' }}>
+        <div className="absolute inset-0 flex flex-col">
+          {/* Header */}
+          <div className="p-2.5 border-b border-[#262626] bg-[#161616]/90 backdrop-blur-sm z-10">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-[#A8A29E]">Seg {index + 1}</span>
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
+                {seg.segmentType}
+              </span>
+            </div>
+          </div>
+
+          {/* Thumbnail */}
+          <SegmentThumbnail seg={seg} className="flex-1" />
+
+          {/* Hover overlay: generate */}
+          {!isDone && !isGen && seg.imageUrl && (
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 z-20">
+              <button
+                onClick={() => onGenerate(seg.id)}
+                className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-medium flex items-center gap-2"
+              >
+                <Video className="w-4 h-4" /> Generate
+              </button>
+            </div>
+          )}
+
+          {/* Done badge */}
+          {isDone && (
+            <div className="absolute top-8 right-2 z-10">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 drop-shadow" />
+            </div>
+          )}
+
+          {!isDone && !isGen && !seg.imageUrl && (
+            <div className="absolute bottom-3 inset-x-0 flex justify-center z-10">
+              <span className="text-xs text-[#57534E]">No image</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+const VideoStep: React.FC = () => {
+  const { state, dispatch } = useWorkspace();
+  const { user } = useAuth();
+  const { orderId: paramOrderId } = useParams<{ orderId: string }>();
+  const orderId = paramOrderId || state.orderId;
+
+  const [viewMode, setViewMode] = useState<'full' | 'compact' | 'grid'>(() => {
+    try { return (localStorage.getItem('sf_video_view') as any) || 'full'; } catch { return 'full'; }
+  });
+  const [fullViewColumns, setFullViewColumns] = useState<1 | 2>(() => {
+    try { return localStorage.getItem('sf_video_view_cols') === '2' ? 2 : 1; } catch { return 1; }
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [videoModel, setVideoModel] = useState<'veo-3.1-fast-hd' | 'veo-3.1-fast-fhd' | 'veo-3.1-hd' | 'veo-3.1-fhd' | 'grok-3'>('veo-3.1-fast-hd');
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const retryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingJobQueueRef = useRef<Array<{ id: string; segment_number: number }>>([]);
+  const submitNextJobRef = useRef<() => Promise<void>>();
+
+  const segments = state.segments;
+  const settings = state.settings;
+
+  const enabledSegments = useMemo(() => segments.filter(s => s.isEnabled !== false), [segments]);
+  const videosGenerated = useMemo(() => enabledSegments.filter(s => s.videoUrl).length, [enabledSegments]);
+  const totalDuration = useMemo(() => segments.reduce((sum, s) => sum + s.durationSeconds, 0), [segments]);
+  const allHaveVideos = videosGenerated === enabledSegments.length && enabledSegments.length > 0;
+  const canGenerateVideo = enabledSegments.length > 0 && enabledSegments.every(s => s.imageUrl);
+  const isAnyGenerating = segments.some(s => s.isGeneratingVideo) || isSubmitting;
+
+  // ── Close model dropdown on outside click ────────────────────────────────────
+  useEffect(() => {
+    if (!showModelDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setShowModelDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showModelDropdown]);
+
+  // ── Sync job status from DB (on mount + manual refresh) ─────────────────────
+  const syncJobStatusFromDB = useCallback(async () => {
+    if (!orderId || !user) return;
+    const { data: jobs } = await supabase
+      .from('video_generation_jobs')
+      .select('id, segment_id, segment_number, status, video_url, error_message')
+      .eq('session_id', orderId)
+      .order('segment_number', { ascending: true });
+
+    if (!jobs?.length) return;
+    console.log(`[VideoStep] Syncing ${jobs.length} jobs from DB`);
+
+    for (const job of jobs) {
+      const seg = segments.find(s => s.id === job.segment_id || s.segmentNumber === job.segment_number);
+      if (!seg) continue;
+
+      if (job.status === 2 && job.video_url && !seg.videoUrl) {
+        dispatch({ type: 'SET_SEGMENT_VIDEO', segmentId: seg.id, videoUrl: job.video_url });
+      } else if (job.status === 3 && !seg.videoError && !seg.videoUrl) {
+        dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId: seg.id, error: job.error_message || 'Generation failed' });
+      } else if (job.status === 1 && !seg.isGeneratingVideo && !seg.videoUrl) {
+        dispatch({ type: 'SET_SEGMENT_GENERATING_VIDEO', segmentId: seg.id, isGenerating: true });
+      }
+    }
+  }, [orderId, user, segments, dispatch]);
+
+  // Sync on mount
+  useEffect(() => {
+    syncJobStatusFromDB();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId, user]);
+
+  // ── Supabase Realtime: subscribe immediately when orderId available ───────────
+  // Webhook updates video_generation_jobs → Realtime pushes to frontend → no polling needed
+  const segmentsRef = useRef(segments);
+  useEffect(() => { segmentsRef.current = segments; }, [segments]);
+
+  useEffect(() => {
+    if (!orderId || !user) return;
+    if (realtimeChannelRef.current) return;
+
+    const channel = supabase
+      .channel(`video-jobs-${orderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'video_generation_jobs',
+          filter: `session_id=eq.${orderId}`,
+        },
+        (payload) => {
+          const job = payload.new as any;
+          if (!job) return;
+          const currentSegments = segmentsRef.current;
+
+          if (job.status === 2 && job.video_url) {
+            const seg = currentSegments.find(
+              s => s.id === job.segment_id || s.segmentNumber === job.segment_number
+            );
+            if (seg) {
+              dispatch({ type: 'SET_SEGMENT_VIDEO', segmentId: seg.id, videoUrl: job.video_url });
+              console.log(`[VideoStep] ✅ Video ready: ${seg.segmentType} → ${job.video_url.substring(0, 60)}`);
+            }
+            submitNextJobRef.current?.();
+          } else if (job.status === 3) {
+            const seg = currentSegments.find(
+              s => s.id === job.segment_id || s.segmentNumber === job.segment_number
+            );
+            if (seg) {
+              dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId: seg.id, error: job.error_message || 'Generation failed' });
+              console.error(`[VideoStep] ❌ Video failed: ${seg.segmentType}`);
+            }
+            submitNextJobRef.current?.();
+          }
+        }
+      )
+      .subscribe();
+
+    realtimeChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      realtimeChannelRef.current = null;
+    };
+  }, [orderId, user, dispatch]);
+
+  // Cleanup realtime when all done
+  useEffect(() => {
+    const allDone = enabledSegments.every(s => s.videoUrl || s.videoError);
+    if (allDone && realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
+    }
+  }, [enabledSegments]);
+
+  // ── Auto-retry failed jobs every 15 minutes ──────────────────────────────────
+  useEffect(() => {
+    if (!orderId || !user) return;
+
+    const retryFailed = async () => {
+      const failedSegments = enabledSegments.filter(s => s.videoError && !s.videoUrl);
+      if (failedSegments.length === 0) return;
+
+      console.log(`[VideoStep] Auto-retry: ${failedSegments.length} failed segment(s)`);
+
+      for (const seg of failedSegments) {
+        // Reset error state → mark as generating
+        dispatch({ type: 'SET_SEGMENT_GENERATING_VIDEO', segmentId: seg.id, isGenerating: true });
+
+        try {
+          // Reset job status to pending in DB
+          await supabase
+            .from('video_generation_jobs')
+            .update({ status: 0, error_message: null, veo_uuid: null, video_url: null })
+            .eq('session_id', orderId)
+            .eq('segment_id', seg.id);
+
+          // Re-submit
+          const { data: jobData } = await supabase
+            .from('video_generation_jobs')
+            .select('id')
+            .eq('session_id', orderId)
+            .eq('segment_id', seg.id)
+            .single();
+
+          if (jobData?.id) {
+            await supabase.functions.invoke('generate-videos', {
+              body: { mode: 'process_single', job_id: jobData.id },
+            });
+            console.log(`[VideoStep] 🔄 Retried: ${seg.segmentType} (job ${jobData.id})`);
+          }
+        } catch (err) {
+          console.error(`[VideoStep] Retry failed for ${seg.segmentType}:`, err);
+          dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId: seg.id, error: 'Retry failed' });
+        }
+      }
+    };
+
+    // Start interval only if there are failed segments
+    const hasFailed = enabledSegments.some(s => s.videoError && !s.videoUrl);
+    if (hasFailed && !retryIntervalRef.current) {
+      retryIntervalRef.current = setInterval(retryFailed, 15 * 60 * 1000); // 15 min
+    }
+    if (!hasFailed && retryIntervalRef.current) {
+      clearInterval(retryIntervalRef.current);
+      retryIntervalRef.current = null;
+    }
+
+    return () => {
+      if (retryIntervalRef.current) {
+        clearInterval(retryIntervalRef.current);
+        retryIntervalRef.current = null;
+      }
+    };
+  }, [orderId, user, enabledSegments, dispatch]);
+
+  const setViewModeAndPersist = useCallback((mode: 'full' | 'compact' | 'grid') => {
+    setViewMode(mode);
+    localStorage.setItem('sf_video_view', mode);
+  }, []);
+
+  const setFullViewColumnsAndPersist = useCallback((cols: 1 | 2) => {
+    setFullViewColumns(cols);
+    localStorage.setItem('sf_video_view_cols', String(cols));
+  }, []);
+
+  // ── Build segments payload for create_jobs ──────────────────────────────────
+  const buildSegmentsPayload = useCallback((segs: WorkspaceSegment[]) =>
+    segs.map((seg, i) => ({
+      segment_id: seg.id,
+      segment_number: i + 1,
+      segment_type: seg.segmentType,
+      shot_type: seg.shotType,
+      script_text: seg.script,
+      script: seg.script,
+      image_url: seg.imageUrl,
+      duration_seconds: seg.durationSeconds,
+      visual_direction: seg.visualDirection,
+    })), []);
+
+  // ── Submit pending jobs sequentially via process_single ──────────────────────
+  // Submit next job from queue (called after each job completes/fails via Realtime)
+  const submitNextJob = useCallback(async () => {
+    const next = pendingJobQueueRef.current.shift();
+    if (!next) return;
+
+    const seg = segments.find(s => s.segmentNumber === next.segment_number);
+    if (seg) dispatch({ type: 'SET_SEGMENT_GENERATING_VIDEO', segmentId: seg.id, isGenerating: true });
+
+    try {
+      const { data } = await supabase.functions.invoke('generate-videos', {
+        body: { mode: 'process_single', job_id: next.id },
+      });
+      console.log(`[VideoStep] ✅ Submitted job ${next.id}: ${data?.data?.job?.veo_uuid || 'no uuid yet'}`);
+      // Next job will be triggered by Realtime callback when this one completes
+    } catch (err) {
+      console.error(`[VideoStep] ❌ Failed to submit job ${next.id}:`, err);
+      if (seg) dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId: seg.id, error: 'Submit failed' });
+      // On submit error, proceed to next job immediately
+      await submitNextJobRef.current?.();
+    }
+  }, [segments, dispatch]);
+
+  // Keep ref in sync so Realtime callback always calls latest version
+  useEffect(() => { submitNextJobRef.current = submitNextJob; }, [submitNextJob]);
+
+  // Load pending jobs into queue and trigger first one
+  // Also resets failed (status=3) jobs back to pending so they get retried
+  const submitPendingJobs = useCallback(async (sessionId: string) => {
+    if (!user) return;
+
+    // Reset any failed jobs to pending so they're included
+    await supabase
+      .from('video_generation_jobs')
+      .update({ status: 0, error_message: null })
+      .eq('session_id', sessionId)
+      .eq('status', 3);
+
+    const { data: pendingData } = await supabase
+      .from('video_generation_jobs')
+      .select('id, segment_number')
+      .eq('session_id', sessionId)
+      .eq('status', 0)
+      .order('segment_number', { ascending: true });
+
+    const pending = pendingData || [];
+    console.log(`[VideoStep] Queued ${pending.length} jobs (sequential)`);
+    pendingJobQueueRef.current = pending;
+    await submitNextJobRef.current?.();
+  }, [user]);
+
+  // ── Generate All ─────────────────────────────────────────────────────────────
+  const handleGenerateAll = useCallback(async () => {
+    if (!user || !orderId || isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      const segmentsPayload = buildSegmentsPayload(enabledSegments);
+      const { data, error } = await supabase.functions.invoke('generate-videos', {
+        body: {
+          mode: 'create_jobs',
+          user_id: user.id,
+          session_id: orderId,
+          segments: segmentsPayload,
+          topic: state.topic || '',
+          language: settings?.language || 'indonesian',
+          aspect_ratio: settings?.aspectRatio || '9:16',
+          preferred_platform: videoModel,
+        },
+      });
+
+      if (error) throw error;
+      console.log(`[VideoStep] Created ${data?.data?.total_jobs} jobs (model: ${videoModel})`);
+
+      await submitPendingJobs(orderId);
+    } catch (err) {
+      console.error('[VideoStep] handleGenerateAll error:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [user, orderId, isSubmitting, enabledSegments, settings, state.topic, buildSegmentsPayload, submitPendingJobs]);
+
+  // ── Generate / Regenerate Single ─────────────────────────────────────────────
+  const handleGenerate = useCallback(async (segmentId: string) => {
+    if (!user || !orderId) return;
+    const seg = segments.find(s => s.id === segmentId);
+    if (!seg) return;
+
+    dispatch({ type: 'SET_SEGMENT_GENERATING_VIDEO', segmentId, isGenerating: true });
+
+    try {
+      // Reset existing job for this segment, then create fresh
+      const segPayload = buildSegmentsPayload([seg]);
+      const { data, error } = await supabase.functions.invoke('generate-videos', {
+        body: {
+          mode: 'create_jobs',
+          user_id: user.id,
+          session_id: orderId,
+          segments: segPayload,
+          topic: state.topic || '',
+          language: settings?.language || 'indonesian',
+          aspect_ratio: settings?.aspectRatio || '9:16',
+          preferred_platform: videoModel,
+        },
+      });
+      if (error) throw error;
+
+      const job = data?.data?.jobs?.[0];
+      if (job?.id) {
+        const { data: pd } = await supabase.functions.invoke('generate-videos', {
+          body: { mode: 'process_single', job_id: job.id },
+        });
+        console.log(`[VideoStep] ✅ Single job submitted: ${pd?.data?.job?.veo_uuid || job.id}`);
+      }
+    } catch (err) {
+      console.error('[VideoStep] handleGenerate error:', err);
+      dispatch({ type: 'SET_SEGMENT_VIDEO_ERROR', segmentId, error: 'Submit failed' });
+    }
+  }, [user, orderId, segments, settings, state.topic, buildSegmentsPayload, dispatch]);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Pre-flight alert (only shown if not ready) */}
+      {!canGenerateVideo && (
+        <div className="mb-4 flex items-center gap-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          <p className="text-sm text-amber-300">
+            Generate semua gambar di step Images terlebih dahulu.
+          </p>
+        </div>
+      )}
+
+      {/* ─── Header (same pattern as ImageStep) ─── */}
+      <div className="mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-white mb-1 line-clamp-2">
+              {state.topic || 'Video Generation'}
+            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-neutral-500 text-sm">
+                Durasi: {totalDuration}s
+                {settings && ` • ${settings.aspectRatio}`}
+                {` • ${videosGenerated}/${enabledSegments.length} videos`}
+              </p>
+
+              {/* View mode toggle */}
+              <div className="flex items-center gap-0.5 border border-[#262626] rounded-lg p-0.5">
+                <button
+                  onClick={() => setViewModeAndPersist('full')}
+                  className={`p-1.5 rounded transition-colors ${viewMode === 'full' ? 'bg-emerald-500 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                  title="Full View"
+                >
+                  <LayoutList className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setViewModeAndPersist('compact')}
+                  className={`p-1.5 rounded transition-colors ${viewMode === 'compact' ? 'bg-emerald-500 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                  title="Compact View"
+                >
+                  <List className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setViewModeAndPersist('grid')}
+                  className={`p-1.5 rounded transition-colors ${viewMode === 'grid' ? 'bg-emerald-500 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                  title="Grid View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Full view column toggle */}
+              {viewMode === 'full' && (
+                <div className="flex items-center gap-0.5 border-l border-[#262626] pl-1 ml-0.5">
+                  <button
+                    onClick={() => setFullViewColumnsAndPersist(1)}
+                    className={`p-1.5 rounded transition-colors ${fullViewColumns === 1 ? 'bg-emerald-500 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                    title="1 Column"
+                  >
+                    <LayoutList className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setFullViewColumnsAndPersist(2)}
+                    className={`p-1.5 rounded transition-colors ${fullViewColumns === 2 ? 'bg-emerald-500 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                    title="2 Columns"
+                  >
+                    <Columns2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Model selector + Generate All */}
+          <div className="flex gap-2">
+            {/* Video Model Dropdown */}
+            <div className="relative" ref={modelDropdownRef}>
+              <button
+                onClick={() => setShowModelDropdown(v => !v)}
+                className="h-10 px-3 flex items-center gap-2 border border-[#262626] rounded-lg text-neutral-300 hover:bg-[#1E1E1E] transition-colors text-sm"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span className="hidden sm:inline">
+                  {videoModel === 'veo-3.1-fast-hd' ? 'VEO 3.1 Fast HD' : videoModel === 'veo-3.1-fast-fhd' ? 'VEO 3.1 Fast FHD' : videoModel === 'veo-3.1-hd' ? 'VEO 3.1 HD' : videoModel === 'veo-3.1-fhd' ? 'VEO 3.1 FHD' : 'Grok 3'}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              {showModelDropdown && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-[#1E1E1E] border border-[#262626] rounded-xl shadow-xl z-[200] p-3">
+                  <p className="text-xs text-neutral-500 mb-2 px-1">Video Model</p>
+                  {([
+                    { key: 'veo-3.1-fast-hd',  label: 'VEO 3.1 Fast HD',  desc: '$0.015/video · 8s · 720p' },
+                    { key: 'veo-3.1-fast-fhd', label: 'VEO 3.1 Fast FHD', desc: '$0.015/video · 8s · 1080p' },
+                    { key: 'veo-3.1-hd',       label: 'VEO 3.1 HD',       desc: '$0.50/video · 8s · 720p premium' },
+                    { key: 'veo-3.1-fhd',      label: 'VEO 3.1 FHD',      desc: '$0.50/video · 8s · 1080p premium' },
+                    { key: 'grok-3',           label: 'Grok 3',            desc: '$0.015/video · 6–15s · Dynamic' },
+                  ] as const).map(({ key, label, desc }) => (
+                    <button
+                      key={key}
+                      onClick={() => { setVideoModel(key); setShowModelDropdown(false); }}
+                      className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex flex-col gap-0.5 ${
+                        videoModel === key ? 'bg-emerald-500/10 text-emerald-400' : 'text-neutral-300 hover:bg-neutral-800'
+                      }`}
+                    >
+                      <span className="font-medium">{label}</span>
+                      <span className="text-xs text-neutral-500">{desc}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          {/* Sync button */}
+          <button
+            onClick={syncJobStatusFromDB}
+            title="Sync status dari DB"
+            className="h-10 w-10 flex items-center justify-center rounded-lg border border-[#262626] text-neutral-400 hover:bg-[#1E1E1E] hover:text-neutral-200 transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+
+          {/* Generate All button */}
+          <button
+            onClick={handleGenerateAll}
+            disabled={!canGenerateVideo || isAnyGenerating}
+            className="h-10 px-5 font-medium flex items-center gap-2 rounded-lg text-white transition-colors disabled:opacity-40 bg-emerald-500 hover:bg-emerald-600 disabled:cursor-not-allowed"
+          >
+            {isAnyGenerating ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /><span>Generating...</span></>
+            ) : allHaveVideos ? (
+              <><RefreshCw className="w-4 h-4" /><span>Regenerate All</span></>
+            ) : (
+              <><Clapperboard className="w-4 h-4" /><span>Generate All ({enabledSegments.length - videosGenerated})</span></>
+            )}
+          </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Content ─── */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Compact view */}
+        {viewMode === 'compact' && (
+          <div className="space-y-1.5">
+            {enabledSegments.map((seg, i) => (
+              <CompactRow key={seg.id} seg={seg} index={i} onGenerate={handleGenerate} />
             ))}
           </div>
         )}
-      </div>
 
-      {/* Bottom Navigation */}
-      <div className="flex items-center justify-between pt-6 border-t border-[#262626] mt-6">
-        <button
-          onClick={onPrevStep}
-          className="px-5 py-2.5 rounded-lg bg-[#161616] hover:bg-[#1E1E1E] border border-[#262626] hover:border-[#404040] text-[#FAFAF9] font-medium transition-all flex items-center gap-2"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Images
-        </button>
+        {/* Grid view */}
+        {viewMode === 'grid' && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pb-6">
+            {enabledSegments.map((seg, i) => (
+              <GridCard key={seg.id} seg={seg} index={i} onGenerate={handleGenerate} />
+            ))}
+          </div>
+        )}
 
-        <button
-          onClick={onNextStep}
-          disabled={!canNext}
-          className="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-[#262626] disabled:text-[#57534E] disabled:cursor-not-allowed text-white font-medium transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 disabled:shadow-none"
-        >
-          Continue to Studio
-          <ArrowRight className="w-4 h-4" />
-        </button>
+        {/* Full view */}
+        {viewMode === 'full' && (
+          <div className={fullViewColumns === 2 ? 'grid grid-cols-1 xl:grid-cols-2 gap-5' : 'space-y-4'}>
+            {enabledSegments.map((seg, i) => (
+              <FullCard key={seg.id} seg={seg} index={i} twoCol={fullViewColumns === 2} onGenerate={handleGenerate} />
+            ))}
+          </div>
+        )}
+
+        {/* Empty state (shouldn't normally appear) */}
+        {enabledSegments.length === 0 && (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <Clapperboard className="w-12 h-12 text-[#3D3D3D]" />
+            <p className="text-sm text-[#57534E]">Tidak ada segment yang aktif</p>
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
 export default VideoStep;
-export type { VideoStepShellProps, PreFlightItem };

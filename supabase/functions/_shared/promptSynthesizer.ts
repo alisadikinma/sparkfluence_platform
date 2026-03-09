@@ -18,9 +18,12 @@ import {
   getCostumeByCategory,
   getCostumeCategoryKeys,
   getContextualCostume,
-  CTA_EMOTION_OVERRIDE,
   getHookExpression,
   getHookLighting,
+  getEnvironmentSpec,
+  resolveWardrobe,
+  getVariantSpec,
+  getVisualSynergy,
 } from './lookups/index.ts'
 
 // ============================================================================
@@ -424,7 +427,7 @@ Pick ONE category from the list. Output ONLY the category name.`
         console.warn(`[getContextualOutfitAsync] ⚠️ Invalid category from LLM: "${rawCategory}", using fallback`)
       }
     } else {
-      console.warn(`[getContextualOutfitAsync] LLM failed: ${geminiResult.error}`)
+      console.warn(`[getContextualOutfitAsync] LLM failed: ${llmResult.error}`)
     }
   } catch (llmErr) {
     console.warn(`[getContextualOutfitAsync] LLM error: ${llmErr}`)
@@ -489,9 +492,31 @@ Pick ONE category from the list. Output ONLY the category name.`
 }
 
 // ============================================================================
-// CREATOR PROMPT BUILDER v3.0 (2026-01-15)
-// - CTA emotion override: ALWAYS smile/friendly
-// - Uses imported CTA_EMOTION_OVERRIDE from lookups
+// TOPIC CATEGORY DETECTOR
+// Infers WARDROBE_LIBRARY key from free-text topic for wardrobe + environment
+// ============================================================================
+
+function _detectTopicCategory(topic: string): string {
+  const t = topic.toLowerCase()
+  if (/finance|invest|saham|bisnis keuangan|trading|crypto|bitcoin|forex|aset/.test(t)) return 'finance_investment'
+  if (/tech|teknologi|ai|coding|code|developer|software|digital|startup|aplikasi|app|data|cloud|cyber|programming/.test(t)) return 'tech_ai'
+  if (/health|fitness|olahraga|gym|diet|kesehatan|wellness|sport|workout|nutrisi/.test(t)) return 'health_fitness'
+  if (/food|cook|masak|makanan|kuliner|recipe|resep|restoran|cafe|makan/.test(t)) return 'food_cooking'
+  if (/edukasi|education|belajar|tutorial|tips|pelajaran|course|kelas|sekolah/.test(t)) return 'education_tutorial'
+  if (/bisnis|business|entrepreneur|founder|startup|marketing|brand|umkm/.test(t)) return 'business_startup'
+  if (/travel|wisata|trip|perjalanan|holiday|liburan|destinasi|backpacking/.test(t)) return 'lifestyle_travel'
+  if (/produktif|productivity|habit|rutinitas|focus|time management|kerja|work/.test(t)) return 'productivity_tools'
+  if (/design|kreatif|creative|seni|art|aesthetic|foto|fotografi|video|content creation/.test(t)) return 'creative_design'
+  if (/news|berita|politik|current event|ekonomi|sosial|viral|trending/.test(t)) return 'news_current_events'
+  if (/gaming|game|esport|gamer|streamer/.test(t)) return 'gaming_esports'
+  return 'default'
+}
+
+// ============================================================================
+// CREATOR PROMPT BUILDER v3.1 (2026-03-09)
+// - CTA: authority + urgency expression (not generic smile) for scroll-stopping CTAs
+// - HOOK: synergy matrix for hook+action combos, environment palette, wardrobe, variant camera
+// - HOOK + CTA: wardrobe resolved from topic category, environment from hook category
 // ============================================================================
 
 export interface CreatorPromptInput {
@@ -504,6 +529,9 @@ export interface CreatorPromptInput {
   refinementNotes?: string
   layout?: string       // 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center'
   hookCategory?: string // 'visual_shock' | 'negative_bias' | 'curiosity_gap' | 'relatability' | 'speed_value'
+  visualAction?: string // e.g. 'minum_dramatic', 'destruction', 'frozen_mid_action' — from visual_direction
+  topicCategory?: string // e.g. 'tech_ai', 'finance_investment' — for wardrobe + environment
+  variantOverride?: 'A' | 'B' | 'C' // Camera/lighting variant for anti-repetition (default A)
 }
 
 export interface CreatorPromptResult {
@@ -543,33 +571,53 @@ export async function buildCreatorPromptAsync(
 
   let emotionSpecs: { expression: string; body: string }
 
+  // ── HOOK: Apply synergy matrix (hook + visual action) if available ──────
+  const hookCat = input.hookCategory || 'visual_shock'
+  const visualAction = input.visualAction || ''
+  const synergy = (isHOOK && visualAction) ? getVisualSynergy(hookCat, visualAction) : null
+  const variant = input.variantOverride || 'A'
+  const variantSpec = (isHOOK || isCTA) ? getVariantSpec(hookCat, variant) : null
+
   if (isCTA) {
-    // CTA ALWAYS gets friendly/smile expression
+    // CTA: Authority + urgency energy — NOT just generic smile
+    // Direct eye contact, strong forward lean, hand gesture toward camera or CTA action
     emotionSpecs = {
-      expression: CTA_EMOTION_OVERRIDE.expression,
-      body: CTA_EMOTION_OVERRIDE.body
+      expression: 'direct confident eye contact, warm authoritative expression — approachable but urgent, slight genuine smile with purpose behind it',
+      body: 'strong forward lean toward camera, one hand raised in emphatic gesture or pointing directly at viewer — urgency energy, "this matters, act now" body language, open chest',
     }
-    console.log(`[buildCreatorPromptAsync] 😊 CTA emotion override applied: friendly smile`)
+    console.log(`[buildCreatorPromptAsync] ⚡ CTA authority+urgency override applied`)
   } else if (isHOOK) {
-    // HOOK gets hook-category-specific expression from HOOK_EXPRESSION_MAP
-    // Falls back to generic intensification if no hookCategory provided
-    const hookCat = input.hookCategory || 'visual_shock'
-    const hookExpr = getHookExpression(hookCat)
-    emotionSpecs = {
-      expression: hookExpr.promptPhrase,
-      body: `${hookExpr.gesture}, ${hookExpr.body}`,
+    if (synergy) {
+      // SYNERGY: hook + visual action combo → specific expression override
+      emotionSpecs = {
+        expression: synergy.expressionOverride,
+        body: synergy.poseOverride,
+      }
+      console.log(`[buildCreatorPromptAsync] 🎯 HOOK synergy applied: ${hookCat}:${visualAction}`)
+    } else {
+      // Standard HOOK expression from HOOK_EXPRESSION_MAP
+      const hookExpr = getHookExpression(hookCat)
+      emotionSpecs = {
+        expression: hookExpr.promptPhrase,
+        body: `${hookExpr.gesture}, ${hookExpr.body}`,
+      }
+      console.log(`[buildCreatorPromptAsync] 🎯 HOOK expression applied: category=${hookCat}`)
     }
-    console.log(`[buildCreatorPromptAsync] 🎯 HOOK expression applied: category=${hookCat}`)
   } else {
     emotionSpecs = emotionMap[input.emotion.toLowerCase()] || emotionMap.authority
   }
-  
-  // Hook-category-specific lighting (for HOOK segments only)
-  const hookLighting = isHOOK ? getHookLighting(input.hookCategory || 'visual_shock') : null
 
-  // Camera specs based on segment type
+  // Hook-category-specific lighting + environment (for HOOK + CTA segments)
+  const hookLighting = (isHOOK || isCTA) ? getHookLighting(hookCat) : null
+  const envSpec = (isHOOK || isCTA) ? getEnvironmentSpec(hookCat) : null
+
+  // Wardrobe: resolve from topicCategory + scene context in visualDirection
+  const topicCat = input.topicCategory || _detectTopicCategory(input.topic)
+  const wardrobeSpec = (isHOOK || isCTA) ? resolveWardrobe(topicCat, input.topic) : null
+
+  // Camera specs — HOOK/CTA use variant spec for anti-repetition
   const cameraMap: Record<string, string> = {
-    'HOOK': 'Close-up (CU), 85mm f/1.8, eye-level to slight low angle',
+    'HOOK': variantSpec ? variantSpec.camera : 'Close-up (CU), 85mm f/1.8, eye-level to slight low angle',
     'CTA': 'Close-up (CU), 85mm f/1.8, eye-level, engaging direct angle',
     'LOOP-END': 'Close-up (CU), 85mm f/1.8, matching HOOK composition',
     'BODY': 'Medium close-up (MCU), 50mm f/2.8, eye-level',
@@ -591,11 +639,31 @@ export async function buildCreatorPromptAsync(
   // Build prompt
   let prompt: string
   
+  // Build environment + wardrobe lines for HOOK/CTA
+  const lightingLine = (isHOOK || isCTA) && hookLighting
+    ? hookLighting.promptPhrase
+    : isCTA
+    ? 'Butterfly 2:1 ratio, 4000K neutral-warm, clean even light — broadcast-ready professional energy'
+    : 'Rembrandt 4:1 ratio, professional studio lighting'
+
+  const backgroundLine = envSpec
+    ? envSpec.promptPhrase
+    : isHOOK
+    ? `Slightly blurred contextual background with subtle visual element related to ${input.topic || 'content creation'} to create curiosity`
+    : `Modern setting appropriate for ${input.topic || 'content creation'}`
+
+  const composition = isHOOK
+    ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens'
+    : isCTA
+    ? 'Centered authority composition, direct eye contact, subject fills lower 70% of frame'
+    : 'Rule of thirds, subject positioned for visual balance'
+
   if (input.hasReferenceImage) {
     // CRITICAL: Must explicitly instruct to CHANGE outfit from reference image
     // Image edit models preserve original clothing unless explicitly told to change
-    const outfitInstruction = input.contextualOutfit
-      ? `IMPORTANT: Change the person's outfit to: ${input.contextualOutfit}. Do NOT keep the original clothing from reference.`
+    const resolvedOutfit = input.contextualOutfit || wardrobeSpec?.promptPhrase
+    const outfitInstruction = resolvedOutfit
+      ? `IMPORTANT: Change the person's outfit to: ${resolvedOutfit}. Do NOT keep the original clothing from reference.`
       : ''
 
     prompt = `The person from the reference image with ${emotionSpecs.expression}.
@@ -604,19 +672,19 @@ Pose: ${emotionSpecs.body}
 ${outfitInstruction}
 
 Camera: ${cameraSpecs}
-Composition: ${isHOOK ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens' : 'Rule of thirds, subject positioned for visual balance'}
+Composition: ${composition}
 
-Lighting: ${isHOOK && hookLighting ? hookLighting.promptPhrase : isCTA ? 'Butterfly 2:1 ratio, clean even light' : 'Rembrandt 4:1 ratio, professional studio lighting'}
-Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for maximum attention' : ''}
-Background: ${isHOOK ? 'Slightly blurred contextual background with subtle visual element related to ' + (input.topic || 'content creation') + ' to create curiosity' : 'Contextual for ' + (input.topic || 'content creation') + ', moderate depth blur'}
+Lighting: ${lightingLine}
+Color: Cinematic warm tones, Vision3 500T film stock look${(isHOOK || isCTA) ? ', rich saturation for maximum attention' : ''}
+Background: ${backgroundLine}
 
 Preserve ONLY: exact facial features, face shape, and skin tone from reference image.
 Do NOT preserve: clothing, accessories, or background from reference.${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}
-Style: Cinematic photorealistic, natural skin texture, high quality.${isHOOK ? ' Maximum visual impact, scroll-stopping energy.' : ''}
+Style: Cinematic photorealistic, natural skin texture, high quality.${(isHOOK || isCTA) ? ' Maximum visual impact, scroll-stopping energy.' : ''}
 Clean frame, no text overlays, no watermarks.`
 
   } else {
-    const outfitLine = input.contextualOutfit || 'smart casual professional attire'
+    const outfitLine = input.contextualOutfit || wardrobeSpec?.promptPhrase || 'smart casual professional attire'
 
     prompt = `A professional content creator with ${emotionSpecs.expression}.
 
@@ -624,13 +692,13 @@ Pose: ${emotionSpecs.body}
 Outfit: ${outfitLine}
 
 Camera: ${cameraSpecs}
-Composition: ${isHOOK ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens' : 'Rule of thirds, subject positioned for visual balance'}
+Composition: ${composition}
 
-Lighting: ${isHOOK && hookLighting ? hookLighting.promptPhrase : isCTA ? 'Butterfly 2:1 ratio, clean even light' : 'Rembrandt 4:1 ratio, professional studio lighting'}
-Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for maximum attention' : ''}
-Background: ${isHOOK ? 'Slightly blurred contextual background with subtle visual element related to ' + (input.topic || 'content creation') + ' to create curiosity' : 'Modern setting appropriate for ' + (input.topic || 'content creation')}
+Lighting: ${lightingLine}
+Color: Cinematic warm tones, Vision3 500T film stock look${(isHOOK || isCTA) ? ', rich saturation for maximum attention' : ''}
+Background: ${backgroundLine}
 
-Style: Cinematic photorealistic, natural skin texture, high quality.${isHOOK ? ' Maximum visual impact, scroll-stopping energy.' : ''}${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}
+Style: Cinematic photorealistic, natural skin texture, high quality.${(isHOOK || isCTA) ? ' Maximum visual impact, scroll-stopping energy.' : ''}${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}
 Clean frame, no text overlays, no watermarks.`
   }
 

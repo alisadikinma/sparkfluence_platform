@@ -311,6 +311,55 @@ ${visualActions.map(a => `• **${a.name}:** ${a.videoAction}
 3. Camera framing (extreme close-up, medium shot, POV — to reinforce the action)
 Example: "Creator frozen mid-bite eating raw onion, eyes snap to camera wide-open | Extreme close-up face | Rembrandt hard shadow lighting"
 
+---
+
+## 🎬 SCENE IMMERSION MANDATE — ALL 3 OPTIONS (A + B + C)
+
+**THIS IS THE MOST IMPORTANT RULE FOR visual_direction.**
+
+NEVER write "creator at desk", "creator in studio", "creator pointing at laptop", or any generic shot.
+The HOOK image must be MINDBLOWING and make the viewer stop scrolling.
+
+**FORMULA: [Creator as character in costume] + [Surreal world = topic made literal] + [Impossible props]**
+
+The creator is NOT talking ABOUT the topic — the creator IS INSIDE the topic as a surreal character.
+
+### TOPIC → WORLD TRANSLATION PATTERNS (use as inspiration):
+| Topic Category | Surreal Scene Concept |
+|---|---|
+| War / Conflict / Military | Creator in medieval battle armor inside an active warzone, bullets ricocheting off a shield |
+| Tech / AI / Business | Creator as mad scientist / surgeon in a futuristic lab, extracting glowing data-brains from famous tech figures |
+| Finance / Stocks / Money | Creator as a bazaar street vendor selling stacks of cash, gold bars, or company logos like groceries |
+| Health / Diet / Body | Creator as a chef in an operating room, dissecting human organs labeled with health facts |
+| Social Media / Viral / Entertainment | Creator as a DJ performing on top of coffins in a graveyard / underwater / in zero gravity |
+| Politics / Power / Government | Creator as a traditional shopkeeper (market stall / warung) selling nuclear missiles / oil barrels / flags with price tags |
+| Mystery / Secret / Hidden | Creator emerging from a massive vault door / foggy portal / secret underground bunker |
+| Education / History | Creator as a time-traveler caught between eras — half modern outfit, half ancient costume |
+| Relationship / Social | Creator as a puppet master or chess player controlling life-size dolls of real-world characters |
+
+### SCENE IMMERSION RULES:
+1. **Costume:** Creator MUST wear a costume matching the scene — NOT everyday clothes or plain shirt
+2. **Setting:** Background MUST be a surreal constructed world — NOT a home office, coffee shop, or plain studio
+3. **Props:** Props MUST be physically impossible, absurdly literal, or surreally exaggerated
+4. **Expression:** Manic grin, wide-eyed shock, conspiratorial smirk, or intense war-cry — NEVER neutral face
+5. **Scale:** Make the scene CINEMATIC — epic lighting, detailed environment, multiple visual elements
+
+### OUTPUT FORMAT for visual_direction (ALL options):
+\`[Creator as ROLE in COSTUME] doing [ACTION] inside [SURREAL WORLD SETTING] | [IMPOSSIBLE/ABSURD PROPS relevant to topic] | [Camera: framing] | [Lighting: style and mood]\`
+
+### SCENE IMMERSION EXAMPLES (real hook samples):
+- Topic "Future War isn't about bombs": Creator wearing medieval Roman warrior armor, crouching behind bronze shield with bullets bouncing off it, screaming mid-battle, explosions and guns firing in background | Epic war ruins backdrop | Dutch angle extreme low shot | Harsh military flare lighting
+- Topic "Tech Billionaire habits": Creator in white lab coat as brain surgeon, extracting glowing golden brains from reclining patients labeled "Elon Musk", "Zuckerberg", "Bezos" in a sleek surgical room | Multiple glowing brain jars on shelves | Clinical overhead operating light | Cold white-blue lighting
+- Topic "Spotify Funeral Urn plays music": Creator wearing DJ headphones, scratching turntables made of grey burial urns in a misty moonlit graveyard | Spotify logo on tombstones | Ghosts floating in background | Moody atmospheric fog-light
+- Topic "Trump says Iran has nukes": Creator in ornate traditional Middle Eastern merchant robes standing at a bazaar stall ("Toko Roket Nuklir") displaying nuclear missiles with price tags and country flags | Warm bazaar lantern lighting | Medium wide shot
+
+### ANTI-PATTERNS — NEVER DO THIS:
+❌ "Creator at coffee shop looking at laptop"
+❌ "Creator pointing finger at camera with plain background"
+❌ "Creator standing in front of whiteboard"
+❌ "Creator holding phone showing statistics"
+❌ Any scene that could describe 1000 other videos
+
 ### HOOK OUTPUT FORMAT:
 \`\`\`json
 "hook_options": {

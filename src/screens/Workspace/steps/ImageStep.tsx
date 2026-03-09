@@ -428,7 +428,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
       if (data?.data?.jobs) {
         const updates: Array<{ segmentId: string; changes: Partial<WorkspaceSegment> }> = [];
         segments.forEach(seg => {
-          const job = data.data.jobs.find((j: any) => j.segment_number === parseInt(seg.id));
+          const job = data.data.jobs.find((j: any) => j.segment_number === seg.segmentNumber);
           if (job) updates.push({ segmentId: seg.id, changes: { jobId: job.id, isGeneratingImage: true } });
         });
         if (updates.length > 0) dispatch({ type: 'BATCH_UPDATE_SEGMENTS', updates });
@@ -471,7 +471,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
   const handleRegenerateWithNotes = useCallback(async (notes: string) => {
     if (!user || !orderId || !regenerateModal.segment) return;
     const segment = regenerateModal.segment;
-    const segmentNumber = parseInt(segment.id);
+    const segmentNumber = segment.segmentNumber;
 
     dispatch({ type: 'SET_SEGMENT_GENERATING_IMAGE', segmentId: segment.id, isGenerating: true });
     setRegenerateModal({ isOpen: false, segment: null });
@@ -712,7 +712,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
           session_id: orderId,
           segments: [{
             segment_id: segment.segmentId,
-            segment_number: parseInt(segment.id),
+            segment_number: segment.segmentNumber,
             segment_type: segment.segmentType,
             shot_type: segment.shotType,
             emotion: segment.emotion,
@@ -1307,7 +1307,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
                   selectedImageUrl={segment.imageUrl}
                   onGenerate={() => handleGenerateImage(segment.id)}
                   onRegenerate={() => isCreator ? setRegenerateModal({ isOpen: true, segment }) : handleGenerateImage(segment.id)}
-                  onSelectImage={imageId => handleSelectImage(imageId, parseInt(segment.id))}
+                  onSelectImage={imageId => handleSelectImage(imageId, segment.segmentNumber)}
                   onDeleteImage={handleDeleteImage}
                   onPreview={setPreviewImage}
                   onDownload={imageUrl => handleDownloadImage(imageUrl, segment.segmentType, segment.id)}

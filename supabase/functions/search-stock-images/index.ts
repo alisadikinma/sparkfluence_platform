@@ -19,6 +19,9 @@ import {
   type LocationResult,
 } from '../_shared/keywordExtractor.ts';
 
+// Import product detection — runs BEFORE LLM to catch brand/product names
+import { getProductSearchQuery } from '../_shared/lookups/productKeywords.ts';
+
 // ============================================================================
 // HELPER: Generate suggested queries from extraction result
 // ============================================================================
@@ -103,8 +106,43 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // SMART MODE: Extract keywords using shared LLM module
-    if (isSmartMode && (visualDirection || script)) {
+    // PRE-DETECTION: Check for product/brand names BEFORE calling LLM
+    // This catches "Notion AI", "Miro", "Codium AI" before LLM generalizes them
+    if (isSmartMode && script) {
+      // 1. Check productKeywords lookup (highest priority — specific brands)
+      const productQuery = getProductSearchQuery(script);
+      if (productQuery) {
+        console.log(`[SMART_SEARCH] Product detected: "${productQuery}" — skipping LLM`);
+        searchQuery = productQuery;
+        smartExtraction = {
+          location: null,
+          venue: null,
+          suggestedQueries: [productQuery],
+          source: 'fallback'
+        };
+      } else {
+        // 2. Check for capitalized brand name at start of sentence: "Notion AI. Otomatis..."
+        const capsStartMatch = script.match(/^([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)*)\./);
+        if (capsStartMatch && capsStartMatch[1].split(' ').length <= 3) {
+          const brandName = capsStartMatch[1];
+          // Only use this if it's a proper brand (not generic sentence start)
+          const isGenericWord = /^(The|A|An|This|That|These|Those|It|He|She|They|We|You|I)$/.test(brandName);
+          if (!isGenericWord) {
+            console.log(`[SMART_SEARCH] Capitalized entity detected: "${brandName}" — skipping LLM`);
+            searchQuery = brandName;
+            smartExtraction = {
+              location: null,
+              venue: null,
+              suggestedQueries: [brandName],
+              source: 'fallback'
+            };
+          }
+        }
+      }
+    }
+
+    // SMART MODE: Extract keywords using shared LLM module (only if product not detected)
+    if (isSmartMode && (visualDirection || script) && !searchQuery) {
       try {
         console.log(`[SMART_SEARCH] Extracting keywords from visualDirection + script...`);
 
