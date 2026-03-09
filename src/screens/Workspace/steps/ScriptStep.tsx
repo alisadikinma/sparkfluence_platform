@@ -1,41 +1,37 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
-  Video,
   Scissors,
-  Volume2,
-  Type,
-  Sparkles,
-  Plus,
   RefreshCw,
   CheckCircle,
   Lock,
   Wand2,
   User,
   Film,
-  Camera,
-  Clapperboard,
   Power,
   ChevronDown,
   GitMerge,
   SplitSquareHorizontal,
   AlertTriangle,
-  type LucideIcon,
+  ClipboardCopy,
+  Check,
+  Clock,
 } from 'lucide-react';
 import type { HookOptions, ScoreBreakdown, WorkspaceSegment } from '../../../contexts/WorkspaceContext';
-import { getHookTint } from '../components/HookSelector';
 import { ViralityScore } from '../components/ViralityScore';
+import { parseVisualDirection, StructuredVDChips } from '../../ImageGeneration/components';
+
+function getHookTint(key: string): string {
+  switch (key) {
+    case 'option_a_safe': return 'rgba(34, 197, 94, 0.04)';
+    case 'option_b_negative': return 'rgba(239, 68, 68, 0.04)';
+    case 'option_c_visual': return 'rgba(6, 182, 212, 0.04)';
+    default: return 'transparent';
+  }
+}
 
 // ============================================================================
 // LOCAL TYPES
 // ============================================================================
-
-interface DirectorChip {
-  id: string;
-  type: 'camera' | 'action' | 'sfx' | 'vfx' | 'text_pop' | 'cut';
-  label: string;
-  icon: string;
-  color: string;
-}
 
 interface ScriptSegment {
   id: string;
@@ -45,7 +41,6 @@ interface ScriptSegment {
   duration: number;
   script: string;
   visualDirection: string;
-  directorChips: DirectorChip[];
   emotion: string;
   maxWords: number;
   wordCount: number;
@@ -60,6 +55,7 @@ interface ScriptSegment {
 
 interface ScriptStepProps {
   // Data — accepts either mapped ScriptSegment[] or raw WorkspaceSegment[]
+  topic?: string;
   segments?: ScriptSegment[];
   workspaceSegments?: WorkspaceSegment[];
   onEditSegment?: (segmentId: string, field: 'script' | 'visualDirection', value: string) => void;
@@ -76,6 +72,8 @@ interface ScriptStepProps {
   // Segment operations
   onToggleSegment?: (segmentId: string) => void;
   onAdjustDuration?: (segmentId: string, durationSeconds: number) => void;
+  // Regenerate
+  onRegenerateScript?: () => void;
   // Coach focus
   focusedSegmentId?: string | null;
   onFocusSegment?: (segmentId: string) => void;
@@ -83,222 +81,6 @@ interface ScriptStepProps {
   onMergeSegments?: (segmentId1: string, segmentId2: string) => void;
   onSplitSegment?: (segmentId: string, splitIndex: number) => void;
 }
-
-// ============================================================================
-// MOCK DATA
-// ============================================================================
-
-export const MOCK_SEGMENTS: ScriptSegment[] = [
-  {
-    id: '1',
-    segmentNumber: 1,
-    segmentType: 'HOOK',
-    shotType: 'CREATOR' as const,
-    duration: 5,
-    script: 'Lo gak tau 3 cara AI ini? Rugi parah.',
-    visualDirection:
-      'Scene: Creator di coffee shop, tuang kopi | Camera: Medium \u2192 Push-in ke wajah | [TEXT POP: "3 CARA AI"] | [SFX: Ding]',
-    directorChips: [
-      { id: 'c1', type: 'camera' as const, label: 'Medium \u2192 Push-in', icon: 'Video', color: 'blue' },
-      { id: 'c2', type: 'text_pop' as const, label: '3 CARA AI', icon: 'Type', color: 'pink' },
-      { id: 'c3', type: 'sfx' as const, label: 'Ding', icon: 'Volume2', color: 'green' },
-    ],
-    emotion: 'excited',
-    maxWords: 9,
-    wordCount: 8,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 3.7,
-    waveformFill: 0.74,
-  },
-  {
-    id: '2',
-    segmentNumber: 2,
-    segmentType: 'FORE',
-    shotType: 'B-ROLL' as const,
-    duration: 8,
-    script: 'Tapi tunggu, yang ketiga literally bikin 50 orang quit 9-to-5.',
-    visualDirection: '[CUT TO: AI tools dashboard montage] | Camera: Quick-cut sequence | [SFX: Whoosh]',
-    directorChips: [
-      { id: 'c4', type: 'cut' as const, label: 'CUT TO: Montage', icon: 'Scissors', color: 'orange' },
-      { id: 'c5', type: 'camera' as const, label: 'Quick-cut sequence', icon: 'Video', color: 'blue' },
-      { id: 'c6', type: 'sfx' as const, label: 'Whoosh', icon: 'Volume2', color: 'green' },
-    ],
-    emotion: 'intriguing',
-    maxWords: 14,
-    wordCount: 11,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 5.1,
-    waveformFill: 0.64,
-  },
-  {
-    id: '3',
-    segmentNumber: 3,
-    segmentType: 'BODY-1',
-    shotType: 'B-ROLL' as const,
-    duration: 8,
-    script: 'Nah pertama: AI copywriting. Jasper bikin 50 artikel per hari, coba sendiri.',
-    visualDirection: '[CUT TO: Screen recording Jasper] | Camera: Zoom-in ke text output | [SFX: Typing]',
-    directorChips: [
-      { id: 'c8', type: 'cut' as const, label: 'CUT TO: Screen Recording', icon: 'Scissors', color: 'orange' },
-      { id: 'c9', type: 'camera' as const, label: 'Zoom-in', icon: 'Video', color: 'blue' },
-      { id: 'c10', type: 'sfx' as const, label: 'Typing', icon: 'Volume2', color: 'green' },
-    ],
-    emotion: 'informative',
-    maxWords: 14,
-    wordCount: 11,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 5.1,
-    waveformFill: 0.64,
-  },
-  {
-    id: '4',
-    segmentNumber: 4,
-    segmentType: 'BODY-2',
-    shotType: 'B-ROLL' as const,
-    duration: 8,
-    script: 'Tapi kedua lebih gila: AI video, 10 menit bikin satu TikTok. 50 juta views.',
-    visualDirection: '[CUT TO: AI video generation screen] | Camera: Pan across multiple TikTok screens',
-    directorChips: [
-      { id: 'c12', type: 'cut' as const, label: 'CUT TO: AI Video Gen', icon: 'Scissors', color: 'orange' },
-      { id: 'c13', type: 'camera' as const, label: 'Pan across screens', icon: 'Video', color: 'blue' },
-    ],
-    emotion: 'surprising',
-    maxWords: 14,
-    wordCount: 13,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 6.0,
-    waveformFill: 0.75,
-  },
-  {
-    id: '5',
-    segmentNumber: 5,
-    segmentType: 'PEAK',
-    shotType: 'B-ROLL' as const,
-    duration: 8,
-    script: 'Tapi ternyata ketiga paling gila: AI trading, 100 orang profit 40% dalam 3 bulan.',
-    visualDirection: '[CUT TO: Trading dashboard green profit] | Camera: Slow zoom ke profit number',
-    directorChips: [
-      { id: 'c16', type: 'cut' as const, label: 'CUT TO: Trading Dashboard', icon: 'Scissors', color: 'orange' },
-      { id: 'c17', type: 'camera' as const, label: 'Slow zoom', icon: 'Video', color: 'blue' },
-    ],
-    emotion: 'mind-blown',
-    maxWords: 14,
-    wordCount: 13,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 6.0,
-    waveformFill: 0.75,
-  },
-  {
-    id: '6',
-    segmentNumber: 6,
-    segmentType: 'CTA',
-    shotType: 'CREATOR' as const,
-    duration: 5,
-    script: 'Save sekarang, follow gue biar gak ketinggalan.',
-    visualDirection: 'Scene: Creator sip kopi, relaxed smile | Camera: Medium shot',
-    directorChips: [
-      { id: 'c20', type: 'camera' as const, label: 'Medium shot', icon: 'Video', color: 'blue' },
-    ],
-    emotion: 'friendly',
-    maxWords: 9,
-    wordCount: 7,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 3.2,
-    waveformFill: 0.64,
-  },
-  {
-    id: '7',
-    segmentNumber: 7,
-    segmentType: 'LOOP-END',
-    shotType: 'CREATOR' as const,
-    duration: 5,
-    script: 'Inget tadi gue bilang rugi? Gue lupa satu...',
-    visualDirection: 'Scene: Creator tuang kopi lagi (mirror HOOK) | Camera: Same angle as HOOK',
-    directorChips: [
-      { id: 'c23', type: 'camera' as const, label: 'Same angle as HOOK', icon: 'Video', color: 'blue' },
-      { id: 'c24', type: 'sfx' as const, label: 'Rewind', icon: 'Volume2', color: 'green' },
-      { id: 'c25', type: 'cut' as const, label: 'CUT TO: HOOK start', icon: 'Scissors', color: 'orange' },
-    ],
-    emotion: 'teasing',
-    maxWords: 9,
-    wordCount: 8,
-    isOverLimit: false,
-    retentionLevel: 'high' as const,
-    needsFix: false,
-    isFixing: false,
-    estimatedSpeechSeconds: 3.7,
-    waveformFill: 0.74,
-  },
-];
-
-const MOCK_HOOK_OPTIONS: HookOptions = {
-  option_a_safe: {
-    script_text: 'Lo gak tau 3 cara AI ini? Rugi parah.',
-    visual_direction:
-      'Scene: Creator di coffee shop, tuang kopi | Camera: Medium \u2192 Push-in ke wajah | [TEXT POP: "3 CARA AI"] | [SFX: Ding]',
-    hook_type: 'curiosity_gap',
-  },
-  option_b_negative: {
-    script_text: 'Stop kerja manual! 3 AI tools ini literally ganti lo.',
-    visual_direction:
-      'Scene: Creator slam laptop tutup | Camera: Close-up slam \u2192 Whip-pan ke wajah | [SFX: Boom] | [TEXT POP: "STOP"]',
-    hook_type: 'negative_controversial',
-  },
-  option_c_visual: {
-    script_text: 'Liat dashboard gue? 3 AI tools bikin semua ini.',
-    visual_direction:
-      '[Camera: Blur \u2192 Sharp focus on screen] | Creator tunjuk laptop | [CUT TO: Screen recording dashboard] | [SFX: Cash register]',
-    hook_type: 'visual_action',
-  },
-};
-
-const MOCK_SCORE_BREAKDOWN: ScoreBreakdown = {
-  hook: { score: 95, status: 'pass' as const },
-  pacing: { score: 90, status: 'pass' as const },
-  density: { score: 75, status: 'warn' as const },
-  cta: { score: 88, status: 'pass' as const },
-  editingCues: { score: 92, status: 'pass' as const },
-};
-
-// ============================================================================
-// ICON MAP FOR DIRECTOR CHIPS
-// ============================================================================
-
-const chipIconMap: Record<string, LucideIcon> = {
-  camera: Video,
-  action: Clapperboard,
-  sfx: Volume2,
-  vfx: Sparkles,
-  text_pop: Type,
-  cut: Scissors,
-};
-
-const chipColorMap: Record<string, string> = {
-  camera: 'bg-blue-500/10 text-blue-400',
-  action: 'bg-amber-500/10 text-amber-400',
-  sfx: 'bg-green-500/10 text-green-400',
-  vfx: 'bg-violet-500/10 text-violet-400',
-  text_pop: 'bg-pink-500/10 text-pink-400',
-  cut: 'bg-orange-500/10 text-orange-400',
-};
 
 // ============================================================================
 // RETENTION HEATMAP COLORS
@@ -415,43 +197,6 @@ function maxWordsForDuration(seconds: number): number {
 // WORKSPACE → SCRIPT SEGMENT MAPPER
 // ============================================================================
 
-function parseDirectorChips(visualDirection: string): DirectorChip[] {
-  const chips: DirectorChip[] = [];
-  let idx = 0;
-
-  // Camera/shot patterns
-  const cameraMatch = visualDirection.match(/Camera:\s*([^|[\]]+)/i);
-  if (cameraMatch) {
-    chips.push({ id: `c${idx++}`, type: 'camera', label: cameraMatch[1].trim(), icon: 'Video', color: 'blue' });
-  }
-
-  // CUT TO patterns
-  const cutMatches = visualDirection.matchAll(/\[CUT TO:\s*([^\]]+)\]/gi);
-  for (const m of cutMatches) {
-    chips.push({ id: `c${idx++}`, type: 'cut', label: `CUT TO: ${m[1].trim()}`, icon: 'Scissors', color: 'orange' });
-  }
-
-  // SFX patterns
-  const sfxMatches = visualDirection.matchAll(/\[SFX:\s*([^\]]+)\]/gi);
-  for (const m of sfxMatches) {
-    chips.push({ id: `c${idx++}`, type: 'sfx', label: m[1].trim(), icon: 'Volume2', color: 'green' });
-  }
-
-  // TEXT POP patterns
-  const textPopMatches = visualDirection.matchAll(/\[TEXT POP:\s*([^\]]+)\]/gi);
-  for (const m of textPopMatches) {
-    chips.push({ id: `c${idx++}`, type: 'text_pop', label: m[1].trim().replace(/"/g, ''), icon: 'Type', color: 'pink' });
-  }
-
-  // VFX patterns
-  const vfxMatches = visualDirection.matchAll(/\[VFX:\s*([^\]]+)\]/gi);
-  for (const m of vfxMatches) {
-    chips.push({ id: `c${idx++}`, type: 'vfx', label: m[1].trim(), icon: 'Sparkles', color: 'violet' });
-  }
-
-  return chips;
-}
-
 function mapWorkspaceToScriptSegment(ws: WorkspaceSegment): ScriptSegment {
   const words = ws.script.trim().split(/\s+/).filter(Boolean);
   const wordCount = words.length;
@@ -468,7 +213,6 @@ function mapWorkspaceToScriptSegment(ws: WorkspaceSegment): ScriptSegment {
     duration: ws.durationSeconds,
     script: ws.script,
     visualDirection: ws.visualDirection,
-    directorChips: parseDirectorChips(ws.visualDirection),
     emotion: ws.emotion,
     maxWords,
     wordCount,
@@ -719,39 +463,12 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
           </div>
         </div>
 
-        {/* Director Chips */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {segment.directorChips.map((chip) => {
-            const ChipIcon = chipIconMap[chip.type] || Camera;
-            const colorClass = chipColorMap[chip.type] || 'bg-[#262626] text-[#A8A29E]';
-
-            return (
-              <span
-                key={chip.id}
-                className={`
-                  inline-flex items-center gap-1 rounded-full px-3 py-1
-                  text-[12px] font-medium ${colorClass}
-                `}
-              >
-                <ChipIcon className="w-3 h-3" />
-                {chip.label}
-              </span>
-            );
-          })}
-
-          {/* Add chip button */}
-          {!scriptConfirmed && !isDisabled && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full px-3 py-1
-                text-[12px] font-medium text-[#57534E] bg-[#1E1E1E] border border-dashed border-[#3f3f46]
-                hover:border-[#57534E] hover:text-[#78716C] transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              Add
-            </button>
-          )}
-        </div>
+        {/* Visual Direction (structured 6-category display) */}
+        {segment.visualDirection && (() => {
+          const svd = parseVisualDirection(segment.visualDirection);
+          if (!svd) return null;
+          return <StructuredVDChips structuredVD={svd} />;
+        })()}
 
         {/* Merge/Split actions + auto-merge suggestion */}
         {!scriptConfirmed && !isDisabled && (canMergeDown || canSplit || lowDensity) && (
@@ -878,6 +595,7 @@ const SegmentCard: React.FC<SegmentCardProps> = ({
 // ============================================================================
 
 export const ScriptStep: React.FC<ScriptStepProps> = ({
+  topic,
   segments: segmentsProp,
   workspaceSegments: workspaceSegmentsProp,
   onEditSegment: onEditSegmentProp,
@@ -893,13 +611,14 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
   onUnconfirm: onUnconfirmProp,
   onToggleSegment: onToggleSegmentProp,
   onAdjustDuration: onAdjustDurationProp,
+  onRegenerateScript: onRegenerateScriptProp,
   focusedSegmentId,
   onFocusSegment,
   onMergeSegments: onMergeSegmentsProp,
   onSplitSegment: onSplitSegmentProp,
 }) => {
-  // Internal state (fallback to mock data when props not provided)
-  const [internalSegments, setInternalSegments] = useState<ScriptSegment[]>(MOCK_SEGMENTS);
+  // Internal state (no mock fallback — only real workspace data)
+  const [internalSegments, setInternalSegments] = useState<ScriptSegment[]>([]);
   const [internalSelectedHook, setInternalSelectedHook] = useState('option_a_safe');
   const [internalConfirmed, setInternalConfirmed] = useState(false);
 
@@ -909,10 +628,10 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
     [workspaceSegmentsProp],
   );
   const segments = segmentsProp ?? mappedSegments ?? internalSegments;
-  const hookOptions = hookOptionsProp ?? MOCK_HOOK_OPTIONS;
+  const hookOptions = hookOptionsProp ?? null;
   const selectedHook = selectedHookProp ?? internalSelectedHook;
-  const viralityScore = viralityScoreProp ?? 88;
-  const scoreBreakdown = scoreBreakdownProp ?? MOCK_SCORE_BREAKDOWN;
+  const viralityScore = viralityScoreProp ?? 0;
+  const scoreBreakdown = scoreBreakdownProp ?? null;
   const isRegenerating = isRegeneratingProp ?? false;
   const scriptConfirmed = scriptConfirmedProp ?? internalConfirmed;
 
@@ -996,14 +715,44 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
     [onAdjustDurationProp],
   );
 
+  // Copy all script text to clipboard
+  const [copySuccess, setCopySuccess] = useState(false);
+  const handleCopyScript = useCallback(() => {
+    const enabledSegments = segments.filter((s) => s.isEnabled !== false);
+    const header = topic ? `${topic}\n\n` : '';
+    const body = enabledSegments
+      .map((s) => `[${s.segmentType}] ${s.duration}s — ${s.shotType}\n${s.script}`)
+      .join('\n\n');
+    navigator.clipboard.writeText(header + body).then(() => {
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    });
+  }, [segments, topic]);
+
   return (
     <div className="space-y-4">
       {/* ================================================================ */}
-      {/* TOP ACTION BAR — Score + Hook Tabs + Confirm                      */}
+      {/* TOP ACTION BAR — Score + Duration + Hook Tabs + Confirm           */}
       {/* ================================================================ */}
       <div className="flex items-center gap-3 flex-wrap">
         {/* Virality Score pill */}
-        <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />
+        {scoreBreakdown && <ViralityScore score={viralityScore} breakdown={scoreBreakdown} compact />}
+
+        {/* Total Duration pill */}
+        {(() => {
+          const enabledSegs = segments.filter(s => s.isEnabled !== false);
+          const totalSec = enabledSegs.reduce((sum, s) => sum + s.duration, 0);
+          const mins = Math.floor(totalSec / 60);
+          const secs = totalSec % 60;
+          const display = mins > 0 ? `${mins}:${secs.toString().padStart(2, '0')}` : `${totalSec}s`;
+          return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#262626] bg-[#161616] text-xs font-mono text-[#A8A29E]">
+              <Clock className="w-3.5 h-3.5" />
+              {display}
+              <span className="text-[#57534E]">/ {enabledSegs.length} seg</span>
+            </span>
+          );
+        })()}
 
         {/* Hook variant tabs (Safe / Bold / Visual) */}
         {hookOptions && (
@@ -1035,16 +784,53 @@ export const ScriptStep: React.FC<ScriptStepProps> = ({
           </div>
         )}
 
-        {/* Regenerating indicator */}
-        {isRegenerating && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
-            <RefreshCw className="w-3.5 h-3.5 motion-safe:animate-spin" />
-            Generating...
-          </span>
-        )}
-
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Regenerate Script (icon-only + tooltip) */}
+        {isRegenerating ? (
+          <span className="inline-flex items-center justify-center w-8 h-8 text-amber-400" title="Generating new script...">
+            <RefreshCw className="w-4 h-4 motion-safe:animate-spin" />
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={onRegenerateScriptProp}
+            disabled={scriptConfirmed || !onRegenerateScriptProp}
+            className={`
+              inline-flex items-center justify-center w-8 h-8 rounded-lg
+              border transition-all duration-200
+              ${scriptConfirmed || !onRegenerateScriptProp
+                ? 'border-[#262626] bg-[#161616] text-[#57534E] cursor-not-allowed opacity-60'
+                : 'border-[#262626] bg-[#161616] text-[#78716C] hover:text-amber-400 hover:border-amber-500/30 hover:bg-amber-500/10 cursor-pointer'
+              }
+            `}
+            title={scriptConfirmed ? 'Unlock script to regenerate' : 'Regenerate entire script'}
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        )}
+
+        {/* Copy Script (icon-only + tooltip) */}
+        <button
+          type="button"
+          onClick={handleCopyScript}
+          className={`
+            inline-flex items-center justify-center w-8 h-8 rounded-lg
+            border border-[#262626] bg-[#161616] transition-all duration-200 cursor-pointer
+            ${copySuccess
+              ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+              : 'text-[#78716C] hover:text-[#A8A29E] hover:border-[#3f3f46]'
+            }
+          `}
+          title={copySuccess ? 'Copied!' : 'Copy all script to clipboard'}
+        >
+          {copySuccess ? (
+            <Check className="w-4 h-4" />
+          ) : (
+            <ClipboardCopy className="w-4 h-4" />
+          )}
+        </button>
 
         {/* Confirm / Unlock */}
         {scriptConfirmed ? (

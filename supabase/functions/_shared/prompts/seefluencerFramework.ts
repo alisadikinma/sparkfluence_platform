@@ -15,6 +15,8 @@
 import {
   HOOK_LIBRARY,
   HOOK_CATEGORY_META,
+  VISUAL_ACTION_BANK,
+  getVisualActionsForHookCategory,
   type HookCategory,
   type HookTemplate
 } from '../knowledge/11-hook-library-2026.ts'
@@ -224,6 +226,9 @@ export function getLocalizedHookStrategy(contentType: ContentType, language: str
   const negHook = pickRandom(HOOK_LIBRARY.negative_bias, 1)[0] || HOOK_LIBRARY.negative_bias[0];
   const visHook = pickRandom(HOOK_LIBRARY.visual_shock, 1)[0] || HOOK_LIBRARY.visual_shock[0];
 
+  // Get top visual actions for Option C based on primary hook category
+  const visualActions = getVisualActionsForHookCategory(mapping.primary).slice(0, 3);
+
   const formatHook = (h: HookTemplate, i: number) => {
     const prefix = h.visual_cue ? `${h.visual_cue} ` : '';
     return `   ${i + 1}. ${prefix}"${h.script}"`;
@@ -296,6 +301,16 @@ Source concept: ${visHook.visual_cue ? `${visHook.visual_cue} "${visHook.script}
 Goal: Physical action or camera trick stops scroll BEFORE words register.
 ${visHook.visual_cue ? `KEEP the visual cue prefix (${visHook.visual_cue}) and adapt the spoken text.` : 'Add a visual cue prefix: [Camera:], [Action:], or [Visual:].'}
 
+**VISUAL ACTION LIBRARY — Choose ONE for the visual_direction field:**
+${visualActions.map(a => `• **${a.name}:** ${a.videoAction}
+  → Prompt: "${a.promptFragment}"`).join('\n')}
+
+**Option C visual_direction MUST describe:**
+1. What the creator physically does in the first 0.5 seconds (from the actions above or similar)
+2. The expression at that moment (shock, smirk, intensity — matching the video action)
+3. Camera framing (extreme close-up, medium shot, POV — to reinforce the action)
+Example: "Creator frozen mid-bite eating raw onion, eyes snap to camera wide-open | Extreme close-up face | Rembrandt hard shadow lighting"
+
 ### HOOK OUTPUT FORMAT:
 \`\`\`json
 "hook_options": {
@@ -310,7 +325,18 @@ ${visHook.visual_cue ? `KEEP the visual cue prefix (${visHook.visual_cue}) and a
 2. **Replace ALL [Placeholder]s** with ACTUAL topic-specific content.
 3. **2-Stage Hook/Rehook:** Visual action in first 1s, verbal hook in next 2s.
 4. **The HOOK segment in "segments" array uses Option A by default.**
-5. **Each option must have DIFFERENT script_text** — not just rephrased versions of the same hook.`;
+5. **Each option must have DIFFERENT script_text** — not just rephrased versions of the same hook.
+6. **CURIOSITY GAP (CRITICAL):** NEVER reveal the answer, tool name, product name, solution, or payoff in the HOOK. The HOOK creates the question — BODY/PEAK delivers the answer. If someone reads ONLY the HOOK, they should NOT know what the specific tools/answers/solutions are. Instead of naming specific items, use quantity + category teasers: "3 AI tools yang gila" NOT "Jasper, CapCut, Pionex".
+   **BUT IMPORTANT:** The BODY segments MUST name the specific tools/products/answers. That's the payoff! Each BODY segment reveals ONE item by name (e.g., BODY-1: "Pertama: Jasper AI..."). Hiding names in BODY = broken promise = viewer leaves.
+7. **TOPIC KEYWORD COHERENCE (CRITICAL):** All 3 hook options MUST share the same core topic keywords so that FORE/BODY/PEAK connect with ANY hook variant. The user can switch between hooks — FORE must still make sense.
+   **Rule:** Extract 2-3 core topic keywords from the TOPIC (e.g., topic "3 kesalahan branding" → keywords: "kesalahan", "branding"). ALL 3 hooks MUST contain these same topic keywords, just framed differently (safe/negative/visual angle).
+   **Example:**
+   - Topic: "3 kesalahan branding pribadi"
+   - ✅ Option A: "3 KESALAHAN branding pribadi yang bikin lo gagal..."
+   - ✅ Option B: "STOP! 3 KESALAHAN branding pribadi ini FATAL..."
+   - ✅ Option C: "[Camera: extreme close-up] 3 KESALAHAN branding pribadi yang gak ada yang berani bilang..."
+   - ❌ Option B: "Lo masih lakuin ini? Karir lo dalam BAHAYA..." (missing "kesalahan", "branding" → FORE won't connect)
+   **Why:** FORE is written ONCE and says "kesalahan yang terakhir ini paling fatal..." — if Option B doesn't mention "kesalahan", switching to it breaks the narrative flow.`;
 }
 
 // ============================================================================
@@ -395,9 +421,12 @@ ${itemCount >= 3 ? '- Item #3: Stakes raise → "no way..."' : ''}
 ${itemCount >= 4 ? '- Item #4: Mind-blown → "this is insane"' : ''}
 - Final Item (PEAK): The BEST → "I NEED to share this"
 
-**Per-Item Formula:** [Name] + [Why it matters] + [One specific detail]
+**Per-Item Formula:** [SPECIFIC Name] + [Why it matters] + [One concrete detail/stat]
+Example: "Pertama: Jasper AI buat copywriting. 50 artikel per hari, satu klik."
 
 **Rules:**
+- ✅ ALWAYS name the specific tool/product/answer in EACH body segment — this IS the payoff.
+- ❌ NEVER hide or vaguely describe items in BODY ("AI copywriting tool" instead of "Jasper AI" = BAD).
 - ❌ NEVER skip items. ALL ${itemCount} must be covered.
 - ❌ NEVER waste a BODY segment on filler/reactions only.
 - ✅ Each item introduces NEW information.
@@ -410,13 +439,14 @@ ${itemCount >= 4 ? '- Item #4: Mind-blown → "this is insane"' : ''}
 
 - BODY-1 (PROBLEM): State the problem. Make viewer nod "that's me."
 - BODY-2 (AGITATE): Make the problem WORSE. Show consequences of NOT solving it.
-- BODY-3+ (SOLUTION): Deliver concrete steps. Each step = 1 segment.
+- BODY-3+ (SOLUTION): Deliver concrete steps. Each step = 1 segment. NAME specific tools/methods.
 - PEAK: Show the RESULT of applying the solution. Proof it works.
 
 **Rules:**
 - PROBLEM must be relatable (80%+ of audience has this)
 - AGITATE creates urgency (financial loss, wasted time, embarrassment)
-- SOLUTION must be specific and actionable (not "just work harder")`;
+- SOLUTION must be specific and actionable — NAME the exact tool/method/product (not "just use an AI tool")
+- ✅ BODY is where the HOOK's curiosity gap gets resolved. Deliver the actual answer here.`;
   }
 
   return `

@@ -2,9 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useOnboarding } from '../../contexts/OnboardingContext';
+import { useOnboardingStatus } from '../../hooks/useOnboardingStatus';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { generateOrderId } from '../../lib/orderIdGenerator';
+import { getScriptLanguageFromCountry } from '../../lib/countryDetection';
 import { ScriptForm, SelectedTopic } from '../ScriptLab/components/ScriptForm';
 import { TopicRecommendations } from '../ScriptLab/components/TopicRecommendations';
 import { TikTokChallenge } from '../../types/topic';
@@ -19,6 +21,7 @@ export const ChatHome: React.FC = () => {
   const location = useLocation();
   const { t, language: uiLanguage } = useLanguage();
   const { updateOnboardingData } = useOnboarding();
+  const { data: onboardingData } = useOnboardingStatus();
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(false);
@@ -27,6 +30,22 @@ export const ChatHome: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<SelectedTopic | null>(null);
   const [selectedChallenge, setSelectedChallenge] = useState<TikTokChallenge | null>(null);
+
+  // Lifted state: script language + DNA toggle (shared between TopicRecommendations & ScriptForm)
+  const [scriptLang, setScriptLang] = useState('en');
+  const [scriptLangInitialized, setScriptLangInitialized] = useState(false);
+  const [useDnaTone, setUseDnaTone] = useState(true);
+
+  const hasDnaTone = !!(onboardingData?.creative_dna && onboardingData.creative_dna.length > 0);
+
+  // Set script language based on user's country (only once when data loads)
+  useEffect(() => {
+    if (!scriptLangInitialized && onboardingData?.country) {
+      const defaultLang = getScriptLanguageFromCountry(onboardingData.country);
+      setScriptLang(defaultLang);
+      setScriptLangInitialized(true);
+    }
+  }, [onboardingData?.country, scriptLangInitialized]);
 
   // Ref to scroll ScriptForm into view when topic selected
   const formRef = useRef<HTMLDivElement>(null);
@@ -44,14 +63,7 @@ export const ChatHome: React.FC = () => {
     setSelectedTopic(topic);
   };
 
-  // Scroll form into view when topic or challenge is selected
-  useEffect(() => {
-    if ((selectedTopic || selectedChallenge) && formRef.current) {
-      setTimeout(() => {
-        formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 100);
-    }
-  }, [selectedTopic, selectedChallenge]);
+  // No scroll behavior - page fits in one viewport
 
   const handleClearTopic = () => {
     setSelectedTopic(null);
@@ -160,10 +172,12 @@ export const ChatHome: React.FC = () => {
 
       const segments = scriptData.data.segments;
       const orderId = generateOrderId();
+      // Prefer LLM-generated clickbait title over raw user topic
+      const scriptTitle = scriptData.data.title || selectedTopic?.title || formData.prompt.trim().split('\n')[0].slice(0, 100);
 
       // Save to localStorage for backward compat
       const scriptLabData = {
-        topic: formData.prompt,
+        topic: scriptTitle,
         inputType: formData.inputType,
         model: formData.model,
         aspectRatio: formData.ratio,
@@ -191,7 +205,7 @@ export const ChatHome: React.FC = () => {
         state: {
           sessionId: `video_${Date.now()}_${Math.random().toString(36).substring(7)}`,
           orderId,
-          topic: formData.prompt.trim(),
+          topic: scriptTitle,
           segments: segments,
           metadata: scriptData.data.metadata,
           hookOptions: scriptData.data.hook_options || null,
@@ -353,17 +367,17 @@ export const ChatHome: React.FC = () => {
 
   // ── Main Layout: Topic-first (Gemini-style) ──
   return (
-    <div className="w-full min-h-screen bg-[#0B0E14] overflow-x-hidden">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div className="w-full min-h-full bg-[#0B0E14]">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full pb-6">
         {/* ── Greeting Section ── */}
-        <div className={`pt-8 sm:pt-12 pb-6 sm:pb-8 text-center transition-all duration-500 ${selectedTopic ? 'pt-4 sm:pt-6 pb-3 sm:pb-4' : ''}`}>
-          <h1 className={`font-bold text-[#FAFAF9] transition-all duration-500 ${selectedTopic ? 'text-xl sm:text-2xl' : 'text-2xl sm:text-4xl'}`}>
+        <div className={`pt-3 pb-2 text-center shrink-0 transition-all duration-500 ${selectedTopic ? 'pt-2 pb-1' : ''}`}>
+          <h1 className={`font-bold text-[#FAFAF9] transition-all duration-500 ${selectedTopic ? 'text-lg sm:text-xl' : 'text-xl sm:text-2xl'}`}>
             <span className="bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent">
               {greeting[uiLanguage as keyof typeof greeting] || greeting.en}
             </span>
           </h1>
           {!selectedTopic && (
-            <p className="text-[#A8A29E] text-sm sm:text-base mt-2 sm:mt-3">
+            <p className="text-[#A8A29E] text-xs sm:text-sm mt-1">
               {subtitle[uiLanguage as keyof typeof subtitle] || subtitle.en}
             </p>
           )}
@@ -371,7 +385,7 @@ export const ChatHome: React.FC = () => {
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6">
+          <div className="mb-2 shrink-0">
             <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4">
               <p className="text-red-400 text-sm text-center">{error}</p>
             </div>
@@ -379,17 +393,25 @@ export const ChatHome: React.FC = () => {
         )}
 
         {/* ── Topics Section (full width, primary focus) ── */}
-        <div className={`transition-all duration-500 ${selectedTopic ? 'opacity-60 pointer-events-none max-h-[200px] overflow-hidden' : ''}`}>
-          <TopicRecommendations onSelectTopic={handleSelectTopic} onSelectChallenge={setSelectedChallenge} disabled={loading} />
+        <div className={`transition-all duration-500 ${selectedTopic ? 'max-h-[200px] overflow-hidden opacity-60 pointer-events-none' : ''}`}>
+          <TopicRecommendations
+            onSelectTopic={handleSelectTopic}
+            onSelectChallenge={setSelectedChallenge}
+            disabled={loading}
+            scriptLang={scriptLang}
+            onScriptLangChange={setScriptLang}
+            useDnaTone={useDnaTone}
+            onDnaToneChange={setUseDnaTone}
+            hasDnaTone={hasDnaTone}
+          />
         </div>
 
         {/* ── Selected Topic Indicator + Expand to collapse topics ── */}
         {selectedTopic && (
-          <div className="flex items-center justify-center my-3">
+          <div className="flex items-center justify-center my-1 shrink-0">
             <button
               onClick={() => {
                 setSelectedTopic(null);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               className="flex items-center gap-2 text-[#78716C] hover:text-[#A8A29E] transition-colors text-xs"
             >
@@ -404,8 +426,8 @@ export const ChatHome: React.FC = () => {
           ref={formRef}
           className={`transition-all duration-500 ease-out ${
             (selectedTopic || selectedChallenge)
-              ? 'opacity-100 translate-y-0 max-h-[2000px]'
-              : 'opacity-0 translate-y-8 max-h-0 overflow-hidden pointer-events-none'
+              ? 'opacity-100 translate-y-0'
+              : 'opacity-0 translate-y-8 h-0 overflow-hidden pointer-events-none'
           }`}
         >
           {/* Selected topic card */}
@@ -466,7 +488,7 @@ export const ChatHome: React.FC = () => {
           )}
 
           {/* Script form with settings */}
-          <div className="max-w-2xl mx-auto pb-8">
+          <div className="max-w-2xl mx-auto pb-4">
             <div className="flex items-center gap-2 mb-3">
               <PenTool className="w-4 h-4 text-emerald-400" />
               <h3 className="text-sm font-semibold text-[#FAFAF9]">
@@ -483,6 +505,8 @@ export const ChatHome: React.FC = () => {
               selectedTopic={selectedTopic}
               onClearTopic={handleClearTopic}
               selectedChallenge={selectedChallenge}
+              scriptLang={scriptLang}
+              useDnaTone={useDnaTone}
             />
           </div>
         </div>

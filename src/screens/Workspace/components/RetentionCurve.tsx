@@ -25,9 +25,15 @@ interface SegmentInput {
   isEnabled?: boolean;
 }
 
+interface PrecomputedScore {
+  score: number;
+  segmentType: string;
+}
+
 interface RetentionCurveProps {
   segments: SegmentInput[];
   language?: string;
+  precomputedScores?: PrecomputedScore[];
   onSegmentClick?: (segmentIndex: number) => void;
 }
 
@@ -57,7 +63,7 @@ function extractFeatures(
     has_negative_frame: hasNegativeFrame(text),
     word_density_optimal: optimalDensity,
     under_word_limit: wordCount <= maxWords,
-    has_pattern_interrupt: hasForeshadow(text),
+    has_pattern_interrupt: /[A-Z]{2,}/.test(text) || /!\s*[A-Z]/.test(text) || /\b(STOP|WAIT|HEY|SERIUS|RUKO|YO)\b/.test(text) || hasForeshadow(text),
     has_foreshadow: hasForeshadow(text),
     has_transition: 0.5,
     builds_on_hook: 0.5,
@@ -97,6 +103,7 @@ function barColor(score: number): string {
 export const RetentionCurve: React.FC<RetentionCurveProps> = ({
   segments,
   language = 'id',
+  precomputedScores,
   onSegmentClick,
 }) => {
   const enabledSegments = useMemo(
@@ -105,24 +112,36 @@ export const RetentionCurve: React.FC<RetentionCurveProps> = ({
   );
 
   // Score each segment, then calculate retention curve
+  // When precomputedScores is provided (from centralized analysisMap), use those
+  // to guarantee consistency with IssuesTab/OverviewTab scores
   const retentionPoints = useMemo(() => {
     if (enabledSegments.length === 0) return [];
 
     const scores: number[] = [];
     const types: SegmentType[] = [];
 
-    for (const seg of enabledSegments) {
-      const st = seg.segmentType.startsWith('BODY') ? 'BODY' : seg.segmentType as SegmentType;
-      const words = seg.script.trim().split(/\s+/).filter(Boolean);
-      const maxWords = Math.floor((130 / 60) * (seg.durationSeconds ?? 8) * 0.8);
-      const features = extractFeatures(seg.script, st, words.length, maxWords, language);
-      const result = scoreSegment(st, features);
-      scores.push(result.total);
-      types.push(st);
+    if (precomputedScores && precomputedScores.length === enabledSegments.length) {
+      // Use centralized scores — guaranteed consistent with SmartCompanion
+      for (const ps of precomputedScores) {
+        scores.push(ps.score);
+        const st = ps.segmentType.startsWith('BODY') ? 'BODY' : ps.segmentType as SegmentType;
+        types.push(st);
+      }
+    } else {
+      // Fallback: compute locally (standalone usage outside SmartCompanion)
+      for (const seg of enabledSegments) {
+        const st = seg.segmentType.startsWith('BODY') ? 'BODY' : seg.segmentType as SegmentType;
+        const words = seg.script.trim().split(/\s+/).filter(Boolean);
+        const maxWords = Math.floor((130 / 60) * (seg.durationSeconds ?? 8) * 0.8);
+        const features = extractFeatures(seg.script, st, words.length, maxWords, language);
+        const result = scoreSegment(st, features);
+        scores.push(result.total);
+        types.push(st);
+      }
     }
 
     return calculateRetentionCurve(scores, types);
-  }, [enabledSegments, language]);
+  }, [enabledSegments, language, precomputedScores]);
 
   // Find biggest drop
   const biggestDrop = useMemo(() => {

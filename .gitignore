@@ -17,3 +17,11 @@ nul
 settings.local.json*.backup-*
 *before-redirect*
 .nemp/
+
+# Temporary research/extract files
+fc_*.json
+fc_*.txt
+docs/mockups/
+
+# Claude local settings
+.claude/settings.local.json

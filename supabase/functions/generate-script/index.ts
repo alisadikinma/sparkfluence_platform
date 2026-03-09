@@ -44,6 +44,7 @@ import {
 } from '../_shared/prompts/visualEnhancer.ts'
 // P0: Product Naming - Entity Check & Fix
 import { injectProductNamingRule } from '../_shared/prompts/productNamingRule.ts'
+import { getScoringOptimizationRules } from '../_shared/prompts/scoringOptimizer.ts'
 import { checkAndFixEntities } from '../_shared/entityCheck.ts'
 // Security: Input sanitization
 import { sanitizePromptInput, sanitizePlatform, sanitizeLanguage, sanitizeDuration } from '../_shared/inputSanitizer.ts'
@@ -898,6 +899,8 @@ ${dnaStyles.map((style: string, i: number) => `${i + 1}. **${style}**`).join('\n
 - CTA should feel authentic to this creator's style
 ` : ''}
 
+${getScoringOptimizationRules(language)}
+
 ═══════════════════════════════════════════════════════════════
 ✅ SELF-VERIFICATION CHECKLIST (Component 17)
 ═══════════════════════════════════════════════════════════════
@@ -905,7 +908,7 @@ ${dnaStyles.map((style: string, i: number) => `${i + 1}. **${style}**`).join('\n
 BEFORE OUTPUTTING, VERIFY ALL:
 □ HOOK OPTIONS: Generated all 3 (safe/negative/visual) in hook_options field?
 □ HOOK: Uses specific psychological trigger? Clickbait-but-Honest?
-□ HOOK: visual_direction has ≥2 editing cues + A-Roll camera manipulation?
+□ HOOK: visual_direction has ≥2 editing cues + A-Roll camera manipulation? Specifies lens (85mm/50mm) + aperture (f/1.8) + lighting ratio?
 □ FORE: Uses matched foreshadow strategy? Creates unfinished loop?
 □ FORE: Contains urgency phrase ("sampai habis/akhir" / "watch till end")?
 □ BODY: Each segment introduces NEW information (deletion test)?
@@ -916,9 +919,22 @@ BEFORE OUTPUTTING, VERIFY ALL:
 □ CTA: Uses engagement strategy (polarize/question/identity/reward)? NOT generic?
 □ POPE IN POOL: Applied if topic is high-friction? (finance/law/coding/medical)
 □ A-ROLL: CREATOR shots use camera manipulation on speaker, not static talking head?
-□ EDITING CUES: Every visual_direction has ≥2 of [SFX/CUT TO/ZOOM/TEXT POP/ACTION/Camera/Visual]?
+□ VISUAL DIRECTION DEPTH: Every visual_direction has ALL 6 parts (Scene/Camera/Lighting/Color/Mood/FX) with 50-80 words?
+□ VISUAL DIRECTION QUALITY: Camera includes specific lens (24mm/35mm/50mm/85mm) + aperture (f/1.8-f/2.8) + movement? Lighting includes pattern (Rembrandt/butterfly/split) + ratio (2:1/4:1/8:1) + Kelvin? Color includes film stock reference (Portra 400/CineStill 800T/Vision3)?
+□ B-ROLL SPECIFICITY: B-Roll visual_direction describes CONCRETE objects/scenes (not "AI dashboard" but "holographic trading terminal with green candlestick charts, multi-monitor setup, dark room")?
+□ EDITING CUES: CREATOR visual_direction has ≥2 of [SFX/TEXT POP/ACTION/Camera movement]?
 □ WORD COUNT: Every segment ≤ MAX WORDS from structure table?
 □ LOOP-END: Mirrors HOOK visually + creates curiosity loop?
+□ SCORING: HOOK category matches topic? (education→negative_bias, food/travel→visual_shock, lifestyle→relatability, story→curiosity_gap, tutorial→speed_value)
+□ SCORING: Every HOOK has ALL of: number + power word (CAPS) + pattern interrupt + under word limit? PLUS question(?) or negative frame? (aim for 90%+ score)
+□ SCORING: HOOK does NOT reveal product/tool names? (tease with "3 tools", reveal in BODY)
+□ SCORING: Every FORE has foreshadow/open loop phrase + specific detail + transition start? (+41% watch time)
+□ SCORING: Every BODY has pattern interrupt + actionable value verb + specific detail + transition word? (ALL 5 features needed for 85%+)
+□ SCORING: BODY word density is 70-90%? (not too sparse — fill the segment with value, avoid 3-word sentences)
+□ SCORING: PEAK is highest-intensity segment with unexpected twist ("ternyata/ini dia") + specific proof? (drives SHARES — 3x > likes)
+□ SCORING: CTA has SINGLE focus + clear action verb + first-person + urgency? (single CTA = +371% clicks)
+□ SCORING: LOOP-END mirrors HOOK energy exactly + has callback reference? (seamless loop = 100%+ retention)
+□ SCORING: Emotion arc follows roller coaster pattern (high→dip→build→CLIMAX→warm)? NOT flat/monotone?
 □ [Placeholder] REPLACED: ALL template placeholders replaced with actual topic content?
 
 DO NOT deviate from this structure. Output ONLY the JSON.`;
@@ -1006,11 +1022,67 @@ ${numberedTopicInstructions}
 ⚡ GENERATE NOW - OUTPUT JSON ONLY
 ═══════════════════════════════════════════════════════════════
 
+🏆 SCORING CHEAT SHEET (auto-scored by regex — MUST hit ALL features):
+
+⚠️ A scoring engine will score EVERY segment (0-100). Scripts scoring <80% are REJECTED.
+Each feature below is detected by regex. Missing ANY = points lost = score drops.
+
+TITLE: Max 8 words. Number + power word. "3 AI Tools Yang GILA" ✅
+HOOK — MINIMUM 5 of 7 features REQUIRED (< 5 = auto-reject):
+  1. ❓ Question with ? mark: "Lo tau gak...?" or "Pernah kepikiran...?" [12pts]
+  2. 🔢 Number/digit: "3 tools", "50 orang", "100 juta" [15pts — HIGHEST]
+  3. ⚡ POWER WORD (caps): GILA, PARAH, RAHASIA, FATAL, SHOCKING, literally [10pts]
+  4. ❌ Negative frame word: "Jangan", "Stop", "Salah", "Gagal", "Rugi", "Kesalahan" [8pts]
+  5. 🚫 NEVER reveal tool/product names (tease with quantity: "3 AI tools") [10pts]
+  6. 📏 Word density 60-95% of max words [10pts]
+  7. 🔥 Pattern interrupt (ALL CAPS word, "!" or direct address "Lo harus...") [7pts]
+  Example: "3 KESALAHAN fatal yang bikin konten lo gak pernah viral — tau gak kenapa?"
+  ↑ number(3) + CAPS(KESALAHAN) + negative(gak pernah) + question(?) + power word(fatal) = 90%+
+FORE — MUST contain:
+  1. Foreshadow trigger: "tunggu", "tapi", "yang paling", "nanti", "ini dia", "jangan skip" [15pts]
+  2. Keywords from HOOK (scorer checks word overlap — repeat 1-2 HOOK keywords) [12pts]
+  3. Specific detail: number, name, or concrete reference [10pts]
+  Example: "Tapi tunggu, KESALAHAN yang terakhir ini yang paling fatal..."
+  ↑ foreshadow(tunggu) + hook keyword(KESALAHAN, fatal) + specific(terakhir)
+BODY — Each segment MUST have:
+  1. Pattern interrupt: "Tapi tunggu...", "Nah ini dia...", "Dan yang bikin kaget...", or "!" [15pts]
+  2. Specific name + number: "Jasper AI bikin 50 artikel per hari" (NOT "AI tool bikin banyak") [12pts]
+  3. Actionable value verb: "cara", "bikin", "buat", "step", "karena", "jadi" [13pts]
+  4. Transition word at start: "Nah", "Tapi", "Terus", "Kedua", "Ketiga" [5pts]
+  5. Reference HOOK keywords (scorer checks overlap) [builds_on_hook pts]
+PEAK — MUST have ALL:
+  1. "ternyata" or "actually" or "plot twist" or "ini dia" or "yang bikin beda" [15pts]
+  2. Number + "orang/people/users/%" (proof): "100 orang buktiin, 40% profit" [10pts]
+  3. CAPS word + superlative for intensity: "PALING GILA", "TERBESAR", "INSANE" [18pts — HIGHEST]
+  4. High-intensity emotional word: GILA, PARAH, SHOCKING, brutal, dahsyat [12pts]
+CTA — MUST have ALL:
+  1. SINGLE focus — ONE action only (never 3+ verbs) [18pts — HIGHEST]
+  2. Action verb: "Save", "Follow", "Comment", "Klik" [12pts]
+  3. First person: "gue", "gw", "I" [10pts]
+  4. Urgency word: "sekarang", "now", "segera" [8pts]
+  "Save sekarang, follow gue" ✅ (max 2 verbs)
+LOOP-END: "Inget tadi gue bilang...?" (callback) [15pts] + mirror HOOK energy [20pts]
+
+📋 SELF-CHECK before outputting (count features per segment):
+□ HOOK: question? + number? + power word? + negative? + no payoff reveal? = ≥ 5/7
+□ HOOK COHERENCE: Do ALL 3 hook options share the same 2-3 core topic keywords? If not → REWRITE
+□ FORE: foreshadow? + hook keywords? + specific detail? = ≥ 3/3
+□ BODY (each): interrupt? + specific? + value verb? + transition? = ≥ 3/4
+□ PEAK: twist? + proof? + CAPS intensity? + emotional word? = ≥ 3/4
+□ CTA: single focus? + action verb? + first person? + urgency? = ≥ 3/4
+□ If ANY segment has < 3 features → REWRITE that segment before outputting
+
 CRITICAL REMINDERS:
 1. Generate ALL 3 hook options in "hook_options" field (safe/negative/visual)
 2. HOOK segment in "segments" uses Option A (safe) by default
+⚠️ HOOK COHERENCE RULE: All 3 hook options MUST share the SAME core topic keywords (e.g. if topic is "3 kesalahan branding", ALL hooks must contain "kesalahan" + "branding"). FORE/BODY are written ONCE — they must connect with ANY hook the user picks. Hooks that use completely different framing (e.g. "Karir lo dalam bahaya" instead of "kesalahan branding") will BREAK the narrative flow when user switches hooks.
 3. Each visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
-4. CREATOR shots: include editing cues [Camera:], [ACTION:], [SFX:], [TEXT POP:]
+4. VISUAL DIRECTION QUALITY — this directly drives image/video generation:
+   - Camera MUST include lens (24/35/50/85mm) + aperture (f/1.8-f/2.8) + movement (dolly/track/orbit/static)
+   - Lighting MUST include pattern (Rembrandt/butterfly/split/loop) + ratio (2:1 to 8:1) + temp (3200K-6500K)
+   - Color MUST include film stock (Portra 400/CineStill 800T/Vision3 500T) + grade style
+   - Scene MUST describe SPECIFIC objects/environment (not "AI dashboard" but "holographic trading terminal with green candlestick charts rising")
+   - CREATOR shots: include editing cues [Camera:], [ACTION:], [SFX:], [TEXT POP:]
 5. ALL script_text MUST be in ${langConfig.name} ONLY - NO mixing languages!
 6. Return ONLY valid JSON, no other text
 ${itemCount ? `7. ⚠️ COVER ALL ${itemCount} ITEMS - Do NOT skip any! Each item gets its own BODY segment.
@@ -1218,6 +1290,8 @@ function parseScriptOutput(generatedText: string, duration: string, topic?: stri
       // Build result object
       const result: any = {
         segments,
+        title: parsed.title || null,
+        hook_options: parsed.hook_options || null,
         metadata: parsed.metadata || {
           total_duration: parseInt(duration),
           language: language || 'english',
@@ -1324,6 +1398,8 @@ LANGUAGE: ${langConfig.name} - ${langConfig.style}
 
 CRITICAL:
 - visual_direction MUST use structured format: "Scene: ... | Camera: ... | Lighting: ... | Color: ... | Mood: ... | FX: ..." (50-80 words total, ALL 6 categories)
+- Camera: include lens (50mm/85mm) + aperture (f/1.8) + movement. Lighting: include pattern + ratio + Kelvin. Color: include film stock reference.
+- Scene: describe SPECIFIC concrete objects, not generic placeholders
 - script_text in ${langConfig.name} Gen-Z style
 - Output ONLY valid JSON`
 

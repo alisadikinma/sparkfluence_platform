@@ -765,7 +765,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
                       )}
                     </div>
                   ) : (
-                    <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                    <p className="text-xs text-amber-400 font-medium">
                       {uiText.noAvatarWarning}
                     </p>
                   )}

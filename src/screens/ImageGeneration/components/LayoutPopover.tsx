@@ -18,17 +18,17 @@ export const LayoutIcon: React.FC<{ layout: Segment['layout']; className?: strin
     )}
 
     {layout === 'split-60-40' && (<>
-      {/* Left 60%: Creator */}
-      <rect x="2" y="2" width="22" height="59" rx="2" className="fill-purple-500/50" />
-      {/* Right 40%: B-Roll */}
-      <rect x="25" y="2" width="15" height="59" rx="2" className="fill-white/15" />
+      {/* Top 60%: Creator */}
+      <rect x="2" y="2" width="38" height="34" rx="2" className="fill-purple-500/50" />
+      {/* Bottom 40%: B-Roll */}
+      <rect x="2" y="37" width="38" height="24" rx="2" className="fill-white/15" />
     </>)}
 
     {layout === 'split-50-50' && (<>
-      {/* Left 50%: Creator */}
-      <rect x="2" y="2" width="18" height="59" rx="2" className="fill-purple-500/50" />
-      {/* Right 50%: B-Roll */}
-      <rect x="21" y="2" width="19" height="59" rx="2" className="fill-white/15" />
+      {/* Top 50%: Creator */}
+      <rect x="2" y="2" width="38" height="28" rx="2" className="fill-purple-500/50" />
+      {/* Bottom 50%: B-Roll */}
+      <rect x="2" y="31" width="38" height="30" rx="2" className="fill-white/15" />
     </>)}
 
     {layout === 'pip' && (<>
@@ -46,7 +46,14 @@ export const LayoutIcon: React.FC<{ layout: Segment['layout']; className?: strin
     </>)}
 
     {/* Creator label */}
-    <text x="50%" y={layout === 'pip' ? '25' : '32'} textAnchor="middle" className="fill-purple-300" fontSize="6" fontWeight="bold">
+    <text
+      x="50%"
+      y={layout === 'pip' ? '25' : layout === 'split-60-40' ? '22' : layout === 'split-50-50' ? '19' : '32'}
+      textAnchor="middle"
+      className="fill-purple-300"
+      fontSize="6"
+      fontWeight="bold"
+    >
       {layout === 'pip' ? '' : 'C'}
     </text>
   </svg>

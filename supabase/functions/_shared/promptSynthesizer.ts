@@ -13,12 +13,14 @@
  */
 
 import { callLLM } from './apiKeyRotation.ts'
-import { 
+import {
   COSTUME_CATEGORIES,
   getCostumeByCategory,
   getCostumeCategoryKeys,
   getContextualCostume,
-  CTA_EMOTION_OVERRIDE
+  CTA_EMOTION_OVERRIDE,
+  getHookExpression,
+  getHookLighting,
 } from './lookups/index.ts'
 
 // ============================================================================
@@ -500,7 +502,8 @@ export interface CreatorPromptInput {
   hasReferenceImage: boolean
   contextualOutfit?: string
   refinementNotes?: string
-  layout?: string  // 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center'
+  layout?: string       // 'full' | 'split-60-40' | 'split-50-50' | 'pip' | 'creator-center'
+  hookCategory?: string // 'visual_shock' | 'negative_bias' | 'curiosity_gap' | 'relatability' | 'speed_value'
 }
 
 export interface CreatorPromptResult {
@@ -548,17 +551,22 @@ export async function buildCreatorPromptAsync(
     }
     console.log(`[buildCreatorPromptAsync] 😊 CTA emotion override applied: friendly smile`)
   } else if (isHOOK) {
-    // HOOK gets INTENSIFIED expression — must stop the scroll in 1.5 seconds
-    const baseEmotion = emotionMap[input.emotion.toLowerCase()] || emotionMap.curiosity
+    // HOOK gets hook-category-specific expression from HOOK_EXPRESSION_MAP
+    // Falls back to generic intensification if no hookCategory provided
+    const hookCat = input.hookCategory || 'visual_shock'
+    const hookExpr = getHookExpression(hookCat)
     emotionSpecs = {
-      expression: `${baseEmotion.expression}, EXAGGERATED intensity — eyebrows raised high, eyes wide open, mouth slightly open as if about to reveal a secret`,
-      body: `${baseEmotion.body}, one hand raised pointing at viewer or gesturing dramatically, dynamic energy, leaning toward camera`
+      expression: hookExpr.promptPhrase,
+      body: `${hookExpr.gesture}, ${hookExpr.body}`,
     }
-    console.log(`[buildCreatorPromptAsync] 🎯 HOOK intensified emotion applied: ${input.emotion}`)
+    console.log(`[buildCreatorPromptAsync] 🎯 HOOK expression applied: category=${hookCat}`)
   } else {
     emotionSpecs = emotionMap[input.emotion.toLowerCase()] || emotionMap.authority
   }
   
+  // Hook-category-specific lighting (for HOOK segments only)
+  const hookLighting = isHOOK ? getHookLighting(input.hookCategory || 'visual_shock') : null
+
   // Camera specs based on segment type
   const cameraMap: Record<string, string> = {
     'HOOK': 'Close-up (CU), 85mm f/1.8, eye-level to slight low angle',
@@ -598,18 +606,18 @@ ${outfitInstruction}
 Camera: ${cameraSpecs}
 Composition: ${isHOOK ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens' : 'Rule of thirds, subject positioned for visual balance'}
 
-Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : isHOOK ? 'dramatic Rembrandt' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : isHOOK ? '5:1 high contrast' : '4:1'} ratio
-Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for attention' : ''}
+Lighting: ${isHOOK && hookLighting ? hookLighting.promptPhrase : isCTA ? 'Butterfly 2:1 ratio, clean even light' : 'Rembrandt 4:1 ratio, professional studio lighting'}
+Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for maximum attention' : ''}
 Background: ${isHOOK ? 'Slightly blurred contextual background with subtle visual element related to ' + (input.topic || 'content creation') + ' to create curiosity' : 'Contextual for ' + (input.topic || 'content creation') + ', moderate depth blur'}
 
 Preserve ONLY: exact facial features, face shape, and skin tone from reference image.
 Do NOT preserve: clothing, accessories, or background from reference.${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}
 Style: Cinematic photorealistic, natural skin texture, high quality.${isHOOK ? ' Maximum visual impact, scroll-stopping energy.' : ''}
 Clean frame, no text overlays, no watermarks.`
-    
+
   } else {
     const outfitLine = input.contextualOutfit || 'smart casual professional attire'
-    
+
     prompt = `A professional content creator with ${emotionSpecs.expression}.
 
 Pose: ${emotionSpecs.body}
@@ -618,8 +626,8 @@ Outfit: ${outfitLine}
 Camera: ${cameraSpecs}
 Composition: ${isHOOK ? 'Off-center left using golden ratio, negative space right for visual breathing room, direct intense eye contact with lens' : 'Rule of thirds, subject positioned for visual balance'}
 
-Lighting: Professional studio lighting, ${isCTA ? 'Butterfly' : isHOOK ? 'dramatic Rembrandt' : 'Rembrandt'} pattern, ${isCTA ? '2:1' : isHOOK ? '5:1 high contrast' : '4:1'} ratio
-Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for attention' : ''}
+Lighting: ${isHOOK && hookLighting ? hookLighting.promptPhrase : isCTA ? 'Butterfly 2:1 ratio, clean even light' : 'Rembrandt 4:1 ratio, professional studio lighting'}
+Color: Cinematic warm tones, Vision3 500T film stock look${isHOOK ? ', high saturation for maximum attention' : ''}
 Background: ${isHOOK ? 'Slightly blurred contextual background with subtle visual element related to ' + (input.topic || 'content creation') + ' to create curiosity' : 'Modern setting appropriate for ' + (input.topic || 'content creation')}
 
 Style: Cinematic photorealistic, natural skin texture, high quality.${isHOOK ? ' Maximum visual impact, scroll-stopping energy.' : ''}${layoutFraming ? `\nFraming: ${layoutFraming}` : ''}

@@ -5,7 +5,7 @@ import { useRateLimit } from "../../../hooks/useRateLimit";
 import { supabase } from "../../../lib/supabase";
 import { useAuth } from "../../../contexts/AuthContext";
 import { getScriptLanguageFromCountry } from "../../../lib/countryDetection";
-import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle, Hash, TrendingUp, Check, Plus, Search, X } from "lucide-react";
+import { RefreshCw, Sparkles, Loader2, Lightbulb, Target, Dna, AlertCircle, Hash, TrendingUp, Check, Plus, Search, X, ChevronDown, Globe } from "lucide-react";
 import { Topic, TikTokChallenge, SOURCE_BADGE_CONFIG } from "../../../types/topic";
 import { getFallbackTopics } from "../../../constants/fallbackTopics";
 
@@ -13,6 +13,11 @@ interface TopicRecommendationsProps {
   onSelectTopic: (topic: Topic) => void;
   onSelectChallenge?: (challenge: TikTokChallenge | null) => void;
   disabled?: boolean;
+  scriptLang?: string;
+  onScriptLangChange?: (lang: string) => void;
+  useDnaTone?: boolean;
+  onDnaToneChange?: (enabled: boolean) => void;
+  hasDnaTone?: boolean;
 }
 
 // Cache settings - v5: invalidated for directive trending-source prompt + post-processing
@@ -23,6 +28,11 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   onSelectTopic,
   onSelectChallenge,
   disabled = false,
+  scriptLang,
+  onScriptLangChange,
+  useDnaTone,
+  onDnaToneChange,
+  hasDnaTone,
 }) => {
   const { t, language } = useLanguage();
   const { user } = useAuth();
@@ -223,23 +233,30 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       setAutocompleteSuggestions([]);
       return;
     }
+    const q = query.trim().toLowerCase();
+    const localFallback = () => {
+      const filtered = trendingChips
+        .filter(chip => chip.keyword.toLowerCase().includes(q))
+        .map(chip => chip.keyword);
+      return filtered.length > 0 ? filtered : trendingChips.slice(0, 8).map(c => c.keyword);
+    };
+
     try {
       const langCode = language === 'id' ? 'id' : language === 'hi' ? 'hi' : 'en';
       const { data, error } = await supabase.functions.invoke('autocomplete-keywords', {
         body: { query: query.trim(), lang: langCode }
       });
       if (error) throw error;
-      if (data?.suggestions) {
-        setAutocompleteSuggestions(data.suggestions.slice(0, 8));
+      const suggestions = data?.data?.suggestions ?? data?.suggestions;
+      if (Array.isArray(suggestions) && suggestions.length > 0) {
+        setAutocompleteSuggestions(suggestions.slice(0, 8));
+      } else {
+        // Edge function succeeded but returned empty — fall back to local filtering
+        setAutocompleteSuggestions(localFallback());
       }
     } catch (err) {
       console.error('[Autocomplete] Error:', err);
-      // Fallback: filter trending chips locally
-      const q = query.trim().toLowerCase();
-      const fallback = trendingChips
-        .filter(chip => chip.keyword.toLowerCase().includes(q))
-        .map(chip => chip.keyword);
-      setAutocompleteSuggestions(fallback.length > 0 ? fallback : trendingChips.map(c => c.keyword));
+      setAutocompleteSuggestions(localFallback());
     }
   }, [language, trendingChips]);
 
@@ -602,8 +619,8 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     };
 
     return (
-      <div className="mb-6 sm:mb-8 w-full">
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
+      <div className="w-full">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
             <h3 className="text-sm sm:text-lg font-semibold text-text-primary">
@@ -613,7 +630,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         </div>
 
         {/* Loading Message */}
-        <div className="mb-4 flex items-center justify-center gap-3 py-3">
+        <div className="mb-2 flex items-center justify-center gap-3 py-2 shrink-0">
           <Loader2 className="w-5 h-5 text-primary animate-spin" />
           <div className="text-center">
             <p className="text-text-secondary text-sm font-medium">{loadingText.generating}</p>
@@ -668,9 +685,9 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   };
 
   return (
-    <div className="mb-6 sm:mb-8 w-full">
+    <div className="w-full">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 sm:mb-5">
+      <div className="flex items-center justify-between mb-2 shrink-0">
         <div className="flex items-center gap-2">
           <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />
           <h3 className="text-sm sm:text-lg font-semibold text-[#FAFAF9]">
@@ -711,6 +728,54 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         </button>
       </div>
 
+      {/* Language + DNA Controls */}
+      {(scriptLang !== undefined || hasDnaTone) && (
+        <div className="flex items-center gap-3 mb-2 shrink-0">
+          {/* Language Selector */}
+          {scriptLang !== undefined && onScriptLangChange && (
+            <div className="relative">
+              <div className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-text-muted" />
+                <select
+                  value={scriptLang}
+                  onChange={(e) => onScriptLangChange(e.target.value)}
+                  disabled={disabled}
+                  className="appearance-none bg-[#12121a] border border-[#262626] rounded-lg px-3 py-1.5 pr-7 text-xs sm:text-sm text-[#FAFAF9] focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+                >
+                  <option value="id">Indonesia</option>
+                  <option value="en">English</option>
+                  <option value="hi">हिन्दी</option>
+                  <option value="fr">Français</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[#78716C] pointer-events-none" />
+              </div>
+            </div>
+          )}
+
+          {/* DNA Toggle */}
+          {hasDnaTone && onDnaToneChange && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={useDnaTone ?? true}
+                  onChange={(e) => onDnaToneChange(e.target.checked)}
+                  disabled={disabled}
+                  className="sr-only"
+                />
+                <div className={`w-9 h-5 rounded-full transition-colors ${useDnaTone ? "bg-emerald-500" : "bg-[#161616] border border-[#262626]"}`}>
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useDnaTone ? "translate-x-4" : "translate-x-0.5"}`} />
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <Dna className="w-3.5 h-3.5 text-[#ec4899]" />
+                <span className="text-[#FAFAF9] text-xs sm:text-sm">DNA</span>
+              </div>
+            </label>
+          )}
+        </div>
+      )}
+
       {/* Rate Limit Warning */}
       {rateLimited && (
         <div className="mb-4 bg-orange-500/10 border border-orange-500/30 rounded-lg px-4 py-2 flex items-center gap-2">
@@ -723,7 +788,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
       {/* Context Badges - Show user's personalization ABOVE search bar */}
       {!activeKeyword && (onboardingData?.interest || onboardingData?.selected_niches || onboardingData?.creative_dna) && (
-        <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="flex flex-wrap items-center gap-2 mb-2 shrink-0">
           <span className="text-text-muted text-xs">
             {uiText.basedOn}
           </span>
@@ -758,7 +823,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
       )}
 
       {/* Search Bar */}
-      <div className="mb-3 sm:mb-4" ref={searchContainerRef}>
+      <div className="mb-2 shrink-0" ref={searchContainerRef}>
         <div className="relative">
           {searchLoading ? (
             <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />
@@ -789,7 +854,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
           {/* Autocomplete Dropdown - Google-like suggestions */}
           {showSuggestions && autocompleteSuggestions.length > 0 && (
-            <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-card border border-border-default rounded-lg shadow-lg overflow-hidden max-h-[320px] overflow-y-auto">
+            <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-[#181824] border border-[#2D2D3F] rounded-lg shadow-lg overflow-hidden max-h-[320px] overflow-y-auto">
               {autocompleteSuggestions.map((suggestion, i) => {
                 // Highlight the part that matches user input
                 const query = searchKeyword.trim().toLowerCase();
@@ -798,18 +863,18 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
                   <button
                     key={i}
                     onClick={() => { handleKeywordSearch(suggestion); setShowSuggestions(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-text-secondary hover:bg-surface hover:text-text-primary transition-colors"
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-[#94A3B8] hover:bg-[#232334] hover:text-[#FAFAF9] transition-colors"
                   >
-                    <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+                    <Search className="w-3.5 h-3.5 text-[#64748B] flex-shrink-0" />
                     <span className="flex-1 truncate">
                       {idx >= 0 ? (
                         <>
                           {suggestion.slice(0, idx)}
-                          <span className="text-text-muted">{suggestion.slice(idx, idx + query.length)}</span>
-                          <span className="font-medium text-text-primary">{suggestion.slice(idx + query.length)}</span>
+                          <span className="text-[#64748B]">{suggestion.slice(idx, idx + query.length)}</span>
+                          <span className="font-medium text-[#FAFAF9]">{suggestion.slice(idx + query.length)}</span>
                         </>
                       ) : (
-                        <span className="font-medium text-text-primary">{suggestion}</span>
+                        <span className="font-medium text-[#FAFAF9]">{suggestion}</span>
                       )}
                     </span>
                   </button>

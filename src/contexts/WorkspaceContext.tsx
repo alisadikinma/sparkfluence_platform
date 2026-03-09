@@ -80,6 +80,16 @@ export interface WorkspaceSegment {
   isEnabled: boolean;
   includeCreatorFace?: boolean;
   referenceImageUrl?: string;
+  // Image generation extras (ported from old ImageGeneration)
+  creatorCostume?: string;
+  creatorAppearance?: string;
+  structuredVD?: { scene: string; camera: string; lighting: string; color: string; mood: string; fx: string };
+  additionalNotes?: string;
+  optionsApplied?: boolean;
+  previousScript?: string;
+  shortenedByAI?: boolean;
+  jobId?: string;
+  referenceImageSource?: 'unsplash' | 'pexels' | 'upload';
 }
 
 export interface WorkspaceSettings {
@@ -124,8 +134,7 @@ export interface WorkspaceState {
   isGeneratingScript: boolean;
   isRegeneratingScript: boolean;
 
-  // Dashboard (Phase 4)
-  sliderValues: { hookAggressiveness: number; controversyLevel: number; humorDensity: number; pacing: number; emotionalIntensity: number };
+  // Smart Companion
   focusedSegmentId: string | null;
 
   // Dirty flag (unsaved changes)
@@ -138,7 +147,7 @@ export interface WorkspaceState {
 
 export type WorkspaceAction =
   | { type: 'INIT_SESSION'; orderId: string; sessionType: WorkspaceState['sessionType']; topic: string; settings: WorkspaceSettings }
-  | { type: 'RESTORE_SESSION'; state: Partial<WorkspaceState> }
+  | { type: 'RESTORE_SESSION'; state: Partial<WorkspaceState>; markDirty?: boolean }
   | { type: 'SET_TITLE'; title: string }
   | { type: 'SET_STATUS'; status: WorkspaceState['status'] }
   | { type: 'SET_ACTIVE_STEP'; step: WorkspaceState['activeStep'] }
@@ -158,6 +167,9 @@ export type WorkspaceAction =
   | { type: 'SET_SEGMENT_IMAGE'; segmentId: string; imageUrl: string; imageEntry?: WorkspaceSegment['images'][0] }
   | { type: 'SET_SEGMENT_IMAGE_ERROR'; segmentId: string; error: string }
   | { type: 'SET_SEGMENT_LAYOUT'; segmentId: string; layout: WorkspaceSegment['layout'] }
+  | { type: 'UPDATE_SEGMENT_IMAGES'; segmentId: string; images: WorkspaceSegment['images']; selectedImageUrl?: string }
+  | { type: 'SET_SEGMENT_OPTIONS'; segmentId: string; options: Partial<Pick<WorkspaceSegment, 'additionalNotes' | 'includeCreatorFace' | 'referenceImageUrl' | 'referenceImageSource' | 'optionsApplied' | 'layout'>> }
+  | { type: 'BATCH_UPDATE_SEGMENTS'; updates: Array<{ segmentId: string; changes: Partial<WorkspaceSegment> }> }
   // Video actions
   | { type: 'SET_SEGMENT_GENERATING_VIDEO'; segmentId: string; isGenerating: boolean }
   | { type: 'SET_SEGMENT_VIDEO'; segmentId: string; videoUrl: string }
@@ -165,8 +177,7 @@ export type WorkspaceAction =
   // Segment operations (Phase 2)
   | { type: 'TOGGLE_SEGMENT'; segmentId: string }
   | { type: 'ADJUST_DURATION'; segmentId: string; durationSeconds: number }
-  // Dashboard (Phase 4)
-  | { type: 'SET_SLIDER_VALUES'; values: { hookAggressiveness: number; controversyLevel: number; humorDensity: number; pacing: number; emotionalIntensity: number } }
+  // Smart Companion
   | { type: 'SET_FOCUSED_SEGMENT'; segmentId: string | null }
   // Advanced segment operations (Phase 6)
   | { type: 'MERGE_SEGMENTS'; segmentId1: string; segmentId2: string }
@@ -210,7 +221,6 @@ export const initialWorkspaceState: WorkspaceState = {
   qualityReport: null,
   isGeneratingScript: false,
   isRegeneratingScript: false,
-  sliderValues: { hookAggressiveness: 5, controversyLevel: 3, humorDensity: 4, pacing: 6, emotionalIntensity: 5 },
   focusedSegmentId: null,
   isDirty: false,
 };
@@ -233,7 +243,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
       };
 
     case 'RESTORE_SESSION':
-      return { ...state, ...action.state, isDirty: false };
+      return { ...state, ...action.state, isDirty: action.markDirty ?? false };
 
     case 'SET_TITLE':
       return { ...state, title: action.title, isDirty: true };
@@ -250,16 +260,20 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
     case 'SET_REGENERATING_SCRIPT':
       return { ...state, isRegeneratingScript: action.isRegenerating };
 
-    case 'SET_SCRIPT_DATA':
+    case 'SET_SCRIPT_DATA': {
+      // LOOP-END defaults to disabled (user must explicitly enable)
+      const segsWithLoopEndOff = action.segments.map((seg) =>
+        seg.segmentType === 'LOOP-END' ? { ...seg, isEnabled: false } : seg,
+      );
       return {
         ...state,
-        segments: action.segments,
+        segments: segsWithLoopEndOff,
         hookOptions: action.hookOptions,
         qualityReport: action.qualityReport,
         status: 'script_ready',
         scriptVersions: [{
           version: 1,
-          segments: action.segments,
+          segments: segsWithLoopEndOff,
           hookOptions: action.hookOptions,
           selectedHook: state.selectedHook,
           score: action.qualityReport.final_score,
@@ -268,6 +282,7 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         selectedVersion: 1,
         isDirty: true,
       };
+    }
 
     case 'SELECT_HOOK': {
       if (state.scriptConfirmed || !state.hookOptions) return state;
@@ -388,6 +403,43 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         isDirty: true,
       };
 
+    case 'UPDATE_SEGMENT_IMAGES':
+      return {
+        ...state,
+        segments: state.segments.map(seg =>
+          seg.id === action.segmentId
+            ? {
+                ...seg,
+                images: action.images,
+                imageUrl: action.selectedImageUrl ?? seg.imageUrl,
+                isGeneratingImage: action.images.some(img => img.status === 1),
+              }
+            : seg
+        ),
+        isDirty: true,
+      };
+
+    case 'SET_SEGMENT_OPTIONS':
+      return {
+        ...state,
+        segments: state.segments.map(seg =>
+          seg.id === action.segmentId
+            ? { ...seg, ...action.options }
+            : seg
+        ),
+        isDirty: true,
+      };
+
+    case 'BATCH_UPDATE_SEGMENTS':
+      return {
+        ...state,
+        segments: state.segments.map(seg => {
+          const update = action.updates.find(u => u.segmentId === seg.id);
+          return update ? { ...seg, ...update.changes } : seg;
+        }),
+        isDirty: true,
+      };
+
     case 'SET_SEGMENT_GENERATING_VIDEO':
       return {
         ...state,
@@ -442,9 +494,6 @@ function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): Works
         isDirty: true,
       };
     }
-
-    case 'SET_SLIDER_VALUES':
-      return { ...state, sliderValues: action.values, isDirty: true };
 
     case 'SET_FOCUSED_SEGMENT':
       return { ...state, focusedSegmentId: action.segmentId };

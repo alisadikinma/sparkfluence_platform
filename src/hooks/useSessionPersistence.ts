@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWorkspace } from '../contexts/WorkspaceContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useChatSessions, ChatSessionRow } from './useChatSessions';
 import type { WorkspaceState, WorkspaceSegment } from '../contexts/WorkspaceContext';
 
@@ -9,6 +10,7 @@ import type { WorkspaceState, WorkspaceSegment } from '../contexts/WorkspaceCont
 
 export interface UseSessionPersistenceOptions {
   orderId: string | undefined;  // From URL params
+  sessionType?: 'script_gen' | 'creator_lab' | 'ad_studio';  // For new session creation
   autoSaveInterval?: number;    // Default: 5000ms (5 seconds)
   enabled?: boolean;            // Default: true
 }
@@ -16,6 +18,7 @@ export interface UseSessionPersistenceOptions {
 export interface UseSessionPersistenceReturn {
   isRestoring: boolean;         // True while loading session from DB
   isSaving: boolean;            // True during save operation
+  sessionFound: boolean;        // True if DB had an existing session (even if empty)
   lastSavedAt: Date | null;     // Last successful save timestamp
   saveNow: () => Promise<void>; // Manual save trigger
   error: string | null;
@@ -96,13 +99,15 @@ function dbRowToWorkspaceState(row: ChatSessionRow): Partial<WorkspaceState> {
       const imageInfo = imageData.segments?.find((img: any) => img.id === s.id);
       // Find corresponding video data
       const videoInfo = videoData.segments?.find((vid: any) => vid.id === s.id);
+      // Ensure HOOK/CTA/LOOP-END are always CREATOR (fix legacy data saved as B-ROLL)
+      const segType = (s.segmentType || '').toUpperCase();
 
       return {
         id: s.id || s.segmentId,
         segmentId: s.segmentId,
         segmentNumber: s.segmentNumber,
         segmentType: s.segmentType,
-        shotType: s.shotType,
+        shotType: ['HOOK', 'CTA', 'LOOP-END'].includes(segType) ? 'CREATOR' : (s.shotType || 'B-ROLL'),
         timing: s.timing,
         durationSeconds: s.durationSeconds,
         script: s.script,
@@ -111,8 +116,8 @@ function dbRowToWorkspaceState(row: ChatSessionRow): Partial<WorkspaceState> {
         transition: s.transition,
         maxWords: s.maxWords,
         layout: s.layout || 'full',
-        loopEndEnabled: s.loopEndEnabled ?? true,
-        isEnabled: s.isEnabled ?? true,
+        loopEndEnabled: s.loopEndEnabled ?? ((s.segmentType || '').toUpperCase() !== 'LOOP-END'),
+        isEnabled: s.isEnabled ?? ((s.segmentType || '').toUpperCase() !== 'LOOP-END'),
         includeCreatorFace: s.includeCreatorFace,
         referenceImageUrl: s.referenceImageUrl,
         // Image fields
@@ -158,25 +163,38 @@ function dbRowToWorkspaceState(row: ChatSessionRow): Partial<WorkspaceState> {
 export function useSessionPersistence(options: UseSessionPersistenceOptions): UseSessionPersistenceReturn {
   const {
     orderId,
+    sessionType = 'script_gen',
     autoSaveInterval = 5000,
     enabled = true,
   } = options;
 
   const { state, dispatch } = useWorkspace();
-  const { fetchSession, saveWorkspaceState } = useChatSessions();
+  const { user, loading: authLoading } = useAuth();
+  const { fetchSession, saveWorkspaceState, createSession } = useChatSessions();
 
-  const [isRestoring, setIsRestoring] = useState(false);
+  // Start as true when orderId is present — blocks Workspace init effect until DB query completes
+  // Also keep restoring while auth is still loading (user not yet available)
+  const [isRestoring, setIsRestoring] = useState(!!orderId && enabled);
   const [isSaving, setIsSaving] = useState(false);
+  const [sessionFound, setSessionFound] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Refs to avoid stale closures
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastStateRef = useRef<WorkspaceState | null>(null);
+  const needsImmediateSave = useRef(false);
+  const hasRestoredRef = useRef(false);
 
   // ── Restore session from DB on mount ──
+  // IMPORTANT: Wait for auth to load (user !== null) before attempting DB fetch.
+  // Without this, fetchSession returns null (no user), hasRestoredRef gets set to true,
+  // and the restore never retries after auth loads — causing mock data to appear on refresh.
   useEffect(() => {
-    if (!enabled || !orderId) return;
+    if (hasRestoredRef.current || !enabled || !orderId) return;
+    // Wait for auth to finish loading before attempting restore
+    if (authLoading || !user) return;
+    hasRestoredRef.current = true;
 
     const restoreSession = async () => {
       setIsRestoring(true);
@@ -187,7 +205,15 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
         if (row) {
           const restoredState = dbRowToWorkspaceState(row);
           dispatch({ type: 'RESTORE_SESSION', state: restoredState });
+          setSessionFound(true);
           setLastSavedAt(new Date(row.updated_at));
+        } else {
+          // New session — create DB row so future updateSession calls work
+          await createSession({
+            orderId,
+            sessionType,
+            title: 'Untitled',
+          });
         }
       } catch (err: any) {
         console.error('[useSessionPersistence] Restore error:', err);
@@ -198,7 +224,7 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     };
 
     restoreSession();
-  }, [orderId, enabled, fetchSession, dispatch]);
+  }, [orderId, enabled, authLoading, user, fetchSession, createSession, sessionType, dispatch]);
 
   // ── Save function ──
   const performSave = useCallback(async () => {
@@ -257,6 +283,19 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     };
   }, [enabled, orderId, state.isDirty, state, autoSaveInterval, performSave]);
 
+  // ── Immediate save after state update (for saveNow calls) ──
+  // When saveNow() is called right after dispatch, the state may not have updated
+  // yet (React batching). This effect runs AFTER the re-render with updated state.
+  useEffect(() => {
+    if (needsImmediateSave.current && state.isDirty) {
+      needsImmediateSave.current = false;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      performSave();
+    }
+  }, [state, performSave]);
+
   // ── Flush pending save on unmount ──
   useEffect(() => {
     return () => {
@@ -270,17 +309,62 @@ export function useSessionPersistence(options: UseSessionPersistenceOptions): Us
     };
   }, [state.isDirty, orderId, performSave]);
 
+  // ── Save on page unload (prevents data loss on refresh/close) ──
+  useEffect(() => {
+    if (!enabled || !orderId) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (state.isDirty) {
+        // Flush pending debounce timer
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+        }
+        // Trigger save — performSave is async but we try our best
+        performSave();
+        // Show browser "unsaved changes" warning so user can cancel if needed
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [enabled, orderId, state.isDirty, performSave]);
+
+  // ── Save on tab visibility change (more reliable than beforeunload for async) ──
+  useEffect(() => {
+    if (!enabled || !orderId) return;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden' && state.isDirty) {
+        // Tab is being hidden (switched away, minimized, or closing)
+        // This fires reliably even when beforeunload doesn't complete async saves
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+        }
+        performSave();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [enabled, orderId, state.isDirty, performSave]);
+
   // ── Manual save trigger ──
   const saveNow = useCallback(async () => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
     }
+    // Set flag so the useEffect above catches the save after state updates
+    needsImmediateSave.current = true;
+    // Also try saving now in case state already includes the change
     await performSave();
   }, [performSave]);
 
   return {
     isRestoring,
     isSaving,
+    sessionFound,
     lastSavedAt,
     saveNow,
     error,

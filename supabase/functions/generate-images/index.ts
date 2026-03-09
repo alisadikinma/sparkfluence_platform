@@ -71,6 +71,51 @@ import {
 } from '../_shared/promptSynthesizer.ts'
 
 // ============================================================================
+// EMOTION → HOOK CATEGORY MAP (2026-03-09)
+// Derives hook category from segment emotion field for HOOK-specific
+// expression and lighting in buildCreatorPromptAsync
+// ============================================================================
+
+const EMOTION_TO_HOOK_CATEGORY: Record<string, string> = {
+  // visual_shock emotions
+  shock:       'visual_shock',
+  surprise:    'visual_shock',
+  excitement:  'visual_shock',
+  energy:      'visual_shock',
+  // negative_bias emotions
+  fear:        'negative_bias',
+  warning:     'negative_bias',
+  tension:     'negative_bias',
+  anger:       'negative_bias',
+  urgency:     'negative_bias',
+  // curiosity_gap emotions
+  curiosity:   'curiosity_gap',
+  mystery:     'curiosity_gap',
+  intrigue:    'curiosity_gap',
+  wonder:      'curiosity_gap',
+  // relatability emotions
+  relatable:   'relatability',
+  friendly:    'relatability',
+  empathy:     'relatability',
+  warmth:      'relatability',
+  happiness:   'relatability',
+  // speed_value emotions
+  authority:   'speed_value',
+  confidence:  'speed_value',
+  value:       'speed_value',
+  calm:        'speed_value',
+  focus:       'speed_value',
+}
+
+/**
+ * Derive hook category from emotion string.
+ * Used to select the right expression + lighting for HOOK segment images.
+ */
+function deriveHookCategory(emotion: string): string {
+  return EMOTION_TO_HOOK_CATEGORY[emotion.toLowerCase()] ?? 'visual_shock'
+}
+
+// ============================================================================
 // STOCK IMAGE SEARCH - TEMPORARILY DISABLED (2026-01-11)
 // All segments use AI generation via fal.ai
 // TODO: Re-enable when stock image feature is ready
@@ -730,6 +775,8 @@ async function handleProcessSingle(
       console.log(`[PROCESS_SINGLE]   Reasoning: ${outfitResult.reasoning}`)
       
       // Step 2: Build CREATOR prompt (without hardcoded age/appearance)
+      const segmentUpper = (job.segment_type || 'HOOK').toUpperCase()
+      const isHookSegment = segmentUpper === 'HOOK'
       const creatorInput: CreatorPromptInput = {
         topic: job.topic || '',
         emotion: job.emotion || 'authority',
@@ -738,7 +785,9 @@ async function handleProcessSingle(
         hasReferenceImage: hasRefImage,
         contextualOutfit: outfitResult.outfit,
         refinementNotes: regenerationNotes,
-        layout: job.layout || 'full'
+        layout: job.layout || 'full',
+        // Derive hook category for HOOK segments — used by HOOK_EXPRESSION_MAP + HOOK_LIGHTING_MAP
+        hookCategory: isHookSegment ? deriveHookCategory(job.emotion || 'authority') : undefined,
       }
       
       const creatorResult = await buildCreatorPromptAsync(creatorInput, supabase)

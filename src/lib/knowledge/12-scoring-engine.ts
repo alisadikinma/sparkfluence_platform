@@ -17,8 +17,14 @@
  *   [J] TikTok Creator Analytics / Epidemic Sound — Retention curve patterns
  *   [K] NRC Emotion Intensity Lexicon — Word-level emotion scores
  *   [L] InSet Indonesian Sentiment Lexicon — 10,218 words, -5 to +5
+ *   [M] OpusClip 2026 — TikTok algorithm: watch time > views, shares 3x > likes, 80% completion > volume
+ *   [N] Virvid 2026 — 71% decide in 3s, 70%+ completion = algorithmic boost, AI hooks +30% retention
+ *   [O] Joyspace 2026 — "50% Rule" (keep 50% audience = viral), pattern interrupts every 5-8s, looping hack
+ *   [P] AutoFaceless 2026 — 82% internet = video, TikTok 2.80% engagement, 59% watch 41-80% duration
+ *   [Q] DriveEditor 2025 — Problem/Solution hooks +48% retention (Nike), Reveal/Teaser +41% watch time (Sephora)
+ *   [R] WolfPack 2025 — 4-part structure (Hook→Value→Content→CTA), single idea per video, direct CTAs
  *
- * Last updated: 2026-02-08
+ * Last updated: 2026-02-12
  */
 
 // ═══════════════════════════════════════════════════════════════
@@ -63,19 +69,19 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
   HOOK: {
     has_question: {
       weight: 12,
-      source: '[G] Questions +23.3% shares (Backlinko 912M posts). Forces mental engagement in critical 1.3s window [B].'
+      source: '[G] Questions +23.3% shares (Backlinko 912M posts). [N] 71% decide in 3s — question forces mental engagement. [M] Question Hook = open loop viewers stay to close.'
     },
     has_number: {
       weight: 15,
-      source: '[F] Numbers in headlines +36% CTR (Conductor). number_list hook pattern avg +18% retention [D].'
+      source: '[F] Numbers in headlines +36% CTR (Conductor). [D] number_list hook pattern avg +18% retention. [M] Results Hook with specific numbers = proven pattern.'
     },
     has_power_word: {
       weight: 10,
-      source: '[H] Negative/emotional words +2.3% CTR per word (Nature/Upworthy 105K A/B tests).'
+      source: '[H] Negative/emotional words +2.3% CTR per word (Nature/Upworthy 105K A/B tests). [Q] Bold statements spark curiosity/emotional response — "stop scrolling" effect.'
     },
     has_negative_frame: {
       weight: 8,
-      source: '[I] Negative superlatives +63% higher CTR (Outbrain 65K titles). [A] Loss aversion 2x intensity.'
+      source: '[I] Negative superlatives +63% higher CTR (Outbrain 65K titles). [A] Loss aversion 2x intensity. [M] Contradiction Hook creates cognitive dissonance.'
     },
     word_density_optimal: {
       weight: 10,
@@ -83,30 +89,34 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
     },
     under_word_limit: {
       weight: 8,
-      source: '[B] Gen Z 1.3s decision point. HOOK must be readable in <3s at 2.5-3.0 words/sec.'
+      source: '[B] Gen Z 1.3s decision point. [N] 71% decide in 3s. [Q] Avg attention span 8.2s. HOOK must be readable in <3s.'
     },
     has_pattern_interrupt: {
       weight: 7,
-      source: '[A] 5 RAS trigger techniques. Pattern interrupts reset attention baseline. [J] +17pp retention.'
+      source: '[A] 5 RAS trigger techniques. [O] Pattern interrupts every 5-8s. [J] +17pp retention.'
     },
     matches_hook_category: {
       weight: 5,
-      source: '[D] 5 hook categories each have distinct psychological triggers. Category alignment = coherence.'
+      source: '[D] 5 hook categories. [M] 4 proven patterns: Question, Contradiction, Results, Story — each has distinct psychology.'
+    },
+    payoff_not_revealed: {
+      weight: 10,
+      source: '[Q] Sephora: blurred→reveal = +41% watch time, +27% engagement. Buffer: "Curiosity drives people, discomfort of not knowing." Virvid: Mystery Hook 22M+ views, 70%+ completion. HOOK must create open loop — NEVER reveal the answer/tool/product. Reveal in BODY/PEAK for maximum retention.'
     },
   },
 
   FORE: {
     has_foreshadow: {
       weight: 15,
-      source: '[E] "Tunggu sampai lo liat..." pattern locks retention. Foreshadow = open loop = must watch.'
+      source: '[E] "Tunggu sampai lo liat..." pattern locks retention. [Q] Reveal/Teaser = +41% watch time (Sephora). Foreshadow = open loop = must watch.'
     },
     has_transition: {
       weight: 8,
-      source: 'Smooth hook→body transition reduces 5s drop-off. [J] Avg 15-22% drop at 5s mark.'
+      source: 'Smooth hook→body transition reduces 5s drop-off. [J] Avg 15-22% drop at 5s mark. [R] Value Proposition within 5-10s.'
     },
     builds_on_hook: {
       weight: 12,
-      source: '[A] Commitment/Consistency: viewers who self-identified in HOOK expect payoff. Break = exit.'
+      source: '[A] Commitment/Consistency: viewers who self-identified in HOOK expect payoff. [R] Value Proposition: "Why should they keep watching?" Break = exit.'
     },
     word_density_optimal: {
       weight: 10,
@@ -114,18 +124,18 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
     },
     has_specific_detail: {
       weight: 10,
-      source: '[E] Specificity > vague. "3 tools" > "some tools". Concrete = trust, vague = skip.'
+      source: '[E] Specificity > vague. [R] "Here\'s how a simple content plan can boost your engagement by 50%" > generic promise.'
     },
   },
 
   BODY: {
     has_pattern_interrupt: {
       weight: 15,
-      source: '[J] Pattern interrupts add +17pp retention. Critical mid-video to prevent linear decline.'
+      source: '[J] Pattern interrupts add +17pp retention. [O] Every 5-8 seconds to "bump" retention back up. [M] Every 10-15s: visual changes, topic shifts, text overlays, audio changes.'
     },
     has_specific_detail: {
       weight: 12,
-      source: '[A][E] Concrete data/examples build authority. "47 options tested" > "many options".'
+      source: '[A][E] Concrete data/examples build authority. [R] Specificity key for trust/credibility. "47 options tested" > "many options".'
     },
     has_transition_word: {
       weight: 5,
@@ -137,22 +147,22 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
     },
     has_value_delivery: {
       weight: 13,
-      source: '[A] Reciprocity principle: deliver value before asking. Body = main value container.'
+      source: '[A] Reciprocity principle: deliver value before asking. [M] Progressive Value Delivery: each segment must deliver incremental value, escalating. Body = main value container.'
     },
   },
 
   PEAK: {
     has_emotional_climax: {
       weight: 18,
-      source: '[A] Emotional campaigns 2x ROI vs rational. Peak must be highest emotional point.'
+      source: '[A] Emotional campaigns 2x ROI vs rational. [M] Shares weighted 3x > likes — PEAK drives shares. Peak must be highest emotional point.'
     },
     has_unexpected_twist: {
       weight: 15,
-      source: '[E] Surprise = replay + share value. Unexpected element at PEAK drives completion.'
+      source: '[E] Surprise = replay + share value. [Q] Reveal/Teaser = +41% watch time (Sephora). Unexpected element at PEAK drives completion + shares.'
     },
     has_specific_proof: {
       weight: 10,
-      source: '[A] Authority + Social Proof at climax. "50K+ people" or "tested for 30 days" = trust peak.'
+      source: '[A] Authority + Social Proof at climax. [Q] Problem/Solution with data = +48% retention (Nike). "50K+ people" or "tested for 30 days" = trust peak.'
     },
     word_density_optimal: {
       weight: 8,
@@ -167,7 +177,7 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
   CTA: {
     has_clear_action: {
       weight: 12,
-      source: '[C] Action-oriented language +121% conversion. Must have explicit verb (tap/click/follow/save).'
+      source: '[C] Action-oriented language +121% conversion. [R] "Comment Strategy below!" > "Let us know". Must have explicit verb (tap/click/follow/save).'
     },
     first_person: {
       weight: 10,
@@ -175,7 +185,7 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
     },
     single_focus: {
       weight: 18,
-      source: '[C] Single CTA focus +371% clicks. Multiple CTAs = decision paralysis = no action.'
+      source: '[C] Single CTA focus +371% clicks. [R] ONE idea per video. Multiple CTAs = decision paralysis = no action.'
     },
     has_urgency_word: {
       weight: 8,
@@ -194,11 +204,11 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
   'LOOP-END': {
     mirrors_hook_energy: {
       weight: 20,
-      source: 'LOOP-END must match HOOK energy for seamless loop. Energy mismatch = viewer notices cut.'
+      source: '[O] "Looping Hack" — seamless loop = over 100% retention rate. Energy mismatch = viewer notices cut = scroll away.'
     },
     has_callback: {
       weight: 15,
-      source: 'Callback to HOOK creates satisfying closure. "Remember when I said..." = replay trigger.'
+      source: '[M] Call-backs: reference opening hook with a twist = replay trigger. "Remember when I said..." = closure + loop.'
     },
     word_density_optimal: {
       weight: 10,
@@ -206,7 +216,7 @@ export const SCORING_RULES: Record<SegmentType, Record<string, ScoringWeight>> =
     },
     emotional_match: {
       weight: 10,
-      source: 'Emotion tone should match HOOK (±0.2 intensity) for seamless loop perception.'
+      source: '[O] Emotion tone must match HOOK (±0.2 intensity) for seamless loop perception. Mismatch = jarring transition.'
     },
   },
 };
@@ -231,6 +241,8 @@ export const RETENTION_MODEL = {
   /** Maps hook score (0-100) to initial retention % */
   hookScoreToRetention: (hookScore: number): number => {
     // [J] 65%+ 3s retention = 4-7x more impressions
+    // [N] 71% of viewers decide in first 3 seconds
+    // [M] 80% completion with 10K views > 20% completion with 100K views
     // Linear mapping: score 0→40%, score 50→65%, score 100→95%
     return Math.min(95, Math.max(40, 40 + (hookScore / 100) * 55));
   },
@@ -251,7 +263,7 @@ export const RETENTION_MODEL = {
     default: 20,
   } as Record<string, number>,
 
-  /** Pattern interrupt bonus: [J] +17 percentage points when mid-video interrupt detected */
+  /** Pattern interrupt bonus: [J][O] +17pp when mid-video interrupt detected. [O] Every 5-8s cadence optimal. */
   patternInterruptBonus: 17,
 
   /** Benchmark thresholds for retention curve */
@@ -260,6 +272,25 @@ export const RETENTION_MODEL = {
     above_average: 65,// [E] Reels benchmark
     average: 50,
     below_average: 35,
+  },
+
+  /**
+   * 2026 Algorithm thresholds — critical for distribution
+   * Source: [N] Virvid, [M] OpusClip, [O] Joyspace, [P] AutoFaceless
+   */
+  algorithmThresholds: {
+    /** [N] 70%+ completion rate triggers algorithmic boost on TikTok/Reels */
+    completionForBoost: 70,
+    /** [O] "50% Rule" — keep 50% audience until last second = viral hit */
+    fiftyPercentRule: 50,
+    /** [P] 59% of videos are watched 41-80% of duration — beat this to stand out */
+    averageWatchThrough: 59,
+    /** [M] Shares weighted 3x higher than likes — write for shareability */
+    shareToLikeWeight: 3,
+    /** [M] Immediate scroll (< 2 seconds) = strong negative signal */
+    immediateScrollThreshold: 2,
+    /** [Q] Silent-friendly captions increase completion by 40% */
+    captionCompletionBoost: 40,
   },
 
   /**
@@ -457,6 +488,24 @@ export const POWER_WORDS: Record<string, PowerWord[]> = {
     { word: 'anjir', category: 'emotional', impact: 0.7, source: '[L]' },
     { word: 'gokil', category: 'emotional', impact: 0.7, source: '[L]' },
     { word: 'shocking', category: 'emotional', impact: 0.8, source: '[A]' },
+    { word: 'merinding', category: 'emotional', impact: 0.75, source: '[L]' },
+    { word: 'ngilu', category: 'emotional', impact: 0.65, source: '[L]' },
+    { word: 'keren', category: 'emotional', impact: 0.55, source: '[L]' },
+    { word: 'dahsyat', category: 'emotional', impact: 0.7, source: '[L]' },
+    { word: 'brutal', category: 'emotional', impact: 0.75, source: '[L]' },
+    { word: 'insane', category: 'emotional', impact: 0.7, source: '[A]' },
+    { word: 'epic', category: 'emotional', impact: 0.6, source: '[A]' },
+    { word: 'fatal', category: 'negative', impact: 0.8, source: '[H]' },
+    { word: 'mantap', category: 'emotional', impact: 0.55, source: '[L]' },
+    { word: 'canggih', category: 'emotional', impact: 0.6, source: '[L]' },
+    { word: 'powerful', category: 'emotional', impact: 0.65, source: '[A]' },
+    { word: 'game changer', category: 'value', impact: 0.75, source: '[E]' },
+    { word: 'next level', category: 'emotional', impact: 0.65, source: '[E]' },
+    { word: 'auto', category: 'value', impact: 0.5, source: '[L]' },
+    { word: 'anti', category: 'negative', impact: 0.6, source: '[L]' },
+    { word: 'wajib', category: 'urgency', impact: 0.7, source: '[L]' },
+    { word: 'kesalahan', category: 'negative', impact: 0.75, source: '[H]' },
+    { word: 'ketinggalan', category: 'negative', impact: 0.7, source: '[H]' },
   ],
 
   hi: [
@@ -517,20 +566,20 @@ export const WORD_DENSITY = {
 
   /** Density score thresholds */
   thresholds: {
-    optimal_min: 70,    // Below 70% = too sparse, feels empty
-    optimal_max: 90,    // Above 90% = too packed, feels rushed
-    warning: 100,       // At 100% = at absolute limit
-    critical: 110,      // Above 110% = over limit, will be cut off
+    optimal_min: 60,    // Below 60% = too sparse, feels empty
+    optimal_max: 95,    // Above 95% = too packed, feels rushed
+    warning: 105,       // At 105% = at limit
+    critical: 115,      // Above 115% = over limit, will be cut off
   },
 
   /** Score based on density percentage */
   densityScore: (densityPercent: number): number => {
-    if (densityPercent >= 70 && densityPercent <= 90) return 1.0;  // Optimal
-    if (densityPercent >= 60 && densityPercent < 70) return 0.7;   // Slightly sparse
-    if (densityPercent > 90 && densityPercent <= 100) return 0.8;  // Slightly packed
-    if (densityPercent > 100 && densityPercent <= 110) return 0.4; // Over limit
-    if (densityPercent > 110) return 0.1;                          // Critical
-    if (densityPercent < 60) return 0.5;                           // Too empty
+    if (densityPercent >= 60 && densityPercent <= 95) return 1.0;  // Optimal (widened)
+    if (densityPercent >= 55 && densityPercent < 60) return 0.7;   // Slightly sparse
+    if (densityPercent > 95 && densityPercent <= 105) return 0.7;  // Slightly packed
+    if (densityPercent > 105 && densityPercent <= 115) return 0.4; // Over limit
+    if (densityPercent > 115) return 0.1;                          // Critical
+    if (densityPercent < 55) return 0.5;                           // Too empty
     return 0.5;
   },
 };
@@ -607,8 +656,15 @@ export const SCORE_BENCHMARKS = {
   /** Top 10% threshold — scripts scoring above this are in top tier */
   top10Percent: 82,
 
+  /**
+   * [N] 70%+ completion = algorithmic boost threshold.
+   * [M] High-quality creators see 67% more watch time, 3x total views, 40x follower growth.
+   * [P] YouTube Shorts 50-60s = 4.1M avg views — length sweet spot.
+   */
+  top_10_percent: 82,
+
   /** Source reference */
-  source: '[E] Derived from 8 viral case studies + platform engagement benchmarks. [J] TikTok viral completion rate avg 78%.',
+  source: '[E] Derived from 8 viral case studies + platform engagement benchmarks. [J] TikTok viral completion rate avg 78%. [M][N][O][P][Q][R] 2026 algorithm data.',
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -620,15 +676,17 @@ export const SCORE_BENCHMARKS = {
  * HOOK is weighted highest because it determines if anyone sees the rest.
  *
  * Source: [J] 65%+ 3s retention = 4-7x distribution.
- *         [A] 45-65% decide in 3 seconds.
+ *         [N] 71% decide in 3 seconds.
+ *         [M] Shares weighted 3x higher than likes — PEAK drives shares.
+ *         [O] "50% Rule" — keep 50% audience = viral, BODY must hold attention.
  */
 export const SEGMENT_WEIGHT_IN_OVERALL: Record<SegmentType, number> = {
-  HOOK: 0.30,        // 30% — make or break moment
-  FORE: 0.10,        // 10% — bridge
-  BODY: 0.20,        // 20% — main value (may span multiple segments)
-  PEAK: 0.20,        // 20% — climax drives shares/saves
-  CTA: 0.15,         // 15% — conversion point
-  'LOOP-END': 0.05,  // 5% — optional, only when enabled
+  HOOK: 0.30,        // 30% — make or break moment ([N] 71% decide in 3s)
+  FORE: 0.10,        // 10% — bridge (foreshadow locks retention)
+  BODY: 0.20,        // 20% — main value (progressive delivery, pattern interrupts)
+  PEAK: 0.20,        // 20% — climax drives shares ([M] shares 3x > likes)
+  CTA: 0.15,         // 15% — conversion point (single focus critical)
+  'LOOP-END': 0.05,  // 5% — optional ([O] looping hack = 100%+ retention)
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -785,9 +843,9 @@ export function hasNumber(text: string): boolean {
  */
 export function hasNegativeFrame(text: string): boolean {
   const negativePatterns = [
-    /\b(stop|don't|never|worst|avoid|mistake|fail|wrong|warning|losing|dead)\b/i,  // EN
-    /\b(jangan|bahaya|salah|gagal|rugi|bukan|gak boleh|gak|ngeri|ancur)\b/i,       // ID
-    /\b(मत|गलती|खतरा|बकवास|फालतू|नहीं|गलत)\b/,                                     // HI
+    /\b(stop|don't|never|worst|avoid|mistake|fail|wrong|warning|losing|dead|kill|hate|toxic|scam|terrible|horrible|disaster)\b/i,  // EN
+    /\b(jangan|bahaya|salah|gagal|rugi|bukan|gak boleh|gak pernah|gak|ngeri|ancur|toxic|scam|fatal|mati|hancur|parah)\b/i,       // ID
+    /\b(मत|गलती|खतरा|बकवास|फालतू|नहीं|गलत|scam|toxic)\b/,                                     // HI
   ];
   return negativePatterns.some(p => p.test(text));
 }
@@ -797,9 +855,9 @@ export function hasNegativeFrame(text: string): boolean {
  */
 export function hasForeshadow(text: string): boolean {
   const patterns = [
-    /\b(wait until|but first|here's the thing|the best part)\b/i,     // EN
-    /\b(tunggu|tapi|yang paling|nanti|plot twist)\b/i,                // ID
-    /\b(रुको|लेकिन|सबसे बड़ा|अभी तो|देखो)\b/,                            // HI
+    /\b(wait until|but first|here's the thing|the best part|stay until|watch till|don't skip|keep watching|here it comes|brace yourself|prepare|you won't believe)\b/i,     // EN
+    /\b(tunggu|tapi|yang paling|nanti|plot twist|tonton sampai|sampai habis|sampai akhir|yang terakhir|yang ketiga|simak|stay|ini dia|yang bikin|siapin diri|jangan skip)\b/i,  // ID
+    /\b(रुको|लेकिन|सबसे बड़ा|अभी तो|देखो|अंत तक|तैयार रहो)\b/,                            // HI
   ];
   return patterns.some(p => p.test(text));
 }
@@ -809,9 +867,9 @@ export function hasForeshadow(text: string): boolean {
  */
 export function hasCtaAction(text: string): boolean {
   const ctaPatterns = [
-    /\b(tap|click|follow|save|share|subscribe|comment|download|get|try|join|shop|buy|start)\b/i,
-    /\b(follow|save|share|comment|klik|cek|cobain|beli|ikutin)\b/i,
-    /\b(follow|save|share|comment|देखो|करो|लो|जुड़ो)\b/,
+    /\b(tap|click|follow|save|share|subscribe|comment|download|get|try|join|shop|buy|start|check|drop|repost|duet|stitch|tag|dm|send)\b/i,
+    /\b(follow|save|share|comment|klik|cek|cobain|beli|ikutin|tulis|ketik|kirim|drop|tag|mention|repost|duet|stitch)\b/i,
+    /\b(follow|save|share|comment|देखो|करो|लो|जुड़ो|भेजो|लिखो)\b/,
   ];
   return ctaPatterns.some(p => p.test(text));
 }

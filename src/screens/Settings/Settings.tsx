@@ -62,7 +62,7 @@ export const Settings = (): JSX.Element => {
   };
 
   return (
-    <div className="w-full min-h-screen bg-page">
+    <div className="w-full h-full bg-page">
       {/* Content */}
       <main className="p-4 sm:p-6">
           {/* Header */}

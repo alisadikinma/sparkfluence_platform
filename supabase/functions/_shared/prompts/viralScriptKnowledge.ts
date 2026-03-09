@@ -92,10 +92,18 @@ The exact segment structure will be provided dynamically based on:
 
 Return ONLY a valid JSON object. NO markdown, NO explanations, NO text before/after JSON.
 
+### Title Rules (CRITICAL — this is the first thing viewers see):
+- **MAX 8 WORDS** — shorter = higher CTR. "5 AI Tools Yang GILA" ✅ vs "5 AI Tools Yang Bisa Mengubah Cara Kerja Lo Selamanya" ❌
+- MUST include at least ONE of: number, power word, negative frame, or question
+- Use CAPS on 1-2 key words for emphasis: "3 KESALAHAN Fatal..." or "5 Tools Yang GILA..."
+- Formula: [Number] + [Subject] + [Power Word/Emotion] → "3 AI Tools Yang GILA", "5 KESALAHAN Fatal Content Creator"
+- NEVER use generic/descriptive titles. ALWAYS use scroll-stopping clickbait-but-honest titles.
+- Title language MUST match the script language
+
 ### Required Top-Level Fields:
 \`\`\`json
 {
-  "title": "Video title",
+  "title": "Short clickbait title (max 8 words, with number/power word)",
   "hook_options": {
     "option_a_safe": {
       "script_text": "Safe/relatable hook text",
