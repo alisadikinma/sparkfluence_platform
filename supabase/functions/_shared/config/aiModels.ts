@@ -524,7 +524,7 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     supportsNegativePrompt: false,
     maxPromptLength: 4000,
     responseFormat: 'url',
-    costPerImage: 0.15,
+    costPerImage: 0.08, // Updated 2026-03-09: $0.08 standard, 1.5x for 2K, 2x for 4K
     isFree: false,
     rateLimit: 0,
     strengths: ['face consistency', 'character preservation', 'multi-image reference', 'up to 14 refs'],
@@ -532,6 +532,72 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     bestFor: ['CREATOR shots with avatar', 'HOOK/CTA', 'face consistency required'],
     enabled: true,
     notes: 'PRIMARY for CREATOR shots - best face consistency via image_urls array',
+  },
+
+  // ==========================================================================
+  // FAL.AI QWEN IMAGE 2 PRO EDIT - A-ROLL with reference image support
+  // Cheaper alternative to Nano Banana for HOOK/CTA segments
+  // ==========================================================================
+  'fal-qwen-image-2-pro-edit': {
+    key: 'fal-qwen-image-2-pro-edit',
+    displayName: 'Qwen Image 2 Pro Edit (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/qwen-image-2/pro/edit',
+    apiModelName: 'fal-ai/qwen-image-2/pro/edit',
+    aspectRatios: {
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: 'image_urls',
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.075,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['reference image support', 'good face consistency', 'cheaper than nano-banana'],
+    weaknesses: ['no negative prompt', 'paid', 'requires reference image'],
+    bestFor: ['CREATOR shots', 'HOOK/CTA', 'budget-conscious production'],
+    enabled: true,
+    notes: 'A-ROLL edit model — cheaper alternative to Nano Banana 2. $0.075/image',
+  },
+
+  // ==========================================================================
+  // FAL.AI SEEDREAM V5 LITE EDIT - A-ROLL with reference image support
+  // Most affordable edit model for HOOK/CTA segments
+  // ==========================================================================
+  'fal-seedream-v5-lite-edit': {
+    key: 'fal-seedream-v5-lite-edit',
+    displayName: 'Seedream v5 Lite Edit (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v5/lite/edit',
+    apiModelName: 'fal-ai/bytedance/seedream/v5/lite/edit',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: 'image_urls',
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.035,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['most affordable edit model', 'reference image support', 'ByteDance quality'],
+    weaknesses: ['no negative prompt', 'lite variant', 'requires reference image'],
+    bestFor: ['CREATOR shots', 'HOOK/CTA', 'high volume production'],
+    enabled: true,
+    notes: 'Most affordable A-ROLL edit model. $0.035/image. Good for high volume.',
   },
 
   // ==========================================================================

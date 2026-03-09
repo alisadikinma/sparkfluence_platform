@@ -85,9 +85,10 @@ export const JOB_STATUS = {
 
 export const IMAGE_MODELS = {
   aRoll: {
-    auto: { id: 'auto', label: 'Auto (Nano Banana) — $0.15', edgeKey: 'fal-nano-banana-edit' },
-    'nano-banana': { id: 'nano-banana', label: 'Nano Banana Edit — $0.15', edgeKey: 'fal-nano-banana-edit' },
-    'flux-kontext': { id: 'flux-kontext', label: 'FLUX Kontext Pro — $0.10', edgeKey: 'flux-kontext' },
+    auto:               { id: 'auto',               label: 'Auto (Nano Banana 2) — $0.08',      edgeKey: 'fal-nano-banana-edit' },
+    'nano-banana':      { id: 'nano-banana',         label: 'Nano Banana 2 Edit — $0.08',        edgeKey: 'fal-nano-banana-edit' },
+    'qwen-edit':        { id: 'qwen-edit',           label: 'Qwen Image 2 Pro Edit — $0.075',    edgeKey: 'fal-qwen-image-2-pro-edit' },
+    'seedream-v5-edit': { id: 'seedream-v5-edit',    label: 'Seedream v5 Lite Edit — $0.035',    edgeKey: 'fal-seedream-v5-lite-edit' },
   },
   bRoll: {
     auto:             { id: 'auto',             label: 'Auto (Seedream v4) — $0.03',   edgeKey: 'fal-seedream-v4' },
@@ -100,7 +101,7 @@ export const IMAGE_MODELS = {
 };
 
 export interface ImageModelSettings {
-  aRoll: 'auto' | 'nano-banana' | 'flux-kontext';
+  aRoll: 'auto' | 'nano-banana' | 'qwen-edit' | 'seedream-v5-edit';
   bRoll: 'auto' | 'seedream-v4' | 'seedream-v4-5' | 'seedream-v5' | 'qwen-image' | 'qwen-image-v1';
 }
 
