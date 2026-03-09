@@ -85,20 +85,23 @@ export const JOB_STATUS = {
 
 export const IMAGE_MODELS = {
   aRoll: {
-    auto: { id: 'auto', label: 'Auto (Nano Banana)', edgeKey: 'fal-nano-banana-edit' },
-    'nano-banana': { id: 'nano-banana', label: 'Nano Banana Edit', edgeKey: 'fal-nano-banana-edit' },
-    'flux-kontext': { id: 'flux-kontext', label: 'FLUX Kontext Pro', edgeKey: 'flux-kontext' },
+    auto: { id: 'auto', label: 'Auto (Nano Banana) — $0.15', edgeKey: 'fal-nano-banana-edit' },
+    'nano-banana': { id: 'nano-banana', label: 'Nano Banana Edit — $0.15', edgeKey: 'fal-nano-banana-edit' },
+    'flux-kontext': { id: 'flux-kontext', label: 'FLUX Kontext Pro — $0.10', edgeKey: 'flux-kontext' },
   },
   bRoll: {
-    auto: { id: 'auto', label: 'Auto (Seedream v4)', edgeKey: 'fal-seedream-v4' },
-    'qwen-image': { id: 'qwen-image', label: 'Qwen Image', edgeKey: 'fal-qwen-image' },
-    'seedream-v4': { id: 'seedream-v4', label: 'Seedream v4', edgeKey: 'fal-seedream-v4' },
+    auto:             { id: 'auto',             label: 'Auto (Seedream v4) — $0.03',   edgeKey: 'fal-seedream-v4' },
+    'seedream-v4':    { id: 'seedream-v4',       label: 'Seedream v4 — $0.03',          edgeKey: 'fal-seedream-v4' },
+    'seedream-v4-5':  { id: 'seedream-v4-5',     label: 'Seedream v4.5 — $0.04',        edgeKey: 'fal-seedream-v4-5' },
+    'seedream-v5':    { id: 'seedream-v5',        label: 'Seedream v5 Lite — $0.035',    edgeKey: 'fal-seedream-v5-lite' },
+    'qwen-image':     { id: 'qwen-image',         label: 'Qwen Image 2 — $0.035',        edgeKey: 'fal-qwen-image' },
+    'qwen-image-v1':  { id: 'qwen-image-v1',      label: 'Qwen Image v1 Legacy — $0.02', edgeKey: 'fal-qwen-image-v1' },
   },
 };
 
 export interface ImageModelSettings {
   aRoll: 'auto' | 'nano-banana' | 'flux-kontext';
-  bRoll: 'auto' | 'qwen-image' | 'seedream-v4';
+  bRoll: 'auto' | 'seedream-v4' | 'seedream-v4-5' | 'seedream-v5' | 'qwen-image' | 'qwen-image-v1';
 }
 
 export const SUPPORTED_DURATIONS = [5, 8, 10];

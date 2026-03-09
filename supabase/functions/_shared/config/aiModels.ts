@@ -473,10 +473,10 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   // ==========================================================================
   'fal-nano-banana': {
     key: 'fal-nano-banana',
-    displayName: 'Nano Banana Pro T2I (fal.ai)',
+    displayName: 'Nano Banana 2 T2I (fal.ai)',
     provider: 'fal',
-    endpoint: 'https://fal.run/fal-ai/nano-banana-pro',
-    apiModelName: 'fal-ai/nano-banana-pro',
+    endpoint: 'https://fal.run/fal-ai/nano-banana-2',
+    apiModelName: 'fal-ai/nano-banana-2',
     aspectRatios: {
       '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
       '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
@@ -507,10 +507,10 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   // ==========================================================================
   'fal-nano-banana-edit': {
     key: 'fal-nano-banana-edit',
-    displayName: 'Nano Banana Pro Edit (fal.ai)',
+    displayName: 'Nano Banana 2 Edit (fal.ai)',
     provider: 'fal',
-    endpoint: 'https://fal.run/fal-ai/nano-banana-pro/edit',
-    apiModelName: 'fal-ai/nano-banana-pro/edit',
+    endpoint: 'https://fal.run/fal-ai/nano-banana-2/edit',
+    apiModelName: 'fal-ai/nano-banana-2/edit',
     aspectRatios: {
       '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
       '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
@@ -553,18 +553,84 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     },
     qualityOptions: undefined,
     styleOptions: undefined,
-    refImageParam: null, // Not supported
-    supportsNegativePrompt: false, // Not supported
+    refImageParam: null,
+    supportsNegativePrompt: false,
     maxPromptLength: 4000,
     responseFormat: 'url',
     costPerImage: 0.03,
     isFree: false,
     rateLimit: 0,
-    strengths: ['high resolution (up to 4096px)', 'excellent text rendering', 'cinematic quality', 'fast'],
+    strengths: ['high resolution (up to 4096px)', 'excellent text rendering', 'cinematic quality', 'fast', 'most affordable'],
     weaknesses: ['no reference image', 'no negative prompt'],
     bestFor: ['B-ROLL', 'high-res visuals', 'text/typography in images', 'hero shots'],
     enabled: true,
-    notes: 'HIGH QUALITY B-ROLL - best for text rendering and high-res output',
+    notes: 'HIGH QUALITY B-ROLL - best for text rendering and high-res output. $0.03/image',
+  },
+
+  // ==========================================================================
+  // FAL.AI SEEDREAM V4.5 - Upgraded B-ROLL (ByteDance)
+  // Higher quality than v4, better prompt following
+  // ==========================================================================
+  'fal-seedream-v4-5': {
+    key: 'fal-seedream-v4-5',
+    displayName: 'Seedream v4.5 (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v4.5/text-to-image',
+    apiModelName: 'fal-ai/bytedance/seedream/v4.5/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 2048, height: 2048 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1536, height: 1152 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 1152, height: 1536 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: null,
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.04,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['upgraded from v4', 'better prompt following', 'high resolution', 'cinematic quality'],
+    weaknesses: ['no reference image', 'no negative prompt', 'slightly more expensive than v4'],
+    bestFor: ['B-ROLL', 'premium visuals', 'when v4 quality not sufficient'],
+    enabled: true,
+    notes: 'UPGRADED B-ROLL - better quality than v4, $0.04/image',
+  },
+
+  // ==========================================================================
+  // FAL.AI SEEDREAM V5 LITE - Latest B-ROLL (ByteDance)
+  // Newest generation, text-to-image and edit variants
+  // ==========================================================================
+  'fal-seedream-v5-lite': {
+    key: 'fal-seedream-v5-lite',
+    displayName: 'Seedream v5 Lite (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v5/lite/text-to-image',
+    apiModelName: 'fal-ai/bytedance/seedream/v5/lite/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: null,
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.035,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['latest generation', 'better aesthetics than v4', 'balanced price/quality'],
+    weaknesses: ['no reference image', 'no negative prompt', 'lite variant'],
+    bestFor: ['B-ROLL', 'modern aesthetics', 'general purpose'],
+    enabled: true,
+    notes: 'LATEST B-ROLL - newest Seedream generation, $0.035/image',
   },
 
   // ==========================================================================
@@ -606,12 +672,12 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   },
 
   // ==========================================================================
-  // FAL.AI QWEN IMAGE - B-ROLL with negative prompt support
-  // Turbo mode available, supports LoRAs
+  // FAL.AI QWEN IMAGE v1 (LEGACY) - Original Qwen, still active
+  // fal-ai/qwen-image — $0.02/image, turbo mode, negative prompt
   // ==========================================================================
-  'fal-qwen-image': {
-    key: 'fal-qwen-image',
-    displayName: 'Qwen Image (fal.ai)',
+  'fal-qwen-image-v1': {
+    key: 'fal-qwen-image-v1',
+    displayName: 'Qwen Image v1 Legacy (fal.ai)',
     provider: 'fal',
     endpoint: 'https://fal.run/fal-ai/qwen-image',
     apiModelName: 'fal-ai/qwen-image',
@@ -627,18 +693,51 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
       'turbo': 'high',
     },
     styleOptions: undefined,
-    refImageParam: null, // Not supported
-    supportsNegativePrompt: true, // KEY FEATURE!
+    refImageParam: null,
+    supportsNegativePrompt: true,
     maxPromptLength: 4000,
     responseFormat: 'url',
     costPerImage: 0.02,
     isFree: false,
     rateLimit: 0,
-    strengths: ['negative prompt support', 'turbo mode', 'LoRA support', 'good quality'],
-    weaknesses: ['no reference image', 'max 1024px'],
+    strengths: ['negative prompt support', 'turbo mode', 'LoRA support', 'cheapest option'],
+    weaknesses: ['no reference image', 'max 1024px', 'legacy version'],
+    bestFor: ['B-ROLL', 'budget shoots', 'when negative prompt needed'],
+    enabled: true,
+    notes: 'LEGACY Qwen v1 - still active, $0.02/image. Use qwen-image for budget shoots.',
+  },
+
+  // ==========================================================================
+  // FAL.AI QWEN IMAGE v2 - B-ROLL with negative prompt support
+  // Turbo mode available, supports LoRAs
+  // ==========================================================================
+  'fal-qwen-image': {
+    key: 'fal-qwen-image',
+    displayName: 'Qwen Image 2 T2I (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/qwen-image-2/text-to-image',
+    apiModelName: 'fal-ai/qwen-image-2/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 768, height: 1360 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1360, height: 768 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: null, // T2I - no reference support
+    supportsNegativePrompt: true, // KEY FEATURE retained from v1
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.035,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['negative prompt support', 'high quality', 'qwen-2 upgraded model'],
+    weaknesses: ['no reference image'],
     bestFor: ['B-ROLL', 'environments', 'when negative prompt needed'],
     enabled: true,
-    notes: 'B-ROLL with NEGATIVE PROMPT - use when need to exclude specific elements',
+    notes: 'B-ROLL with NEGATIVE PROMPT - Qwen Image 2, $0.035/image. Better quality than v1.',
   },
 };
 
