@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { Pencil } from 'lucide-react';
+import { Pencil, ChevronLeft, ChevronRight, ArrowLeft, ArrowUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkspace } from '../../contexts/WorkspaceContext';
@@ -11,6 +11,7 @@ import VideoStep from './steps/VideoStep';
 import { StudioStep } from './steps/StudioStep';
 import { SmartCompanion } from './components/SmartCompanion';
 import { useSessionPersistence } from '../../hooks/useSessionPersistence';
+import { useLanguage } from '../../contexts/LanguageContext';
 import type { ScoreBreakdown, WorkspaceSegment, HookOptions } from '../../contexts/WorkspaceContext';
 import {
   SEGMENT_WEIGHT_IN_OVERALL,
@@ -351,6 +352,7 @@ export const Workspace: React.FC = () => {
   const { orderId, step } = useParams<{ orderId: string; step?: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useLanguage();
   const locationState = location.state as LocationNavigationState | null;
   const {
     state,
@@ -551,6 +553,19 @@ export const Workspace: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- saveNow is stable (useCallback), locationState checked once via initRef
   }, [isRestoring, sessionFound, state.segments.length, state.isGeneratingScript, dispatch, locationState, orderId, sessionType, saveNow]);
 
+  // Floating nav state
+  const mainRef = useRef<HTMLElement>(null);
+  const [showBackConfirm, setShowBackConfirm] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const onScroll = () => setShowScrollTop(el.scrollTop > 100);
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
   // NOTE: Auto-focus removed — was causing IssuesTab flicker (focusedSegmentId filters
   // the issue list, creating a visible drop from N to 1-2 issues on mount).
   // focusedSegmentId is now only set by explicit user actions (retention curve click, segment click).
@@ -692,7 +707,7 @@ export const Workspace: React.FC = () => {
         {/* ============================================================ */}
         {/* CENTER — main content area (scrollable)                      */}
         {/* ============================================================ */}
-        <main className="flex-1 min-h-0 overflow-y-auto hide-scrollbar">
+        <main ref={mainRef} className="flex-1 min-h-0 overflow-y-auto hide-scrollbar">
           <div className={`p-4 lg:p-6 ${isScriptStep ? 'max-w-4xl mx-auto' : 'max-w-[1600px] mx-auto'}`}>
             {activeStep === 'script' && (
               <ScriptStep
@@ -770,6 +785,101 @@ export const Workspace: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* ================================================================ */}
+      {/* FLOATING NAV — fixed to viewport, outside scroll container       */}
+      {/* ================================================================ */}
+      {(() => {
+        const STEPS = ['script', 'images', 'video', 'studio'] as const;
+        const STEP_LABELS: Record<string, string> = {
+          script: 'Script', images: 'Images', video: 'Video', studio: 'Studio',
+        };
+        const idx = STEPS.indexOf(activeStep as any);
+        const prevStep = idx > 0 ? STEPS[idx - 1] : null;
+        const nextStep = idx < STEPS.length - 1 ? STEPS[idx + 1] : null;
+        const sessionBaseRoute =
+          sessionType === 'creator_lab' ? '/creator-lab' :
+          sessionType === 'ad_studio' ? '/ad-studio' : '/script-gen';
+        const nav = t.workspaceNav;
+        const topicLabel = state.topic || state.title || '';
+        const confirmBody = nav.backConfirmBody.replace('{topic}', topicLabel);
+
+        return (
+          <div className="fixed bottom-6 left-0 right-0 flex justify-between items-end px-6 pointer-events-none z-[100]">
+            {/* LEFT: PREVIOUS (if exists) or Choose New Topic */}
+            {prevStep ? (
+              <button
+                onClick={() => navigateToStep(prevStep)}
+                className="pointer-events-auto opacity-50 hover:opacity-100 transition-opacity duration-200
+                           flex items-center gap-1.5 px-3 py-2 bg-neutral-700 border border-neutral-600
+                           rounded-lg text-xs text-neutral-200 hover:text-white shadow-lg cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                {nav.navPrev}
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowBackConfirm(true)}
+                className="pointer-events-auto opacity-50 hover:opacity-100 transition-opacity duration-200
+                           flex items-center gap-1.5 px-3 py-2 bg-neutral-700 border border-neutral-600
+                           rounded-lg text-xs text-neutral-200 hover:text-white shadow-lg cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                {nav.chooseNewTopic}
+              </button>
+            )}
+
+            {/* RIGHT: Scroll Top + Next */}
+            <div className="pointer-events-auto flex items-center gap-2">
+              {showScrollTop && (
+                <button
+                  onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+                  className="p-2 bg-violet-600 hover:bg-violet-500 border border-violet-500/30 rounded-lg text-white shadow-lg cursor-pointer transition-colors"
+                  title={nav.scrollToTop}
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </button>
+              )}
+              {nextStep && (
+                <button
+                  onClick={() => navigateToStep(nextStep)}
+                  className="opacity-50 hover:opacity-100 transition-opacity duration-200
+                             flex items-center gap-1.5 px-3 py-2 bg-emerald-600 border border-emerald-500/30
+                             rounded-lg text-xs text-white shadow-lg cursor-pointer font-medium"
+                >
+                  {nav.navNext}
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Back-to-topic confirmation dialog */}
+            {showBackConfirm && (
+              <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center pointer-events-auto"
+                   onClick={(e) => { if (e.target === e.currentTarget) setShowBackConfirm(false); }}>
+                <div className="bg-[#1E1E1E] border border-[#262626] rounded-xl p-6 max-w-sm mx-4 shadow-2xl">
+                  <h3 className="text-base font-semibold text-white">{nav.backConfirmTitle}</h3>
+                  <p className="text-neutral-400 text-sm mt-2">{confirmBody}</p>
+                  <div className="flex gap-2 mt-5">
+                    <button
+                      onClick={() => setShowBackConfirm(false)}
+                      className="flex-1 px-3 py-2 bg-[#2A2A2A] border border-[#363636] rounded-lg text-sm text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                    >
+                      {nav.backConfirmCancel}
+                    </button>
+                    <button
+                      onClick={() => navigate(sessionBaseRoute)}
+                      className="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm text-white font-medium transition-colors cursor-pointer"
+                    >
+                      {nav.backConfirmConfirm}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 };

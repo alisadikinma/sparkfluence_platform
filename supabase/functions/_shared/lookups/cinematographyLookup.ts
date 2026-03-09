@@ -1559,3 +1559,489 @@ export function buildHookVisualPrompt(hookCategory: string): string {
   const light = getHookLighting(hookCategory);
   return `${expr.promptPhrase}. Lighting: ${light.promptPhrase}.`;
 }
+
+
+// ============================================================================
+// VISUAL ACTION SYNERGY MATRIX (2026-03-09)
+// Source: ai-image-carousel-prompt-gen/references/hook-visual-library.md Section 6
+//
+// When hook category + visual action are BOTH specified, these synergies produce
+// more precise expression + pose than each in isolation.
+// Key: `hookCategory:visualAction` → use '_fallback' rule if no primary synergy.
+// ============================================================================
+
+export interface SynergyRule {
+  expressionOverride: string;
+  poseOverride: string;
+  promptPhrase: string;
+}
+
+export const VISUAL_ACTION_SYNERGY_MATRIX: Record<string, SynergyRule | { rule: string }> = {
+  'visual_shock:destruction': {
+    expressionOverride: 'shocked mid-rip, aggressive both-hands action, jaw dropped',
+    poseOverride: 'hands actively tearing/destroying prop, body leaning into action, fragments flying',
+    promptPhrase: 'creator mid-destruction, shocked jaw-drop face, aggressive energy, both hands ripping prop, fragments mid-air, full-body commitment',
+  },
+  'visual_shock:scale_absurd': {
+    expressionOverride: 'dwarfed awe, eyes wide looking up at oversized prop, mouth agape',
+    poseOverride: 'one hand reaching toward enormous object, body dwarfed by scale, neck craned upward',
+    promptPhrase: 'creator tiny next to enormous prop, eyes wide in disbelief looking upward, hand reaching toward scale object',
+  },
+  'visual_shock:frozen_mid_action': {
+    expressionOverride: 'suspended shock — expression caught mid-reaction, not before or after',
+    poseOverride: 'entire body frozen in peak-motion frame, motion blur on extremities, eyes wide',
+    promptPhrase: 'creator body completely frozen mid-action, motion blur on hands, expression caught at peak shock moment, suspended in time',
+  },
+  'negative_bias:minum_dramatic': {
+    expressionOverride: 'warning intensity over rim — concern eyes locked on camera while sipping',
+    poseOverride: 'mug/cup raised to lip, eyes locked directly over rim, slight frown brow',
+    promptPhrase: 'creator drinking slowly with intense warning eyes locked over rim of cup, frown brow, measured deliberate energy',
+  },
+  'negative_bias:objek_absurd': {
+    expressionOverride: 'deadpan serious warning with completely absurd prop — zero reaction to the absurdity',
+    poseOverride: 'holding absurd object at chest with serious straight-arm grip, zero smile, direct confrontational gaze',
+    promptPhrase: 'creator holding wildly absurd object with completely deadpan serious expression, treating it as a normal warning prop',
+  },
+  'curiosity_gap:satisfying_process': {
+    expressionOverride: 'knowing smirk locked on camera while performing satisfying action — eyes never leave viewer',
+    poseOverride: 'side profile doing satisfying action (pouring/slicing/peeling), eyes turned to camera, slight smile',
+    promptPhrase: 'creator performing satisfying action in side profile, eyes locked on camera with knowing smirk, answer about to be revealed',
+  },
+  'curiosity_gap:extreme_closeup': {
+    expressionOverride: 'macro curiosity — fragment of expression revealing nothing but suggesting everything',
+    poseOverride: 'only partial face or hands visible, extreme crop hides more than reveals',
+    promptPhrase: 'extreme macro closeup — only eyes or only hands with object, severe crop that hides more than reveals, mystery maximized',
+  },
+  'relatability:wrong_context': {
+    expressionOverride: 'authentic relatable expression in absurd setting — acting like it is completely normal',
+    poseOverride: 'casual relaxed posture in completely wrong setting, treating absurd environment as mundane',
+    promptPhrase: 'creator with authentic relatable casual expression in completely wrong environment — pajamas at boardroom, casual at formal — treated as totally normal',
+  },
+  'relatability:mundane_zen': {
+    expressionOverride: 'calm zen island in chaos storm — serene face while everything around is mayhem',
+    poseOverride: 'seated or standing calmly, props flying/falling around, eyes closed or peaceful direct gaze',
+    promptPhrase: 'creator in perfect zen calm, genuine peaceful expression, while objects chaotically fly and fall around them',
+  },
+  'speed_value:props_overflow': {
+    expressionOverride: 'confident authority buried in tool abundance — not overwhelmed, owns the chaos',
+    poseOverride: 'surrounded by overflowing topic-related tools, confident direct posture, one hand gesturing toward tools',
+    promptPhrase: 'creator surrounded by abundant overflow of relevant tools, confident authoritative expression, gesturing toward the abundance',
+  },
+  '_fallback': {
+    rule: 'pose/body/hands from visual_action; eyes/mouth from hook_category HOOK_EXPRESSION_MAP; lighting ALWAYS from HOOK_LIGHTING_MAP; camera from ANTI_REPETITION_VARIANTS[A]',
+  },
+};
+
+export function getVisualSynergy(hookCategory: string, visualAction: string): SynergyRule | null {
+  const key = `${hookCategory}:${visualAction}`;
+  const rule = VISUAL_ACTION_SYNERGY_MATRIX[key];
+  if (!rule || 'rule' in rule) return null;
+  return rule as SynergyRule;
+}
+
+
+// ============================================================================
+// ANTI-REPETITION VARIANTS (2026-03-09)
+// Source: hook-visual-library.md Section 7
+// Rotate A → B → C for same hook category across multiple content pieces.
+// ============================================================================
+
+export interface VariantSpec {
+  name: string;
+  camera: string;
+  lightingMod: string;
+  envMod: string;
+  expressionIntensity: string;
+}
+
+export const ANTI_REPETITION_VARIANTS: Record<string, [VariantSpec, VariantSpec, VariantSpec]> = {
+  visual_shock: [
+    { name: 'A: Classic Impact',     camera: 'CU 85mm eye-level',    lightingMod: '4:1 Rembrandt warm',    envMod: 'dark disrupted background, scattered objects, warm-cool clash',      expressionIntensity: 'peak shock — full frozen recoil, jaw dropped, hands up' },
+    { name: 'B: Dynamic Angle',      camera: 'MCU 50mm low angle',   lightingMod: '3:1 strong cool rim',   envMod: 'industrial concrete blue-teal background, harsh texture',             expressionIntensity: 'aggressive shock — leaning INTO the surprise, active not passive' },
+    { name: 'C: Intimate Disbelief', camera: 'CU 135mm dutch tilt',  lightingMod: '5:1 hard spotlight',    envMod: 'near-black void, single warm source, zero distraction',              expressionIntensity: 'quiet internal shock — wide eyes, closed mouth, stunned silence' },
+  ],
+  negative_bias: [
+    { name: 'A: Direct Warning',     camera: 'MCU 85mm eye-level',   lightingMod: '3:1 warm underlit',     envMod: 'dark minimal — exposed brick or dark wood, subtle texture',           expressionIntensity: 'firm confrontational — stop gesture, direct gaze, set jaw' },
+    { name: 'B: Authority Concern',  camera: 'MCU 50mm high angle',  lightingMod: '2:1 warm overhead',     envMod: 'dark wood office, warm desk lamp, serious professional setting',       expressionIntensity: 'worried mentor — pointing with concern, furrowed brow, head shake' },
+    { name: 'C: Full-Body Stop',     camera: 'MS 35mm eye-level',    lightingMod: '3:1 red accent side',   envMod: 'deep black with danger-red practical light accent',                   expressionIntensity: 'physical urgency — full body leaning forward, both hands up, wide eyes' },
+  ],
+  curiosity_gap: [
+    { name: 'A: Classic Mystery',    camera: 'MCU 85mm slight angle', lightingMod: '4:1 warm Rembrandt',   envMod: 'warm library or golden interior, rich textured background',            expressionIntensity: 'knowing smirk — one side of mouth, eyes narrowed slightly' },
+    { name: 'B: Intimate Secret',    camera: 'CU 135mm low angle',   lightingMod: '3:1 warm amber only',   envMod: 'near-dark candle-quality light, mystery shadow pools',                 expressionIntensity: 'intense whisper — lips parted, leaning in toward camera' },
+    { name: 'C: Tease Reveal',       camera: 'MS 50mm centered',     lightingMod: '2:1 bright warm',       envMod: 'atmospheric room, blurred reveal prop in foreground',                  expressionIntensity: 'excited anticipation — barely holding back smile, eyes wide with contained excitement' },
+  ],
+  relatability: [
+    { name: 'A: Cafe Conversation',  camera: 'MCU 50mm slight offset',lightingMod: '2:1 soft loop',        envMod: 'cafe or desk with coffee and laptop, warm recognizable lifestyle',      expressionIntensity: 'warm recognition — oh-you-too moment, head nod, knowing smile' },
+    { name: 'B: Bedroom Real',       camera: 'MCU 85mm high angle',  lightingMod: '1.5:1 soft window',     envMod: 'bedroom or couch with string lights, authentic personal space',          expressionIntensity: 'vulnerable honesty — genuine micro-expressions, real emotion' },
+    { name: 'C: On-the-Go',         camera: 'MS 35mm eye-level',    lightingMod: '2:1 golden backlight',   envMod: 'outdoor urban casual, natural golden hour',                            expressionIntensity: 'casual confident — walking toward camera, relaxed genuine smile, dynamic energy' },
+  ],
+  speed_value: [
+    { name: 'A: Studio Authority',   camera: 'MCU 85mm centered',    lightingMod: '2:1 butterfly clean',   envMod: 'clean professional studio backdrop, organized workspace signals',        expressionIntensity: 'calm confident — direct unwavering gaze, composed authority' },
+    { name: 'B: Proof Setup',        camera: 'MS 50mm low angle',    lightingMod: '2:1 cool backlight',    envMod: 'workspace with visible screens/tools showing results in background',    expressionIntensity: 'active teaching — mid-explanation energy, hand gesturing, engaged lean' },
+    { name: 'C: Intimate Expertise', camera: 'MCU 35mm eye-level',   lightingMod: '2:1 warm side key',    envMod: 'home setup with tools of craft, warm personal competence environment',    expressionIntensity: 'approachable expert — close warm delivery, personal confidence, friendly authority' },
+  ],
+};
+
+export function getVariantSpec(hookCategory: string, variant: 'A' | 'B' | 'C' = 'A'): VariantSpec {
+  const variants = ANTI_REPETITION_VARIANTS[hookCategory] ?? ANTI_REPETITION_VARIANTS['speed_value'];
+  const idx = variant === 'A' ? 0 : variant === 'B' ? 1 : 2;
+  return variants[idx];
+}
+
+
+// ============================================================================
+// WARDROBE LIBRARY (2026-03-09)
+// Source: hook-visual-library.md Section 10
+// Priority: user override → scene context → topic category
+// ============================================================================
+
+export interface WardrobeSpec {
+  elements: string;
+  palette: string;
+  promptPhrase: string;
+}
+
+export const WARDROBE_LIBRARY: Record<string, WardrobeSpec> = {
+  finance_investment: {
+    elements: 'navy blazer, crisp white shirt, tailored trousers, leather watch',
+    palette: 'navy/charcoal/white/gold',
+    promptPhrase: 'wearing a fitted navy blazer over crisp white dress shirt, tailored trousers, leather watch — polished financial authority',
+  },
+  tech_ai: {
+    elements: 'dark charcoal hoodie, slim joggers or dark jeans, wireless earbuds, matte texture',
+    palette: 'charcoal/black/slate/dark gray',
+    promptPhrase: 'dark minimalist tech hoodie, slim dark pants, wireless earbuds, clean matte dark aesthetic — silicon valley builder energy',
+  },
+  health_fitness: {
+    elements: 'athletic tank top or performance tee, training pants or shorts, fitness tracker',
+    palette: 'energetic pops on neutral base — black/white/neon accent',
+    promptPhrase: 'athletic performance wear — fitted training tank or tee, performance pants, fitness tracker — active health-forward energy',
+  },
+  food_cooking: {
+    elements: 'canvas apron over casual fitted tee, rolled sleeves, kitchen towel tucked in',
+    palette: 'natural/cream/warm earth tones',
+    promptPhrase: 'canvas apron over casual fitted tee with rolled sleeves, kitchen towel tucked — authentic home chef energy',
+  },
+  education_tutorial: {
+    elements: 'light blue oxford button-up, dark chinos, rolled sleeves (approachable authority)',
+    palette: 'soft blue/navy/khaki/white',
+    promptPhrase: 'light blue oxford button-up with rolled sleeves, dark chinos — approachable educator authority',
+  },
+  business_startup: {
+    elements: 'crisp white or light button-up, dark tailored trousers, minimal leather accessory',
+    palette: 'white/light gray/charcoal/dark navy',
+    promptPhrase: 'crisp white business button-up, dark tailored trousers, clean minimal watch — startup founder meets boardroom energy',
+  },
+  lifestyle_travel: {
+    elements: 'relaxed linen shirt or casual overshirt, comfortable chinos or linen pants, travel accessories',
+    palette: 'earth tones — beige/tan/warm white/dusty blue',
+    promptPhrase: 'relaxed linen overshirt, comfortable chinos, travel accessories — effortless adventurer energy',
+  },
+  productivity_tools: {
+    elements: 'clean minimalist crewneck or sweater, dark slim jeans, smart watch',
+    palette: 'clean neutrals — white/gray/navy/black',
+    promptPhrase: 'clean minimalist crewneck sweater, dark slim jeans, smart watch — focused productive energy',
+  },
+  creative_design: {
+    elements: 'oversized graphic tee under denim jacket, wide-leg pants, creative accessories (rings, layered)',
+    palette: 'creative contrast — denim/black with graphic print',
+    promptPhrase: 'oversized graphic tee layered under denim jacket, relaxed wide-leg pants, creative accessories — designer creative director energy',
+  },
+  news_current_events: {
+    elements: 'structured dark blazer or suit jacket, clean black turtleneck, tailored trousers',
+    palette: 'authoritative dark — charcoal/black/dark navy',
+    promptPhrase: 'structured dark blazer over clean black turtleneck, tailored trousers — journalistic authority, broadcast-ready gravitas',
+  },
+  gaming_esports: {
+    elements: 'gaming jersey or branded hoodie, casual joggers',
+    palette: 'team colors or RGB-adjacent — dark with neon accent',
+    promptPhrase: 'gaming jersey or branded gaming hoodie, comfortable joggers — authentic esports competitor energy',
+  },
+  default: {
+    elements: 'clean fitted button-up shirt, dark well-fitted jeans, simple watch',
+    palette: 'versatile neutral — white/blue/dark gray/black',
+    promptPhrase: 'clean fitted button-up, dark jeans, simple watch — smart casual versatile presence',
+  },
+};
+
+export const SCENE_COSTUME_OVERRIDES: Record<string, string> = {
+  'night market': 'casual streetwear tee, relaxed shorts or pants, comfortable footwear',
+  'pasar malam': 'casual streetwear tee, relaxed shorts, comfortable street footwear',
+  'beach': 'casual tank top, board shorts or light beach pants, sandals',
+  'pantai': 'casual tank top, board shorts, sandals',
+  'kitchen': 'canvas apron over casual fitted tee, rolled sleeves, kitchen towel tucked in',
+  'dapur': 'canvas apron over casual fitted tee, rolled sleeves',
+  'gym': 'athletic wear — performance tee, training pants, fitness tracker',
+  'lab': 'lab coat over smart casual button-up',
+  'construction': 'high-visibility safety vest over workwear',
+  'rooftop': 'smart casual — relaxed blazer or overshirt over clean tee',
+  'formal': 'full suit or blazer + dress shirt + tie',
+  'office': 'business casual — button-up or blazer over smart casual',
+  'classroom': 'smart casual — button-up or polo, dark pants',
+  'outdoor': 'outdoor casual — linen shirt or light jacket, comfortable bottoms',
+  'home': 'relaxed hoodie or casual crewneck, comfortable pants — authentic home energy',
+};
+
+export function resolveWardrobe(topicCategory: string, sceneContext?: string): WardrobeSpec {
+  if (sceneContext) {
+    const sceneKey = Object.keys(SCENE_COSTUME_OVERRIDES).find(k =>
+      sceneContext.toLowerCase().includes(k)
+    );
+    if (sceneKey && SCENE_COSTUME_OVERRIDES[sceneKey]) {
+      const phrase = SCENE_COSTUME_OVERRIDES[sceneKey];
+      return { elements: phrase, palette: 'scene-appropriate', promptPhrase: phrase };
+    }
+  }
+  return WARDROBE_LIBRARY[topicCategory] ?? WARDROBE_LIBRARY['default'];
+}
+
+
+// ============================================================================
+// PROP INTERACTION SYSTEM (2026-03-09)
+// Source: hook-visual-library.md Section 11
+// ============================================================================
+
+export interface PropBank {
+  topicRelated: string[];
+  randomAbsurd: string[];
+}
+
+export interface PropInteraction {
+  propSource: 'topicRelated' | 'randomAbsurd' | 'either';
+  interaction: string;
+  promptDetail: string;
+}
+
+export const TOPIC_PROP_BANK: Record<string, PropBank> = {
+  finance_investment: {
+    topicRelated: ['briefcase', 'stock chart printout', 'gold coins', 'financial calculator', 'business newspaper'],
+    randomAbsurd: ['rubber duck', 'giant lollipop', 'inflatable flamingo', 'toy dinosaur', 'balloon sword'],
+  },
+  tech_ai: {
+    topicRelated: ['laptop showing code', 'circuit board', 'USB drive', 'mechanical keyboard', 'smartwatch'],
+    randomAbsurd: ['oversized pencil', 'retro flip phone', 'abacus', 'crystal ball', 'wind-up toy'],
+  },
+  health_fitness: {
+    topicRelated: ['protein shake bottle', 'resistance band', 'gym towel', 'stopwatch', 'nutrition label'],
+    randomAbsurd: ['oversized trophy', 'tiny bicycle', 'inflatable dumbbell', 'crown', 'cape'],
+  },
+  food_cooking: {
+    topicRelated: ['wooden spoon', 'fresh ingredients', 'cast iron pan', 'chef knife', 'cookbook'],
+    randomAbsurd: ['tiny umbrella cocktail', 'giant fork', 'confetti cannon', 'bouquet of vegetables', 'disco ball'],
+  },
+  education_tutorial: {
+    topicRelated: ['textbook', 'whiteboard marker', 'graduation hat', 'notebook and pencil', 'pointer stick'],
+    randomAbsurd: ['oversized pencil', 'wizard hat', 'globe', 'magic wand', 'toy microscope'],
+  },
+  business_startup: {
+    topicRelated: ['pitch deck print', 'coffee cup', 'business card', 'planner', 'pen and notebook'],
+    randomAbsurd: ['pirate flag', 'toy rocket', 'golden egg', 'monopoly money', 'tiny suitcase'],
+  },
+  lifestyle_travel: {
+    topicRelated: ['passport', 'vintage map', 'camera', 'travel journal', 'luggage tag'],
+    randomAbsurd: ['inflatable globe', 'tiny sombrero', 'rubber duck with sunglasses', 'miniature Eiffel Tower', 'compass'],
+  },
+  productivity_tools: {
+    topicRelated: ['sticky notes', 'open planner', 'mechanical keyboard', 'laptop', 'to-do list'],
+    randomAbsurd: ['hourglass', 'toy robot', 'abacus', 'stress ball', 'rubber stamp'],
+  },
+  gaming_esports: {
+    topicRelated: ['gaming controller', 'headset', 'gaming mouse', 'energy drink can', 'keyboard'],
+    randomAbsurd: ['golden trophy', 'crown', 'cape', 'toy sword', 'neon sign'],
+  },
+  creative_design: {
+    topicRelated: ['sketchbook', 'color palette swatches', 'stylus pen', 'camera', 'color swatch fan'],
+    randomAbsurd: ['oversized crayon', 'paint explosion', 'giant eraser', 'kaleidoscope', 'confetti cannon'],
+  },
+  default: {
+    topicRelated: ['microphone', 'notepad', 'phone', 'coffee cup', 'book'],
+    randomAbsurd: ['rubber duck', 'giant pencil', 'confetti cannon', 'toy trophy', 'balloon'],
+  },
+};
+
+export const VISUAL_ACTION_PROP_INTERACTION: Record<string, PropInteraction> = {
+  makan_nyeleneh: {
+    propSource: 'either',
+    interaction: 'BITES',
+    promptDetail: 'creator caught mid-bite into prop, crumbs or residue visible, eyes locked directly on camera mid-chew',
+  },
+  minum_dramatic: {
+    propSource: 'either',
+    interaction: 'DRINKS',
+    promptDetail: 'prop (mug/glass/bottle) raised to lip, eyes locked directly over rim, deliberate slow dramatic sip',
+  },
+  objek_absurd: {
+    propSource: 'randomAbsurd',
+    interaction: 'HOLDS deadpan',
+    promptDetail: 'creator holding completely absurd prop at chest height with straight arm, deadpan flat expression, treating it as perfectly normal',
+  },
+  destruction: {
+    propSource: 'topicRelated',
+    interaction: 'RIPS/BREAKS',
+    promptDetail: 'creator mid-destruction — hands actively ripping or breaking prop, fragments caught mid-air, aggressive forward energy',
+  },
+  satisfying_process: {
+    propSource: 'topicRelated',
+    interaction: 'PERFORMS satisfying action',
+    promptDetail: 'creator performing peak moment of satisfying action (pouring, slicing, peeling, stacking) — caught at peak of the satisfaction',
+  },
+  scale_absurd: {
+    propSource: 'either',
+    interaction: 'DWARFED by oversized prop',
+    promptDetail: 'creator standing next to comically oversized prop — dwarfed by scale, one hand reaching toward enormous object',
+  },
+  wrong_context: {
+    propSource: 'topicRelated',
+    interaction: 'USES normally in absurd setting',
+    promptDetail: 'creator using normal topic-related prop in completely wrong setting — prop is normal, environment is absurd, creator treats it as mundane',
+  },
+  frozen_mid_action: {
+    propSource: 'either',
+    interaction: 'FROZEN mid-throw/catch',
+    promptDetail: 'creator completely frozen mid-action — body suspended at peak motion, motion blur on prop and extremities, everything else sharp',
+  },
+  extreme_closeup: {
+    propSource: 'topicRelated',
+    interaction: 'MACRO of hands + prop',
+    promptDetail: 'extreme macro closeup of creator hands interacting with prop — every texture hyper-visible, face intentionally cropped out',
+  },
+  props_overflow: {
+    propSource: 'topicRelated',
+    interaction: 'SURROUNDED by many props',
+    promptDetail: 'creator surrounded by and partially buried in abundant overflow of topic-related props — stacked, overflowing, falling in abundance',
+  },
+  contradiction_pose: {
+    propSource: 'topicRelated',
+    interaction: 'EMOTIONAL MISMATCH with prop',
+    promptDetail: 'creator expression completely contradicts the prop — smiling brightly while holding ominous prop, OR horrified while holding cheerful prop',
+  },
+  mundane_zen: {
+    propSource: 'either',
+    interaction: 'ZEN amid prop chaos',
+    promptDetail: 'creator perfectly calm while props fly, fall, scatter chaotically around them — serene island in a prop storm',
+  },
+};
+
+export const HOOK_PROP_RULE: Record<string, 'topicRelated' | 'randomAbsurd'> = {
+  visual_shock: 'randomAbsurd',
+  negative_bias: 'topicRelated',
+  curiosity_gap: 'topicRelated',
+  relatability: 'topicRelated',
+  speed_value: 'topicRelated',
+};
+
+export function resolvePropContext(
+  hookCategory: string,
+  visualAction: string,
+  topicCategory: string
+): { propType: string; interaction: PropInteraction | null; propPool: string[] } {
+  const propRule = HOOK_PROP_RULE[hookCategory] ?? 'topicRelated';
+  const bank = TOPIC_PROP_BANK[topicCategory] ?? TOPIC_PROP_BANK['default'];
+  const interaction = VISUAL_ACTION_PROP_INTERACTION[visualAction] ?? null;
+  const effectiveSource = interaction?.propSource === 'either'
+    ? propRule
+    : (interaction?.propSource ?? propRule);
+  const propPool = effectiveSource === 'randomAbsurd' ? bank.randomAbsurd : bank.topicRelated;
+  return { propType: effectiveSource, interaction, propPool };
+}
+
+
+// ============================================================================
+// ENVIRONMENT PALETTE (2026-03-09)
+// Source: hook-visual-library.md Section 5
+// Background/environment spec per hook category for HOOK and CTA segments.
+// ============================================================================
+
+export interface EnvironmentSpec {
+  background: string;
+  palette: string;
+  propsInFrame: string;
+  blur: string;
+  depthLayers: string[];
+  avoid: string;
+  promptPhrase: string;
+}
+
+export const ENVIRONMENT_PALETTE: Record<string, EnvironmentSpec> = {
+  visual_shock: {
+    background: 'Dynamic disrupted — scattered papers, tipped objects, motion blur elements, or stark minimalist void',
+    palette: 'High contrast warm-cool clash — 3200K tungsten on subject, cool blue-teal in background',
+    propsInFrame: 'Visual action object prominent in foreground, aftermath elements scattered',
+    blur: 'f/1.8 circular bokeh, background dissolving into abstract shapes',
+    depthLayers: [
+      'Foreground: action detail or prop fragment — sharp',
+      'Subject: dramatic warm lighting — sharp',
+      'Background: disrupted chaos + bokeh dissolve',
+    ],
+    avoid: 'Calm orderly backgrounds, neutral tones, corporate clean — contradicts shock energy',
+    promptPhrase: 'dark disrupted background, scattered objects and aftermath, high contrast warm-cool color clash, f/1.8 circular bokeh, background dissolving into chaos',
+  },
+  negative_bias: {
+    background: 'Dark minimal texture — exposed brick, dark wood, deep black void with subtle surface detail',
+    palette: 'Dark warm browns + deep blacks, single warm key cutting through, faint red-amber danger accent',
+    propsInFrame: 'Minimal — one subtle danger signal (red light, warning sign silhouette), nothing cluttered',
+    blur: 'f/1.8 dark warm bokeh, background nearly black with texture hint',
+    depthLayers: [
+      'Foreground: stop-gesture hand or warning element — sharp',
+      'Subject: underlit serious face, warm key side',
+      'Background: dark void, faint warm practical, minimal texture',
+    ],
+    avoid: 'Bright cheerful environments, colorful props, cluttered backgrounds',
+    promptPhrase: 'dark minimal textured background — exposed brick or dark void, single warm key, faint red-amber danger accent, deep dramatic shadow, warning atmosphere',
+  },
+  curiosity_gap: {
+    background: 'Warm atmospheric — library, candle-lit study, cozy workshop with depth and mystery shadow pools',
+    palette: 'Warm ambers and deep golds — #C98B3F, #8B6914 palette, warm shadows, golden practical light',
+    propsInFrame: 'One partially hidden object — covered item, closed box, shadow silhouette of something unseen',
+    blur: 'f/1.8 large warm golden bokeh orbs from practical lights, creating depth and mystery',
+    depthLayers: [
+      'Foreground: hidden teaser object — intentionally blurred or partially visible',
+      'Subject: knowing expression in warm Rembrandt light',
+      'Background: warm atmospheric depth + golden bokeh orbs',
+    ],
+    avoid: 'Clinical bright settings, stark minimal cold, fully revealed objects',
+    promptPhrase: 'warm atmospheric background — library or candle-lit study, deep amber-gold tones, large bokeh golden orbs, mystery shadow pools, partially hidden object in foreground',
+  },
+  relatability: {
+    background: 'Authentic recognizable lifestyle — home desk, cafe corner, bedroom, couch with everyday items',
+    palette: 'Warm naturals — cream, soft brown, sage green, warm wood tones, nothing oversaturated',
+    propsInFrame: 'Everyday recognizable items naturally placed — coffee mug, phone, laptop, notebook, plant',
+    blur: 'f/2.0 soft warm lifestyle bokeh, background readable enough to identify the space',
+    depthLayers: [
+      'Foreground: lifestyle prop naturally placed',
+      'Subject: relatable posture, warm loop lighting',
+      'Background: recognizable room, warm practicals, soft blur',
+    ],
+    avoid: 'Studio setups, stark minimal, luxury locations, anything creating distance instead of identification',
+    promptPhrase: 'warm recognizable lifestyle environment — home desk or cozy cafe, everyday props scattered, soft 2:1 loop lighting, warm naturals palette, readable background with lifestyle details',
+  },
+  speed_value: {
+    background: 'Clean professional context — organized modern workspace, competence signals visible',
+    palette: 'Clean neutrals with professional warmth — white, warm gray, warm wood, subtle screen blue accent',
+    propsInFrame: 'Tools of expertise subtly visible — screens showing results, books, relevant product/tool',
+    blur: 'f/2.8 soft clean professional bokeh — background slightly readable (competence signals)',
+    depthLayers: [
+      'Foreground: product or hand gesture — sharp value signal',
+      'Subject: confident creator, butterfly lighting',
+      'Background: organized workspace, screen glow, competence signals — slightly soft',
+    ],
+    avoid: 'Messy backgrounds, dark moody, overly casual, anything undermining professional authority',
+    promptPhrase: 'clean organized professional background — modern workspace, subtle screen glow, competence signals visible, 2:1 butterfly lighting, bright clean palette, f/2.8 professional bokeh',
+  },
+};
+
+export function getEnvironmentSpec(hookCategory: string): EnvironmentSpec {
+  return ENVIRONMENT_PALETTE[hookCategory] ?? ENVIRONMENT_PALETTE['speed_value'];
+}
+
+/**
+ * Build a full HOOK visual prompt combining expression + lighting + environment + camera variant.
+ * Enhanced version of buildHookVisualPrompt() that includes environment and camera context.
+ */
+export function buildHookFullVisualPrompt(hookCategory: string, variant: 'A' | 'B' | 'C' = 'A'): string {
+  const expr = getHookExpression(hookCategory);
+  const light = getHookLighting(hookCategory);
+  const env = getEnvironmentSpec(hookCategory);
+  const v = getVariantSpec(hookCategory, variant);
+  return `${expr.promptPhrase}. Lighting: ${light.promptPhrase}. Environment: ${env.promptPhrase}. Camera: ${v.camera}.`;
+}

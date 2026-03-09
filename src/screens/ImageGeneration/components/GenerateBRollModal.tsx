@@ -358,13 +358,75 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
 
     const suggestions: string[] = [];
 
-    // First, extract emphasized words (highest priority)
+    // HIGHEST PRIORITY: detect capitalized brand/product name at start of sentence
+    // Catches "Notion AI. Otomatis...", "Miro. Tool kolaborasi...", "Codium AI bisa..."
+    const capsStartMatch = script.match(/^([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+)*)\./);
+    if (capsStartMatch && capsStartMatch[1].split(' ').length <= 3) {
+      const brandAtStart = capsStartMatch[1];
+      const isGenericWord = /^(The|A|An|This|That|These|Those|It|He|She|They|We|You|I)$/.test(brandAtStart);
+      if (!isGenericWord) {
+        suggestions.unshift(brandAtStart);
+      }
+    }
+
+    // Second priority: extract emphasized words (e.g., **Notion AI**)
     const emphasizedWords = extractEmphasizedWords(script);
-    suggestions.push(...emphasizedWords);
+    for (const word of emphasizedWords) {
+      if (!suggestions.includes(word)) suggestions.push(word);
+    }
 
     const lowerScript = script.toLowerCase();
 
-    // Tech & cybersecurity keywords
+    // Brand keywords (map to relevant imagery) - SaaS + hardware
+    const brandKeywords: Record<string, string[]> = {
+      // Hardware brands
+      'xiaomi': ['Xiaomi', 'Xiaomi smartphone', 'smart device'],
+      'samsung': ['Samsung', 'Samsung phone', 'electronics'],
+      'apple': ['Apple', 'iPhone', 'minimalist technology'],
+      'google': ['Google', 'tech company', 'innovation'],
+      'microsoft': ['Microsoft', 'software', 'enterprise tech'],
+      'tesla': ['Tesla', 'electric car', 'innovation'],
+      'amazon': ['Amazon', 'ecommerce', 'delivery'],
+      'netflix': ['Netflix', 'streaming', 'entertainment'],
+      'spotify': ['Spotify', 'music streaming', 'audio'],
+      'tiktok': ['TikTok', 'social media', 'content creator'],
+      'instagram': ['Instagram', 'social media', 'photography'],
+      'youtube': ['YouTube', 'video', 'content creator'],
+      'huawei': ['Huawei', 'Huawei phone', 'smartphone'],
+      'oppo': ['OPPO', 'OPPO phone', 'smartphone'],
+      'vivo': ['Vivo', 'Vivo phone', 'smartphone'],
+      // SaaS / Productivity
+      'notion ai': ['Notion AI', 'Notion AI workspace'],
+      'notion': ['Notion', 'Notion workspace app'],
+      'miro': ['Miro', 'Miro collaboration whiteboard'],
+      'figma': ['Figma', 'Figma design tool'],
+      'canva': ['Canva', 'Canva design'],
+      'loom': ['Loom', 'Loom screen recording'],
+      'clickup': ['ClickUp', 'ClickUp project management'],
+      'trello': ['Trello', 'Trello kanban'],
+      'asana': ['Asana', 'Asana project management'],
+      'linear': ['Linear', 'Linear issue tracker'],
+      'slack': ['Slack', 'Slack team communication'],
+      'webflow': ['Webflow', 'Webflow website builder'],
+      'shopify': ['Shopify', 'Shopify ecommerce'],
+      'airtable': ['Airtable', 'Airtable spreadsheet'],
+      'hubspot': ['HubSpot', 'HubSpot CRM'],
+      // AI Tools
+      'codium ai': ['Codium AI', 'AI code editor'],
+      'codium': ['Codium AI', 'AI coding assistant'],
+      'codeium': ['Codeium', 'AI code completion'],
+      'cursor ai': ['Cursor AI', 'AI code editor'],
+      'cursor': ['Cursor', 'AI code editor'],
+      'chatgpt': ['ChatGPT', 'ChatGPT AI interface'],
+      'copilot': ['GitHub Copilot', 'AI coding'],
+      'gemini': ['Google Gemini', 'Google AI'],
+      'perplexity': ['Perplexity AI', 'AI search'],
+      'midjourney': ['Midjourney', 'AI art'],
+      'runway': ['Runway AI', 'AI video'],
+      'elevenlabs': ['ElevenLabs', 'AI voice'],
+    };
+
+    // Tech & cybersecurity keywords (lower priority than brands)
     const techKeywords: Record<string, string[]> = {
       'keamanan siber': ['cybersecurity', 'hacker', 'security'],
       'cybersecurity': ['cybersecurity', 'hacker', 'network security'],
@@ -374,7 +436,6 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
       'security': ['security', 'protection', 'shield'],
       'data': ['data center', 'server', 'database'],
       'cloud': ['cloud computing', 'server room', 'data center'],
-      'ai': ['artificial intelligence', 'robot', 'technology'],
       'machine learning': ['AI technology', 'neural network'],
       'blockchain': ['blockchain', 'cryptocurrency', 'digital'],
       'iot': ['smart device', 'connected devices', 'technology'],
@@ -383,25 +444,7 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
       'digital': ['digital', 'technology', 'modern'],
       'teknologi': ['technology', 'innovation', 'modern'],
       'technology': ['technology', 'innovation', 'futuristic'],
-    };
-
-    // Brand keywords (map to relevant imagery) - include the brand name itself!
-    const brandKeywords: Record<string, string[]> = {
-      'xiaomi': ['Xiaomi', 'Xiaomi smartphone', 'smart device', 'tech innovation'],
-      'samsung': ['Samsung', 'Samsung phone', 'electronics', 'smartphone'],
-      'apple': ['Apple', 'iPhone', 'minimalist technology', 'premium device'],
-      'google': ['Google', 'tech company', 'innovation', 'digital'],
-      'microsoft': ['Microsoft', 'software', 'enterprise tech', 'office'],
-      'tesla': ['Tesla', 'electric car', 'innovation', 'futuristic'],
-      'amazon': ['Amazon', 'ecommerce', 'delivery', 'warehouse'],
-      'netflix': ['Netflix', 'streaming', 'entertainment', 'movie'],
-      'spotify': ['Spotify', 'music streaming', 'audio', 'headphones'],
-      'tiktok': ['TikTok', 'social media', 'content creator', 'viral'],
-      'instagram': ['Instagram', 'social media', 'photography', 'lifestyle'],
-      'youtube': ['YouTube', 'video', 'content creator', 'streaming'],
-      'huawei': ['Huawei', 'Huawei phone', 'smartphone', 'technology'],
-      'oppo': ['OPPO', 'OPPO phone', 'smartphone', 'camera phone'],
-      'vivo': ['Vivo', 'Vivo phone', 'smartphone', 'selfie'],
+      // 'ai' only matches if NOT preceded by a brand name (handled by caps detection above)
     };
 
     // Industry keywords
@@ -423,10 +466,13 @@ export const GenerateBRollModal: React.FC<GenerateBRollModalProps> = ({
       'olahraga': ['sports', 'fitness', 'athlete'],
     };
 
-    // Check brand keywords FIRST (higher priority)
-    for (const [key, values] of Object.entries(brandKeywords)) {
+    // Check brand keywords FIRST (higher priority) — sort by key length desc so "notion ai" matches before "notion"
+    const brandEntries = Object.entries(brandKeywords).sort((a, b) => b[0].length - a[0].length);
+    for (const [key, values] of brandEntries) {
       if (lowerScript.includes(key)) {
-        suggestions.push(...values);
+        for (const v of values) {
+          if (!suggestions.includes(v)) suggestions.push(v);
+        }
       }
     }
 

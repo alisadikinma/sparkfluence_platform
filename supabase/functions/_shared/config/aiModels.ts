@@ -78,6 +78,8 @@ export interface VideoModelConfig {
   enabled: boolean;
   /** Supports audio_url parameter for TTS integration */
   supportsAudio?: boolean;
+  /** Extra static form params to always include (e.g. mode=custom for Grok) */
+  extraFormParams?: Record<string, string>;
   /** Notes/comments */
   notes?: string;
 }
@@ -151,7 +153,67 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
   // ==========================================================================
   // VEO 3.1 HD (GeminiGen.AI) - Best lip-sync, highest quality
   // PRIMARY for talking head / CREATOR segments
-  // Docs: https://docs.geminigen.ai - Duration 8s fixed, 9:16 only 720p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 720p, $0.015/video
+  // ==========================================================================
+  'veo-3.1-fast-hd': {
+    key: 'veo-3.1-fast-hd',
+    displayName: 'VEO 3.1 Fast HD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1-fast',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '16:9': { apiValue: '16:9', maxResolution: '720p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.015,
+    strengths: ['Fast generation', 'Good lip-sync', 'Budget-friendly ($0.015)', 'Native audio'],
+    weaknesses: ['720p only', '8s fixed duration'],
+    bestFor: ['High volume production', 'Most segments', 'Budget-conscious projects'],
+    enabled: true,
+    notes: 'DEFAULT model. Fast + 720p at $0.015/video.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 FAST FULL HD (GeminiGen.AI) - Fast + 1080p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 1080p, $0.015/video
+  // ==========================================================================
+  'veo-3.1-fast-fhd': {
+    key: 'veo-3.1-fast-fhd',
+    displayName: 'VEO 3.1 Fast FHD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1-fast',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '1080p' },
+      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.015,
+    strengths: ['Fast + 1080p Full HD', 'Good lip-sync', 'Budget-friendly ($0.015)', 'Native audio'],
+    weaknesses: ['8s fixed duration'],
+    bestFor: ['Full HD output at low cost', 'CREATOR segments'],
+    enabled: true,
+    notes: 'Fast variant + 1080p at $0.015/video.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 HD (GeminiGen.AI) - Premium quality, 720p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 720p, $0.50/video
   // ==========================================================================
   'veo-3.1-hd': {
     key: 'veo-3.1-hd',
@@ -163,31 +225,92 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     defaultDuration: 8,
     maxDuration: 8,
     resolutions: {
-      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
       '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
     },
     aspectRatios: {
       '9:16': { apiValue: '9:16', maxResolution: '720p' },
+      '16:9': { apiValue: '16:9', maxResolution: '720p' },
+    },
+    refImageParam: 'ref_images',
+    dialogueLimits: { 8: 14 },
+    costPerVideo: 0.50,
+    strengths: ['Premium lip-sync quality', 'Native audio', 'Best voice consistency'],
+    weaknesses: ['Expensive ($0.50)', '8s fixed', '720p only'],
+    bestFor: ['Premium CREATOR shots', 'Hero content', 'High-value segments'],
+    enabled: true,
+    notes: 'Premium VEO 3.1 + 720p at $0.50/video.',
+  },
+
+  // ==========================================================================
+  // VEO 3.1 FULL HD (GeminiGen.AI) - Premium quality, 1080p
+  // Docs: https://docs.geminigen.ai - Duration 8s, 1080p, $0.50/video
+  // ==========================================================================
+  'veo-3.1-fhd': {
+    key: 'veo-3.1-fhd',
+    displayName: 'VEO 3.1 FHD',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
+    apiModelName: 'veo-3.1',
+    supportedDurations: [8],
+    defaultDuration: 8,
+    maxDuration: 8,
+    resolutions: {
+      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: '9:16', maxResolution: '1080p' },
       '16:9': { apiValue: '16:9', maxResolution: '1080p' },
     },
     refImageParam: 'ref_images',
     dialogueLimits: { 8: 14 },
     costPerVideo: 0.50,
-    strengths: ['Best lip-sync quality', 'Native audio generation', 'Voice consistency', 'HD 1080p output'],
-    weaknesses: ['More expensive ($0.50)', '8s fixed duration', '9:16 only 720p'],
-    bestFor: ['CREATOR segments (HOOK, CTA)', 'Talking head videos', 'Premium quality production'],
+    strengths: ['Best quality', '1080p Full HD', 'Premium lip-sync', 'Native audio'],
+    weaknesses: ['Most expensive ($0.50)', '8s fixed'],
+    bestFor: ['Top-tier production', 'Hero HOOK/CTA shots', 'Premium content'],
     enabled: true,
-    notes: 'PRIMARY for lip-sync quality. Uses webhook for status updates via GeminiGen.AI.',
+    notes: 'Premium VEO 3.1 + 1080p at $0.50/video.',
   },
 
   // ==========================================================================
-  // VEO 3.1 FAST (GeminiGen.AI) - Fast generation, good lip-sync
-  // DEFAULT model for cost-effective production
-  // Docs: https://docs.geminigen.ai - Duration 8s fixed
+  // GROK 3 (GeminiGen.AI) - Aurora engine, flexible durations
+  // Endpoint: POST https://api.geminigen.ai/uapi/v1/video-gen/grok
+  // Durations: 6s, 10s, 15s | Resolution: 480p, 720p | $0.015/video
+  // ==========================================================================
+  'grok-3': {
+    key: 'grok-3',
+    displayName: 'Grok 3',
+    provider: 'geminigen',
+    endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/grok',
+    apiModelName: 'grok-3',
+    supportedDurations: [6, 10, 15],
+    defaultDuration: 6,
+    maxDuration: 15,
+    resolutions: {
+      '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
+      '480p': { apiValue: '480p', dimensions: { width: 854, height: 480 } },
+    },
+    aspectRatios: {
+      '9:16': { apiValue: 'portrait',   maxResolution: '720p' },
+      '16:9': { apiValue: 'landscape',  maxResolution: '720p' },
+      '1:1':  { apiValue: 'square',     maxResolution: '720p' },
+    },
+    refImageParam: 'file_urls',
+    dialogueLimits: { 6: 10, 10: 15, 15: 25 },
+    costPerVideo: 0.015,
+    strengths: ['Flexible duration (6/10/15s)', 'Native SFX + audio', 'Fast generation', 'Budget-friendly ($0.015)'],
+    weaknesses: ['Max 720p', 'Motion-only prompts required'],
+    bestFor: ['B-ROLL segments', 'Dynamic motion', 'Flexible duration needs'],
+    enabled: true,
+    extraFormParams: { mode: 'custom' },
+    notes: 'Grok 3 Aurora engine via GeminiGen.AI. $0.015/video. Uses webhook.',
+  },
+
+  // ==========================================================================
+  // LEGACY ALIAS — kept for backward compatibility
   // ==========================================================================
   'veo-3.1-fast': {
     key: 'veo-3.1-fast',
-    displayName: 'VEO 3.1 Fast',
+    displayName: 'VEO 3.1 Fast HD',
     provider: 'geminigen',
     endpoint: 'https://api.geminigen.ai/uapi/v1/video-gen/veo',
     apiModelName: 'veo-3.1-fast',
@@ -195,21 +318,20 @@ export const VIDEO_MODELS: Record<string, VideoModelConfig> = {
     defaultDuration: 8,
     maxDuration: 8,
     resolutions: {
-      '1080p': { apiValue: '1080p', dimensions: { width: 1920, height: 1080 } },
       '720p': { apiValue: '720p', dimensions: { width: 1280, height: 720 } },
     },
     aspectRatios: {
       '9:16': { apiValue: '9:16', maxResolution: '720p' },
-      '16:9': { apiValue: '16:9', maxResolution: '1080p' },
+      '16:9': { apiValue: '16:9', maxResolution: '720p' },
     },
     refImageParam: 'ref_images',
     dialogueLimits: { 8: 14 },
-    costPerVideo: 0.19,
-    strengths: ['Fast generation', 'Good lip-sync', 'Cost effective ($0.19)', 'Native audio'],
-    weaknesses: ['Max 720p for 9:16', '8s fixed duration'],
-    bestFor: ['High volume production', 'B-ROLL with voiceover', 'Quick turnaround', 'Budget-conscious projects'],
+    costPerVideo: 0.015,
+    strengths: ['Fast generation', 'Budget-friendly ($0.015)'],
+    weaknesses: ['720p only', '8s fixed'],
+    bestFor: ['General use'],
     enabled: true,
-    notes: 'DEFAULT model for cost-effective production. Good lip-sync at lower cost.',
+    notes: 'Legacy alias → use veo-3.1-fast-hd.',
   },
 };
 
@@ -473,10 +595,10 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   // ==========================================================================
   'fal-nano-banana': {
     key: 'fal-nano-banana',
-    displayName: 'Nano Banana Pro T2I (fal.ai)',
+    displayName: 'Nano Banana 2 T2I (fal.ai)',
     provider: 'fal',
-    endpoint: 'https://fal.run/fal-ai/nano-banana-pro',
-    apiModelName: 'fal-ai/nano-banana-pro',
+    endpoint: 'https://fal.run/fal-ai/nano-banana-2',
+    apiModelName: 'fal-ai/nano-banana-2',
     aspectRatios: {
       '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
       '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
@@ -507,10 +629,10 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   // ==========================================================================
   'fal-nano-banana-edit': {
     key: 'fal-nano-banana-edit',
-    displayName: 'Nano Banana Pro Edit (fal.ai)',
+    displayName: 'Nano Banana 2 Edit (fal.ai)',
     provider: 'fal',
-    endpoint: 'https://fal.run/fal-ai/nano-banana-pro/edit',
-    apiModelName: 'fal-ai/nano-banana-pro/edit',
+    endpoint: 'https://fal.run/fal-ai/nano-banana-2/edit',
+    apiModelName: 'fal-ai/nano-banana-2/edit',
     aspectRatios: {
       '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
       '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
@@ -524,7 +646,7 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     supportsNegativePrompt: false,
     maxPromptLength: 4000,
     responseFormat: 'url',
-    costPerImage: 0.15,
+    costPerImage: 0.08, // Updated 2026-03-09: $0.08 standard, 1.5x for 2K, 2x for 4K
     isFree: false,
     rateLimit: 0,
     strengths: ['face consistency', 'character preservation', 'multi-image reference', 'up to 14 refs'],
@@ -532,6 +654,72 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     bestFor: ['CREATOR shots with avatar', 'HOOK/CTA', 'face consistency required'],
     enabled: true,
     notes: 'PRIMARY for CREATOR shots - best face consistency via image_urls array',
+  },
+
+  // ==========================================================================
+  // FAL.AI QWEN IMAGE 2 PRO EDIT - A-ROLL with reference image support
+  // Cheaper alternative to Nano Banana for HOOK/CTA segments
+  // ==========================================================================
+  'fal-qwen-image-2-pro-edit': {
+    key: 'fal-qwen-image-2-pro-edit',
+    displayName: 'Qwen Image 2 Pro Edit (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/qwen-image-2/pro/edit',
+    apiModelName: 'fal-ai/qwen-image-2/pro/edit',
+    aspectRatios: {
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: 'image_urls',
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.075,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['reference image support', 'good face consistency', 'cheaper than nano-banana'],
+    weaknesses: ['no negative prompt', 'paid', 'requires reference image'],
+    bestFor: ['CREATOR shots', 'HOOK/CTA', 'budget-conscious production'],
+    enabled: true,
+    notes: 'A-ROLL edit model — cheaper alternative to Nano Banana 2. $0.075/image',
+  },
+
+  // ==========================================================================
+  // FAL.AI SEEDREAM V5 LITE EDIT - A-ROLL with reference image support
+  // Most affordable edit model for HOOK/CTA segments
+  // ==========================================================================
+  'fal-seedream-v5-lite-edit': {
+    key: 'fal-seedream-v5-lite-edit',
+    displayName: 'Seedream v5 Lite Edit (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v5/lite/edit',
+    apiModelName: 'fal-ai/bytedance/seedream/v5/lite/edit',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: 'image_urls',
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.035,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['most affordable edit model', 'reference image support', 'ByteDance quality'],
+    weaknesses: ['no negative prompt', 'lite variant', 'requires reference image'],
+    bestFor: ['CREATOR shots', 'HOOK/CTA', 'high volume production'],
+    enabled: true,
+    notes: 'Most affordable A-ROLL edit model. $0.035/image. Good for high volume.',
   },
 
   // ==========================================================================
@@ -553,18 +741,84 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
     },
     qualityOptions: undefined,
     styleOptions: undefined,
-    refImageParam: null, // Not supported
-    supportsNegativePrompt: false, // Not supported
+    refImageParam: null,
+    supportsNegativePrompt: false,
     maxPromptLength: 4000,
     responseFormat: 'url',
     costPerImage: 0.03,
     isFree: false,
     rateLimit: 0,
-    strengths: ['high resolution (up to 4096px)', 'excellent text rendering', 'cinematic quality', 'fast'],
+    strengths: ['high resolution (up to 4096px)', 'excellent text rendering', 'cinematic quality', 'fast', 'most affordable'],
     weaknesses: ['no reference image', 'no negative prompt'],
     bestFor: ['B-ROLL', 'high-res visuals', 'text/typography in images', 'hero shots'],
     enabled: true,
-    notes: 'HIGH QUALITY B-ROLL - best for text rendering and high-res output',
+    notes: 'HIGH QUALITY B-ROLL - best for text rendering and high-res output. $0.03/image',
+  },
+
+  // ==========================================================================
+  // FAL.AI SEEDREAM V4.5 - Upgraded B-ROLL (ByteDance)
+  // Higher quality than v4, better prompt following
+  // ==========================================================================
+  'fal-seedream-v4-5': {
+    key: 'fal-seedream-v4-5',
+    displayName: 'Seedream v4.5 (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v4.5/text-to-image',
+    apiModelName: 'fal-ai/bytedance/seedream/v4.5/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 2048, height: 2048 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1536, height: 1152 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 1152, height: 1536 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: null,
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.04,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['upgraded from v4', 'better prompt following', 'high resolution', 'cinematic quality'],
+    weaknesses: ['no reference image', 'no negative prompt', 'slightly more expensive than v4'],
+    bestFor: ['B-ROLL', 'premium visuals', 'when v4 quality not sufficient'],
+    enabled: true,
+    notes: 'UPGRADED B-ROLL - better quality than v4, $0.04/image',
+  },
+
+  // ==========================================================================
+  // FAL.AI SEEDREAM V5 LITE - Latest B-ROLL (ByteDance)
+  // Newest generation, text-to-image and edit variants
+  // ==========================================================================
+  'fal-seedream-v5-lite': {
+    key: 'fal-seedream-v5-lite',
+    displayName: 'Seedream v5 Lite (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/bytedance/seedream/v5/lite/text-to-image',
+    apiModelName: 'fal-ai/bytedance/seedream/v5/lite/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: 'custom', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: 'custom', dimensions: { width: 1024, height: 1792 } },
+      '16:9': { apiValue: 'custom', dimensions: { width: 1792, height: 1024 } },
+      '4:3': { apiValue: 'custom', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: 'custom', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: null,
+    supportsNegativePrompt: false,
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.035,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['latest generation', 'better aesthetics than v4', 'balanced price/quality'],
+    weaknesses: ['no reference image', 'no negative prompt', 'lite variant'],
+    bestFor: ['B-ROLL', 'modern aesthetics', 'general purpose'],
+    enabled: true,
+    notes: 'LATEST B-ROLL - newest Seedream generation, $0.035/image',
   },
 
   // ==========================================================================
@@ -606,12 +860,12 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
   },
 
   // ==========================================================================
-  // FAL.AI QWEN IMAGE - B-ROLL with negative prompt support
-  // Turbo mode available, supports LoRAs
+  // FAL.AI QWEN IMAGE v1 (LEGACY) - Original Qwen, still active
+  // fal-ai/qwen-image — $0.02/image, turbo mode, negative prompt
   // ==========================================================================
-  'fal-qwen-image': {
-    key: 'fal-qwen-image',
-    displayName: 'Qwen Image (fal.ai)',
+  'fal-qwen-image-v1': {
+    key: 'fal-qwen-image-v1',
+    displayName: 'Qwen Image v1 Legacy (fal.ai)',
     provider: 'fal',
     endpoint: 'https://fal.run/fal-ai/qwen-image',
     apiModelName: 'fal-ai/qwen-image',
@@ -627,18 +881,51 @@ export const IMAGE_MODELS: Record<string, ImageModelConfig> = {
       'turbo': 'high',
     },
     styleOptions: undefined,
-    refImageParam: null, // Not supported
-    supportsNegativePrompt: true, // KEY FEATURE!
+    refImageParam: null,
+    supportsNegativePrompt: true,
     maxPromptLength: 4000,
     responseFormat: 'url',
     costPerImage: 0.02,
     isFree: false,
     rateLimit: 0,
-    strengths: ['negative prompt support', 'turbo mode', 'LoRA support', 'good quality'],
-    weaknesses: ['no reference image', 'max 1024px'],
+    strengths: ['negative prompt support', 'turbo mode', 'LoRA support', 'cheapest option'],
+    weaknesses: ['no reference image', 'max 1024px', 'legacy version'],
+    bestFor: ['B-ROLL', 'budget shoots', 'when negative prompt needed'],
+    enabled: true,
+    notes: 'LEGACY Qwen v1 - still active, $0.02/image. Use qwen-image for budget shoots.',
+  },
+
+  // ==========================================================================
+  // FAL.AI QWEN IMAGE v2 - B-ROLL with negative prompt support
+  // Turbo mode available, supports LoRAs
+  // ==========================================================================
+  'fal-qwen-image': {
+    key: 'fal-qwen-image',
+    displayName: 'Qwen Image 2 T2I (fal.ai)',
+    provider: 'fal',
+    endpoint: 'https://fal.run/fal-ai/qwen-image-2/text-to-image',
+    apiModelName: 'fal-ai/qwen-image-2/text-to-image',
+    aspectRatios: {
+      '1:1': { apiValue: '1:1', dimensions: { width: 1024, height: 1024 } },
+      '9:16': { apiValue: '9:16', dimensions: { width: 768, height: 1360 } },
+      '16:9': { apiValue: '16:9', dimensions: { width: 1360, height: 768 } },
+      '4:3': { apiValue: '4:3', dimensions: { width: 1024, height: 768 } },
+      '3:4': { apiValue: '3:4', dimensions: { width: 768, height: 1024 } },
+    },
+    qualityOptions: undefined,
+    styleOptions: undefined,
+    refImageParam: null, // T2I - no reference support
+    supportsNegativePrompt: true, // KEY FEATURE retained from v1
+    maxPromptLength: 4000,
+    responseFormat: 'url',
+    costPerImage: 0.035,
+    isFree: false,
+    rateLimit: 0,
+    strengths: ['negative prompt support', 'high quality', 'qwen-2 upgraded model'],
+    weaknesses: ['no reference image'],
     bestFor: ['B-ROLL', 'environments', 'when negative prompt needed'],
     enabled: true,
-    notes: 'B-ROLL with NEGATIVE PROMPT - use when need to exclude specific elements',
+    notes: 'B-ROLL with NEGATIVE PROMPT - Qwen Image 2, $0.035/image. Better quality than v1.',
   },
 };
 
@@ -1001,7 +1288,14 @@ export function buildVideoFormData(
   if (params.referenceImageUrl && model.refImageParam) {
     formData.append(model.refImageParam, params.referenceImageUrl);
   }
-  
+
+  // Add any extra static params defined in model config (e.g. mode=custom for Grok)
+  if (model.extraFormParams) {
+    for (const [k, v] of Object.entries(model.extraFormParams)) {
+      formData.append(k, v);
+    }
+  }
+
   return formData;
 }
 
@@ -1068,8 +1362,8 @@ export function selectVideoModel(params: {
     return VIDEO_MODELS['sora-2'];
   }
   
-  // Default: VEO 3.1 Fast (best lip-sync, up to 8s)
-  return VIDEO_MODELS['veo-3.1-fast'];
+  // Default: VEO 3.1 Fast HD (best value, $0.015/video)
+  return VIDEO_MODELS['veo-3.1-fast-hd'];
 }
 
 /**

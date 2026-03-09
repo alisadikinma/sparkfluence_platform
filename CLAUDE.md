@@ -92,7 +92,7 @@ MULTILINE COMMANDS:
 | Video Processing | Python FastAPI + FFmpeg (VPS) |
 | AI - Script | **OpenRouter** `google/gemini-2.5-flash-lite` **(PRIMARY, PAID)** → Gemini 2.0 Flash direct (FREE fallback) |
 | AI - Images | fal.ai: Nano Banana Edit (CREATOR) + Seedream v4 / Qwen (B-ROLL) |
-| AI - Video | fal.ai: Kling 2.5 Turbo (DEFAULT) + Wan 2.5 (with audio) |
+| AI - Video | GeminiGen.AI: VEO 3.1 Fast HD (DEFAULT) + Grok 3 (Aurora engine) |
 | AI - TTS | fal.ai: Chatterbox Turbo (voice cloning) |
 | AI - Music | fal.ai: Minimax Music v2 (AI-generated BGM) |
 | AI - Transcription | Groq Whisper (FREE) |
@@ -150,7 +150,7 @@ MULTILINE COMMANDS:
 | `slangValidator.ts` | Slang validation (imports 08/09/10 knowledge) | `generate-script` |
 | `scriptValidator.ts` | Script structure validation | `generate-script` |
 | `cinematicImageKnowledge.ts` | Image generation prompt knowledge | `generate-images` |
-| `cinematicVideoKnowledge.ts` | Video generation prompt knowledge | `generate-videos` |
+| `cinematicVideoKnowledge.ts` | Video generation prompt knowledge. Grok 3: `buildGrokCreatorPrompt()` (motion-only, `Speech:` lip-sync, ONE camera move) + `buildGrokBrollPrompt()` (environment motion, ambient SFX). VEO: structured cinematic prompt builder. | `generate-videos` |
 | `visualEnhancer.ts` | Visual direction enhancement | `generate-images` |
 | `productNamingRule.ts` | Product name detection rules | `generate-images` |
 | `audioDirective.ts` | Audio/TTS prompt directives | `generate-tts` |
@@ -172,7 +172,7 @@ MULTILINE COMMANDS:
 
 | File | Lines | Content |
 |------|-------|---------|
-| `aiModels.ts` | 1,152 | IMAGE_MODELS, VIDEO_MODELS, TTS endpoints + params |
+| `aiModels.ts` | 1,250+ | IMAGE_MODELS, VIDEO_MODELS, TTS endpoints + params. Updated 2026-03-09: nano-banana-2/edit ($0.08), qwen-image-2/pro/edit ($0.075), seedream-v5/lite/edit ($0.035 A-ROLL); seedream-v4.5, seedream-v5-lite, qwen-image-v1 (B-ROLL) |
 
 ### Frontend Mirrors (`src/lib/knowledge/`)
 
@@ -485,7 +485,7 @@ VideoStep / StudioStep             │ Issues: analyzeSegment() weaknesses + qui
 | `ScriptComparison` | Word-level LCS diff between script versions |
 | `ScriptStep` | Segment cards with retention borders, director chips, waveform bars |
 | `ImageStep` | Image generation per segment (stub) |
-| `VideoStep` | Video generation with pre-flight checklist (stub) |
+| `VideoStep` | Video generation: sequential queue (1 job at a time), Supabase Realtime subscription, `syncJobStatusFromDB` on mount, `VideoPreviewModal` with play+download, segment thumbnail shows image+spinner overlay |
 | `StudioStep` | Remotion player + timeline placeholder (stub) |
 
 ### Design System
@@ -636,32 +636,55 @@ D:\Projects\sparkfluence_platform\
 
 ### Image Generation
 
-| Segment | Model | Endpoint | Reference Image |
-|---------|-------|----------|-----------------|
-| HOOK, CTA, LOOP-END | nano-banana/edit | `fal-ai/nano-banana/edit` | ✅ image_urls array (up to 14) |
-| FORE, BODY-X, PEAK | seedream-v4 | `fal-ai/bytedance/seedream/v4/text-to-image` | ❌ No |
-| B-ROLL (negative prompt) | qwen-image | `fal-ai/qwen-image` | ❌ No |
+#### A-Roll (CREATOR shots — HOOK, CTA, LOOP-END)
+All 3 support reference images (`image_urls` array) for face consistency.
+
+| Option | Model Key | Endpoint | Cost |
+|--------|-----------|----------|------|
+| **Default** | `fal-nano-banana-edit` | `fal-ai/nano-banana-2/edit` | $0.08 |
+| Alt 1 | `fal-qwen-image-2-pro-edit` | `fal-ai/qwen-image-2/pro/edit` | $0.075 |
+| Alt 2 | `fal-seedream-v5-lite-edit` | `fal-ai/bytedance/seedream/v5/lite/edit` | $0.035 |
+
+#### B-Roll (FORE, BODY, PEAK — no reference image)
+
+| Option | Model Key | Endpoint | Cost |
+|--------|-----------|----------|------|
+| **Default** | `fal-seedream-v4` | `fal-ai/bytedance/seedream/v4/text-to-image` | $0.03 |
+| Alt 1 | `fal-seedream-v4-5` | `fal-ai/bytedance/seedream/v4.5/text-to-image` | $0.04 |
+| Alt 2 | `fal-seedream-v5-lite` | `fal-ai/bytedance/seedream/v5/lite/text-to-image` | $0.035 |
+| Alt 3 | `fal-qwen-image` | `fal-ai/qwen-image-2/text-to-image` | $0.035 |
+| Legacy | `fal-qwen-image-v1` | `fal-ai/qwen-image` | $0.02 |
 
 **Fallback Chain:**
 ```
-CREATOR: nano-banana/edit → flux-kontext → qwen-image
-B-ROLL:  seedream-v4 → qwen-image → flux-schnell
+CREATOR: fal-nano-banana-edit → fal-qwen-image-2-pro-edit → fal-seedream-v5-lite-edit
+B-ROLL:  fal-seedream-v4 → fal-qwen-image → flux-schnell
 ```
 
-### Video Generation
+**Frontend model selector:** `src/screens/ImageGeneration/types.ts` → `IMAGE_MODELS.aRoll` / `IMAGE_MODELS.bRoll`
+**Backend config:** `supabase/functions/_shared/config/aiModels.ts`
 
-| Condition | Model | Endpoint | Max Duration |
-|-----------|-------|----------|--------------|
-| DEFAULT (best motion) | Kling 2.5 Turbo | `fal-ai/kling-video/v2.5-turbo/standard/image-to-video` | 10s |
-| With BGM / High-res | Wan 2.5 | `fal-ai/wan-25-preview/image-to-video` | 10s |
+### Video Generation (GeminiGen.AI)
 
-**Key Differences:**
-| Feature | Kling 2.5 | Wan 2.5 |
-|---------|-----------|---------|
-| Audio support | ❌ | ✅ |
-| Resolution | Auto | 480p/720p/1080p |
-| Seed | ❌ | ✅ |
-| Prompt expansion | ❌ | ✅ (LLM-enhanced) |
+| Key | Label | Resolution | Cost | Duration |
+|-----|-------|------------|------|----------|
+| `veo-3.1-fast-hd` | VEO 3.1 Fast HD | 720p | $0.015 | 8s (DEFAULT) |
+| `veo-3.1-fast-fhd` | VEO 3.1 Fast FHD | 1080p | $0.015 | 8s |
+| `veo-3.1-hd` | VEO 3.1 HD | 720p | $0.50 | 8s premium |
+| `veo-3.1-fhd` | VEO 3.1 FHD | 1080p | $0.50 | 8s premium |
+| `grok-3` | Grok 3 (Aurora) | 720p | $0.015 | 6s / 10s / 15s |
+
+**API Endpoints:**
+- VEO: `https://api.geminigen.ai/uapi/v1/video-gen/veo`
+- Grok: `https://api.geminigen.ai/uapi/v1/video-gen/grok`
+
+**Webhook Flow:** GeminiGen → `generate-videos/webhook` → updates `video_generation_jobs` → Supabase Realtime → VideoStep UI
+
+**Grok 3 (Aurora) prompt rules:**
+- Motion-only (never re-describe static image elements)
+- `Speech: [dialogue]` syntax for lip-sync (word limits: 10w/6s · 15w/10s · 25w/15s)
+- Positive language only, ONE camera movement per prompt
+- 50–100 words total per prompt
 
 ### TTS (Text-to-Speech)
 
@@ -699,15 +722,19 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
    └── OpenRouter google/gemini-2.5-flash-lite (PRIMARY, PAID) → Gemini 2.0 Flash direct (FREE fallback)
    
 2. IMAGE GENERATION
-   ├── CREATOR segments → nano-banana/edit (with avatar reference)
-   └── B-ROLL segments → seedream-v4 or qwen-image
+   ├── CREATOR (HOOK/CTA/LOOP-END) → nano-banana-2/edit [default $0.08] | qwen-image-2/pro/edit [$0.075] | seedream-v5/lite/edit [$0.035]
+   └── B-ROLL (FORE/BODY/PEAK)     → seedream-v4 [default $0.03] | seedream-v4.5 [$0.04] | qwen-image-2 [$0.035]
    
 3. TTS GENERATION (Optional)
    └── Chatterbox Turbo → Voice audio per segment
    
-4. VIDEO GENERATION
-   ├── Default → Kling 2.5 Turbo (image_url + prompt)
-   └── With BGM → Wan 2.5 (image_url + prompt + audio_url)
+4. VIDEO GENERATION (GeminiGen.AI — sequential queue, 1 at a time)
+   ├── create_jobs    → create video_generation_jobs DB records
+   ├── process_single → submit job to GeminiGen API
+   ├── webhook        → GeminiGen → Supabase webhook → update job status
+   ├── Realtime       → postgres_changes → VideoStep updates UI → submit next job
+   ├── Default model: veo-3.1-fast-hd ($0.015, 720p, 8s)
+   └── Alt model:     grok-3 ($0.015, 720p, 6–15s, Aurora engine)
    
 5. MUSIC GENERATION (Optional)
    └── Minimax Music v2 → Background music
@@ -738,6 +765,7 @@ B-ROLL:  seedream-v4 → qwen-image → flux-schnell
 | `user_topic_history` | Per-user topic selections for dedup (30-day window) |
 | `topic_outfit_cache` | LLM outfit category cache (topic_hash unique) |
 | `video_jobs` | VPS video processing jobs |
+| `video_generation_jobs` | GeminiGen video job tracking: status 0=pending 1=processing 2=completed 3=failed, Realtime-enabled |
 
 ### Job Status Codes
 
@@ -899,6 +927,12 @@ git log --oneline -10
 | RetentionCurve scores differ from IssuesTab | OverviewTab passes `precomputedScores` from `analysisMap` to RetentionCurve. If mismatch, check prop is being passed. |
 | ChatLayout sidebar missing | Ensure route wraps component with `<ChatLayout>` in `index.tsx` |
 | Virality score too low (< 70%) | **Scoring recalibrated 2026-02-22.** Check: (1) `extractFeatures` in scriptAnalysis.ts for feature detection thresholds, (2) word density optimal range is 60-95%, (3) cross-segment defaults raised (builds_on_hook 0.6, matches_hook_category 0.6). LLM: check `scoringOptimizer.ts` power word bank + builds-on-hook rule + scoring cheat sheet in generate-script. |
+| Video stuck at generating (spinner never resolves) | Click ↻ Sync button to pull latest status from DB. Check `video_generation_jobs` table — if status=2, `syncJobStatusFromDB()` will update UI |
+| Generate All only does 1 video then stops | Realtime subscription issue — check `video_generation_jobs` table has `realtime` enabled. Or webhook not reaching Supabase. Sequential queue triggers next job only after Realtime fires |
+| All 8 videos submitted at once (not sequential) | Old bug — fixed with `pendingJobQueueRef` queue system. `submitPendingJobs` now queues all, submits 1, waits for Realtime before next |
+| Video play/download not working | Check `videoUrl` is set on segment. `VideoPreviewModal` opens on thumbnail click. Download uses `<a href download>` |
+| Failed jobs not retried on Generate All | `submitPendingJobs` resets `status=3` → `status=0` before queuing. If still not picked up, check `video_generation_jobs` filter |
+| GeminiGen webhook not updating DB | Check `generate-videos/webhook` edge function. Verify GeminiGen webhook URL points to correct Supabase edge function URL |
 
 ---
 
@@ -1018,5 +1052,5 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 
 ---
 
-**Last Updated:** February 2026
-**Version:** 7.1 (+ Claude Code Automations: skills, hooks, agents, MCP servers)
+**Last Updated:** March 2026
+**Version:** 7.2 (+ GeminiGen.AI video provider: VEO 3.1 / Grok 3 sequential queue + webhook + Realtime)

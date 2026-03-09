@@ -96,6 +96,19 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
   // ---------------------------------------------------------------------------
   const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close model dropdown on click outside
+  useEffect(() => {
+    if (!showModelDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setShowModelDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showModelDropdown]);
 
   // ---------------------------------------------------------------------------
   // MODAL STATES
@@ -415,7 +428,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
       if (data?.data?.jobs) {
         const updates: Array<{ segmentId: string; changes: Partial<WorkspaceSegment> }> = [];
         segments.forEach(seg => {
-          const job = data.data.jobs.find((j: any) => j.segment_number === parseInt(seg.id));
+          const job = data.data.jobs.find((j: any) => j.segment_number === seg.segmentNumber);
           if (job) updates.push({ segmentId: seg.id, changes: { jobId: job.id, isGeneratingImage: true } });
         });
         if (updates.length > 0) dispatch({ type: 'BATCH_UPDATE_SEGMENTS', updates });
@@ -458,7 +471,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
   const handleRegenerateWithNotes = useCallback(async (notes: string) => {
     if (!user || !orderId || !regenerateModal.segment) return;
     const segment = regenerateModal.segment;
-    const segmentNumber = parseInt(segment.id);
+    const segmentNumber = segment.segmentNumber;
 
     dispatch({ type: 'SET_SEGMENT_GENERATING_IMAGE', segmentId: segment.id, isGenerating: true });
     setRegenerateModal({ isOpen: false, segment: null });
@@ -699,7 +712,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
           session_id: orderId,
           segments: [{
             segment_id: segment.segmentId,
-            segment_number: parseInt(segment.id),
+            segment_number: segment.segmentNumber,
             segment_type: segment.segmentType,
             shot_type: segment.shotType,
             emotion: segment.emotion,
@@ -872,7 +885,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
           {/* Generate All + Model Selection */}
           <div className="flex gap-2">
             {/* Model Dropdown */}
-            <div className="relative">
+            <div className="relative" ref={modelDropdownRef}>
               <button onClick={() => setShowModelDropdown(!showModelDropdown)}
                 className="h-10 px-3 flex items-center gap-2 border border-[#262626] rounded-lg text-neutral-300 hover:bg-[#1E1E1E] transition-colors text-sm">
                 <Sparkles className="w-4 h-4" />
@@ -880,7 +893,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
                 <ChevronDown className={`w-4 h-4 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
               </button>
               {showModelDropdown && (
-                <div className="absolute right-0 top-full mt-2 w-72 bg-[#1E1E1E] border border-[#262626] rounded-xl shadow-lg z-50 p-4">
+                <div className="absolute right-0 top-full mt-2 w-72 bg-[#1E1E1E] border border-[#262626] rounded-xl shadow-lg z-[200] p-4">
                   <h4 className="text-sm font-semibold text-white mb-3">Image Model Selection</h4>
                   <div className="mb-3">
                     <label className="text-xs text-neutral-500 mb-1 block">A-ROLL (HOOK, CTA)</label>
@@ -1294,7 +1307,7 @@ const ImageStep: React.FC<ImageStepProps> = ({ onProgressChange, saveNow }) => {
                   selectedImageUrl={segment.imageUrl}
                   onGenerate={() => handleGenerateImage(segment.id)}
                   onRegenerate={() => isCreator ? setRegenerateModal({ isOpen: true, segment }) : handleGenerateImage(segment.id)}
-                  onSelectImage={imageId => handleSelectImage(imageId, parseInt(segment.id))}
+                  onSelectImage={imageId => handleSelectImage(imageId, segment.segmentNumber)}
                   onDeleteImage={handleDeleteImage}
                   onPreview={setPreviewImage}
                   onDownload={imageUrl => handleDownloadImage(imageUrl, segment.segmentType, segment.id)}

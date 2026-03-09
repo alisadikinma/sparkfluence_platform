@@ -35,11 +35,25 @@ export {
   CTA_EMOTION_OVERRIDE,     // NEW 2026-01-15: Friendly expression for CTA
   HOOK_EXPRESSION_MAP,      // NEW 2026-03-09: Hook category → expression spec
   HOOK_LIGHTING_MAP,        // NEW 2026-03-09: Hook category → lighting spec
+  VISUAL_ACTION_SYNERGY_MATRIX, // NEW 2026-03-09: Hook+action → expression synergy
+  ANTI_REPETITION_VARIANTS, // NEW 2026-03-09: A/B/C camera+lighting variants per category
+  WARDROBE_LIBRARY,         // NEW 2026-03-09: Topic category → costume spec
+  SCENE_COSTUME_OVERRIDES,  // NEW 2026-03-09: Scene context → forced costume
+  ENVIRONMENT_PALETTE,      // NEW 2026-03-09: Hook category → environment spec
+  TOPIC_PROP_BANK,          // NEW 2026-03-09: Topic → prop bank (related + absurd)
+  VISUAL_ACTION_PROP_INTERACTION, // NEW 2026-03-09: Visual action → prop interaction
+  HOOK_PROP_RULE,           // NEW 2026-03-09: Hook category → prop type rule
   getEmotionSpecs,
   getEmotionSpecsWithOverride,  // NEW 2026-01-15: CTA always gets smile
   getHookExpression,        // NEW 2026-03-09: Hook category → expression spec
   getHookLighting,          // NEW 2026-03-09: Hook category → lighting spec
   buildHookVisualPrompt,    // NEW 2026-03-09: Combined expression+lighting prompt phrase
+  getVisualSynergy,         // NEW 2026-03-09: Hook+action → synergy rule
+  getVariantSpec,           // NEW 2026-03-09: Get A/B/C variant spec
+  resolveWardrobe,          // NEW 2026-03-09: Resolve wardrobe from topic+scene
+  getEnvironmentSpec,       // NEW 2026-03-09: Get environment spec for hook category
+  resolvePropContext,       // NEW 2026-03-09: Resolve prop from hook+action+topic
+  buildHookFullVisualPrompt, // NEW 2026-03-09: Full prompt with expression+lighting+env+camera
   getLightingPattern,
   getShotType,
   getMoodSetup,
@@ -58,6 +72,12 @@ export {
   type EmotionSpecs,
   type HookExpressionSpec,  // NEW 2026-03-09
   type HookLightingSpec,    // NEW 2026-03-09
+  type SynergyRule,         // NEW 2026-03-09
+  type VariantSpec,         // NEW 2026-03-09
+  type WardrobeSpec,        // NEW 2026-03-09
+  type EnvironmentSpec,     // NEW 2026-03-09
+  type PropBank,            // NEW 2026-03-09
+  type PropInteraction,     // NEW 2026-03-09
   type FullPromptParams,
   type LightingPattern,
   type LightingRatio,

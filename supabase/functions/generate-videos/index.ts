@@ -21,6 +21,8 @@ import {
   getCameraMovement,
   getEmotionMotion,
   getTransition,
+  buildGrokCreatorPrompt,
+  buildGrokBrollPrompt,
 } from '../_shared/prompts/cinematicVideoKnowledge.ts'
 
 // Import Voice & Face Anchor functions (2026 - Sora 2 Consistency + Enhanced Audio)
@@ -484,18 +486,22 @@ async function handlePreviewPrompts(requestBody: any) {
   const hasProfileImage = avatar_selection !== 'no_avatar' && profile_image_url !== null
 
   // Map user selection to actual platform key
-  // DEFAULT = VEO 3.1 HD for best lip-sync quality (8s, 720p/1080p)
   const platformMap: Record<string, VideoModelKey> = {
-    'veo31': 'veo-3.1-fast',     // VEO 3.1 Fast (8s, best lip-sync)
-    'veo-3.1-hd': 'veo-3.1-hd',  // VEO 3.1 HD (8s, premium quality)
-    'veo-3.1-fast': 'veo-3.1-fast', // VEO 3.1 Fast (8s, cost-effective)
-    'wan-25': 'wan-2.5',         // WAN 2.5 Preview (5s/10s, voice cloning)
-    'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
-    'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
-    'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
-    'auto': 'veo-3.1-hd'         // Default to VEO 3.1 HD for quality
+    'veo-3.1-fast-hd':  'veo-3.1-fast-hd',  // Fast HD 720p $0.015 (DEFAULT)
+    'veo-3.1-fast-fhd': 'veo-3.1-fast-fhd', // Fast FHD 1080p $0.015
+    'veo-3.1-hd':       'veo-3.1-hd',       // Premium HD 720p $0.50
+    'veo-3.1-fhd':      'veo-3.1-fhd',      // Premium FHD 1080p $0.50
+    'grok-3':           'grok-3',            // Grok 3 Aurora 6/10/15s $0.015
+    // Legacy aliases
+    'veo-3.1-fast':     'veo-3.1-fast-hd',
+    'veo31':            'veo-3.1-fast-hd',
+    'wan-25':           'wan-2.5',
+    'sora2':            'sora-2',
+    'sora2-hd':         'sora-2-pro-hd',
+    'sora2-pro':        'sora-2-pro',
+    'auto':             'veo-3.1-fast-hd',
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-hd'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast-hd'
 
   const prompts: Array<{
     segment_id: string
@@ -647,18 +653,22 @@ async function handleCreateJobs(supabase: any, requestBody: any) {
   console.log(`[CREATE_JOBS] Creating ${segments.length} video jobs for session: ${session_id}, preferred_platform: ${preferred_platform}`)
 
   // Map user selection to actual platform key
-  // DEFAULT = VEO 3.1 HD for best lip-sync quality (8s, 720p/1080p)
   const platformMap: Record<string, VideoModelKey> = {
-    'veo31': 'veo-3.1-fast',     // VEO 3.1 Fast (8s, best lip-sync)
-    'veo-3.1-hd': 'veo-3.1-hd',  // VEO 3.1 HD (8s, premium quality)
-    'veo-3.1-fast': 'veo-3.1-fast', // VEO 3.1 Fast (8s, cost-effective)
-    'wan-25': 'wan-2.5',         // WAN 2.5 Preview (5s/10s, voice cloning)
-    'sora2': 'sora-2',           // Standard Sora 2 (10s/15s, 720p)
-    'sora2-hd': 'sora-2-pro-hd', // HD version (15s, 1080p)
-    'sora2-pro': 'sora-2-pro',   // Pro version (25s, 720p)
-    'auto': 'veo-3.1-hd'         // Default to VEO 3.1 HD for quality
+    'veo-3.1-fast-hd':  'veo-3.1-fast-hd',  // Fast HD 720p $0.015 (DEFAULT)
+    'veo-3.1-fast-fhd': 'veo-3.1-fast-fhd', // Fast FHD 1080p $0.015
+    'veo-3.1-hd':       'veo-3.1-hd',       // Premium HD 720p $0.50
+    'veo-3.1-fhd':      'veo-3.1-fhd',      // Premium FHD 1080p $0.50
+    'grok-3':           'grok-3',            // Grok 3 Aurora 6/10/15s $0.015
+    // Legacy aliases
+    'veo-3.1-fast':     'veo-3.1-fast-hd',
+    'veo31':            'veo-3.1-fast-hd',
+    'wan-25':           'wan-2.5',
+    'sora2':            'sora-2',
+    'sora2-hd':         'sora-2-pro-hd',
+    'sora2-pro':        'sora-2-pro',
+    'auto':             'veo-3.1-fast-hd',
   }
-  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-hd'
+  const selectedPlatformForAll = platformMap[preferred_platform] || 'veo-3.1-fast-hd'
 
   // ========================================================================
   // VOICE PROMPT RETRIEVAL (2026 - Avatar-linked)
@@ -2522,9 +2532,10 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
     characterDescription: charDescParam = ''
   } = params
   
-  // Check if using Sora (needs sanitization)
+  // Check model family — each has different prompt requirements
   const isSoraModel = platform.startsWith('sora-')
-  const platformLabel = isSoraModel ? 'SORA 2' : 'VEO 3.1'
+  const isGrokModel = platform === 'grok-3'
+  const platformLabel = isSoraModel ? 'SORA 2' : isGrokModel ? 'GROK 3' : 'VEO 3.1'
   
   // ========================================================================
   // DURATION FIX (2026): Get closest valid duration from model config
@@ -2630,13 +2641,38 @@ function buildCinematicVideoPrompt(params: VideoPromptParams): string {
   const outputIntent = segment.output_intent || segment.outputIntent || undefined
   
   // ========================================================================
+  // GROK 3 ROUTING — Aurora engine needs motion-only, positive-language prompts
+  // ========================================================================
+  if (isGrokModel) {
+    const grokParams = {
+      segmentType,
+      emotion,
+      duration: safeDuration,
+      aspectRatio,
+      visualDirection,
+      dialogue: scriptText,
+      environment,
+      isCreatorShot: isCreatorSegment,
+      hasTextOverlay: false,
+      language: detectedLanguage,
+      creatorGender: actualCreatorGender,
+    }
+
+    if (isCreatorSegment) {
+      return buildGrokCreatorPrompt(grokParams)
+    } else {
+      return buildGrokBrollPrompt(grokParams)
+    }
+  }
+
+  // ========================================================================
   // CREATOR SEGMENT (HOOK, CTA) - Shows creator face with dialogue
   // ========================================================================
   if (isCreatorSegment) {
     const characterName = segment.character_name || 'Creator'
-    
+
     // SORA SANITIZATION: Use simplified character description
-    const characterDescription = isSoraModel 
+    const characterDescription = isSoraModel
       ? simplifyCharacterForSora(actualCharacterDescription, actualCreatorGender)
       : actualCharacterDescription || undefined
     
