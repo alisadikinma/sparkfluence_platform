@@ -79,6 +79,19 @@ export const ImageGeneration = (): JSX.Element => {
   // NEW: Image model selection state
   const [imageModels, setImageModels] = useState<ImageModelSettings>({ aRoll: 'auto', bRoll: 'auto' });
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close model dropdown on click outside
+  useEffect(() => {
+    if (!showModelDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setShowModelDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showModelDropdown]);
 
   const [referenceImageModal, setReferenceImageModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
   const [bRollModal, setBRollModal] = useState<{ isOpen: boolean; segment: Segment | null }>({ isOpen: false, segment: null });
@@ -2201,7 +2214,7 @@ export const ImageGeneration = (): JSX.Element => {
             <div className="flex gap-2">
 
               {/* Model Selection Dropdown */}
-              <div className="relative">
+              <div className="relative" ref={modelDropdownRef}>
                 <Button
                   onClick={() => {
                     setShowModelDropdown(!showModelDropdown);
@@ -2215,7 +2228,7 @@ export const ImageGeneration = (): JSX.Element => {
                 </Button>
 
                 {showModelDropdown && (
-                  <div className="absolute right-0 top-full mt-2 w-72 bg-card border border-border-default rounded-xl shadow-lg z-50 p-4">
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-card border border-border-default rounded-xl shadow-lg z-[200] p-4">
                     <h4 className="text-sm font-semibold text-text-primary mb-3">Image Model Selection</h4>
 
                     {/* A-ROLL Model */}
