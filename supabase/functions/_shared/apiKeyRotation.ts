@@ -744,6 +744,8 @@ export async function callGroqTranscribe(
     responseFormat?: string;
     timestampGranularities?: string;
     filename?: string;
+    /** Language hint for Whisper (ISO 639-1 code, e.g. 'id', 'en', 'hi') */
+    language?: string;
   } = {}
 ): Promise<GroqTranscribeResult> {
   const model = options.model || 'whisper-large-v3-turbo';
@@ -757,6 +759,9 @@ export async function callGroqTranscribe(
     formData.append('response_format', responseFormat);
     if (options.timestampGranularities) {
       formData.append('timestamp_granularities[]', options.timestampGranularities);
+    }
+    if (options.language) {
+      formData.append('language', options.language);
     }
 
     const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {

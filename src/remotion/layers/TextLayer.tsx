@@ -1,6 +1,7 @@
 // ============================================================================
 // Sparkfluence Studio — Text Layer (Remotion)
-// Renders subtitles/captions with stroke outline for readability.
+// Renders text overlays with stroke outline for readability.
+// Respects text.fontSize, text.lineHeight, and text.align from layer config.
 // ============================================================================
 
 import React from 'react';
@@ -24,15 +25,21 @@ export const TextLayer: React.FC<TextLayerProps> = ({ text }) => {
     lineHeight = 1.3,
   } = text;
 
+  // Use text-shadow for stroke instead of WebkitTextStroke for better rendering
+  const strokeShadow = strokeWidth > 0
+    ? `${strokeWidth}px ${strokeWidth}px 0 ${strokeColor}, -${strokeWidth}px -${strokeWidth}px 0 ${strokeColor}, ${strokeWidth}px -${strokeWidth}px 0 ${strokeColor}, -${strokeWidth}px ${strokeWidth}px 0 ${strokeColor}, 0 ${strokeWidth}px 0 ${strokeColor}, 0 -${strokeWidth}px 0 ${strokeColor}, ${strokeWidth}px 0 0 ${strokeColor}, -${strokeWidth}px 0 0 ${strokeColor}`
+    : 'none';
+
   return (
     <div
       style={{
         width: '100%',
         height: '100%',
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center',
-        padding: '8px 16px',
+        padding: '4px 8px',
+        overflow: 'visible',
       }}
     >
       <span
@@ -43,9 +50,7 @@ export const TextLayer: React.FC<TextLayerProps> = ({ text }) => {
           color,
           textAlign: align,
           lineHeight,
-          WebkitTextStroke: `${strokeWidth}px ${strokeColor}`,
-          paintOrder: 'stroke fill',
-          textShadow: `0 2px 8px rgba(0,0,0,0.5)`,
+          textShadow: strokeShadow !== 'none' ? strokeShadow : '0 2px 8px rgba(0,0,0,0.5)',
           wordBreak: 'break-word',
           maxWidth: '100%',
         }}

@@ -335,7 +335,7 @@ export function buildProjectFromPipeline(input: PipelineInput, userId: string): 
   };
 }
 
-function normalizeSegmentType(type: string): SegmentComposition['segmentType'] {
+export function normalizeSegmentType(type: string): SegmentComposition['segmentType'] {
   const upper = type.toUpperCase().replace(/[\s-]/g, '_');
   const map: Record<string, SegmentComposition['segmentType']> = {
     'HOOK': 'HOOK',
@@ -351,6 +351,113 @@ function normalizeSegmentType(type: string): SegmentComposition['segmentType'] {
     'LOOP_END': 'LOOP_END',
   };
   return map[upper] || 'BODY';
+}
+
+// --- Build Project from Chat Session (DB row) ---
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function buildProjectFromSession(session: any, userId: string): SparkfluenceProject {
+  const scriptSegments: Array<{
+    id: string;
+    segmentType?: string;
+    segment_type?: string;
+    type?: string;
+    durationSeconds?: number;
+    duration_seconds?: number;
+    script?: string;
+    visualDirection?: string;
+    visual_direction?: string;
+    emotion?: string;
+    shotType?: string;
+    shot_type?: string;
+    layout?: string;
+  }> = session.script_data?.segments || [];
+
+  const imageSegments: Array<{ id: string; imageUrl?: string; image_url?: string }> =
+    session.image_data?.segments || [];
+
+  const videoSegments: Array<{ id: string; videoUrl?: string; video_url?: string }> =
+    session.video_data?.segments || [];
+
+  // Build lookup maps for image/video by segment id
+  const imageMap = new Map<string, string>();
+  for (const img of imageSegments) {
+    const url = img.imageUrl || img.image_url;
+    if (url) imageMap.set(img.id, url);
+  }
+
+  const videoMap = new Map<string, string>();
+  for (const vid of videoSegments) {
+    const url = vid.videoUrl || vid.video_url;
+    if (url) videoMap.set(vid.id, url);
+  }
+
+  let currentFrame = 0;
+  const segments: SegmentComposition[] = scriptSegments.reduce<SegmentComposition[]>((acc, seg) => {
+    const durationSec = seg.durationSeconds || seg.duration_seconds || 5;
+    const durFrames = secondsToFrames(durationSec);
+    const layers: LayerItem[] = [];
+
+    const videoUrl = videoMap.get(seg.id);
+    const imageUrl = imageMap.get(seg.id);
+
+    // Skip segments with no video and no image (e.g. loop_end not yet generated)
+    if (!videoUrl && !imageUrl) return acc;
+
+    if (videoUrl) {
+      layers.push(createVideoLayer(videoUrl, durFrames));
+    } else if (imageUrl) {
+      layers.push(createImageLayer(imageUrl, durFrames));
+    }
+
+    // Add subtitle/text layer from script
+    const scriptText = seg.script || '';
+    if (scriptText) {
+      layers.push(createTextLayer(scriptText, durFrames));
+    }
+
+    const segType = seg.segmentType || seg.segment_type || seg.type || 'BODY';
+    const layout = (seg.layout || 'full') as LayoutType;
+
+    const comp: SegmentComposition = {
+      id: seg.id || generateId('seg'),
+      segmentType: normalizeSegmentType(segType),
+      startFrame: currentFrame,
+      durationInFrames: durFrames,
+      layout,
+      layers,
+      script: scriptText,
+      emotion: seg.emotion || 'neutral',
+      visualDirection: seg.visualDirection || seg.visual_direction || '',
+    };
+
+    currentFrame += durFrames;
+    acc.push(comp);
+    return acc;
+  }, []);
+
+  // Transitions between consecutive segments
+  const transitions: TransitionItem[] = [];
+  for (let i = 0; i < segments.length - 1; i++) {
+    transitions.push(createTransition(segments[i].id, segments[i + 1].id));
+  }
+
+  const settings = session.settings || {};
+
+  return {
+    id: generateId('proj'),
+    userId,
+    scriptId: session.order_id || '',
+    title: session.title || settings.topic || 'Untitled Project',
+    resolution: { w: STUDIO_WIDTH, h: STUDIO_HEIGHT },
+    fps: STUDIO_FPS,
+    totalDurationInFrames: currentFrame,
+    segments,
+    audio: { tts: [], bgm: [], sfx: [] },
+    transitions,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 // --- Recalculate Frames ---

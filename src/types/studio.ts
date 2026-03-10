@@ -45,7 +45,28 @@ export type EffectPresetType =
   | 'alert-pulse' | 'camera-shake' | 'snow' | 'hearts';
 
 export type TransitionType =
-  | 'fade' | 'slide' | 'wipe' | 'flip' | 'clock-wipe' | 'iris';
+  // Basic
+  | 'fade' | 'cut' | 'dissolve' | 'crossfade' | 'dip-black'
+  // Slide
+  | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down'
+  // Push
+  | 'push-left' | 'push-right' | 'push-up' | 'push-down'
+  // Wipe
+  | 'wipe-left' | 'wipe-right' | 'wipe-up' | 'wipe-down'
+  // Geometric
+  | 'clock-wipe' | 'iris' | 'diamond' | 'heart' | 'star'
+  // Zoom
+  | 'zoom-in' | 'zoom-out' | 'zoom-rotate'
+  // Flip
+  | 'flip-h' | 'flip-v'
+  // Blur
+  | 'blur-through' | 'motion-blur'
+  // Glitch
+  | 'glitch' | 'pixelate' | 'rgb-split'
+  // Light
+  | 'flash-white' | 'flash-black'
+  // Legacy aliases
+  | 'slide' | 'wipe' | 'flip';
 
 export type TextAlign = 'left' | 'center' | 'right';
 
@@ -110,6 +131,9 @@ export interface SegmentComposition {
   layout: LayoutType;
   layers: LayerItem[];
 
+  // Original duration before any trims (set on first trim, allows expanding back)
+  maxDurationInFrames?: number;
+
   // Script metadata (from generation pipeline)
   script: string;
   emotion: string;
@@ -156,9 +180,58 @@ export interface SparkfluenceProject {
   segments: SegmentComposition[];
   audio: AudioMix;
   transitions: TransitionItem[];
+  captions?: CaptionTrack[];
+  overlayTracks?: OverlayTrack[];
 
   createdAt: string;
   updatedAt: string;
+}
+
+// --- Overlay Tracks (Multi-Track System) ---
+
+export interface OverlayClip {
+  id: string;
+  type: 'video' | 'image' | 'text';
+  src: string;                          // media URL (empty string for text)
+  startFrame: number;                   // absolute position on timeline
+  durationInFrames: number;
+  position: { x: number; y: number };   // composition coordinates
+  size: { w: number; h: number };
+  opacity: number;
+  zIndex: number;
+
+  // Text-specific (when type === 'text')
+  text?: {
+    content: string;
+    fontFamily: string;
+    fontSize: number;
+    color: string;
+    strokeColor: string;
+    strokeWidth: number;
+    align: TextAlign;
+  };
+}
+
+export interface OverlayTrack {
+  id: string;
+  label: string;           // "Video 2", "Text 2", etc.
+  trackType: 'video' | 'text';
+  clips: OverlayClip[];
+}
+
+// --- Captions ---
+export type CaptionStyle = 'classic' | 'bold' | 'neon' | 'outline' | 'karaoke' | 'minimal';
+
+export interface CaptionChunk {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface CaptionTrack {
+  segmentId: string;
+  chunks: CaptionChunk[];
+  style: CaptionStyle;
 }
 
 // --- Sticker Library ---

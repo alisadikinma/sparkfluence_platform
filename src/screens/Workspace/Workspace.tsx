@@ -398,8 +398,14 @@ export const Workspace: React.FC = () => {
   }, [location.pathname]);
 
   // Navigate to a step by updating both context state and URL
+  // Studio step opens full-screen StudioEditor (separate route, not inside Workspace)
   const navigateToStep = useCallback(
     (stepId: 'script' | 'images' | 'video' | 'studio') => {
+      if (stepId === 'studio') {
+        // Full-screen studio editor — dedicated route outside Workspace
+        navigate(`${basePath}/studio`);
+        return;
+      }
       setActiveStep(stepId);
       navigate(`${basePath}/${stepId}`, { replace: true });
     },

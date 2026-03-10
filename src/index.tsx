@@ -35,6 +35,7 @@ import { ChatLayout } from "./components/layout";
 import { ChatHome } from "./screens/ChatHome";
 import { Workspace } from "./screens/Workspace";
 import { WorkspaceProvider } from "./contexts/WorkspaceContext";
+import { StudioEditor } from "./screens/Workspace/steps/StudioEditor";
 
 // Wrapper component for smooth scroll
 const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -109,6 +110,9 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     {/* Script Gen — new session home */}
                     <Route path="/script-gen" element={<ChatLayout><ChatHome /></ChatLayout>} />
 
+                    {/* Script Gen — full-screen Studio editor (must be BEFORE /:step catch-all) */}
+                    <Route path="/script-gen/:orderId/studio" element={<StudioEditor />} />
+
                     {/* Script Gen — existing session workspace */}
                     <Route path="/script-gen/:orderId" element={
                       <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
@@ -120,6 +124,9 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     {/* Creator Lab — new session home */}
                     <Route path="/creator-lab" element={<ChatLayout><ChatHome /></ChatLayout>} />
 
+                    {/* Creator Lab — full-screen Studio editor (must be BEFORE /:step catch-all) */}
+                    <Route path="/creator-lab/:orderId/studio" element={<StudioEditor />} />
+
                     {/* Creator Lab — existing session workspace */}
                     <Route path="/creator-lab/:orderId" element={
                       <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
@@ -127,6 +134,9 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/creator-lab/:orderId/:step" element={
                       <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
                     } />
+
+                    {/* Ad Studio — full-screen Studio editor (must be BEFORE /:step catch-all) */}
+                    <Route path="/ad-studio/:orderId/studio" element={<StudioEditor />} />
 
                     {/* Ad Studio — workspace routes */}
                     <Route path="/ad-studio/:orderId" element={

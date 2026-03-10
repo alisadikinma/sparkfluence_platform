@@ -71,6 +71,9 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({ layer, segmentDuration })
     transform += ` ${anim.transform}`;
   }
 
+  // Text layers should NOT clip overflow so larger fonts aren't cut off
+  const shouldClip = layer.type !== 'text';
+
   const positionStyle: React.CSSProperties = {
     position: 'absolute',
     left: layer.position.x,
@@ -80,7 +83,7 @@ const LayerRenderer: React.FC<LayerRendererProps> = ({ layer, segmentDuration })
     opacity,
     transform: `rotate(${layer.rotation}deg) ${transform}`.trim(),
     zIndex: layer.zIndex,
-    overflow: 'hidden',
+    overflow: shouldClip ? 'hidden' : 'visible',
   };
 
   switch (layer.type) {

@@ -487,7 +487,67 @@ VideoStep / StudioStep             │ Issues: analyzeSegment() weaknesses + qui
 | `ScriptStep` | Segment cards with retention borders, director chips, waveform bars |
 | `ImageStep` | Image generation per segment (stub) |
 | `VideoStep` | Video generation: sequential queue (1 job at a time), Supabase Realtime subscription, `syncJobStatusFromDB` on mount, `VideoPreviewModal` with play+download, segment thumbnail shows image+spinner overlay |
-| `StudioStep` | Remotion player + timeline placeholder (stub) |
+| `StudioStep` | Redirects to full-screen StudioEditor |
+
+### Studio Editor (CapCut-style Video Editor)
+Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orderId/studio`, `/ad-studio/:orderId/studio`.
+
+**Architecture:**
+- Entry: `src/screens/Workspace/steps/StudioEditor.tsx` — wraps `StudioProvider`, 3-panel layout
+- State: `src/contexts/StudioContext.tsx` — useReducer + undo/redo history (50 max), 30+ actions
+- Types: `src/types/studio.ts` — SparkfluenceProject, LayerItem, CaptionTrack, etc.
+- Composition: `src/lib/composition.ts` — factories, frame math, buildProjectFromSession
+- Remotion: `src/remotion/VideoComposition.tsx` — renders segments, transitions, captions
+
+**Hooks:**
+| Hook | Purpose |
+|------|---------|
+| `useStudioLoader` | Loads project from `chat_sessions.studio_data` or builds from session data |
+| `useStudioPersistence` | Auto-save (3s debounce) to `chat_sessions.studio_data`, Ctrl+S |
+| `useGenerateCaptions` | Calls `generate-captions` edge function → Groq Whisper → CaptionTrack[] |
+| `useFontLoader` | Dynamic Google Font loading via `<link>` injection |
+| `useTrimInteraction` | Mouse-based trim handles on timeline clips |
+
+**Components (`src/components/studio/`):**
+| Component | Purpose |
+|-----------|---------|
+| `Timeline.tsx` | Multi-track timeline (Video, Text, TTS, BGM) with ruler + playhead |
+| `Toolbar.tsx` | Select/Split/Delete tools + undo/redo + zoom |
+| `timeline/TimelineRuler.tsx` | Time ruler with tick marks |
+| `timeline/TimelineTrack.tsx` | Single track row with clip rendering |
+| `timeline/TimelineClip.tsx` | Draggable segment clip on track |
+| `timeline/AudioClip.tsx` | Audio clip with waveform visualization |
+| `timeline/Playhead.tsx` | Current frame indicator (draggable) |
+| `timeline/TransitionDiamond.tsx` | Diamond between clips for transitions |
+| `panels/TransitionPicker.tsx` | Popover with 6 transition types + duration |
+| `panels/AudioProperties.tsx` | Volume, fades, mute, envelope preview |
+| `panels/TextTemplates.tsx` | 6 text presets + Add Text + Auto Captions button |
+| `panels/TextProperties.tsx` | Full text editing (font, size, color, stroke, animation) |
+| `panels/CaptionStylePicker.tsx` | 6 caption style presets (classic/bold/neon/outline/karaoke/minimal) |
+
+**Remotion Layers (`src/remotion/layers/`):**
+| Layer | Purpose |
+|-------|---------|
+| `SegmentRenderer.tsx` | Renders all layers for a segment |
+| `VideoLayer.tsx` | Video playback layer |
+| `ImageLayer.tsx` | Static image layer |
+| `TextLayer.tsx` | Text overlay with animation |
+| `EffectLayer.tsx` | Visual effects (particles, confetti, etc.) |
+| `CaptionLayer.tsx` | Auto-generated captions with 6 styles |
+
+**Edge Function:** `generate-captions` — Groq Whisper transcription → word-level timestamps → CaptionTrack[]
+
+**Key Features:**
+- Remotion Player preview (9:16) with bidirectional frame sync
+- Multi-track timeline with zoom (Ctrl+wheel), ruler click-to-seek
+- Drag-reorder segments, trim handles, split tool
+- 6 transition types (fade, slide, wipe, flip, clock-wipe, iris)
+- Audio tracks (TTS, BGM, SFX) with waveform bars + volume envelope
+- Auto captions via Groq Whisper with 6 style presets
+- 6 text templates (Headline, Subtitle, Lower Third, Callout, Countdown, Price Tag)
+- Context-sensitive right panel (segment properties / audio properties / text properties)
+- Keyboard shortcuts: Space, Ctrl+Z/Shift+Z, Ctrl+S, V/S/Del, Arrow keys, Home/End
+- Auto-save to `chat_sessions.studio_data` (3s debounce)
 
 ### Design System
 - Color palette: warm charcoal + emerald (NOT AI purple)
