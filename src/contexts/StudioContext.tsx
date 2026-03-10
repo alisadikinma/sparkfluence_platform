@@ -73,6 +73,7 @@ type StudioAction =
   | { type: 'MOVE_OVERLAY_CLIP'; trackId: string; clipId: string; startFrame: number }
   | { type: 'REMOVE_OVERLAY_CLIP'; trackId: string; clipId: string }
   | { type: 'APPLY_TEXT_STYLE_TO_ALL'; sourceLayerId: string; styleProps: Partial<NonNullable<LayerItem['text']>>; position?: { x: number; y: number } }
+  | { type: 'MOVE_TEXT_LAYER'; segmentId: string; layerId: string; position: { x: number; y: number } }
   | { type: 'MOVE_ALL_TEXT_LAYERS'; sourceLayerId: string; position: { x: number; y: number } }
   | { type: 'RESTORE_PROJECT'; project: SparkfluenceProject } // for undo/redo
   | { type: 'MARK_CLEAN' };
@@ -168,6 +169,25 @@ function studioReducer(state: StudioState, action: StudioAction): StudioState {
           return updated;
         }),
       }));
+      return {
+        ...state,
+        isDirty: true,
+        project: { ...state.project, segments },
+      };
+    }
+
+    case 'MOVE_TEXT_LAYER': {
+      // Move ONLY the specific text layer (independent movement)
+      const segments = state.project.segments.map(seg =>
+        seg.id === action.segmentId
+          ? {
+            ...seg,
+            layers: seg.layers.map(l =>
+              l.id === action.layerId ? { ...l, position: { ...action.position } } : l
+            ),
+          }
+          : seg
+      );
       return {
         ...state,
         isDirty: true,

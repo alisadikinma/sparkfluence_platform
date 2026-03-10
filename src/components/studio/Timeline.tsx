@@ -5,6 +5,7 @@
 // ============================================================================
 
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { useStudio } from '../../contexts/StudioContext';
 import { framesToSeconds, formatTimecode, generateId, createVideoLayer, createImageLayer, secondsToFrames } from '../../lib/composition';
 import { generateVideoThumbnail } from '../../lib/videoThumbnail';
@@ -68,6 +69,38 @@ const PlusIcon = () => (
 );
 
 const HEADER_WIDTH = 100;
+
+/** Portal wrapper for TransitionPicker — renders in document.body to avoid overflow clipping */
+const TransitionPickerPortal: React.FC<{
+  anchorX: number;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  children: React.ReactNode;
+}> = ({ anchorX, scrollContainerRef, children }) => {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    // Position picker above the scroll container, centered on diamond X
+    const scrollLeft = container.scrollLeft;
+    const leftPx = rect.left + anchorX - scrollLeft - 150; // 150 = half picker width
+    const topPx = rect.top - 8; // 8px gap above container
+    setPos({ left: Math.max(8, leftPx), top: topPx });
+  }, [anchorX, scrollContainerRef]);
+
+  if (!pos) return null;
+
+  return ReactDOM.createPortal(
+    <div
+      className="fixed z-[200]"
+      style={{ left: pos.left, top: 0, transform: `translateY(${pos.top}px) translateY(-100%)` }}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+};
 
 interface TimelineProps {
   activeTool?: string;
@@ -595,15 +628,17 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
   );
 
   // Handle text layer trim — adjusts inFrame/outFrame of text layer
-  // Allows extending beyond segment boundary (outFrame > durationInFrames)
+  // Allows extending beyond segment boundary (cross-segment text expansion)
   const handleTextTrim = useCallback(
     (clipId: string, trimStartFrames: number, trimEndFrames: number) => {
-      // Find which segment contains this text layer
+      const totalFrames = project.totalDurationInFrames || 1;
       for (const seg of project.segments) {
         const textLayer = seg.layers.find(l => l.id === clipId && l.type === 'text');
         if (textLayer) {
           const newInFrame = Math.max(0, textLayer.inFrame + trimStartFrames);
-          const newOutFrame = textLayer.outFrame - trimEndFrames;
+          // Allow outFrame beyond segment boundary, clamped to total project duration
+          const maxOutFrame = totalFrames - seg.startFrame;
+          const newOutFrame = Math.min(maxOutFrame, textLayer.outFrame - trimEndFrames);
           if (newOutFrame > newInFrame) {
             dispatch({
               type: 'UPDATE_LAYER',
@@ -616,33 +651,39 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
         }
       }
     },
-    [project.segments, dispatch]
+    [project.segments, project.totalDurationInFrames, dispatch]
   );
 
-  // Handle text layer move — repositions text within its segment (or to another segment)
+  // Handle text layer move — repositions text within project timeline (can cross segment boundaries)
   const handleTextMove = useCallback(
     (clipId: string, newAbsoluteStartFrame: number) => {
+      const totalFrames = project.totalDurationInFrames || 1;
       for (const seg of project.segments) {
         const textLayer = seg.layers.find(l => l.id === clipId && l.type === 'text');
         if (!textLayer) continue;
 
         const duration = textLayer.outFrame - textLayer.inFrame;
         // Convert absolute frame to relative inFrame within this segment
-        const newInFrame = Math.max(0, newAbsoluteStartFrame - seg.startFrame);
-        const newOutFrame = Math.min(newInFrame + duration, seg.durationInFrames);
+        const newInFrame = Math.max(-seg.startFrame, newAbsoluteStartFrame - seg.startFrame);
+        // Allow outFrame to extend beyond segment boundary (cross-segment text)
+        const newOutFrame = newInFrame + duration;
 
-        if (newOutFrame > newInFrame) {
+        // Clamp: can't go before project start or after project end
+        const clampedInFrame = Math.max(0, newInFrame);
+        const clampedOutFrame = Math.min(totalFrames - seg.startFrame, newOutFrame);
+
+        if (clampedOutFrame > clampedInFrame) {
           dispatch({
             type: 'UPDATE_LAYER',
             segmentId: seg.id,
             layerId: clipId,
-            changes: { inFrame: newInFrame, outFrame: newOutFrame },
+            changes: { inFrame: clampedInFrame, outFrame: clampedOutFrame },
           });
         }
         return;
       }
     },
-    [project.segments, dispatch]
+    [project.segments, project.totalDurationInFrames, dispatch]
   );
 
   // Handle clip click — for video clips, select segment; for text layers, select layer
@@ -817,11 +858,11 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                             setActiveTransitionPicker(null);
                           } : undefined}
                         />
-                        {/* Transition Picker Popover — anchored above the diamond */}
+                        {/* Transition Picker Popover — rendered via portal to avoid overflow clipping */}
                         {isPickerOpen && (
-                          <div
-                            className="absolute z-50"
-                            style={{ left: centerPx - 150, bottom: '100%', marginBottom: 8 }}
+                          <TransitionPickerPortal
+                            anchorX={centerPx}
+                            scrollContainerRef={scrollContainerRef}
                           >
                             <TransitionPicker
                               fromSegmentId={clip.id}
@@ -841,7 +882,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                               }}
                               onClose={() => setActiveTransitionPicker(null)}
                             />
-                          </div>
+                          </TransitionPickerPortal>
                         )}
                       </React.Fragment>
                     );

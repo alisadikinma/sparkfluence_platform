@@ -4,6 +4,7 @@
 // ============================================================================
 
 import React, { useState, useMemo, useCallback } from 'react';
+import { Upload } from 'lucide-react';
 import { useStudio } from '../../contexts/StudioContext';
 import {
   searchStickers,
@@ -70,46 +71,98 @@ export const AssetPanel: React.FC = () => {
 
 // --- Media Panel ---
 const MediaPanel: React.FC = () => {
-  const { state, dispatch } = useStudio();
+  const { state, dispatch, pushHistory } = useStudio();
   const { project, selection } = state;
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const handleDeleteFromMedia = useCallback((segId: string) => {
+    pushHistory('Delete segment from media');
+    dispatch({ type: 'DELETE_SEGMENT', segmentId: segId });
+    setConfirmDeleteId(null);
+  }, [dispatch, pushHistory]);
 
   return (
     <div className="space-y-2">
+      {/* Import Button */}
+      <button
+        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-400 text-xs font-medium transition-colors"
+        onClick={() => {
+          // Dispatch custom event to open import modal (handled by StudioEditor)
+          window.dispatchEvent(new CustomEvent('studio:open-import-video'));
+        }}
+      >
+        <Upload className="w-3.5 h-3.5" />
+        Import
+      </button>
+
       <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium px-1">
-        Segments ({project.segments.length})
+        Generated ({project.segments.length})
       </p>
       {project.segments.map(seg => (
-        <button
+        <div
           key={seg.id}
-          onClick={() => dispatch({ type: 'SELECT_SEGMENT', segmentId: seg.id })}
-          className={`w-full rounded p-2 text-left transition-colors ${
+          className={`relative rounded transition-colors ${
             selection.segmentId === seg.id
-              ? 'bg-purple-600/20 border border-purple-500/40'
+              ? 'bg-emerald-600/20 border border-emerald-500/40'
               : 'bg-[#1a1a28] border border-transparent hover:border-[#2b2b38]'
           }`}
         >
-          <div className="flex items-center gap-2">
-            {/* Thumbnail */}
-            <div className="w-10 h-14 bg-gray-800 rounded overflow-hidden flex-shrink-0">
-              {seg.layers.find(l => l.type === 'image' || l.type === 'video') && (
-                <img
-                  src={seg.layers.find(l => l.type === 'image' || l.type === 'video')?.src || ''}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="text-xs text-white font-medium">{seg.segmentType}</div>
-              <div className="text-[10px] text-gray-500 truncate">
-                {seg.script?.slice(0, 40)}
+          <button
+            onClick={() => dispatch({ type: 'SELECT_SEGMENT', segmentId: seg.id })}
+            className="w-full p-2 text-left"
+          >
+            <div className="flex items-center gap-2">
+              {/* Thumbnail */}
+              <div className="w-10 h-14 bg-gray-800 rounded overflow-hidden flex-shrink-0">
+                {seg.layers.find(l => l.type === 'image' || l.type === 'video') && (
+                  <img
+                    src={seg.layers.find(l => l.type === 'image' || l.type === 'video')?.src || ''}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
+                )}
               </div>
-              <div className="text-[10px] text-gray-600">
-                {(seg.durationInFrames / 30).toFixed(0)}s
+              <div className="min-w-0 flex-1">
+                <div className="text-xs text-white font-medium">{seg.segmentType}</div>
+                <div className="text-[10px] text-gray-500 truncate">
+                  {seg.script?.slice(0, 40)}
+                </div>
+                <div className="text-[10px] text-gray-600">
+                  {(seg.durationInFrames / 30).toFixed(0)}s
+                </div>
               </div>
             </div>
-          </div>
-        </button>
+          </button>
+
+          {/* Delete button — shows on hover */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(seg.id); }}
+            className="absolute top-1.5 right-1.5 p-1 rounded bg-neutral-800/80 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+            style={{ opacity: selection.segmentId === seg.id || confirmDeleteId === seg.id ? 1 : undefined }}
+            title="Delete from media + timeline"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
+
+          {/* Inline confirmation */}
+          {confirmDeleteId === seg.id && (
+            <div className="px-2 pb-2 flex items-center gap-1.5">
+              <span className="text-[9px] text-red-400 flex-1">Hapus media + timeline?</span>
+              <button
+                onClick={() => handleDeleteFromMedia(seg.id)}
+                className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-[9px] font-medium hover:bg-red-500/30"
+              >
+                Ya
+              </button>
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-2 py-0.5 rounded bg-neutral-700 text-neutral-400 text-[9px] font-medium hover:bg-neutral-600"
+              >
+                Batal
+              </button>
+            </div>
+          )}
+        </div>
       ))}
     </div>
   );

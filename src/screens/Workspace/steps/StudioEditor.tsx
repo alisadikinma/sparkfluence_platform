@@ -28,10 +28,15 @@ import {
   Upload,
   Image,
   GripVertical,
+  FolderOpen,
+  Loader2,
+  X,
+  ExternalLink,
 } from 'lucide-react';
 import { Player, type PlayerRef, type CallbackListener } from '@remotion/player';
 import { StudioProvider, useStudio } from '../../../contexts/StudioContext';
 import { useAuth } from '../../../contexts/AuthContext';
+import { supabase } from '../../../lib/supabase';
 import { useStudioLoader } from '../../../hooks/useStudioLoader';
 import { useStudioPersistence } from '../../../hooks/useStudioPersistence';
 import { VideoComposition } from '../../../remotion/VideoComposition';
@@ -217,6 +222,101 @@ interface MediaAsset {
   addedToTimeline: boolean;
 }
 
+// --- Past Videos Modal: Query video_generation_jobs (status=2) ---
+interface PastVideo {
+  id: string;
+  segment_type: string;
+  video_url: string;
+  created_at: string;
+  order_id: string;
+}
+
+const PastVideosModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (url: string, segmentType: string) => void;
+}> = ({ isOpen, onClose, onSelect }) => {
+  const { user } = useAuth();
+  const [videos, setVideos] = useState<PastVideo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || loaded || !user) return;
+    setLoading(true);
+    supabase
+      .from('video_generation_jobs')
+      .select('id, segment_type, video_url, created_at, order_id')
+      .eq('user_id', user.id)
+      .eq('status', 2) // completed
+      .not('video_url', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(50)
+      .then(({ data, error }) => {
+        if (!error && data) setVideos(data as PastVideo[]);
+        setLoading(false);
+        setLoaded(true);
+      });
+  }, [isOpen, loaded, user]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-[#1E1E1E] border border-neutral-700 rounded-xl w-[600px] max-h-[70vh] flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
+          <h3 className="text-sm font-semibold text-neutral-200">Past Generated Videos</h3>
+          <button onClick={onClose} className="p-1 text-neutral-400 hover:text-white transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 text-emerald-400 animate-spin" />
+            </div>
+          ) : videos.length === 0 ? (
+            <div className="text-center py-12 text-neutral-500 text-xs">
+              No completed videos found
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {videos.map((v) => (
+                <div
+                  key={v.id}
+                  onClick={() => { onSelect(v.video_url, v.segment_type); onClose(); }}
+                  className="relative rounded-lg overflow-hidden cursor-pointer group hover:ring-1 hover:ring-emerald-500/50 transition-all"
+                >
+                  <div className="aspect-[9/16] bg-neutral-900">
+                    <video
+                      src={v.video_url}
+                      className="w-full h-full object-cover"
+                      muted
+                      preload="metadata"
+                      playsInline
+                      onLoadedMetadata={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
+                    />
+                  </div>
+                  <div className="absolute top-1 left-1">
+                    <span className="text-[8px] font-medium px-1 py-0.5 rounded bg-black/70 text-emerald-400 border border-emerald-500/30">
+                      {v.segment_type}
+                    </span>
+                  </div>
+                  <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-gradient-to-t from-black/80 to-transparent">
+                    <span className="text-[9px] text-neutral-300 truncate block">{v.order_id}</span>
+                    <span className="text-[8px] text-neutral-500">{new Date(v.created_at).toLocaleDateString()}</span>
+                  </div>
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Media Tab: CapCut-style grid with Import + segment assets + drag ---
 const MediaTabContent: React.FC = () => {
   const { state, dispatch } = useStudio();
@@ -224,6 +324,7 @@ const MediaTabContent: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importedAssets, setImportedAssets] = useState<MediaAsset[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showPastVideos, setShowPastVideos] = useState(false);
 
   // Track which imported assets are on the timeline (by URL match)
   const timelineUrls = useMemo(() => {
@@ -345,7 +446,7 @@ const MediaTabContent: React.FC = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >
-      {/* Import button */}
+      {/* Import buttons */}
       <div className="flex gap-1.5">
         <button
           onClick={() => fileInputRef.current?.click()}
@@ -353,6 +454,14 @@ const MediaTabContent: React.FC = () => {
         >
           <Upload className="w-3.5 h-3.5" />
           Import
+        </button>
+        <button
+          onClick={() => setShowPastVideos(true)}
+          className="flex items-center justify-center gap-1.5 px-2 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 rounded-lg text-xs font-medium transition-colors"
+          title="Import from past generated videos"
+        >
+          <FolderOpen className="w-3.5 h-3.5" />
+          Past
         </button>
         <input
           ref={fileInputRef}
@@ -363,6 +472,28 @@ const MediaTabContent: React.FC = () => {
           onChange={(e) => handleFileImport(e.target.files)}
         />
       </div>
+
+      {/* Past Videos Modal */}
+      <PastVideosModal
+        isOpen={showPastVideos}
+        onClose={() => setShowPastVideos(false)}
+        onSelect={(url, segmentType) => {
+          const durFrames = secondsToFrames(8); // default 8s for imported video
+          const layers = [createVideoLayer(url, durFrames)];
+          const segment: SegmentComposition = {
+            id: generateId('seg_past'),
+            segmentType: segmentType as SegmentComposition['segmentType'] || 'BODY',
+            startFrame: 0,
+            durationInFrames: durFrames,
+            layout: 'full',
+            layers,
+            script: '',
+            emotion: 'neutral',
+            visualDirection: '',
+          };
+          dispatch({ type: 'ADD_SEGMENT', segment });
+        }}
+      />
 
       {/* Drop zone overlay */}
       {isDragOver && (
@@ -513,31 +644,259 @@ const MediaTabContent: React.FC = () => {
   );
 };
 
-// --- Audio Tab: Audio track list ---
+// --- AI Music generation presets ---
+const BGM_PRESETS = [
+  { label: 'Upbeat Pop', prompt: 'Upbeat energetic pop music with catchy melody, modern production, feel-good vibes, 120bpm' },
+  { label: 'Chill Lo-fi', prompt: 'Chill lo-fi hip hop beat with warm piano chords, vinyl crackle, relaxing ambient mood, 85bpm' },
+  { label: 'Cinematic Epic', prompt: 'Cinematic epic orchestral music with building tension, dramatic strings, powerful brass, emotional crescendo' },
+  { label: 'Corporate', prompt: 'Clean corporate background music, positive and motivational, acoustic guitar with light percussion, professional tone' },
+  { label: 'Tropical House', prompt: 'Tropical house beat with steel drums, marimba melody, summer vibes, danceable groove, 110bpm' },
+  { label: 'Dark Trap', prompt: 'Dark atmospheric trap beat with heavy 808 bass, eerie synth pads, hard-hitting drums, mysterious mood' },
+];
+
+// --- Audio Tab: Import files + AI Generate + browse Pixabay + track list ---
 const AudioTabContent: React.FC = () => {
-  const { state } = useStudio();
+  const { state, dispatch, pushHistory } = useStudio();
   const { tts, bgm, sfx } = state.project.audio;
-  const totalTracks = tts.length + bgm.length + sfx.length;
+  const audioFileRef = useRef<HTMLInputElement>(null);
+  const [audioType, setAudioType] = useState<'bgm' | 'sfx'>('bgm');
+  const [genPrompt, setGenPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genError, setGenError] = useState('');
 
-  if (totalTracks === 0) {
-    return <p className="text-center text-neutral-500 text-xs mt-8">No audio tracks</p>;
-  }
+  // Import audio file from disk
+  const handleAudioImport = useCallback((files: FileList | null) => {
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith('audio/')) continue;
+      const blobUrl = URL.createObjectURL(file);
+      const audio = document.createElement('audio');
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () => {
+        const durSec = audio.duration || 10;
+        const durFrames = Math.round(durSec * STUDIO_FPS);
+        const track = {
+          id: generateId(`${audioType}_import`),
+          src: blobUrl,
+          label: file.name.replace(/\.[^.]+$/, ''),
+          startFrame: 0,
+          durationInFrames: durFrames,
+          volume: audioType === 'bgm' ? 0.3 : 0.7,
+          fadeInFrames: audioType === 'bgm' ? 15 : 0,
+          fadeOutFrames: audioType === 'bgm' ? 15 : 0,
+          muted: false,
+        };
+        pushHistory(`Import ${audioType.toUpperCase()}`);
+        dispatch({ type: 'ADD_AUDIO_TRACK', trackType: audioType, track });
+      };
+      audio.src = blobUrl;
+    }
+  }, [audioType, dispatch, pushHistory]);
 
-  const TrackRow: React.FC<{ label: string; count: number; color: string }> = ({ label, count, color }) =>
-    count > 0 ? (
-      <div className="flex items-center gap-2 px-2 py-1.5 bg-neutral-800/50 rounded-lg">
-        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-        <span className="text-xs text-neutral-300">{label}</span>
-        <span className="text-[10px] text-neutral-500 ml-auto">{count}</span>
-      </div>
-    ) : null;
+  // Generate BGM via Minimax Music v2 edge function
+  const handleGenerateMusic = useCallback(async (prompt: string) => {
+    if (!prompt.trim() || isGenerating) return;
+    setIsGenerating(true);
+    setGenError('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-music`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({ prompt: prompt.trim() }),
+        }
+      );
+      const json = await resp.json();
+      if (!json.success) {
+        setGenError(json.error?.message || 'Generation failed');
+        return;
+      }
+      // Add generated music to timeline
+      const durSec = json.data.duration_seconds || 30;
+      const durFrames = Math.round(durSec * STUDIO_FPS);
+      const track = {
+        id: generateId('bgm_ai'),
+        src: json.data.music_url,
+        label: `AI BGM — ${prompt.trim().slice(0, 30)}`,
+        startFrame: 0,
+        durationInFrames: durFrames,
+        volume: 0.3,
+        fadeInFrames: 15,
+        fadeOutFrames: 15,
+        muted: false,
+      };
+      pushHistory('Generate BGM');
+      dispatch({ type: 'ADD_AUDIO_TRACK', trackType: 'bgm', track });
+      setGenPrompt('');
+    } catch {
+      setGenError('Network error — try again');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [isGenerating, dispatch, pushHistory]);
+
+  const formatDur = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
 
   return (
-    <div className="space-y-2">
-      <span className="text-xs text-neutral-400 font-medium">Audio Tracks</span>
-      <TrackRow label="Voice (TTS)" count={tts.length} color="#60A5FA" />
-      <TrackRow label="Background Music" count={bgm.length} color="#C084FC" />
-      <TrackRow label="Sound Effects" count={sfx.length} color="#FBBF24" />
+    <div className="space-y-3 h-full overflow-y-auto">
+      {/* Type toggle */}
+      <div className="flex gap-1 bg-neutral-900 rounded-lg p-0.5">
+        <button
+          onClick={() => setAudioType('bgm')}
+          className={`flex-1 text-[10px] font-medium py-1.5 rounded-md transition-colors ${
+            audioType === 'bgm' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-300'
+          }`}
+        >
+          BGM ({bgm.length})
+        </button>
+        <button
+          onClick={() => setAudioType('sfx')}
+          className={`flex-1 text-[10px] font-medium py-1.5 rounded-md transition-colors ${
+            audioType === 'sfx' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-300'
+          }`}
+        >
+          SFX ({sfx.length})
+        </button>
+      </div>
+
+      {/* Import from file */}
+      <div className="flex gap-1.5">
+        <button
+          onClick={() => audioFileRef.current?.click()}
+          className="flex items-center gap-1 px-2 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 rounded-lg text-[10px] font-medium transition-colors"
+        >
+          <Upload className="w-3 h-3" />
+          Import File
+        </button>
+        <a
+          href={audioType === 'bgm' ? 'https://pixabay.com/music/' : 'https://pixabay.com/sound-effects/'}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 px-2 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 rounded-lg text-[10px] font-medium transition-colors"
+        >
+          <ExternalLink className="w-3 h-3" />
+          Pixabay
+        </a>
+        <input
+          ref={audioFileRef}
+          type="file"
+          accept="audio/*"
+          multiple
+          className="hidden"
+          onChange={(e) => handleAudioImport(e.target.files)}
+        />
+      </div>
+
+      {/* AI Generate BGM (only show for BGM tab) */}
+      {audioType === 'bgm' && (
+        <div className="space-y-2 p-2 bg-neutral-900/50 rounded-lg border border-neutral-800">
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="w-3 h-3 text-emerald-400" />
+            <span className="text-[10px] font-medium text-emerald-400">AI Generate BGM</span>
+          </div>
+
+          {/* Style presets — click to fill prompt, user confirms with Generate */}
+          <div className="flex flex-wrap gap-1">
+            {BGM_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                onClick={() => { setGenPrompt(preset.prompt); setGenError(''); }}
+                disabled={isGenerating}
+                className={`px-1.5 py-0.5 border rounded text-[9px] transition-colors disabled:opacity-40 ${
+                  genPrompt === preset.prompt
+                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white border-neutral-700'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Prompt textarea + Generate button */}
+          <textarea
+            value={genPrompt}
+            onChange={(e) => { setGenPrompt(e.target.value); setGenError(''); }}
+            placeholder="Select a style above or describe the music you want..."
+            rows={2}
+            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-[10px] text-neutral-200 placeholder-neutral-600 outline-none focus:border-emerald-500 transition-colors resize-none"
+            disabled={isGenerating}
+          />
+          <button
+            onClick={() => handleGenerateMusic(genPrompt)}
+            disabled={isGenerating || genPrompt.trim().length < 10}
+            className="w-full py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-[10px] font-medium disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5"
+          >
+            {isGenerating ? (
+              <><Loader2 className="w-3 h-3 animate-spin" /> Generating (30-60s)...</>
+            ) : (
+              <><Sparkles className="w-3 h-3" /> Generate BGM</>
+            )}
+          </button>
+          {genError && (
+            <p className="text-[9px] text-red-400 mt-1">{genError}</p>
+          )}
+        </div>
+      )}
+
+      {/* Current tracks */}
+      {(bgm.length > 0 || sfx.length > 0 || tts.length > 0) && (
+        <div className="space-y-1.5 pt-1 border-t border-neutral-800">
+          <span className="text-[10px] text-neutral-500">Current Tracks</span>
+          {tts.length > 0 && (
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-neutral-800/30 rounded-lg">
+              <div className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
+              <span className="text-[10px] text-neutral-300">Voice (TTS)</span>
+              <span className="text-[9px] text-neutral-500 ml-auto">{tts.length}</span>
+            </div>
+          )}
+          {bgm.map((track) => (
+            <div key={track.id} className="flex items-center gap-2 px-2 py-1.5 bg-neutral-800/30 rounded-lg group">
+              <div className="w-2 h-2 rounded-full bg-purple-400 flex-shrink-0" />
+              <span className="text-[10px] text-neutral-300 truncate flex-1">{track.label}</span>
+              <span className="text-[9px] text-neutral-500">{formatDur(track.durationInFrames / STUDIO_FPS)}</span>
+              <button
+                onClick={() => { pushHistory('Remove BGM'); dispatch({ type: 'REMOVE_AUDIO_TRACK', trackType: 'bgm', trackId: track.id }); }}
+                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-all"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+          {sfx.map((track) => (
+            <div key={track.id} className="flex items-center gap-2 px-2 py-1.5 bg-neutral-800/30 rounded-lg group">
+              <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+              <span className="text-[10px] text-neutral-300 truncate flex-1">{track.label}</span>
+              <span className="text-[9px] text-neutral-500">{formatDur(track.durationInFrames / STUDIO_FPS)}</span>
+              <button
+                onClick={() => { pushHistory('Remove SFX'); dispatch({ type: 'REMOVE_AUDIO_TRACK', trackType: 'sfx', trackId: track.id }); }}
+                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-all"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {bgm.length === 0 && sfx.length === 0 && tts.length === 0 && (
+        <div className="text-center py-6">
+          <Music className="w-6 h-6 text-neutral-700 mx-auto mb-1.5" />
+          <p className="text-[10px] text-neutral-500">No audio tracks</p>
+          <p className="text-[9px] text-neutral-600 mt-0.5">Generate AI music, import files, or browse Pixabay</p>
+        </div>
+      )}
     </div>
   );
 };
@@ -729,7 +1088,7 @@ const StudioEditorInner: React.FC = () => {
   const { orderId } = useParams<{ orderId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { state, dispatch, undo, redo, canUndo, canRedo } = useStudio();
+  const { state, dispatch, undo, redo, canUndo, canRedo, pushHistory } = useStudio();
 
   const [activeTool, setActiveTool] = useState<ToolType>('select');
   const [activeLeftTab, setActiveLeftTab] = useState<LeftPanelTab>('media');
@@ -932,9 +1291,30 @@ const StudioEditorInner: React.FC = () => {
       } else if (e.key === 's' && !e.ctrlKey) {
         setActiveTool('split');
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (state.selection.segmentId) {
-          e.preventDefault();
-          dispatch({ type: 'DELETE_SEGMENT', segmentId: state.selection.segmentId });
+        e.preventDefault();
+        // Priority: delete selected layer first, then overlay clip, then nothing
+        // DELETE_SEGMENT is only for Media panel delete (not keyboard shortcut)
+        if (state.selection.layerId && state.selection.segmentId) {
+          // Check if it's an overlay clip
+          const isOverlay = (state.project.overlayTracks || []).some(t => t.id === state.selection.segmentId);
+          if (isOverlay) {
+            pushHistory('Delete overlay clip');
+            dispatch({ type: 'REMOVE_OVERLAY_CLIP', trackId: state.selection.segmentId, clipId: state.selection.layerId });
+          } else {
+            pushHistory('Delete layer');
+            dispatch({ type: 'REMOVE_LAYER', segmentId: state.selection.segmentId, layerId: state.selection.layerId });
+          }
+        } else if (state.selection.segmentId) {
+          // No specific layer selected — check if it's a segment on video track
+          // Remove only the video/image layer from the segment, keep segment structure
+          const seg = state.project.segments.find(s => s.id === state.selection.segmentId);
+          if (seg) {
+            const mediaLayer = seg.layers.find(l => l.type === 'video' || l.type === 'image');
+            if (mediaLayer) {
+              pushHistory('Remove video from timeline');
+              dispatch({ type: 'REMOVE_LAYER', segmentId: seg.id, layerId: mediaLayer.id });
+            }
+          }
         }
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -953,7 +1333,7 @@ const StudioEditorInner: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, state.playback.isPlaying, state.playback.currentFrame, state.project.totalDurationInFrames, dispatch, saveNow]);
+  }, [undo, redo, pushHistory, state.playback.isPlaying, state.playback.currentFrame, state.project.totalDurationInFrames, state.selection, state.project.segments, state.project.overlayTracks, dispatch, saveNow]);
 
   // --- Export modal ---
   const [showExportModal, setShowExportModal] = useState(false);
@@ -1171,8 +1551,7 @@ const StudioEditorInner: React.FC = () => {
                     currentFrame={state.playback.currentFrame}
                     selectedSegmentId={state.selection.segmentId}
                     selectedLayerId={state.selection.layerId}
-                    containerWidth={playerSize.w}
-                    containerHeight={playerSize.h}
+                    containerRef={playerContainerRef}
                     onLayerSelect={(segId, layerId) => dispatch({ type: 'SELECT_LAYER', segmentId: segId, layerId })}
                     onLayerMove={(segId, layerId, position) => {
                       // Check if this is an overlay clip (segId = track.id)
@@ -1180,7 +1559,8 @@ const StudioEditorInner: React.FC = () => {
                       if (isOverlay) {
                         dispatch({ type: 'UPDATE_OVERLAY_CLIP', trackId: segId, clipId: layerId, changes: { position } });
                       } else {
-                        dispatch({ type: 'MOVE_ALL_TEXT_LAYERS', sourceLayerId: layerId, position });
+                        // Move only this specific text layer (independent)
+                        dispatch({ type: 'MOVE_TEXT_LAYER', segmentId: segId, layerId, position });
                       }
                     }}
                   />

@@ -1,21 +1,32 @@
 // ============================================================================
 // PlayerOverlay — Transparent layer on top of Remotion Player
 // Shows draggable bounding boxes for text layers in the current segment.
-// Converts preview pixel coordinates ↔ composition coordinates (1080×1920).
-// Always renders full-area overlay for proper mouse capture during drag.
+// Queries the Remotion Player's actual DOM to find the exact content area,
+// ensuring pixel-perfect alignment with the rendered composition.
 // ============================================================================
 
 import React, { useCallback, useRef, useState, useMemo, useEffect } from 'react';
 import { STUDIO_WIDTH, STUDIO_HEIGHT } from '../../types/studio';
 import type { SparkfluenceProject, LayerItem } from '../../types/studio';
 
+/** Estimate text block height in composition pixels based on font size + content length */
+function estimateTextHeight(layer: LayerItem): number {
+  const fontSize = layer.text?.fontSize ?? 48;
+  const content = layer.text?.content ?? '';
+  const boxWidth = layer.size.w;
+  const charsPerLine = Math.max(1, Math.floor(boxWidth / (fontSize * 0.55)));
+  const lineCount = Math.max(1, Math.ceil(content.length / charsPerLine));
+  const lineHeight = fontSize * 1.3;
+  const padding = fontSize * 0.5;
+  return Math.max(fontSize + padding, lineCount * lineHeight + padding);
+}
+
 interface PlayerOverlayProps {
   project: SparkfluenceProject;
   currentFrame: number;
   selectedSegmentId: string | null;
   selectedLayerId: string | null;
-  containerWidth: number;
-  containerHeight: number;
+  containerRef: React.RefObject<HTMLDivElement | null>;
   onLayerSelect: (segmentId: string, layerId: string) => void;
   onLayerMove: (segmentId: string, layerId: string, position: { x: number; y: number }) => void;
 }
@@ -29,13 +40,40 @@ interface DragState {
   startPosY: number;
 }
 
+/** Measure Remotion Player's actual content area by querying its DOM */
+function measureRemotionContent(containerEl: HTMLElement): {
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+} | null {
+  // Remotion Player renders a div with the exact composition dimensions (1080x1920)
+  // with transform: scale(...). Find it by looking for the composition-sized div.
+  const containerRect = containerEl.getBoundingClientRect();
+
+  // Find all absolutely-positioned divs inside the Player
+  // Remotion's structure: outer > positioned wrapper > composition div (with transform)
+  const allDivs = containerEl.querySelectorAll('div[style]');
+  for (const div of allDivs) {
+    const style = (div as HTMLElement).style;
+    const transform = style.transform;
+    // Look for the div with transform: scale(X) — this is Remotion's composition container
+    if (transform && transform.startsWith('scale(')) {
+      const contentRect = (div as HTMLElement).getBoundingClientRect();
+      const scale = contentRect.width / STUDIO_WIDTH;
+      const offsetX = contentRect.left - containerRect.left;
+      const offsetY = contentRect.top - containerRect.top;
+      return { offsetX, offsetY, scale };
+    }
+  }
+  return null;
+}
+
 export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   project,
   currentFrame,
   selectedSegmentId,
   selectedLayerId,
-  containerWidth,
-  containerHeight,
+  containerRef,
   onLayerSelect,
   onLayerMove,
 }) => {
@@ -43,9 +81,45 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   const [dragDelta, setDragDelta] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   const dragDeltaRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
-  // Scale factors: preview pixels → composition pixels
-  const scaleX = containerWidth / STUDIO_WIDTH;
-  const scaleY = containerHeight / STUDIO_HEIGHT;
+  // Measure Remotion's actual content area from the DOM
+  const [contentArea, setContentArea] = useState<{ offsetX: number; offsetY: number; scale: number }>({
+    offsetX: 0, offsetY: 0, scale: 1,
+  });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const measure = () => {
+      const result = measureRemotionContent(container);
+      if (result) {
+        setContentArea(result);
+      }
+    };
+
+    // Measure initially and on resize
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+
+    // Also measure on animation frame for smooth updates
+    let rafId: number;
+    const rafMeasure = () => {
+      measure();
+      rafId = requestAnimationFrame(rafMeasure);
+    };
+    // Only use rAF during drag for performance
+    if (dragState) {
+      rafId = requestAnimationFrame(rafMeasure);
+    }
+
+    return () => {
+      observer.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [containerRef, dragState]);
+
+  const { offsetX, offsetY, scale } = contentArea;
 
   // Find the current segment at this frame
   const currentSegment = useMemo(() => {
@@ -58,7 +132,6 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   const visibleTextLayers = useMemo(() => {
     const result: { segmentId: string; layer: LayerItem }[] = [];
 
-    // 1. Segment text layers
     if (currentSegment) {
       const relativeFrame = currentFrame - currentSegment.startFrame;
       for (const layer of currentSegment.layers) {
@@ -74,13 +147,11 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       }
     }
 
-    // 2. Overlay text clips (cross-segment, absolute frames)
     for (const track of (project.overlayTracks || [])) {
       for (const clip of track.clips) {
         if (clip.type !== 'text' || !clip.text?.content) continue;
         const clipEnd = clip.startFrame + clip.durationInFrames;
         if (currentFrame >= clip.startFrame && currentFrame < clipEnd) {
-          // Adapt overlay clip to LayerItem-like shape for rendering
           const overlayAsLayer: LayerItem = {
             id: clip.id,
             type: 'text',
@@ -124,8 +195,6 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
     dragDeltaRef.current = { dx: 0, dy: 0 };
   }, [onLayerSelect]);
 
-  // Use window-level mouse events for reliable drag tracking
-  // dragDeltaRef avoids stale closure — handleUp always reads current value
   useEffect(() => {
     if (!dragState) return;
 
@@ -133,13 +202,12 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       const dx = e.clientX - dragState.startMouseX;
       const dy = e.clientY - dragState.startMouseY;
       dragDeltaRef.current = { dx, dy };
-      setDragDelta({ dx, dy }); // state for visual re-render only
+      setDragDelta({ dx, dy });
     };
 
     const handleUp = () => {
-      // Read from ref (always current, no stale closure)
-      const compDx = dragDeltaRef.current.dx / scaleX;
-      const compDy = dragDeltaRef.current.dy / scaleY;
+      const compDx = dragDeltaRef.current.dx / scale;
+      const compDy = dragDeltaRef.current.dy / scale;
 
       const newX = Math.round(Math.max(0, Math.min(STUDIO_WIDTH, dragState.startPosX + compDx)));
       const newY = Math.round(Math.max(0, Math.min(STUDIO_HEIGHT, dragState.startPosY + compDy)));
@@ -157,15 +225,13 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [dragState, scaleX, scaleY, onLayerMove]); // removed dragDelta from deps — ref handles it
+  }, [dragState, scale, onLayerMove]);
 
-  // Always render the overlay for pointer event capture
   return (
     <div
-      className="absolute inset-0 z-10"
+      className="absolute inset-0 z-50"
       style={{
         cursor: dragState ? 'move' : 'default',
-        // Only block pointer events on the overlay itself when dragging
         pointerEvents: visibleTextLayers.length > 0 || dragState ? 'auto' : 'none',
       }}
     >
@@ -173,13 +239,12 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
         const isSelected = selectedSegmentId === segmentId && selectedLayerId === layer.id;
         const isDragging = dragState?.layerId === layer.id;
 
-        // Position in preview pixels
-        let previewX = layer.position.x * scaleX;
-        let previewY = layer.position.y * scaleY;
-        const previewW = layer.size.w * scaleX;
-        const previewH = layer.size.h * scaleY;
+        // Position using actual measured offset from Remotion's DOM
+        let previewX = offsetX + layer.position.x * scale;
+        let previewY = offsetY + layer.position.y * scale;
+        const previewW = layer.size.w * scale;
+        const previewH = estimateTextHeight(layer) * scale;
 
-        // Apply drag delta during drag
         if (isDragging) {
           previewX += dragDelta.dx;
           previewY += dragDelta.dy;
@@ -202,7 +267,6 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
             }}
             onMouseDown={(e) => handleMouseDown(e, segmentId, layer)}
           >
-            {/* Corner handles for selected text */}
             {isSelected && !layer.locked && (
               <>
                 <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50" />
@@ -212,7 +276,6 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
               </>
             )}
 
-            {/* Label when selected */}
             {isSelected && (
               <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[8px] font-medium whitespace-nowrap">
                 {layer.text?.content?.slice(0, 20) || 'Text'}
