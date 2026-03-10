@@ -198,7 +198,7 @@ MULTILINE COMMANDS:
 │  ├── Edge Functions (Deno)                                  │
 │  │   ├── generate-script (Gemini + RAG)                    │
 │  │   ├── generate-images (fal.ai multi-model)              │
-│  │   ├── generate-videos (Kling 2.5 / Wan 2.5)             │
+│  │   ├── generate-videos (VEO 3.1 / Grok 3 via GeminiGen)  │
 │  │   ├── generate-tts (Chatterbox Turbo)                   │
 │  │   ├── generate-music (Minimax Music v2)                 │
 │  │   ├── analyze-voice (Gemini multimodal → voice anchor)  │
@@ -1021,7 +1021,7 @@ git log --oneline -10
 |----------|-------|
 | Image (with reference) | Nano Banana, FLUX Kontext Pro |
 | Image (no reference) | Seedream v4, Qwen Image |
-| Video | Kling Video, Wan 2.5 |
+| Video | VEO 3.1, Grok 3 (GeminiGen.AI) |
 | TTS | Chatterbox Turbo |
 | Music | Minimax Music v2 |
 
