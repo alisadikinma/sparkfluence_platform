@@ -3,6 +3,7 @@
 // Shows draggable bounding boxes for text layers in the current segment.
 // Queries the Remotion Player's actual DOM to find the exact content area,
 // ensuring pixel-perfect alignment with the rendered composition.
+// Features: drag-to-move, corner resize (scales font), edge resize (reflow).
 // ============================================================================
 
 import React, { useCallback, useRef, useState, useMemo, useEffect } from 'react';
@@ -21,6 +22,8 @@ function estimateTextHeight(layer: LayerItem): number {
   return Math.max(fontSize + padding, lineCount * lineHeight + padding);
 }
 
+type ResizeHandle = 'tl' | 'tr' | 'bl' | 'br' | 'ml' | 'mr' | 'tm' | 'bm';
+
 interface PlayerOverlayProps {
   project: SparkfluenceProject;
   currentFrame: number;
@@ -29,6 +32,7 @@ interface PlayerOverlayProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
   onLayerSelect: (segmentId: string, layerId: string) => void;
   onLayerMove: (segmentId: string, layerId: string, position: { x: number; y: number }) => void;
+  onLayerResize?: (segmentId: string, layerId: string, changes: Partial<LayerItem>) => void;
 }
 
 interface DragState {
@@ -40,23 +44,30 @@ interface DragState {
   startPosY: number;
 }
 
+interface ResizeState {
+  segmentId: string;
+  layerId: string;
+  handle: ResizeHandle;
+  startMouseX: number;
+  startMouseY: number;
+  startW: number;
+  startH: number;
+  startX: number;
+  startY: number;
+  startFontSize: number;
+}
+
 /** Measure Remotion Player's actual content area by querying its DOM */
 function measureRemotionContent(containerEl: HTMLElement): {
   offsetX: number;
   offsetY: number;
   scale: number;
 } | null {
-  // Remotion Player renders a div with the exact composition dimensions (1080x1920)
-  // with transform: scale(...). Find it by looking for the composition-sized div.
   const containerRect = containerEl.getBoundingClientRect();
-
-  // Find all absolutely-positioned divs inside the Player
-  // Remotion's structure: outer > positioned wrapper > composition div (with transform)
   const allDivs = containerEl.querySelectorAll('div[style]');
   for (const div of allDivs) {
     const style = (div as HTMLElement).style;
     const transform = style.transform;
-    // Look for the div with transform: scale(X) — this is Remotion's composition container
     if (transform && transform.startsWith('scale(')) {
       const contentRect = (div as HTMLElement).getBoundingClientRect();
       const scale = contentRect.width / STUDIO_WIDTH;
@@ -68,6 +79,11 @@ function measureRemotionContent(containerEl: HTMLElement): {
   return null;
 }
 
+const HANDLE_CURSORS: Record<ResizeHandle, string> = {
+  tl: 'nwse-resize', tr: 'nesw-resize', bl: 'nesw-resize', br: 'nwse-resize',
+  ml: 'ew-resize', mr: 'ew-resize', tm: 'ns-resize', bm: 'ns-resize',
+};
+
 export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   project,
   currentFrame,
@@ -76,15 +92,22 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   containerRef,
   onLayerSelect,
   onLayerMove,
+  onLayerResize,
 }) => {
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragDelta, setDragDelta] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   const dragDeltaRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
+  const [resizeState, setResizeState] = useState<ResizeState | null>(null);
+  const [resizeDelta, setResizeDelta] = useState<{ dw: number; dh: number; dx: number; dy: number }>({ dw: 0, dh: 0, dx: 0, dy: 0 });
+  const resizeDeltaRef = useRef<{ dw: number; dh: number; dx: number; dy: number }>({ dw: 0, dh: 0, dx: 0, dy: 0 });
+
   // Measure Remotion's actual content area from the DOM
   const [contentArea, setContentArea] = useState<{ offsetX: number; offsetY: number; scale: number }>({
     offsetX: 0, offsetY: 0, scale: 1,
   });
+
+  const isInteracting = dragState || resizeState;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -97,19 +120,16 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       }
     };
 
-    // Measure initially and on resize
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(container);
 
-    // Also measure on animation frame for smooth updates
     let rafId: number;
     const rafMeasure = () => {
       measure();
       rafId = requestAnimationFrame(rafMeasure);
     };
-    // Only use rAF during drag for performance
-    if (dragState) {
+    if (isInteracting) {
       rafId = requestAnimationFrame(rafMeasure);
     }
 
@@ -117,7 +137,7 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       observer.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [containerRef, dragState]);
+  }, [containerRef, isInteracting]);
 
   const { offsetX, offsetY, scale } = contentArea;
 
@@ -175,6 +195,7 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
     return result;
   }, [currentSegment, currentFrame, project.overlayTracks]);
 
+  // --- Drag-to-move ---
   const handleMouseDown = useCallback((e: React.MouseEvent, segmentId: string, layer: LayerItem) => {
     e.preventDefault();
     e.stopPropagation();
@@ -227,33 +248,162 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
     };
   }, [dragState, scale, onLayerMove]);
 
+  // --- Resize handles ---
+  const handleResizeStart = useCallback((e: React.MouseEvent, segmentId: string, layer: LayerItem, handle: ResizeHandle) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setResizeState({
+      segmentId,
+      layerId: layer.id,
+      handle,
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      startW: layer.size.w,
+      startH: estimateTextHeight(layer),
+      startX: layer.position.x,
+      startY: layer.position.y,
+      startFontSize: layer.text?.fontSize ?? 48,
+    });
+    setResizeDelta({ dw: 0, dh: 0, dx: 0, dy: 0 });
+    resizeDeltaRef.current = { dw: 0, dh: 0, dx: 0, dy: 0 };
+  }, []);
+
+  useEffect(() => {
+    if (!resizeState) return;
+
+    const handleMove = (e: MouseEvent) => {
+      const rawDx = (e.clientX - resizeState.startMouseX) / scale;
+      const rawDy = (e.clientY - resizeState.startMouseY) / scale;
+      const h = resizeState.handle;
+
+      let dw = 0, dh = 0, dx = 0, dy = 0;
+
+      const isCorner = h === 'tl' || h === 'tr' || h === 'bl' || h === 'br';
+      const isLeft = h === 'tl' || h === 'ml' || h === 'bl';
+      const isTop = h === 'tl' || h === 'tm' || h === 'tr';
+      const isRight = h === 'tr' || h === 'mr' || h === 'br';
+      const isBottom = h === 'bl' || h === 'bm' || h === 'br';
+
+      if (isCorner) {
+        // Proportional resize — scale both W and H by the dominant axis
+        const scaleFactor = 1 + (isBottom || isRight ? rawDy : -rawDy) / resizeState.startH;
+        const clampedScale = Math.max(0.2, Math.min(3, scaleFactor));
+        dw = resizeState.startW * (clampedScale - 1);
+        dh = resizeState.startH * (clampedScale - 1);
+        if (isLeft) dx = -dw;
+        if (isTop) dy = -dh;
+      } else {
+        // Edge resize — width or height only
+        if (isLeft) { dw = -rawDx; dx = rawDx; }
+        if (isRight) { dw = rawDx; }
+        if (isTop) { dh = -rawDy; dy = rawDy; }
+        if (isBottom) { dh = rawDy; }
+      }
+
+      // Enforce minimums
+      const newW = Math.max(40, resizeState.startW + dw);
+      const newH = Math.max(20, resizeState.startH + dh);
+      dw = newW - resizeState.startW;
+      dh = newH - resizeState.startH;
+
+      resizeDeltaRef.current = { dw, dh, dx, dy };
+      setResizeDelta({ dw, dh, dx, dy });
+    };
+
+    const handleUp = () => {
+      const { dw, dh, dx, dy } = resizeDeltaRef.current;
+      const newW = Math.round(Math.max(40, resizeState.startW + dw));
+      const newH = Math.round(Math.max(20, resizeState.startH + dh));
+      const newX = Math.round(Math.max(0, resizeState.startX + dx));
+      const newY = Math.round(Math.max(0, resizeState.startY + dy));
+
+      const isCorner = ['tl', 'tr', 'bl', 'br'].includes(resizeState.handle);
+      const isVerticalEdge = resizeState.handle === 'tm' || resizeState.handle === 'bm';
+
+      // Scale font size proportionally for corner and vertical edge resize
+      let newFontSize = resizeState.startFontSize;
+      if (isCorner || isVerticalEdge) {
+        const heightRatio = newH / resizeState.startH;
+        newFontSize = Math.round(Math.max(12, Math.min(200, resizeState.startFontSize * heightRatio)));
+      }
+
+      if (onLayerResize) {
+        const changes: Partial<LayerItem> = {
+          size: { w: newW, h: newH },
+          position: { x: newX, y: newY },
+        };
+        if ((isCorner || isVerticalEdge) && newFontSize !== resizeState.startFontSize) {
+          changes.text = { fontSize: newFontSize } as any;
+        }
+        onLayerResize(resizeState.segmentId, resizeState.layerId, changes);
+      }
+
+      setResizeState(null);
+      setResizeDelta({ dw: 0, dh: 0, dx: 0, dy: 0 });
+      resizeDeltaRef.current = { dw: 0, dh: 0, dx: 0, dy: 0 };
+    };
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [resizeState, scale, onLayerResize]);
+
+  // Click on empty area deselects — but only if NOT clicking on a layer box
+  const handleOverlayClick = useCallback((e: React.MouseEvent) => {
+    // Only deselect if clicking on the overlay background itself (not a child)
+    if (e.target === e.currentTarget && selectedLayerId) {
+      onLayerSelect('', '');
+    }
+  }, [selectedLayerId, onLayerSelect]);
+
+  // Determine cursor
+  let overlayCursor = 'default';
+  if (dragState) overlayCursor = 'move';
+  if (resizeState) overlayCursor = HANDLE_CURSORS[resizeState.handle];
+
+  // Always enable pointer events when something is selected (so user can click to deselect)
+  const hasInteraction = visibleTextLayers.length > 0 || !!isInteracting || !!selectedLayerId;
+
   return (
     <div
       className="absolute inset-0 z-50"
       style={{
-        cursor: dragState ? 'move' : 'default',
-        pointerEvents: visibleTextLayers.length > 0 || dragState ? 'auto' : 'none',
+        cursor: overlayCursor,
+        pointerEvents: hasInteraction ? 'auto' : 'none',
       }}
+      onMouseDown={handleOverlayClick}
     >
       {visibleTextLayers.map(({ segmentId, layer }) => {
         const isSelected = selectedSegmentId === segmentId && selectedLayerId === layer.id;
         const isDragging = dragState?.layerId === layer.id;
+        const isResizing = resizeState?.layerId === layer.id;
 
         // Position using actual measured offset from Remotion's DOM
         let previewX = offsetX + layer.position.x * scale;
         let previewY = offsetY + layer.position.y * scale;
-        const previewW = layer.size.w * scale;
-        const previewH = estimateTextHeight(layer) * scale;
+        let previewW = layer.size.w * scale;
+        let previewH = estimateTextHeight(layer) * scale;
 
         if (isDragging) {
           previewX += dragDelta.dx;
           previewY += dragDelta.dy;
         }
 
+        if (isResizing) {
+          previewW += resizeDelta.dw * scale;
+          previewH += resizeDelta.dh * scale;
+          previewX += resizeDelta.dx * scale;
+          previewY += resizeDelta.dy * scale;
+        }
+
         return (
           <div
             key={layer.id}
-            className={`absolute transition-shadow ${
+            className={`absolute ${
               isSelected
                 ? 'border-2 border-emerald-500 shadow-[0_0_0_1px_rgba(16,185,129,0.3)]'
                 : 'border border-transparent hover:border-dashed hover:border-white/40'
@@ -267,15 +417,42 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
             }}
             onMouseDown={(e) => handleMouseDown(e, segmentId, layer)}
           >
+            {/* Resize handles — visible when selected */}
             {isSelected && !layer.locked && (
               <>
-                <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50" />
-                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50" />
-                <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50" />
-                <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50" />
+                {/* Corner handles — proportional resize + font scale */}
+                {(['tl', 'tr', 'bl', 'br'] as ResizeHandle[]).map(h => (
+                  <div
+                    key={h}
+                    className="absolute w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50 z-10"
+                    style={{
+                      top: h.startsWith('t') ? -5 : undefined,
+                      bottom: h.startsWith('b') ? -5 : undefined,
+                      left: h.endsWith('l') ? -5 : undefined,
+                      right: h.endsWith('r') ? -5 : undefined,
+                      cursor: HANDLE_CURSORS[h],
+                    }}
+                    onMouseDown={(e) => handleResizeStart(e, segmentId, layer, h)}
+                  />
+                ))}
+                {/* Edge handles — width or height only */}
+                {(['ml', 'mr', 'tm', 'bm'] as ResizeHandle[]).map(h => (
+                  <div
+                    key={h}
+                    className="absolute bg-emerald-500/60 rounded-sm z-10"
+                    style={{
+                      ...(h === 'ml' ? { left: -3, top: '50%', transform: 'translateY(-50%)', width: 4, height: 16, cursor: 'ew-resize' } : {}),
+                      ...(h === 'mr' ? { right: -3, top: '50%', transform: 'translateY(-50%)', width: 4, height: 16, cursor: 'ew-resize' } : {}),
+                      ...(h === 'tm' ? { top: -3, left: '50%', transform: 'translateX(-50%)', width: 16, height: 4, cursor: 'ns-resize' } : {}),
+                      ...(h === 'bm' ? { bottom: -3, left: '50%', transform: 'translateX(-50%)', width: 16, height: 4, cursor: 'ns-resize' } : {}),
+                    }}
+                    onMouseDown={(e) => handleResizeStart(e, segmentId, layer, h)}
+                  />
+                ))}
               </>
             )}
 
+            {/* Label */}
             {isSelected && (
               <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[8px] font-medium whitespace-nowrap">
                 {layer.text?.content?.slice(0, 20) || 'Text'}

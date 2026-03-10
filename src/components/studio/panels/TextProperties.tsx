@@ -137,6 +137,18 @@ export const TextProperties: React.FC<TextPropertiesProps> = ({
         <ColorInput value={text.color} onChange={(c) => updateText({ color: c })} />
       </Section>
 
+      {/* ---- Opacity ---- */}
+      <Section label="Opacity">
+        <SliderRow
+          value={Math.round(layer.opacity * 100)}
+          min={0}
+          max={100}
+          step={1}
+          display={`${Math.round(layer.opacity * 100)}%`}
+          onChange={(v) => onUpdate({ opacity: v / 100 })}
+        />
+      </Section>
+
       {/* ---- Stroke ---- */}
       <Section label="Stroke">
         <StrokeControl

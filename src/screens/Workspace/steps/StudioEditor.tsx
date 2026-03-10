@@ -16,6 +16,7 @@ import {
   Pause,
   Volume2,
   Maximize2,
+  Minimize2,
   SkipBack,
   SkipForward,
   Film,
@@ -92,6 +93,128 @@ const RightPanelContent: React.FC = () => {
             dispatch({ type: 'APPLY_TEXT_STYLE_TO_ALL', sourceLayerId, styleProps, position })
           }
         />
+      </div>
+    );
+  }
+
+  // If an image/video layer is selected, show basic properties with opacity
+  if (selectedSegment && selectedLayer && (selectedLayer.type === 'image' || selectedLayer.type === 'video')) {
+    return (
+      <div className="space-y-3">
+        <button
+          onClick={() => dispatch({ type: 'SELECT_LAYER', segmentId: selectedSegment.id, layerId: null })}
+          className="flex items-center gap-1 text-xs text-neutral-400 hover:text-white transition-colors"
+        >
+          <ArrowLeft className="w-3 h-3" />
+          <span>Back to {selectedSegment.segmentType}</span>
+        </button>
+
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">
+            {selectedLayer.type === 'image' ? 'Image' : 'Video'} Layer
+          </label>
+          {selectedLayer.src && (
+            <div className="w-full aspect-video bg-neutral-900 rounded-lg overflow-hidden mb-2">
+              {selectedLayer.type === 'image' ? (
+                <img src={selectedLayer.src} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <video src={selectedLayer.src} className="w-full h-full object-cover" muted />
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">
+            Position
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">X</label>
+              <input
+                type="number"
+                value={Math.round(selectedLayer.position.x)}
+                onChange={(e) => dispatch({
+                  type: 'UPDATE_LAYER', segmentId: selectedSegment.id, layerId: selectedLayer.id,
+                  changes: { position: { ...selectedLayer.position, x: parseInt(e.target.value) || 0 } },
+                })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">Y</label>
+              <input
+                type="number"
+                value={Math.round(selectedLayer.position.y)}
+                onChange={(e) => dispatch({
+                  type: 'UPDATE_LAYER', segmentId: selectedSegment.id, layerId: selectedLayer.id,
+                  changes: { position: { ...selectedLayer.position, y: parseInt(e.target.value) || 0 } },
+                })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">
+            Size
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">W</label>
+              <input
+                type="number"
+                value={Math.round(selectedLayer.size.w)}
+                onChange={(e) => dispatch({
+                  type: 'UPDATE_LAYER', segmentId: selectedSegment.id, layerId: selectedLayer.id,
+                  changes: { size: { ...selectedLayer.size, w: parseInt(e.target.value) || 0 } },
+                })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">H</label>
+              <input
+                type="number"
+                value={Math.round(selectedLayer.size.h)}
+                onChange={(e) => dispatch({
+                  type: 'UPDATE_LAYER', segmentId: selectedSegment.id, layerId: selectedLayer.id,
+                  changes: { size: { ...selectedLayer.size, h: parseInt(e.target.value) || 0 } },
+                })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">
+            Opacity
+          </label>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(selectedLayer.opacity * 100)}
+                onChange={(e) => dispatch({
+                  type: 'UPDATE_LAYER', segmentId: selectedSegment.id, layerId: selectedLayer.id,
+                  changes: { opacity: parseInt(e.target.value) / 100 },
+                })}
+                className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer bg-neutral-700"
+                style={{
+                  background: `linear-gradient(to right, #10B981 0%, #10B981 ${Math.round(selectedLayer.opacity * 100)}%, #404040 ${Math.round(selectedLayer.opacity * 100)}%, #404040 100%)`,
+                }}
+              />
+              <span className="ml-2 text-xs font-mono text-neutral-400 w-14 text-right">
+                {Math.round(selectedLayer.opacity * 100)}%
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1128,6 +1251,7 @@ const StudioEditorInner: React.FC = () => {
   const [timelineHeight, setTimelineHeight] = useState(200);
   const [leftPanelWidth, setLeftPanelWidth] = useState(224);
   const [rightPanelWidth, setRightPanelWidth] = useState(256);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const [playerSize, setPlayerSize] = useState({ w: 360, h: 640 });
 
@@ -1357,6 +1481,14 @@ const StudioEditorInner: React.FC = () => {
         e.preventDefault();
         const seekAmount = e.shiftKey ? 3 : 30;
         dispatch({ type: 'SET_CURRENT_FRAME', frame: state.playback.currentFrame + seekAmount });
+      } else if (e.key === 'f' && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault();
+        setIsFullscreen(prev => !prev);
+      } else if (e.key === 'Escape') {
+        if (isFullscreen) {
+          e.preventDefault();
+          setIsFullscreen(false);
+        }
       } else if (e.key === 'Home') {
         dispatch({ type: 'SET_CURRENT_FRAME', frame: 0 });
       } else if (e.key === 'End') {
@@ -1366,7 +1498,7 @@ const StudioEditorInner: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, pushHistory, state.playback.isPlaying, state.playback.currentFrame, state.project.totalDurationInFrames, state.selection, state.project.segments, state.project.overlayTracks, dispatch, saveNow]);
+  }, [undo, redo, pushHistory, state.playback.isPlaying, state.playback.currentFrame, state.project.totalDurationInFrames, state.selection, state.project.segments, state.project.overlayTracks, dispatch, saveNow, isFullscreen]);
 
   // --- Export modal ---
   const [showExportModal, setShowExportModal] = useState(false);
@@ -1560,7 +1692,9 @@ const StudioEditorInner: React.FC = () => {
         {/* ============================================================ */}
         {/* CENTER — Video Preview                                       */}
         {/* ============================================================ */}
-        <div className="flex-1 flex flex-col min-w-0 bg-[#0B0E14]">
+        <div className={`flex-1 flex flex-col min-w-0 bg-[#0B0E14] ${
+          isFullscreen ? 'fixed inset-0 z-[60]' : ''
+        }`}>
           {/* Player-Timeline label (CapCut-style) */}
           <div className="flex items-center justify-between px-3 py-1 bg-[#0B0E14] border-b border-[#1E1E1E]">
             <span className="text-[11px] font-medium text-emerald-400">
@@ -1597,7 +1731,14 @@ const StudioEditorInner: React.FC = () => {
                     selectedSegmentId={state.selection.segmentId}
                     selectedLayerId={state.selection.layerId}
                     containerRef={playerContainerRef}
-                    onLayerSelect={(segId, layerId) => dispatch({ type: 'SELECT_LAYER', segmentId: segId, layerId })}
+                    onLayerSelect={(segId, layerId) => {
+                      if (!segId && !layerId) {
+                        // Deselect — clear selection
+                        dispatch({ type: 'SELECT_SEGMENT', segmentId: state.selection.segmentId || '' });
+                      } else {
+                        dispatch({ type: 'SELECT_LAYER', segmentId: segId, layerId });
+                      }
+                    }}
                     onLayerMove={(segId, layerId, position) => {
                       // Check if this is an overlay clip (segId = track.id)
                       const isOverlay = (state.project.overlayTracks || []).some(t => t.id === segId);
@@ -1606,6 +1747,33 @@ const StudioEditorInner: React.FC = () => {
                       } else {
                         // Move only this specific text layer (independent)
                         dispatch({ type: 'MOVE_TEXT_LAYER', segmentId: segId, layerId, position });
+                      }
+                    }}
+                    onLayerResize={(segId, layerId, changes) => {
+                      pushHistory('Resize layer');
+                      const isOverlay = (state.project.overlayTracks || []).some(t => t.id === segId);
+                      if (isOverlay) {
+                        const overlayChanges: any = {};
+                        if (changes.size) overlayChanges.size = changes.size;
+                        if (changes.position) overlayChanges.position = changes.position;
+                        if (changes.text) {
+                          // Merge font size into existing text
+                          const track = (state.project.overlayTracks || []).find(t => t.id === segId);
+                          const clip = track?.clips.find(c => c.id === layerId);
+                          if (clip?.text) {
+                            overlayChanges.text = { ...clip.text, ...changes.text };
+                          }
+                        }
+                        dispatch({ type: 'UPDATE_OVERLAY_CLIP', trackId: segId, clipId: layerId, changes: overlayChanges });
+                      } else {
+                        // For segment layers, merge text changes properly
+                        const seg = state.project.segments.find(s => s.id === segId);
+                        const layer = seg?.layers.find(l => l.id === layerId);
+                        const mergedChanges: any = { ...changes };
+                        if (changes.text && layer?.text) {
+                          mergedChanges.text = { ...layer.text, ...changes.text };
+                        }
+                        dispatch({ type: 'UPDATE_LAYER', segmentId: segId, layerId, changes: mergedChanges });
                       }
                     }}
                   />
@@ -1671,8 +1839,12 @@ const StudioEditorInner: React.FC = () => {
               <button className="p-1 text-neutral-400 hover:text-white transition-colors" title="Volume">
                 <Volume2 className="w-4 h-4" />
               </button>
-              <button className="p-1 text-neutral-400 hover:text-white transition-colors" title="Fullscreen">
-                <Maximize2 className="w-4 h-4" />
+              <button
+                onClick={() => setIsFullscreen(prev => !prev)}
+                className="p-1 text-neutral-400 hover:text-white transition-colors"
+                title={isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen (F)'}
+              >
+                {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
               </button>
               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-neutral-800 text-neutral-400 border border-neutral-700">
                 9:16

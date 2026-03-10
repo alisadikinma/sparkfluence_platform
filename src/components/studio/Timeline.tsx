@@ -555,7 +555,42 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
           }
         }
 
-        // New segment — create and insert
+        // Imported images (no pipelineSegId) → create overlay layer on top of video
+        if (!media.pipelineSegId && media.type === 'image') {
+          // Calculate start frame from drop position
+          const container = scrollContainerRef.current;
+          let startFrame = 0;
+          if (container) {
+            const rect = container.getBoundingClientRect();
+            const dropX = e.clientX - rect.left + container.scrollLeft - HEADER_WIDTH;
+            const dropSeconds = dropX / pixelsPerSecond;
+            startFrame = Math.max(0, Math.round(dropSeconds * STUDIO_FPS));
+          }
+
+          const clip: OverlayClip = {
+            id: generateId('oclip'),
+            type: 'image',
+            src: media.url,
+            startFrame,
+            durationInFrames: secondsToFrames(media.durationSec || 5),
+            position: { x: 0, y: 0 },
+            size: { w: 1080, h: 1920 },
+            opacity: 1,
+            zIndex: 10,
+          };
+
+          // Find or create an image overlay track
+          const existingTrack = (project.overlayTracks || []).find(t => t.trackType === 'video');
+          if (existingTrack) {
+            dispatch({ type: 'ADD_OVERLAY_CLIP', trackId: existingTrack.id, clip });
+          } else {
+            // Create track with initial clip atomically
+            dispatch({ type: 'ADD_OVERLAY_TRACK', trackType: 'video', initialClip: clip });
+          }
+          return;
+        }
+
+        // Pipeline media or video → insert as new segment
         const durFrames = secondsToFrames(media.durationSec);
         const layers = media.type === 'video'
           ? [createVideoLayer(media.url, durFrames)]

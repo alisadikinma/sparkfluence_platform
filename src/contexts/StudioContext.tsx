@@ -81,7 +81,7 @@ type StudioAction =
   | { type: 'REMOVE_CAPTION'; segmentId: string }
   | { type: 'SET_CAPTION_STYLE'; style: CaptionStyle }
   // Overlay track management
-  | { type: 'ADD_OVERLAY_TRACK'; trackType: 'video' | 'text' }
+  | { type: 'ADD_OVERLAY_TRACK'; trackType: 'video' | 'text'; initialClip?: OverlayClip }
   | { type: 'REMOVE_OVERLAY_TRACK'; trackId: string }
   | { type: 'ADD_OVERLAY_CLIP'; trackId: string; clip: OverlayClip }
   | { type: 'UPDATE_OVERLAY_CLIP'; trackId: string; clipId: string; changes: Partial<OverlayClip> }
@@ -603,7 +603,7 @@ function studioReducer(state: StudioState, action: StudioAction): StudioState {
         id: generateId(`overlay_${action.trackType}`),
         label,
         trackType: action.trackType,
-        clips: [],
+        clips: action.initialClip ? [action.initialClip] : [],
       };
       return {
         ...state,

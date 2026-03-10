@@ -522,7 +522,7 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 | `panels/TransitionPicker.tsx` | Popover with 6 transition types + duration |
 | `panels/AudioProperties.tsx` | Volume, fades, mute, envelope preview |
 | `panels/TextTemplates.tsx` | 6 text presets + Add Text + Auto Captions button |
-| `panels/TextProperties.tsx` | Full text editing (font, size, color, stroke, animation) |
+| `panels/TextProperties.tsx` | Full text editing (font, size, color, opacity, stroke, animation) |
 | `panels/CaptionStylePicker.tsx` | 6 caption style presets (classic/bold/neon/outline/karaoke/minimal) |
 
 **Remotion Layers (`src/remotion/layers/`):**
@@ -545,8 +545,11 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - Audio tracks (TTS, BGM, SFX) with waveform bars + volume envelope
 - Auto captions via Groq Whisper with 6 style presets
 - 6 text templates (Headline, Subtitle, Lower Third, Callout, Countdown, Price Tag)
-- Context-sensitive right panel (segment properties / audio properties / text properties)
-- Keyboard shortcuts: Space, Ctrl+Z/Shift+Z, Ctrl+S, V/S/Del, Arrow keys, Home/End
+- Context-sensitive right panel (segment properties / audio properties / text properties / image properties with opacity)
+- Imported images drag-to-timeline create **overlay layers** (not insert as segment). Pipeline media inserts as segments.
+- PlayerOverlay: 8-point resize handles (corner = proportional + font size scale, edge = width/height only). Selection rectangle persists while selected (deselect by clicking empty area).
+- Fullscreen player: CSS `fixed inset-0 z-[60]` overlay, toggle via `F` key or button, exit via `Esc`
+- Keyboard shortcuts: Space, Ctrl+Z/Shift+Z, Ctrl+S, V/S/Del, F (fullscreen), Esc (exit fullscreen), Arrow keys, Home/End
 - Auto-save to `chat_sessions.studio_data` (3s debounce)
 
 ### Design System
