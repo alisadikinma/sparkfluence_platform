@@ -5,18 +5,69 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { buildProjectFromSession } from '../lib/composition';
+import { buildProjectFromSession, normalizeSegmentType, secondsToFrames } from '../lib/composition';
 import type { SparkfluenceProject } from '../types/studio';
+import type { PipelineMediaItem } from '../contexts/StudioContext';
 
 interface UseStudioLoaderResult {
   project: SparkfluenceProject | null;
+  pipelineMedia: PipelineMediaItem[];
   isLoading: boolean;
   error: string | null;
+}
+
+/** Build pipeline media from raw session data (script + image + video) */
+function buildPipelineMedia(session: Record<string, unknown>): PipelineMediaItem[] {
+  const scriptSegments: Array<Record<string, unknown>> =
+    (session.script_data as Record<string, unknown>)?.segments as Array<Record<string, unknown>> || [];
+  const imageSegments: Array<Record<string, unknown>> =
+    (session.image_data as Record<string, unknown>)?.segments as Array<Record<string, unknown>> || [];
+  const videoSegments: Array<Record<string, unknown>> =
+    (session.video_data as Record<string, unknown>)?.segments as Array<Record<string, unknown>> || [];
+
+  const imageMap = new Map<string, string>();
+  for (const img of imageSegments) {
+    const url = (img.imageUrl || img.image_url) as string;
+    if (url) imageMap.set(img.id as string, url);
+  }
+
+  const videoMap = new Map<string, string>();
+  for (const vid of videoSegments) {
+    const url = (vid.videoUrl || vid.video_url) as string;
+    if (url) videoMap.set(vid.id as string, url);
+  }
+
+  const media: PipelineMediaItem[] = [];
+  for (const seg of scriptSegments) {
+    const id = seg.id as string;
+    const videoUrl = videoMap.get(id);
+    const imageUrl = imageMap.get(id);
+    const src = videoUrl || imageUrl;
+    if (!src) continue;
+
+    const segType = (seg.segmentType || seg.segment_type || seg.type || 'BODY') as string;
+    const durationSec = (seg.durationSeconds || seg.duration_seconds || 5) as number;
+
+    media.push({
+      segId: id,
+      segmentType: normalizeSegmentType(segType),
+      src,
+      isVideo: !!videoUrl,
+      durationSec,
+      script: (seg.script || '') as string,
+      emotion: (seg.emotion || 'neutral') as string,
+      visualDirection: (seg.visualDirection || seg.visual_direction || '') as string,
+      layout: (seg.layout || 'full') as string,
+    });
+  }
+
+  return media;
 }
 
 export function useStudioLoader(orderId: string | undefined): UseStudioLoaderResult {
   const { user } = useAuth();
   const [project, setProject] = useState<SparkfluenceProject | null>(null);
+  const [pipelineMedia, setPipelineMedia] = useState<PipelineMediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const fetchedRef = useRef(false);
@@ -64,6 +115,10 @@ export function useStudioLoader(orderId: string | undefined): UseStudioLoaderRes
           return;
         }
 
+        // Always build pipeline media from raw session data (immutable source)
+        const media = buildPipelineMedia(session as Record<string, unknown>);
+        setPipelineMedia(media);
+
         // If studio_data already exists, use it (returning user)
         if (session.studio_data && typeof session.studio_data === 'object') {
           const existingProject = session.studio_data as SparkfluenceProject;
@@ -96,5 +151,5 @@ export function useStudioLoader(orderId: string | undefined): UseStudioLoaderRes
     };
   }, [orderId, user?.id]);
 
-  return { project, isLoading, error };
+  return { project, pipelineMedia, isLoading, error };
 }

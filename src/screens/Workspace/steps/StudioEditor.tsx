@@ -559,81 +559,114 @@ const MediaTabContent: React.FC = () => {
         </div>
       )}
 
-      {/* Generated media from pipeline (video/image generation steps) */}
+      {/* Generated media from pipeline (immutable — survives timeline deletion) */}
       {(() => {
-        const generatedMedia = segments
-          .map((seg) => {
-            const videoLayer = seg.layers.find(l => l.type === 'video');
-            const imageLayer = seg.layers.find(l => l.type === 'image');
-            const mediaSrc = videoLayer?.src || imageLayer?.src;
-            if (!mediaSrc) return null;
-            return {
-              segId: seg.id,
-              segmentType: seg.segmentType,
-              src: mediaSrc,
-              isVideo: !!videoLayer,
-              durationSec: seg.durationInFrames / STUDIO_FPS,
-            };
-          })
-          .filter(Boolean) as { segId: string; segmentType: string; src: string; isVideo: boolean; durationSec: number }[];
+        const pipelineMedia = state.pipelineMedia;
+        if (pipelineMedia.length === 0) return null;
 
-        if (generatedMedia.length === 0) return null;
+        // Track which pipeline segments are currently on timeline
+        const timelineSegIds = new Set(segments.map(s => s.id));
 
         return (
           <div className="space-y-1.5">
-            <span className="text-xs text-neutral-400 font-medium">Generated ({generatedMedia.length})</span>
+            <span className="text-xs text-neutral-400 font-medium">Generated ({pipelineMedia.length})</span>
             <div className="grid grid-cols-2 gap-1.5">
-              {generatedMedia.map((media) => (
-                <div
-                  key={media.segId}
-                  onClick={() => dispatch({ type: 'SELECT_SEGMENT', segmentId: media.segId })}
-                  className="relative rounded-lg overflow-hidden cursor-pointer group transition-all hover:ring-1 hover:ring-emerald-500/50"
-                >
-                  <div className="aspect-video bg-neutral-900 relative">
-                    {media.isVideo ? (
-                      <video
-                        src={media.src}
-                        className="w-full h-full object-cover"
-                        muted
-                        preload="metadata"
-                        playsInline
-                        onLoadedMetadata={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
-                      />
-                    ) : (
-                      <img
-                        src={media.src}
-                        alt=""
-                        className="w-full h-full object-cover"
-                        draggable={false}
-                      />
-                    )}
+              {pipelineMedia.map((media) => {
+                const isOnTimeline = timelineSegIds.has(media.segId);
+                return (
+                  <div
+                    key={media.segId}
+                    draggable
+                    onDragStart={(e) => {
+                      // Set drag data for timeline drop handler
+                      e.dataTransfer.setData('application/x-studio-media', JSON.stringify({
+                        id: media.segId,
+                        type: media.isVideo ? 'video' : 'image',
+                        url: media.src,
+                        name: media.segmentType,
+                        durationSec: media.durationSec,
+                        // Pipeline-specific fields
+                        pipelineSegId: media.segId,
+                        segmentType: media.segmentType,
+                        script: media.script || '',
+                        emotion: media.emotion || 'neutral',
+                        visualDirection: media.visualDirection || '',
+                        layout: media.layout || 'full',
+                        isOnTimeline,
+                      }));
+                      e.dataTransfer.effectAllowed = isOnTimeline ? 'move' : 'copy';
+                    }}
+                    onClick={() => {
+                      if (isOnTimeline) {
+                        // Select existing segment on timeline
+                        dispatch({ type: 'SELECT_SEGMENT', segmentId: media.segId });
+                      }
+                    }}
+                    className={`relative rounded-lg overflow-hidden cursor-grab group transition-all hover:ring-1 hover:ring-emerald-500/50 ${
+                      !isOnTimeline ? 'opacity-50' : ''
+                    }`}
+                  >
+                    <div className="aspect-video bg-neutral-900 relative">
+                      {media.isVideo ? (
+                        <video
+                          src={media.src}
+                          className="w-full h-full object-cover"
+                          muted
+                          preload="metadata"
+                          playsInline
+                          onLoadedMetadata={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
+                        />
+                      ) : (
+                        <img
+                          src={media.src}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          draggable={false}
+                        />
+                      )}
 
-                    {/* Segment type badge */}
-                    <div className="absolute top-1 left-1">
-                      <span className="text-[8px] font-medium px-1 py-0.5 rounded bg-black/70 text-emerald-400 border border-emerald-500/30">
-                        {media.segmentType}
-                      </span>
+                      {/* Segment type badge */}
+                      <div className="absolute top-1 left-1">
+                        <span className="text-[8px] font-medium px-1 py-0.5 rounded bg-black/70 text-emerald-400 border border-emerald-500/30">
+                          {media.segmentType}
+                        </span>
+                      </div>
+
+                      {/* Status badge */}
+                      {!isOnTimeline ? (
+                        <div className="absolute bottom-1 left-1">
+                          <span className="text-[8px] font-medium px-1 py-0.5 rounded bg-amber-500/80 text-white">
+                            Drag to add
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="absolute bottom-1 left-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <span className="text-[8px] font-medium px-1 py-0.5 rounded bg-neutral-700/90 text-neutral-300">
+                            Drag to reorder
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Duration */}
+                      <div className="absolute top-1 right-1">
+                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-black/60 text-white">
+                          {media.durationSec.toFixed(1)}s
+                        </span>
+                      </div>
+
+                      {/* Hover overlay */}
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                     </div>
-
-                    {/* Duration */}
-                    <div className="absolute top-1 right-1">
-                      <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-black/60 text-white">
-                        {media.durationSec.toFixed(1)}s
-                      </span>
-                    </div>
-
-                    {/* Hover overlay */}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
       })()}
 
       {/* Empty state when no media at all */}
-      {importedAssets.length === 0 && segments.every(seg => !seg.layers.some(l => l.type === 'video' || l.type === 'image')) && (
+      {importedAssets.length === 0 && state.pipelineMedia.length === 0 && (
         <div className="text-center py-8">
           <Film className="w-8 h-8 text-neutral-700 mx-auto mb-2" />
           <p className="text-xs text-neutral-500">No media available</p>
@@ -1191,16 +1224,20 @@ const StudioEditorInner: React.FC = () => {
   }, [timelineHeight]);
 
   // --- Phase 1B: Load project from DB ---
-  const { project: loadedProject, isLoading, error: loadError } = useStudioLoader(orderId);
+  const { project: loadedProject, pipelineMedia: loadedPipelineMedia, isLoading, error: loadError } = useStudioLoader(orderId);
 
-  // Set project into context once loaded
+  // Set project + pipeline media into context once loaded
   const hasSetProjectRef = useRef(false);
   useEffect(() => {
     if (loadedProject && !hasSetProjectRef.current) {
       hasSetProjectRef.current = true;
+      // Set pipeline media first (immutable source), then project
+      if (loadedPipelineMedia.length > 0) {
+        dispatch({ type: 'SET_PIPELINE_MEDIA', media: loadedPipelineMedia });
+      }
       dispatch({ type: 'SET_PROJECT', project: loadedProject });
     }
-  }, [loadedProject, dispatch]);
+  }, [loadedProject, loadedPipelineMedia, dispatch]);
 
   // --- Phase 1I: Auto-save persistence ---
   const { saveNow, isSaving, lastSavedAt } = useStudioPersistence(orderId);
@@ -1305,15 +1342,11 @@ const StudioEditorInner: React.FC = () => {
             dispatch({ type: 'REMOVE_LAYER', segmentId: state.selection.segmentId, layerId: state.selection.layerId });
           }
         } else if (state.selection.segmentId) {
-          // No specific layer selected — check if it's a segment on video track
-          // Remove only the video/image layer from the segment, keep segment structure
+          // No specific layer selected — delete entire segment from timeline
           const seg = state.project.segments.find(s => s.id === state.selection.segmentId);
           if (seg) {
-            const mediaLayer = seg.layers.find(l => l.type === 'video' || l.type === 'image');
-            if (mediaLayer) {
-              pushHistory('Remove video from timeline');
-              dispatch({ type: 'REMOVE_LAYER', segmentId: seg.id, layerId: mediaLayer.id });
-            }
+            pushHistory('Delete segment');
+            dispatch({ type: 'DELETE_SEGMENT', segmentId: seg.id });
           }
         }
       } else if (e.key === 'ArrowLeft') {
@@ -1337,15 +1370,27 @@ const StudioEditorInner: React.FC = () => {
 
   // --- Export modal ---
   const [showExportModal, setShowExportModal] = useState(false);
-  const [exportStatus, setExportStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
-  const handleExportMP4 = useCallback(async () => {
-    setExportStatus('saving');
-    await saveNow();
-    setExportStatus('saved');
-    // TODO: trigger VPS FFmpeg render + download when pipeline is connected
-    setTimeout(() => setExportStatus('idle'), 3000);
-  }, [saveNow]);
+  // Build video segments for combine API from studio project segments
+  const exportSegments = useMemo(() => {
+    return state.project.segments.map((seg, index) => {
+      // Find the first video layer's src URL
+      const videoLayer = seg.layers.find(l => l.type === 'video');
+      const imageLayer = seg.layers.find(l => l.type === 'image');
+      const videoUrl = videoLayer?.src || imageLayer?.src || '';
+      const durationSeconds = seg.durationInFrames / (state.project.fps || 30);
+
+      return {
+        segment_id: seg.id,
+        segment_number: index + 1,
+        segment_type: seg.segmentType || 'BODY',
+        video_url: videoUrl,
+        duration_seconds: durationSeconds,
+        script_text: seg.script || null,
+        emotion: seg.emotion || 'neutral',
+      };
+    });
+  }, [state.project.segments, state.project.fps]);
 
 
   // Format frame to MM:SS timecode (legacy)
@@ -1687,10 +1732,11 @@ const StudioEditorInner: React.FC = () => {
       <ExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
-        onExportMP4={handleExportMP4}
-        isSaving={exportStatus === 'saving'}
-        videoTitle={state.project.name || 'Untitled Video'}
+        videoTitle={state.project.title || 'Untitled Video'}
+        thumbnailUrl={state.project.segments[0]?.layers.find(l => l.type === 'image')?.src}
         orderId={orderId}
+        sessionId={orderId}
+        segments={exportSegments}
       />
     </div>
   );

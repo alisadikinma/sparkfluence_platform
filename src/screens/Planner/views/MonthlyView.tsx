@@ -3,7 +3,7 @@ import { useAuth } from "../../../contexts/AuthContext";
 import { useLanguage } from "../../../contexts/LanguageContext";
 import { supabase } from "../../../lib/supabase";
 import { PlatformIcons } from "../../../components/ui/platform-icons";
-import { ChevronLeft, ChevronRight, ArrowUpRight, Clock, X, Play, Trash, Globe } from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowUpRight, Clock, X, Play, Trash, Globe, Download, Loader2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 
 interface PlannedContent {
@@ -17,6 +17,13 @@ interface PlannedContent {
   status: string;
   final_video_url: string | null;
   is_public: boolean;
+  video_data?: {
+    order_id?: string;
+    job_id?: string;
+    duration_seconds?: number;
+    file_size_mb?: number;
+    resolution?: string;
+  };
 }
 
 interface MonthlyViewProps {
@@ -268,12 +275,30 @@ export const MonthlyView: React.FC<MonthlyViewProps> = ({ searchQuery }) => {
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                      <Play className="w-12 h-12 text-white/60" />
+                      {selectedContent.status === 'combining' ? (
+                        <div className="text-center">
+                          <Loader2 className="w-10 h-10 text-emerald-400 animate-spin mx-auto mb-2" />
+                          <p className="text-xs text-white/80">
+                            {language === 'id' ? 'Menggabungkan video...' : 'Combining video...'}
+                          </p>
+                        </div>
+                      ) : (
+                        <Play className="w-12 h-12 text-white/60" />
+                      )}
                     </div>
                   </>
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <Play className="w-12 h-12 text-white/20" />
+                    {selectedContent.status === 'combining' ? (
+                      <div className="text-center">
+                        <Loader2 className="w-10 h-10 text-emerald-400 animate-spin mx-auto mb-2" />
+                        <p className="text-xs text-white/60">
+                          {language === 'id' ? 'Menggabungkan video...' : 'Combining video...'}
+                        </p>
+                      </div>
+                    ) : (
+                      <Play className="w-12 h-12 text-white/20" />
+                    )}
                   </div>
                 )}
               </div>
@@ -283,6 +308,24 @@ export const MonthlyView: React.FC<MonthlyViewProps> = ({ searchQuery }) => {
                 <div className="flex gap-2 flex-wrap">
                   <span className="bg-surface text-text-primary text-xs px-3 py-1 rounded-full">
                     {formatDate(selectedContent.scheduled_date)}
+                  </span>
+                  <span className={`text-xs px-3 py-1 rounded-full ${
+                    selectedContent.status === 'combining'
+                      ? 'bg-amber-500/10 text-amber-400'
+                      : selectedContent.status === 'failed'
+                        ? 'bg-red-500/10 text-red-400'
+                        : selectedContent.final_video_url
+                          ? 'bg-emerald-500/10 text-emerald-400'
+                          : 'bg-surface text-text-secondary'
+                  }`}>
+                    {selectedContent.status === 'combining'
+                      ? (language === 'id' ? 'Menggabungkan...' : 'Combining...')
+                      : selectedContent.status === 'failed'
+                        ? (language === 'id' ? 'Gagal' : 'Failed')
+                        : selectedContent.final_video_url
+                          ? (language === 'id' ? 'Siap' : 'Ready')
+                          : (language === 'id' ? 'Direncanakan' : 'Planned')
+                    }
                   </span>
                   <span className="bg-surface text-text-primary text-xs px-3 py-1 rounded-full flex items-center gap-1">
                     <Globe className="w-3 h-3" />
@@ -295,6 +338,21 @@ export const MonthlyView: React.FC<MonthlyViewProps> = ({ searchQuery }) => {
 
                 <h2 className="text-xl font-bold text-text-primary">{selectedContent.title}</h2>
                 <p className="text-text-secondary">{selectedContent.description || '-'}</p>
+
+                {/* Video metadata */}
+                {selectedContent.video_data?.duration_seconds && (
+                  <div className="flex gap-3 text-xs text-text-muted">
+                    {selectedContent.video_data.duration_seconds && (
+                      <span>{Math.round(selectedContent.video_data.duration_seconds)}s</span>
+                    )}
+                    {selectedContent.video_data.resolution && (
+                      <span>{selectedContent.video_data.resolution}</span>
+                    )}
+                    {selectedContent.video_data.file_size_mb && (
+                      <span>{selectedContent.video_data.file_size_mb.toFixed(1)} MB</span>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -312,7 +370,33 @@ export const MonthlyView: React.FC<MonthlyViewProps> = ({ searchQuery }) => {
                   </div>
                 </div>
 
-                <div className="flex gap-3 pt-4">
+                {/* Download Button — only when final_video_url is available */}
+                {selectedContent.final_video_url && (
+                  <a
+                    href={selectedContent.final_video_url}
+                    download={`${selectedContent.title || 'video'}.mp4`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-emerald-500/20"
+                  >
+                    <Download className="w-4 h-4" />
+                    {language === 'id' ? 'Download MP4' : 'Download MP4'}
+                  </a>
+                )}
+
+                {/* Combining in progress indicator */}
+                {selectedContent.status === 'combining' && !selectedContent.final_video_url && (
+                  <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                    <Loader2 className="w-4 h-4 text-amber-400 animate-spin flex-shrink-0" />
+                    <span className="text-xs text-amber-400 font-medium">
+                      {language === 'id'
+                        ? 'Video sedang digabungkan... Cek kembali nanti.'
+                        : 'Video is being combined... Check back later.'}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-2">
                   <Button
                     onClick={() => handleDelete(selectedContent.id)}
                     variant="outline"

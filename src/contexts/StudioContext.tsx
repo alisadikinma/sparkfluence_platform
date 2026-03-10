@@ -22,9 +22,24 @@ import type {
 } from '../types/studio';
 import { recalculateFrames, generateId } from '../lib/composition';
 
+// --- Pipeline Media Item (immutable source from generation pipeline) ---
+export interface PipelineMediaItem {
+  segId: string;
+  segmentType: string;
+  src: string;
+  isVideo: boolean;
+  durationSec: number;
+  script: string;
+  emotion: string;
+  visualDirection: string;
+  layout: string;
+}
+
 // --- State Shape ---
 interface StudioState {
   project: SparkfluenceProject;
+  /** Original generated media from pipeline — never removed by timeline delete */
+  pipelineMedia: PipelineMediaItem[];
   selection: StudioSelection;
   playback: PlaybackState;
   zoom: number;
@@ -76,13 +91,36 @@ type StudioAction =
   | { type: 'MOVE_TEXT_LAYER'; segmentId: string; layerId: string; position: { x: number; y: number } }
   | { type: 'MOVE_ALL_TEXT_LAYERS'; sourceLayerId: string; position: { x: number; y: number } }
   | { type: 'RESTORE_PROJECT'; project: SparkfluenceProject } // for undo/redo
+  | { type: 'SET_PIPELINE_MEDIA'; media: PipelineMediaItem[] }
   | { type: 'MARK_CLEAN' };
 
 // --- Reducer ---
 function studioReducer(state: StudioState, action: StudioAction): StudioState {
   switch (action.type) {
-    case 'SET_PROJECT':
-      return { ...state, project: action.project, isDirty: false };
+    case 'SET_PROJECT': {
+      // Build pipeline media from project segments (immutable source for media panel)
+      // Only populate if pipelineMedia is empty (first load)
+      const media: PipelineMediaItem[] = state.pipelineMedia.length > 0
+        ? state.pipelineMedia
+        : action.project.segments.map(seg => {
+            const videoLayer = seg.layers.find(l => l.type === 'video');
+            const imageLayer = seg.layers.find(l => l.type === 'image');
+            const src = videoLayer?.src || imageLayer?.src || '';
+            return {
+              segId: seg.id,
+              segmentType: seg.segmentType,
+              src,
+              isVideo: !!videoLayer,
+              durationSec: seg.durationInFrames / (action.project.fps || 30),
+              script: seg.script || '',
+              emotion: seg.emotion || 'neutral',
+              visualDirection: seg.visualDirection || '',
+              layout: seg.layout || 'full',
+            };
+          }).filter(m => m.src !== '');
+
+      return { ...state, project: action.project, pipelineMedia: media, isDirty: false };
+    }
 
     case 'SELECT_SEGMENT':
       return { ...state, selection: { segmentId: action.segmentId, layerId: null } };
@@ -638,6 +676,9 @@ function studioReducer(state: StudioState, action: StudioAction): StudioState {
     case 'RESTORE_PROJECT':
       return { ...state, project: action.project, isDirty: true };
 
+    case 'SET_PIPELINE_MEDIA':
+      return { ...state, pipelineMedia: action.media };
+
     case 'MARK_CLEAN':
       return { ...state, isDirty: false };
 
@@ -666,6 +707,7 @@ function createEmptyProject(): SparkfluenceProject {
 
 const initialState: StudioState = {
   project: createEmptyProject(),
+  pipelineMedia: [],
   selection: { segmentId: null, layerId: null },
   playback: { isPlaying: false, currentFrame: 0 },
   zoom: 1,

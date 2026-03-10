@@ -7,7 +7,7 @@
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { useStudio } from '../../contexts/StudioContext';
-import { framesToSeconds, formatTimecode, generateId, createVideoLayer, createImageLayer, secondsToFrames } from '../../lib/composition';
+import { framesToSeconds, formatTimecode, generateId, createVideoLayer, createImageLayer, createTextLayer, secondsToFrames } from '../../lib/composition';
 import { generateVideoThumbnail } from '../../lib/videoThumbnail';
 import { STUDIO_FPS } from '../../types/studio';
 import type { SegmentComposition, OverlayTrack, OverlayClip } from '../../types/studio';
@@ -94,7 +94,7 @@ const TransitionPickerPortal: React.FC<{
   return ReactDOM.createPortal(
     <div
       className="fixed z-[200]"
-      style={{ left: pos.left, top: 0, transform: `translateY(${pos.top}px) translateY(-100%)` }}
+      style={{ left: pos.left, bottom: `${window.innerHeight - pos.top}px` }}
     >
       {children}
     </div>,
@@ -488,11 +488,13 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
 
   // Handle drop of media from left panel onto timeline
   const [isDropTarget, setIsDropTarget] = useState(false);
+  const [dropIndicatorIndex, setDropIndicatorIndex] = useState<number | null>(null);
 
   const handleTimelineDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDropTarget(false);
+      setDropIndicatorIndex(null);
 
       const mediaJson = e.dataTransfer.getData('application/x-studio-media');
       if (!mediaJson) return;
@@ -504,31 +506,84 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
           url: string;
           name: string;
           durationSec: number;
+          // Pipeline-specific fields (optional)
+          pipelineSegId?: string;
+          segmentType?: string;
+          script?: string;
+          emotion?: string;
+          visualDirection?: string;
+          layout?: string;
+          isOnTimeline?: boolean;
         };
 
+        // Calculate insert index from drop X position
+        const container = scrollContainerRef.current;
+        let insertIndex = project.segments.length; // default: append
+        if (container) {
+          const rect = container.getBoundingClientRect();
+          const dropX = e.clientX - rect.left + container.scrollLeft - HEADER_WIDTH;
+          const dropSeconds = dropX / pixelsPerSecond;
+
+          // Find which segment boundary the drop is closest to
+          let accSec = 0;
+          for (let i = 0; i < project.segments.length; i++) {
+            const segSec = project.segments[i].durationInFrames / STUDIO_FPS;
+            const midpoint = accSec + segSec / 2;
+            if (dropSeconds < midpoint) {
+              insertIndex = i;
+              break;
+            }
+            accSec += segSec;
+          }
+        }
+
+        const segId = media.pipelineSegId || media.id;
+
+        // If this segment is already on the timeline, MOVE it (reorder)
+        if (media.isOnTimeline && segId) {
+          const currentIndex = project.segments.findIndex(s => s.id === segId);
+          if (currentIndex !== -1) {
+            // Adjust insert index since we're removing first
+            const adjustedIndex = insertIndex > currentIndex ? insertIndex - 1 : insertIndex;
+            if (adjustedIndex === currentIndex) return; // dropped in same position — no-op
+            // Build new order: remove from current position, insert at new position
+            const ids = project.segments.map(s => s.id);
+            ids.splice(currentIndex, 1);
+            ids.splice(adjustedIndex, 0, segId);
+            dispatch({ type: 'REORDER_SEGMENTS', segmentIds: ids });
+            return;
+          }
+        }
+
+        // New segment — create and insert
         const durFrames = secondsToFrames(media.durationSec);
         const layers = media.type === 'video'
           ? [createVideoLayer(media.url, durFrames)]
           : [createImageLayer(media.url, durFrames)];
 
+        // Add text/subtitle layer if script exists
+        if (media.script) {
+          layers.push(createTextLayer(media.script, durFrames));
+        }
+
         const segment: SegmentComposition = {
-          id: generateId('seg_drop'),
-          segmentType: 'BODY',
+          id: segId || generateId('seg_drop'),
+          segmentType: (media.segmentType || 'BODY') as SegmentComposition['segmentType'],
           startFrame: 0,
           durationInFrames: durFrames,
-          layout: 'full',
+          layout: (media.layout || 'full') as any,
           layers,
-          script: '',
-          emotion: 'neutral',
-          visualDirection: '',
+          script: media.script || '',
+          emotion: media.emotion || 'neutral',
+          visualDirection: media.visualDirection || '',
         };
 
-        dispatch({ type: 'ADD_SEGMENT', segment });
+        dispatch({ type: 'INSERT_SEGMENT_AT', segment, insertIndex });
       } catch {
         // Invalid drag data — ignore
       }
     },
-    [dispatch]
+    [dispatch, pixelsPerSecond, project.segments]
   );
 
   const handleTimelineDragOver = useCallback((e: React.DragEvent) => {
@@ -536,11 +591,33 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       setIsDropTarget(true);
+
+      // Calculate drop indicator position
+      const container = scrollContainerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const dropX = e.clientX - rect.left + container.scrollLeft - HEADER_WIDTH;
+        const dropSeconds = dropX / pixelsPerSecond;
+
+        let idx = project.segments.length;
+        let accSec = 0;
+        for (let i = 0; i < project.segments.length; i++) {
+          const segSec = project.segments[i].durationInFrames / STUDIO_FPS;
+          const midpoint = accSec + segSec / 2;
+          if (dropSeconds < midpoint) {
+            idx = i;
+            break;
+          }
+          accSec += segSec;
+        }
+        setDropIndicatorIndex(idx);
+      }
     }
-  }, []);
+  }, [pixelsPerSecond, project.segments]);
 
   const handleTimelineDragLeave = useCallback(() => {
     setIsDropTarget(false);
+    setDropIndicatorIndex(null);
   }, []);
 
   // Handle trim — dispatch TRIM_SEGMENT for video clips
@@ -600,6 +677,12 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
           url: string;
           name: string;
           durationSec: number;
+          pipelineSegId?: string;
+          segmentType?: string;
+          script?: string;
+          emotion?: string;
+          visualDirection?: string;
+          layout?: string;
         };
 
         const durFrames = secondsToFrames(media.durationSec);
@@ -607,16 +690,21 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
           ? [createVideoLayer(media.url, durFrames)]
           : [createImageLayer(media.url, durFrames)];
 
+        // Add text/subtitle layer if script exists
+        if (media.script) {
+          layers.push(createTextLayer(media.script, durFrames));
+        }
+
         const segment: SegmentComposition = {
-          id: generateId('seg_insert'),
-          segmentType: 'BODY',
+          id: media.pipelineSegId || generateId('seg_insert'),
+          segmentType: (media.segmentType || 'BODY') as SegmentComposition['segmentType'],
           startFrame: 0,
           durationInFrames: durFrames,
-          layout: 'full',
+          layout: (media.layout || 'full') as any,
           layers,
-          script: '',
-          emotion: 'neutral',
-          visualDirection: '',
+          script: media.script || '',
+          emotion: media.emotion || 'neutral',
+          visualDirection: media.visualDirection || '',
         };
 
         dispatch({ type: 'INSERT_SEGMENT_AT', segment, insertIndex });
@@ -805,6 +893,24 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
 
                 {/* Video Track + Transition Diamonds */}
                 <div className="relative">
+                  {/* Drop position indicator */}
+                  {isDropTarget && dropIndicatorIndex !== null && (() => {
+                    // Calculate pixel position for the drop indicator
+                    let accFrames = 0;
+                    for (let i = 0; i < dropIndicatorIndex && i < project.segments.length; i++) {
+                      accFrames += project.segments[i].durationInFrames;
+                    }
+                    const indicatorPx = (accFrames / STUDIO_FPS) * pixelsPerSecond + HEADER_WIDTH;
+                    return (
+                      <div
+                        className="absolute top-0 bottom-0 z-30 pointer-events-none"
+                        style={{ left: indicatorPx - 1 }}
+                      >
+                        <div className="w-0.5 h-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                        <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2.5 h-2.5 bg-emerald-400 rounded-full" />
+                      </div>
+                    );
+                  })()}
                   <TimelineTrack
                     trackType="video"
                     label="Video"
@@ -919,30 +1025,34 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                   />
                 )}
 
-                {/* TTS Track */}
-                <TimelineTrack
-                  trackType="tts"
-                  label="TTS"
-                  icon={<MicIcon />}
-                  clips={ttsClips}
-                  pixelsPerSecond={pixelsPerSecond}
-                  onClipClick={handleClipClick}
-                  selectedClipId={null}
-                />
+                {/* TTS Track — only show when has clips */}
+                {ttsClips.length > 0 && (
+                  <TimelineTrack
+                    trackType="tts"
+                    label="TTS"
+                    icon={<MicIcon />}
+                    clips={ttsClips}
+                    pixelsPerSecond={pixelsPerSecond}
+                    onClipClick={handleClipClick}
+                    selectedClipId={null}
+                  />
+                )}
 
-                {/* BGM Track */}
-                <TimelineTrack
-                  trackType="bgm"
-                  label="BGM"
-                  icon={<MusicIcon />}
-                  clips={bgmClips}
-                  pixelsPerSecond={pixelsPerSecond}
-                  onClipClick={handleClipClick}
-                  selectedClipId={null}
-                />
+                {/* BGM Track — only show when has clips */}
+                {bgmClips.length > 0 && (
+                  <TimelineTrack
+                    trackType="bgm"
+                    label="BGM"
+                    icon={<MusicIcon />}
+                    clips={bgmClips}
+                    pixelsPerSecond={pixelsPerSecond}
+                    onClipClick={handleClipClick}
+                    selectedClipId={null}
+                  />
+                )}
 
-                {/* Overlay Tracks (Video 2, Text 2, etc.) */}
-                {overlayTrackClips.map(({ track, clips: oClips }) => (
+                {/* Overlay Tracks (Video 2, Text 2, etc.) — only show when has clips */}
+                {overlayTrackClips.filter(({ clips: oClips }) => oClips.length > 0).map(({ track, clips: oClips }) => (
                   <div
                     key={track.id}
                     onDragOver={(e) => {
@@ -968,7 +1078,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                   </div>
                 ))}
 
-                {/* Add Track row */}
+                {/* Drop zone for creating overlay tracks via drag */}
                 <div
                   className="flex"
                   style={{ height: 32 }}
@@ -981,17 +1091,9 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                   onDrop={handleEmptyAreaDrop}
                 >
                   <div
-                    className="flex-shrink-0 flex items-center justify-center border-r border-b border-[#262626] bg-[#161616]"
+                    className="flex-shrink-0 border-r border-b border-[#262626] bg-[#161616]"
                     style={{ width: HEADER_WIDTH }}
-                  >
-                    <button
-                      onClick={() => handleAddOverlayTrack('video')}
-                      className="p-1 text-neutral-600 hover:text-emerald-400 transition-colors"
-                      title="Add overlay track"
-                    >
-                      <PlusIcon />
-                    </button>
-                  </div>
+                  />
                   <div className="flex-1 border-b border-[#1E1E1E] bg-[#1A1A1A] flex items-center justify-center">
                     <span className="text-[10px] text-neutral-600">Drop media here to create new track</span>
                   </div>

@@ -176,8 +176,7 @@ export const TransitionPicker: React.FC<TransitionPickerProps> = ({
   return (
     <div
       ref={panelRef}
-      className="absolute z-50 bg-[#1E1E1E] border border-[#262626] rounded-xl shadow-2xl p-4 w-[300px]"
-      style={{ top: '100%', left: '50%', transform: 'translateX(-50%) translateY(8px)' }}
+      className="bg-[#1E1E1E] border border-[#262626] rounded-xl shadow-2xl p-4 w-[300px]"
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
