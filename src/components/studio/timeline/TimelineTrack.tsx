@@ -131,8 +131,8 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
           index: i,
           fromClipId: clip.id,
           toClipId: nextClip.id,
-          leftPx: centerPx - 20,
-          widthPx: 40,
+          leftPx: centerPx - 40,
+          widthPx: 80,
         };
       })
     : [];

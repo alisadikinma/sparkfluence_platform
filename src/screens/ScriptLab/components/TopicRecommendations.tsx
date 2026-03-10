@@ -38,10 +38,9 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
   const { user } = useAuth();
   const { data: onboardingData, loading: onboardingLoading } = useOnboardingStatus();
 
-  // Script/content language derived from user's country (consistent with LLM call)
-  const scriptLanguage = onboardingData?.country
-    ? getScriptLanguageFromCountry(onboardingData.country)
-    : language;
+  // Script/content language: prefer user-selected scriptLang prop, fallback to country-derived
+  const scriptLanguage = scriptLang
+    || (onboardingData?.country ? getScriptLanguageFromCountry(onboardingData.country) : language);
 
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
@@ -242,7 +241,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     };
 
     try {
-      const langCode = language === 'id' ? 'id' : language === 'hi' ? 'hi' : 'en';
+      const langCode = scriptLanguage === 'id' ? 'id' : scriptLanguage === 'hi' ? 'hi' : scriptLanguage === 'fr' ? 'fr' : 'en';
       const { data, error } = await supabase.functions.invoke('autocomplete-keywords', {
         body: { query: query.trim(), lang: langCode }
       });
@@ -305,8 +304,10 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     return `${interest}:${niches}:${dna}`;
   };
 
-  const isCacheValid = (timestamp: number, cachedNichesHash?: string, cachedKeyword?: string | null) => {
+  const isCacheValid = (timestamp: number, cachedNichesHash?: string, cachedKeyword?: string | null, cachedScriptLang?: string) => {
     if (Date.now() - timestamp >= TOPICS_CACHE_EXPIRY) return false;
+    // Script language must match (content language changed = cache invalid)
+    if (cachedScriptLang && cachedScriptLang !== scriptLanguage) return false;
     // Keyword cache: keyword must match current active keyword
     if (activeKeyword || cachedKeyword) {
       return cachedKeyword === activeKeyword;
@@ -321,6 +322,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
         topics,
         timestamp: Date.now(),
         language: language,
+        scriptLang: scriptLanguage,
         nichesHash: getNichesHash(),
         batch,
         keyword: keyword || null,
@@ -342,7 +344,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
     if (!forceRefresh) {
       const cached = getCachedTopics();
       if (cached && cached.topics && cached.topics.length > 0 &&
-          isCacheValid(cached.timestamp, cached.nichesHash, cached.keyword)) {
+          isCacheValid(cached.timestamp, cached.nichesHash, cached.keyword, cached.scriptLang)) {
         setTopics(cached.topics);
         if (cached.batch) setCurrentBatch(cached.batch);
         if (cached.keyword) {
@@ -356,7 +358,7 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
 
     // Generate new topics
     await generateTopics();
-  }, [user, onboardingData, language]);
+  }, [user, onboardingData, language, scriptLang]);
 
   const generateTopics = async (batch: number = 1, existingTopics: Topic[] = [], keyword?: string) => {
     // Keyword mode doesn't require onboarding data
@@ -395,8 +397,8 @@ export const TopicRecommendations: React.FC<TopicRecommendationsProps> = ({
           objectives: onboardingData?.objectives,
           dnaStyles: onboardingData?.creative_dna,
           language: (() => {
-            const sl = getScriptLanguageFromCountry(onboardingData?.country);
-            return sl === "id" ? "indonesian" : sl === "hi" ? "hindi" : "english";
+            const sl = scriptLang || getScriptLanguageFromCountry(onboardingData?.country);
+            return sl === "id" ? "indonesian" : sl === "hi" ? "hindi" : sl === "fr" ? "french" : "english";
           })(),
           count: batch === 1 ? INITIAL_COUNT : LOAD_MORE_COUNT,
           country: savedCountry,

@@ -54,24 +54,55 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
     ) ?? null;
   }, [project.segments, currentFrame]);
 
-  // Collect all visible text layers in the current segment
+  // Collect all visible text layers: segment layers + overlay text clips
   const visibleTextLayers = useMemo(() => {
-    if (!currentSegment) return [];
-    const relativeFrame = currentFrame - currentSegment.startFrame;
+    const result: { segmentId: string; layer: LayerItem }[] = [];
 
-    return currentSegment.layers
-      .filter(layer =>
-        layer.type === 'text' &&
-        layer.visible &&
-        layer.text?.content &&
-        relativeFrame >= layer.inFrame &&
-        relativeFrame < layer.outFrame
-      )
-      .map(layer => ({
-        segmentId: currentSegment.id,
-        layer,
-      }));
-  }, [currentSegment, currentFrame]);
+    // 1. Segment text layers
+    if (currentSegment) {
+      const relativeFrame = currentFrame - currentSegment.startFrame;
+      for (const layer of currentSegment.layers) {
+        if (
+          layer.type === 'text' &&
+          layer.visible &&
+          layer.text?.content &&
+          relativeFrame >= layer.inFrame &&
+          relativeFrame < layer.outFrame
+        ) {
+          result.push({ segmentId: currentSegment.id, layer });
+        }
+      }
+    }
+
+    // 2. Overlay text clips (cross-segment, absolute frames)
+    for (const track of (project.overlayTracks || [])) {
+      for (const clip of track.clips) {
+        if (clip.type !== 'text' || !clip.text?.content) continue;
+        const clipEnd = clip.startFrame + clip.durationInFrames;
+        if (currentFrame >= clip.startFrame && currentFrame < clipEnd) {
+          // Adapt overlay clip to LayerItem-like shape for rendering
+          const overlayAsLayer: LayerItem = {
+            id: clip.id,
+            type: 'text',
+            src: '',
+            position: clip.position || { x: STUDIO_WIDTH * 0.1, y: STUDIO_HEIGHT * 0.5 },
+            size: clip.size || { w: STUDIO_WIDTH * 0.8, h: 120 },
+            zIndex: clip.zIndex || 10,
+            opacity: clip.opacity ?? 1,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            inFrame: 0,
+            outFrame: clip.durationInFrames,
+            text: clip.text,
+          };
+          result.push({ segmentId: track.id, layer: overlayAsLayer });
+        }
+      }
+    }
+
+    return result;
+  }, [currentSegment, currentFrame, project.overlayTracks]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent, segmentId: string, layer: LayerItem) => {
     e.preventDefault();

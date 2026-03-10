@@ -14,6 +14,8 @@ import { TimelineRuler } from './timeline/TimelineRuler';
 import { TimelineTrack } from './timeline/TimelineTrack';
 import { Playhead } from './timeline/Playhead';
 import { TransitionDiamond } from './timeline/TransitionDiamond';
+import { TransitionPicker } from './panels/TransitionPicker';
+import type { TransitionType } from '../../types/studio';
 import type { TimelineClipData } from './timeline/types';
 
 // Re-export shared type for external consumers
@@ -78,6 +80,13 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [thumbnailMap, setThumbnailMap] = useState<Map<string, string>>(new Map());
+
+  // Transition picker popover state: which diamond pair is open
+  const [activeTransitionPicker, setActiveTransitionPicker] = useState<{
+    fromId: string;
+    toId: string;
+    positionX: number;
+  } | null>(null);
 
   // Generate thumbnails for video segments (async, updates state when ready)
   useEffect(() => {
@@ -225,6 +234,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
 
   // Build packed text track rows — only create new rows when clips overlap in time
   const packedTextTracks: TimelineClipData[][] = useMemo(() => {
+    const totalFrames = project.totalDurationInFrames || 1;
     // Collect all text clips
     const allTextClips: TimelineClipData[] = [];
     for (const seg of project.segments) {
@@ -237,7 +247,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
             : layer.text.content,
           startFrame: seg.startFrame + layer.inFrame,
           durationInFrames: layer.outFrame - layer.inFrame,
-          maxDurationInFrames: seg.durationInFrames,
+          maxDurationInFrames: totalFrames, // Allow extending across segments
           color: 'rgba(16, 185, 129, 0.25)',
           segmentType: seg.segmentType,
         });
@@ -303,6 +313,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
   const overlayTracks = project.overlayTracks || [];
 
   const overlayTrackClips = useMemo(() => {
+    const totalFrames = project.totalDurationInFrames || 1;
     return overlayTracks.map(track => ({
       track,
       clips: track.clips.map((clip): TimelineClipData => ({
@@ -310,13 +321,14 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
         label: clip.type === 'text' ? (clip.text?.content?.slice(0, 25) || 'Text') : clip.src.split('/').pop()?.slice(0, 20) || clip.type,
         startFrame: clip.startFrame,
         durationInFrames: clip.durationInFrames,
+        maxDurationInFrames: totalFrames, // Allow extending to full project length
         color: track.trackType === 'video' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(16, 185, 129, 0.25)',
         segmentType: undefined,
         mediaSrc: clip.type !== 'text' ? clip.src : undefined,
         isVideo: clip.type === 'video',
       })),
     }));
-  }, [overlayTracks]);
+  }, [overlayTracks, project.totalDurationInFrames]);
 
   // Handle adding a new overlay track
   const handleAddOverlayTrack = useCallback(
@@ -370,9 +382,58 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
   // Handle overlay clip click
   const handleOverlayClipClick = useCallback(
     (clipId: string) => {
-      // For now, just log — future: select overlay clip for properties
+      // Select the overlay clip (find which track it belongs to)
+      for (const track of (project.overlayTracks || [])) {
+        const clip = track.clips.find(c => c.id === clipId);
+        if (clip) {
+          dispatch({ type: 'SELECT_LAYER', segmentId: track.id, layerId: clipId });
+          return;
+        }
+      }
     },
-    []
+    [project.overlayTracks, dispatch]
+  );
+
+  // Handle overlay clip trim — adjusts startFrame/durationInFrames
+  const handleOverlayTrim = useCallback(
+    (clipId: string, trimStartFrames: number, trimEndFrames: number) => {
+      for (const track of (project.overlayTracks || [])) {
+        const clip = track.clips.find(c => c.id === clipId);
+        if (clip) {
+          const newStartFrame = Math.max(0, clip.startFrame + trimStartFrames);
+          const newDuration = clip.durationInFrames - trimStartFrames - trimEndFrames;
+          if (newDuration > 0) {
+            dispatch({
+              type: 'UPDATE_OVERLAY_CLIP',
+              trackId: track.id,
+              clipId,
+              changes: { startFrame: newStartFrame, durationInFrames: newDuration },
+            });
+          }
+          return;
+        }
+      }
+    },
+    [project.overlayTracks, dispatch]
+  );
+
+  // Handle overlay clip move — repositions on timeline
+  const handleOverlayMove = useCallback(
+    (clipId: string, newAbsoluteStartFrame: number) => {
+      for (const track of (project.overlayTracks || [])) {
+        const clip = track.clips.find(c => c.id === clipId);
+        if (clip) {
+          dispatch({
+            type: 'MOVE_OVERLAY_CLIP',
+            trackId: track.id,
+            clipId,
+            startFrame: Math.max(0, newAbsoluteStartFrame),
+          });
+          return;
+        }
+      }
+    },
+    [project.overlayTracks, dispatch]
   );
 
   // Handle drop on empty area below tracks (auto-create overlay track)
@@ -534,13 +595,14 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
   );
 
   // Handle text layer trim — adjusts inFrame/outFrame of text layer
+  // Allows extending beyond segment boundary (outFrame > durationInFrames)
   const handleTextTrim = useCallback(
     (clipId: string, trimStartFrames: number, trimEndFrames: number) => {
       // Find which segment contains this text layer
       for (const seg of project.segments) {
         const textLayer = seg.layers.find(l => l.id === clipId && l.type === 'text');
         if (textLayer) {
-          const newInFrame = textLayer.inFrame + trimStartFrames;
+          const newInFrame = Math.max(0, textLayer.inFrame + trimStartFrames);
           const newOutFrame = textLayer.outFrame - trimEndFrames;
           if (newOutFrame > newInFrame) {
             dispatch({
@@ -728,23 +790,60 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                       t => t.betweenSegments[0] === clip.id && t.betweenSegments[1] === nextClip.id
                     ) ?? null;
 
+                    const isPickerOpen = activeTransitionPicker?.fromId === clip.id && activeTransitionPicker?.toId === nextClip.id;
+
                     return (
-                      <TransitionDiamond
-                        key={`td-${clip.id}-${nextClip.id}`}
-                        transition={transition}
-                        fromSegmentId={clip.id}
-                        toSegmentId={nextClip.id}
-                        pixelsPerSecond={pixelsPerSecond}
-                        positionX={centerPx}
-                        onClick={() => {
-                          if (!transition) {
-                            handleTransitionDrop(clip.id, nextClip.id, 'fade');
-                          }
-                        }}
-                        onDelete={transition ? () => {
-                          dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
-                        } : undefined}
-                      />
+                      <React.Fragment key={`td-${clip.id}-${nextClip.id}`}>
+                        <TransitionDiamond
+                          transition={transition}
+                          fromSegmentId={clip.id}
+                          toSegmentId={nextClip.id}
+                          pixelsPerSecond={pixelsPerSecond}
+                          positionX={centerPx}
+                          onClick={() => {
+                            if (!transition) {
+                              // Create default fade first, then open picker
+                              handleTransitionDrop(clip.id, nextClip.id, 'fade');
+                            }
+                            // Toggle picker popover
+                            if (isPickerOpen) {
+                              setActiveTransitionPicker(null);
+                            } else {
+                              setActiveTransitionPicker({ fromId: clip.id, toId: nextClip.id, positionX: centerPx });
+                            }
+                          }}
+                          onDelete={transition ? () => {
+                            dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
+                            setActiveTransitionPicker(null);
+                          } : undefined}
+                        />
+                        {/* Transition Picker Popover — anchored above the diamond */}
+                        {isPickerOpen && (
+                          <div
+                            className="absolute z-50"
+                            style={{ left: centerPx - 150, bottom: '100%', marginBottom: 8 }}
+                          >
+                            <TransitionPicker
+                              fromSegmentId={clip.id}
+                              toSegmentId={nextClip.id}
+                              currentTransition={transition}
+                              onSelect={(type: TransitionType, durationFrames: number) => {
+                                if (transition) {
+                                  dispatch({ type: 'UPDATE_TRANSITION', transitionId: transition.id, changes: { type, durationInFrames: durationFrames } });
+                                } else {
+                                  handleTransitionDrop(clip.id, nextClip.id, type);
+                                }
+                              }}
+                              onRemove={() => {
+                                if (transition) {
+                                  dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
+                                }
+                              }}
+                              onClose={() => setActiveTransitionPicker(null)}
+                            />
+                          </div>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </div>
@@ -820,7 +919,10 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                       clips={oClips}
                       pixelsPerSecond={pixelsPerSecond}
                       onClipClick={handleOverlayClipClick}
-                      selectedClipId={null}
+                      selectedClipId={selection.layerId}
+                      onTrim={handleOverlayTrim}
+                      onMove={handleOverlayMove}
+                      activeTool={activeTool}
                     />
                   </div>
                 ))}

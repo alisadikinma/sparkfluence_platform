@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
-  Play, Loader2, Video, RefreshCw, AlertTriangle,
+  Play, Loader2, Video, RefreshCw, AlertTriangle, AlertCircle,
   CheckCircle2, LayoutList, List, LayoutGrid, Columns2,
-  Clapperboard, ChevronDown, Sparkles, Download,
+  Clapperboard, ChevronDown, Sparkles, Download, RotateCcw,
 } from 'lucide-react';
 import { useWorkspace, type WorkspaceSegment } from '../../../contexts/WorkspaceContext';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -108,10 +108,11 @@ const FullCard: React.FC<{
   const isDone = !!seg.videoUrl;
   const isGen = seg.isGeneratingVideo;
   const hasImage = !!seg.imageUrl;
+  const hasFailed = !!seg.videoError && !isDone;
 
   return (
     <div className={`bg-[#161616] border rounded-xl overflow-hidden transition-colors ${
-      isDone ? 'border-emerald-500/20' : isGen ? 'border-emerald-500/30' : 'border-[#262626]'
+      hasFailed ? 'border-red-500/30' : isDone ? 'border-emerald-500/20' : isGen ? 'border-emerald-500/30' : 'border-[#262626]'
     }`}>
       <div className={`flex gap-4 p-4 ${twoCol ? 'flex-col' : 'flex-col sm:flex-row'}`}>
         {/* Thumbnail */}
@@ -132,6 +133,16 @@ const FullCard: React.FC<{
 
           <p className="text-sm text-[#FAFAF9] line-clamp-3">{seg.script || '—'}</p>
 
+          {/* Error message */}
+          {hasFailed && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-400 line-clamp-2">{seg.videoError}</p>
+              </div>
+            </div>
+          )}
+
           {/* Status row */}
           <div className="flex items-center gap-2 mt-auto pt-1 flex-wrap">
             {isDone && (
@@ -144,19 +155,28 @@ const FullCard: React.FC<{
                 <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating...
               </span>
             )}
-            {!hasImage && !isGen && (
+            {hasFailed && (
+              <span className="flex items-center gap-1.5 text-xs text-red-400 font-medium">
+                <AlertCircle className="w-3.5 h-3.5" /> Failed
+              </span>
+            )}
+            {!hasImage && !isGen && !hasFailed && (
               <span className="text-xs text-[#57534E]">Generate gambar dulu di step Images</span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
-              {isDone && (
+              {(isDone || hasFailed) && (
                 <button
                   onClick={() => onGenerate(seg.id)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#262626] bg-[#1E1E1E] hover:bg-[#262626] text-neutral-400 text-xs font-medium transition-colors"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    hasFailed
+                      ? 'bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 text-red-400'
+                      : 'border border-[#262626] bg-[#1E1E1E] hover:bg-[#262626] text-neutral-400'
+                  }`}
                 >
-                  <RefreshCw className="w-3 h-3" /> Regenerate
+                  <RotateCcw className="w-3 h-3" /> Retry
                 </button>
               )}
-              {!isDone && !isGen && hasImage && (
+              {!isDone && !isGen && !hasFailed && hasImage && (
                 <button
                   onClick={() => onGenerate(seg.id)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium transition-colors"
@@ -181,48 +201,68 @@ const CompactRow: React.FC<{
 }> = ({ seg, index, onGenerate }) => {
   const isDone = !!seg.videoUrl;
   const isGen = seg.isGeneratingVideo;
+  const hasFailed = !!seg.videoError && !isDone;
   const [showPreview, setShowPreview] = useState(false);
 
   return (
     <>
-      <div className={`flex items-center gap-3 bg-[#161616] border rounded-xl px-4 py-2.5 transition-colors ${
-        isDone ? 'border-emerald-500/20' : isGen ? 'border-emerald-500/30' : 'border-[#262626] hover:border-neutral-600'
+      <div className={`bg-[#161616] border rounded-xl px-4 py-2.5 transition-colors ${
+        hasFailed ? 'border-red-500/30' : isDone ? 'border-emerald-500/20' : isGen ? 'border-emerald-500/30' : 'border-[#262626] hover:border-neutral-600'
       }`}>
-        <SegmentThumbnail seg={seg} className="w-9 h-[64px] rounded-lg flex-shrink-0" onPlay={() => setShowPreview(true)} />
+        <div className="flex items-center gap-3">
+          <SegmentThumbnail seg={seg} className="w-9 h-[64px] rounded-lg flex-shrink-0" onPlay={() => setShowPreview(true)} />
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-xs text-[#A8A29E]">{index + 1}</span>
-            <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
-              {seg.segmentType}
-            </span>
-            <span className="text-xs text-[#57534E]">{seg.durationSeconds}s</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-xs text-[#A8A29E]">{index + 1}</span>
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${segmentTypeColor(seg.segmentType)}`}>
+                {seg.segmentType}
+              </span>
+              <span className="text-xs text-[#57534E]">{seg.durationSeconds}s</span>
+            </div>
+            <p className="text-sm text-[#FAFAF9] truncate">{seg.script || '—'}</p>
           </div>
-          <p className="text-sm text-[#FAFAF9] truncate">{seg.script || '—'}</p>
+
+          <div className="flex-shrink-0 flex items-center gap-2">
+            {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+            {isGen && <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />}
+            {hasFailed && <AlertCircle className="w-4 h-4 text-red-400" />}
+            {isDone && seg.videoUrl && (
+              <a href={seg.videoUrl} download className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors" title="Download">
+                <Download className="w-3.5 h-3.5" />
+              </a>
+            )}
+            {isDone && (
+              <button onClick={() => onGenerate(seg.id)} className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors" title="Regenerate">
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {hasFailed && (
+              <button
+                onClick={() => onGenerate(seg.id)}
+                className="px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 text-red-400 text-xs font-medium transition-colors flex items-center gap-1.5"
+                title="Retry"
+              >
+                <RotateCcw className="w-3 h-3" /> Retry
+              </button>
+            )}
+            {!isDone && !isGen && !hasFailed && seg.imageUrl && (
+              <button onClick={() => onGenerate(seg.id)} className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-medium transition-colors flex items-center gap-1.5">
+                <Video className="w-3 h-3" /> Generate
+              </button>
+            )}
+            {!isDone && !isGen && !hasFailed && !seg.imageUrl && (
+              <span className="text-xs text-[#57534E]">No image</span>
+            )}
+          </div>
         </div>
 
-        <div className="flex-shrink-0 flex items-center gap-2">
-          {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-          {isGen && <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />}
-          {isDone && seg.videoUrl && (
-            <a href={seg.videoUrl} download className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors" title="Download">
-              <Download className="w-3.5 h-3.5" />
-            </a>
-          )}
-          {isDone && (
-            <button onClick={() => onGenerate(seg.id)} className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors" title="Regenerate">
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {!isDone && !isGen && seg.imageUrl && (
-            <button onClick={() => onGenerate(seg.id)} className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-medium transition-colors flex items-center gap-1.5">
-              <Video className="w-3 h-3" /> Generate
-            </button>
-          )}
-          {!isDone && !isGen && !seg.imageUrl && (
-            <span className="text-xs text-[#57534E]">No image</span>
-          )}
-        </div>
+        {/* Error message inline */}
+        {hasFailed && (
+          <div className="mt-2 ml-12 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-1.5">
+            <p className="text-xs text-red-400 line-clamp-2">{seg.videoError}</p>
+          </div>
+        )}
       </div>
       {showPreview && seg.videoUrl && <VideoPreviewModal videoUrl={seg.videoUrl} onClose={() => setShowPreview(false)} />}
     </>
@@ -238,10 +278,11 @@ const GridCard: React.FC<{
 }> = ({ seg, index, onGenerate }) => {
   const isDone = !!seg.videoUrl;
   const isGen = seg.isGeneratingVideo;
+  const hasFailed = !!seg.videoError && !isDone;
 
   return (
     <div className={`bg-[#161616] rounded-xl border overflow-hidden group transition-colors ${
-      isDone ? 'border-emerald-500/30' : isGen ? 'border-emerald-500/40' : 'border-[#262626] hover:border-neutral-600'
+      hasFailed ? 'border-red-500/30' : isDone ? 'border-emerald-500/30' : isGen ? 'border-emerald-500/40' : 'border-[#262626] hover:border-neutral-600'
     }`}>
       <div className="relative w-full" style={{ paddingBottom: '177.78%' }}>
         <div className="absolute inset-0 flex flex-col">
@@ -259,13 +300,27 @@ const GridCard: React.FC<{
           <SegmentThumbnail seg={seg} className="flex-1" />
 
           {/* Hover overlay: generate */}
-          {!isDone && !isGen && seg.imageUrl && (
+          {!isDone && !isGen && !hasFailed && seg.imageUrl && (
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 z-20">
               <button
                 onClick={() => onGenerate(seg.id)}
                 className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-medium flex items-center gap-2"
               >
                 <Video className="w-4 h-4" /> Generate
+              </button>
+            </div>
+          )}
+
+          {/* Failed overlay */}
+          {hasFailed && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 z-20 p-3">
+              <AlertCircle className="w-6 h-6 text-red-400 mb-2" />
+              <p className="text-xs text-red-400 text-center line-clamp-3 mb-3">{seg.videoError}</p>
+              <button
+                onClick={() => onGenerate(seg.id)}
+                className="px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/30 hover:bg-red-500/30 text-red-400 text-sm font-medium flex items-center gap-2"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Retry
               </button>
             </div>
           )}
@@ -277,7 +332,7 @@ const GridCard: React.FC<{
             </div>
           )}
 
-          {!isDone && !isGen && !seg.imageUrl && (
+          {!isDone && !isGen && !hasFailed && !seg.imageUrl && (
             <div className="absolute bottom-3 inset-x-0 flex justify-center z-10">
               <span className="text-xs text-[#57534E]">No image</span>
             </div>
@@ -322,6 +377,7 @@ const VideoStep: React.FC = () => {
 
   const enabledSegments = useMemo(() => segments.filter(s => s.isEnabled !== false), [segments]);
   const videosGenerated = useMemo(() => enabledSegments.filter(s => s.videoUrl).length, [enabledSegments]);
+  const videosFailed = useMemo(() => enabledSegments.filter(s => s.videoError && !s.videoUrl).length, [enabledSegments]);
   const totalDuration = useMemo(() => segments.reduce((sum, s) => sum + s.durationSeconds, 0), [segments]);
   const allHaveVideos = videosGenerated === enabledSegments.length && enabledSegments.length > 0;
   const canGenerateVideo = enabledSegments.length > 0 && enabledSegments.every(s => s.imageUrl);
@@ -734,6 +790,9 @@ const VideoStep: React.FC = () => {
                 Durasi: {totalDuration}s
                 {settings && ` • ${settings.aspectRatio}`}
                 {` • ${videosGenerated}/${enabledSegments.length} videos`}
+                {videosFailed > 0 && (
+                  <span className="text-red-400"> • {videosFailed} failed</span>
+                )}
               </p>
 
               {/* View mode toggle */}

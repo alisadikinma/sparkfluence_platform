@@ -1086,6 +1086,7 @@ gaspol-brainstorm → gaspol-plan → gaspol-execute
 **Key rules:**
 - **NEVER use `EnterPlanMode`** — gaspol skills cover brainstorm → plan → execute → verify → finish
 - `gaspol-brainstorm` includes design intelligence — auto-triggers `gaspol-design` for UI work
+- **🔒 MANDATORY CONFIRMATION GATE:** After brainstorming, ALWAYS present the proposed design and flow to the user and ask for explicit confirmation BEFORE proceeding to `gaspol-plan` or `gaspol-execute`. NEVER skip this step — even if the design seems obvious. Show: (1) UI layout/component structure, (2) data flow, (3) user interaction flow, then ask "Setuju dengan design dan flow ini? Ada yang mau diubah?"
 - `gaspol-execute` enforces Anti-Placeholder Iron Law + per-phase checkpoints
 - `gaspol-verify` is MANDATORY before claiming any work complete
 - `gaspol-sync-docs` is MANDATORY after implementation to keep CLAUDE.md in sync

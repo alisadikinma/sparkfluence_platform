@@ -3,16 +3,21 @@
 // ============================================================================
 
 import React, { useState, useCallback } from 'react';
-import { X, Download, Send, Calendar, Check, Clock, Loader2 } from 'lucide-react';
+import { X, Download, Calendar, Check, Loader2, AlertCircle } from 'lucide-react';
 import { PlatformIcon } from '../../ui/platform-icons';
 import { supabase } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
+
+export type ExportStatus = 'idle' | 'combining' | 'polling' | 'downloading' | 'done' | 'error';
 
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onExportMP4: () => void;
-  isSaving: boolean;
+  exportStatus: ExportStatus;
+  exportProgress: number;
+  exportStep: string;
+  exportError: string | null;
   /** Video title for planner scheduling */
   videoTitle?: string;
   /** Thumbnail URL for planner entry */
@@ -31,14 +36,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
   onExportMP4,
-  isSaving,
+  exportStatus,
+  exportProgress,
+  exportStep,
+  exportError,
   videoTitle,
   thumbnailUrl,
   orderId,
 }) => {
   const { user } = useAuth();
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
-  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleDate, setScheduleDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [scheduleTime, setScheduleTime] = useState('12:00');
   const [isScheduling, setIsScheduling] = useState(false);
   const [scheduleSuccess, setScheduleSuccess] = useState(false);
@@ -89,17 +97,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Default date to tomorrow
-  const minDate = new Date();
-  minDate.setDate(minDate.getDate() + 1);
-  const minDateStr = minDate.toISOString().split('T')[0];
+  const isExporting = exportStatus === 'combining' || exportStatus === 'polling' || exportStatus === 'downloading';
+  const minDateStr = new Date().toISOString().split('T')[0];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
+        onClick={isExporting ? undefined : onClose}
       />
 
       {/* Modal */}
@@ -107,12 +113,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#333]">
           <h2 className="text-base font-semibold text-white">Export Video</h2>
-          <button
-            onClick={onClose}
-            className="p-1 text-neutral-400 hover:text-white transition-colors rounded-lg hover:bg-neutral-800"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {!isExporting && (
+            <button
+              onClick={onClose}
+              className="p-1 text-neutral-400 hover:text-white transition-colors rounded-lg hover:bg-neutral-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Body */}
@@ -131,11 +139,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   <button
                     key={p.id}
                     onClick={() => togglePlatform(p.id)}
+                    disabled={isExporting}
                     className={`flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border transition-all ${
                       isSelected
                         ? 'border-emerald-500/50 bg-emerald-500/10'
                         : 'border-neutral-700 bg-neutral-800 hover:border-neutral-600'
-                    }`}
+                    } ${isExporting ? 'opacity-50 pointer-events-none' : ''}`}
                   >
                     <div className="relative">
                       <PlatformIcon platform={p.platform} size="md" />
@@ -183,7 +192,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 {/* Schedule Button */}
                 <button
                   onClick={handleSchedule}
-                  disabled={!scheduleDate || isScheduling || scheduleSuccess}
+                  disabled={!scheduleDate || isScheduling || scheduleSuccess || isExporting}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-emerald-500/20"
                 >
                   {scheduleSuccess ? (
@@ -210,25 +219,63 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           {/* Divider */}
           <div className="border-t border-neutral-800" />
 
-          {/* Download Section (SECONDARY) */}
+          {/* Download Section */}
           <div>
             <h3 className="text-xs text-neutral-400 uppercase tracking-wider font-medium mb-3">
               Download
             </h3>
+
+            {/* Export progress */}
+            {isExporting && (
+              <div className="mb-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
+                  <span className="text-xs text-emerald-400 font-medium">{exportStep}</span>
+                </div>
+                <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                    style={{ width: `${exportProgress}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-neutral-500 text-right">{exportProgress}%</p>
+              </div>
+            )}
+
+            {/* Export done */}
+            {exportStatus === 'done' && (
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs text-emerald-400 font-medium">Download started!</span>
+              </div>
+            )}
+
+            {/* Export error */}
+            {exportStatus === 'error' && exportError && (
+              <div className="mb-3 flex items-start gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <span className="text-xs text-red-400">{exportError}</span>
+              </div>
+            )}
+
             <button
               onClick={onExportMP4}
-              disabled={isSaving}
-              className="w-full flex items-center gap-3 px-4 py-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 rounded-xl border border-neutral-700 transition-colors group"
+              disabled={isExporting}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors group ${
+                isExporting
+                  ? 'bg-neutral-800/50 border-neutral-700/50 opacity-50 cursor-not-allowed'
+                  : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700'
+              }`}
             >
               <div className="w-10 h-10 rounded-lg bg-neutral-700/50 flex items-center justify-center flex-shrink-0">
                 <Download className="w-5 h-5 text-neutral-400 group-hover:text-neutral-200" />
               </div>
               <div className="text-left">
                 <p className="text-sm font-medium text-neutral-300 group-hover:text-white transition-colors">
-                  {isSaving ? 'Preparing...' : 'Export as MP4'}
+                  Export as MP4
                 </p>
                 <p className="text-[11px] text-neutral-500">
-                  Download 9:16 video file to your device
+                  Combine segments and download 9:16 video
                 </p>
               </div>
             </button>
@@ -239,7 +286,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         <div className="flex items-center px-5 py-4 border-t border-[#333] bg-[#1A1A1A]">
           <button
             onClick={onClose}
-            className="w-full px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl text-sm font-medium transition-colors border border-neutral-700"
+            disabled={isExporting}
+            className="w-full px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-300 rounded-xl text-sm font-medium transition-colors border border-neutral-700"
           >
             Close
           </button>

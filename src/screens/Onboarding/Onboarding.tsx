@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -7,8 +7,8 @@ import { useOnboarding } from "../../contexts/OnboardingContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
-import { Loader2, Camera, User, ArrowRight, ArrowLeft, Check } from "lucide-react";
-import { clearAvatarCache } from "../../lib/avatarCache";
+import { Loader2, ArrowRight, ArrowLeft } from "lucide-react";
+
 
 interface LookupItem {
   id: string;
@@ -29,11 +29,6 @@ export const Onboarding = (): JSX.Element => {
   
   // Profile step state
   const [displayName, setDisplayName] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
-  const [avatarPreview, setAvatarPreview] = useState("");
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Options from database
   const [interests, setInterests] = useState<LookupItem[]>([]);
@@ -58,10 +53,6 @@ export const Onboarding = (): JSX.Element => {
     displayNameLabel: language === 'id' ? 'Nama Tampilan' : 'Display Name',
     displayNamePlaceholder: language === 'id' ? 'Nama yang akan ditampilkan...' : 'Name to be displayed...',
     displayNameHint: language === 'id' ? 'Ini akan digunakan untuk sapaan di dashboard' : 'This will be used for greetings on dashboard',
-    photoLabel: language === 'id' ? 'Foto Profil' : 'Profile Photo',
-    photoHint: language === 'id' ? 'Opsional - bisa diubah nanti di Settings' : 'Optional - can be changed later in Settings',
-    uploadPhoto: language === 'id' ? 'Upload Foto' : 'Upload Photo',
-    changePhoto: language === 'id' ? 'Ganti Foto' : 'Change Photo',
     step2Title: language === 'id' ? 'Kenali Kamu Lebih Dekat' : 'Get to Know You Better',
     step2Subtitle: language === 'id' ? 'Semakin detail, semakin akurat rekomendasi niche-nya ✨' : 'The more detailed, the more accurate the niche recommendations ✨',
     interestLabel: language === 'id' ? 'Minat' : 'Interest',
@@ -85,7 +76,7 @@ export const Onboarding = (): JSX.Element => {
       // Pre-fill name from user metadata if available
       const existingName = user.user_metadata?.full_name || user.email?.split('@')[0] || "";
       setDisplayName(existingName);
-      
+
       // Check if user already has profile data
       fetchExistingProfile();
     }
@@ -97,16 +88,12 @@ export const Onboarding = (): JSX.Element => {
     try {
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("full_name, avatar_url")
+        .select("full_name")
         .eq("user_id", user.id)
         .maybeSingle();
 
       if (profile) {
         if (profile.full_name) setDisplayName(profile.full_name);
-        if (profile.avatar_url) {
-          setAvatarUrl(profile.avatar_url);
-          setAvatarPreview(profile.avatar_url);
-        }
       }
     } catch (err) {
       console.error("Error fetching profile:", err);
@@ -233,70 +220,6 @@ export const Onboarding = (): JSX.Element => {
     }
   };
 
-  // Handle avatar file selection
-  const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      setError(language === 'id' ? "Ukuran file maksimal 5MB" : "Maximum file size is 5MB");
-      return;
-    }
-
-    setAvatarFile(file);
-    setAvatarPreview(URL.createObjectURL(file));
-    setError(null);
-  };
-
-  // Upload avatar to Supabase
-  const uploadAvatar = async (): Promise<string | null> => {
-    if (!avatarFile || !user) return avatarUrl || null;
-
-    setUploadingAvatar(true);
-    try {
-      const fileExt = avatarFile.name.split(".").pop();
-      const avatarFileName = `${user.id}-${Date.now()}.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(avatarFileName, avatarFile, { upsert: true });
-
-      if (uploadError) {
-        console.error("Storage upload error:", uploadError);
-        // Show user-friendly error
-        if (uploadError.message.includes("Bucket not found")) {
-          setError(language === 'id' 
-            ? "Storage belum dikonfigurasi. Hubungi admin." 
-            : "Storage not configured. Contact admin.");
-        } else if (uploadError.message.includes("violates row-level security")) {
-          setError(language === 'id' 
-            ? "Tidak ada izin upload. Hubungi admin." 
-            : "No upload permission. Contact admin.");
-        } else {
-          setError(language === 'id' 
-            ? `Gagal upload foto: ${uploadError.message}` 
-            : `Failed to upload photo: ${uploadError.message}`);
-        }
-        return null;
-      }
-
-      const { data: urlData } = supabase.storage
-        .from("avatars")
-        .getPublicUrl(avatarFileName);
-
-      console.log("Avatar uploaded successfully:", urlData.publicUrl);
-      return urlData.publicUrl;
-    } catch (err: any) {
-      console.error("Error uploading avatar:", err);
-      setError(language === 'id' 
-        ? `Gagal upload foto: ${err.message}` 
-        : `Failed to upload photo: ${err.message}`);
-      return null;
-    } finally {
-      setUploadingAvatar(false);
-    }
-  };
-
   // Platform icon component
   const PlatformIcon = ({ platformName }: { platformName: string }) => {
     switch (platformName.toLowerCase()) {
@@ -360,16 +283,7 @@ export const Onboarding = (): JSX.Element => {
 
     setError(null);
 
-    // Upload avatar if selected
-    let finalAvatarUrl = avatarUrl;
-    if (avatarFile) {
-      const uploadedUrl = await uploadAvatar();
-      if (uploadedUrl) {
-        finalAvatarUrl = uploadedUrl;
-      }
-    }
-
-    // Save profile to database
+    // Save display name to database
     if (user) {
       try {
         await supabase
@@ -377,7 +291,6 @@ export const Onboarding = (): JSX.Element => {
           .upsert({
             user_id: user.id,
             full_name: displayName.trim(),
-            avatar_url: finalAvatarUrl,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'user_id' });
 
@@ -385,11 +298,6 @@ export const Onboarding = (): JSX.Element => {
         await supabase.auth.updateUser({
           data: { full_name: displayName.trim() }
         });
-
-        // Invalidate avatar cache so other pages fetch fresh data
-        if (finalAvatarUrl) {
-          clearAvatarCache();
-        }
       } catch (err) {
         console.error("Error saving profile:", err);
       }
@@ -482,53 +390,6 @@ export const Onboarding = (): JSX.Element => {
               </div>
             )}
 
-            {/* Avatar Upload */}
-            <div className="flex flex-col items-center gap-4">
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className="relative w-28 h-28 rounded-full bg-gradient-to-br from-[#7c3aed] to-[#ec4899] flex items-center justify-center cursor-pointer group overflow-hidden"
-              >
-                {avatarPreview ? (
-                  <img 
-                    src={avatarPreview} 
-                    alt="Avatar" 
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <User className="w-12 h-12 text-white" />
-                )}
-                
-                {/* Hover overlay */}
-                <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Camera className="w-8 h-8 text-white" />
-                </div>
-                
-                {uploadingAvatar && (
-                  <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 text-white animate-spin" />
-                  </div>
-                )}
-              </div>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleAvatarSelect}
-              />
-              
-              <div className="text-center">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="text-[#7c3aed] hover:text-[#6d28d9] text-sm font-medium transition-colors"
-                >
-                  {avatarPreview ? text.changePhoto : text.uploadPhoto}
-                </button>
-                <p className="text-white/40 text-xs mt-1">{text.photoHint}</p>
-              </div>
-            </div>
-
             {/* Display Name Input */}
             <div className="space-y-2">
               <label className="text-sm font-medium text-white block">
@@ -557,16 +418,13 @@ export const Onboarding = (): JSX.Element => {
               </Button>
               <Button
                 onClick={handleProfileNext}
-                disabled={!isProfileValid || uploadingAvatar}
+                disabled={!isProfileValid}
                 className={`h-12 px-8 font-medium transition-all ${
-                  isProfileValid && !uploadingAvatar
+                  isProfileValid
                     ? "bg-[#7c3aed] hover:bg-[#6d28d9] text-white"
                     : "bg-[#7c3aed]/50 text-white/50 cursor-not-allowed"
                 }`}
               >
-                {uploadingAvatar ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : null}
                 {text.next}
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>

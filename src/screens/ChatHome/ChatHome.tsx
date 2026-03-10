@@ -32,17 +32,33 @@ export const ChatHome: React.FC = () => {
   const [selectedChallenge, setSelectedChallenge] = useState<TikTokChallenge | null>(null);
 
   // Lifted state: script language + DNA toggle (shared between TopicRecommendations & ScriptForm)
-  const [scriptLang, setScriptLang] = useState('en');
+  const SCRIPT_LANG_KEY = 'sparkfluence_script_lang';
+  const [scriptLang, setScriptLangState] = useState(() => {
+    try {
+      const stored = localStorage.getItem(SCRIPT_LANG_KEY);
+      if (stored && ['en', 'id', 'hi', 'fr'].includes(stored)) return stored;
+    } catch {}
+    return 'en';
+  });
   const [scriptLangInitialized, setScriptLangInitialized] = useState(false);
   const [useDnaTone, setUseDnaTone] = useState(true);
 
   const hasDnaTone = !!(onboardingData?.creative_dna && onboardingData.creative_dna.length > 0);
 
-  // Set script language based on user's country (only once when data loads)
+  // Wrap setScriptLang to also persist to localStorage
+  const setScriptLang = (lang: string) => {
+    setScriptLangState(lang);
+    try { localStorage.setItem(SCRIPT_LANG_KEY, lang); } catch {}
+  };
+
+  // Set script language based on user's country (only once, if no saved preference)
   useEffect(() => {
     if (!scriptLangInitialized && onboardingData?.country) {
-      const defaultLang = getScriptLanguageFromCountry(onboardingData.country);
-      setScriptLang(defaultLang);
+      const hasSaved = !!localStorage.getItem(SCRIPT_LANG_KEY);
+      if (!hasSaved) {
+        const defaultLang = getScriptLanguageFromCountry(onboardingData.country);
+        setScriptLang(defaultLang);
+      }
       setScriptLangInitialized(true);
     }
   }, [onboardingData?.country, scriptLangInitialized]);

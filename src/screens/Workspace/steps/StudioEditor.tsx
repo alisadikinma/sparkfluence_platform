@@ -1174,9 +1174,15 @@ const StudioEditorInner: React.FC = () => {
                     containerWidth={playerSize.w}
                     containerHeight={playerSize.h}
                     onLayerSelect={(segId, layerId) => dispatch({ type: 'SELECT_LAYER', segmentId: segId, layerId })}
-                    onLayerMove={(_segId, layerId, position) =>
-                      dispatch({ type: 'MOVE_ALL_TEXT_LAYERS', sourceLayerId: layerId, position })
-                    }
+                    onLayerMove={(segId, layerId, position) => {
+                      // Check if this is an overlay clip (segId = track.id)
+                      const isOverlay = (state.project.overlayTracks || []).some(t => t.id === segId);
+                      if (isOverlay) {
+                        dispatch({ type: 'UPDATE_OVERLAY_CLIP', trackId: segId, clipId: layerId, changes: { position } });
+                      } else {
+                        dispatch({ type: 'MOVE_ALL_TEXT_LAYERS', sourceLayerId: layerId, position });
+                      }
+                    }}
                   />
                 </div>
               ) : (

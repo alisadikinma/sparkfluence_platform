@@ -91,6 +91,8 @@ export function useStudioLoader(orderId: string | undefined): UseStudioLoaderRes
 
     return () => {
       cancelled = true;
+      // Reset ref so re-mount (StrictMode) can fetch again
+      fetchedRef.current = false;
     };
   }, [orderId, user?.id]);
 
