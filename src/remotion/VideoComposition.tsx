@@ -7,14 +7,17 @@
 
 import React, { useMemo } from 'react';
 import { AbsoluteFill, Audio, Sequence, useCurrentFrame, interpolate } from 'remotion';
-import type { SparkfluenceProject, TransitionItem, TransitionType, SegmentComposition, CaptionTrack, OverlayTrack } from '../types/studio';
+import type { SparkfluenceProject, TransitionItem, TransitionType, SegmentComposition, CaptionTrack, OverlayTrack, LayerItem } from '../types/studio';
 import { STUDIO_WIDTH, STUDIO_HEIGHT } from '../types/studio';
 import { SegmentRenderer } from './layers/SegmentRenderer';
 import { CaptionLayer } from './layers/CaptionLayer';
 import { OverlayClipRenderer } from './layers/OverlayClipRenderer';
+import { TextLayer } from './layers/TextLayer';
 
 interface VideoCompositionProps {
   project: SparkfluenceProject;
+  /** Track keys that are hidden — these tracks won't render */
+  hiddenTracks?: string[];
 }
 
 // --- Transition wrapper that applies visual effects to outgoing/incoming segments ---
@@ -126,7 +129,8 @@ const TransitionWrapper: React.FC<TransitionWrapperProps> = ({
 
 // --- Main Composition ---
 
-export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) => {
+export const VideoComposition: React.FC<VideoCompositionProps> = ({ project, hiddenTracks: hiddenTrackKeys }) => {
+  const hiddenSet = useMemo(() => new Set(hiddenTrackKeys || []), [hiddenTrackKeys]);
   // Build a lookup: transition between [fromId, toId]
   const transitionMap = useMemo(() => {
     const map = new Map<string, TransitionItem>();
@@ -188,12 +192,57 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
     return layout;
   }, [project.segments, transitionMap]);
 
+  // Extract text layers that extend beyond their segment boundaries (cross-segment text)
+  // These need to be rendered as global sequences instead of per-segment
+  const crossSegmentTextLayers = useMemo(() => {
+    const layers: Array<{ layer: LayerItem; absoluteStart: number; absoluteDuration: number }> = [];
+    for (const seg of project.segments) {
+      for (const layer of seg.layers) {
+        if (layer.type !== 'text' || !layer.visible) continue;
+        // Cross-segment: inFrame < 0 (starts before segment) or outFrame > segment duration
+        if (layer.inFrame < 0 || layer.outFrame > seg.durationInFrames) {
+          const absoluteStart = Math.max(0, seg.startFrame + layer.inFrame);
+          const absoluteEnd = Math.min(project.totalDurationInFrames, seg.startFrame + layer.outFrame);
+          layers.push({
+            layer,
+            absoluteStart,
+            absoluteDuration: absoluteEnd - absoluteStart,
+          });
+        }
+      }
+    }
+    return layers;
+  }, [project.segments, project.totalDurationInFrames]);
+
+  // Set of layer IDs to skip in per-segment rendering:
+  // - Cross-segment text layers (rendered globally)
+  // - Text layers whose track is hidden (check 'text', 'text-0', 'text-1', etc.)
+  const globalTextLayerIds = useMemo(() => {
+    const ids = new Set(crossSegmentTextLayers.map(l => l.layer.id));
+    // Check if any text track key is hidden — pack text layers into rows to match timeline
+    const anyTextHidden = hiddenSet.has('text') || Array.from(hiddenSet).some(k => k.startsWith('text-'));
+    if (anyTextHidden) {
+      // Simple heuristic: if 'text' (single row) is hidden, hide all text layers
+      // For multi-row, individual row hiding would need row-to-layer mapping
+      // which is complex — for now, 'text' hides all, 'text-N' hides all too
+      if (hiddenSet.has('text')) {
+        for (const seg of project.segments) {
+          for (const layer of seg.layers) {
+            if (layer.type === 'text') ids.add(layer.id);
+          }
+        }
+      }
+    }
+    return ids;
+  }, [crossSegmentTextLayers, hiddenSet, project.segments]);
+
   return (
     <AbsoluteFill style={{ backgroundColor: '#000' }}>
-      {segmentLayout.map(({ segment, adjustedStart, transitionIn, transitionOut }) => {
+      {/* Video segments — skip if 'video' track is hidden */}
+      {!hiddenSet.has('video') && segmentLayout.map(({ segment, adjustedStart, transitionIn, transitionOut }) => {
         const hasTransIn = transitionIn !== null;
         const hasTransOut = transitionOut !== null;
-        const captionTrack = captionMap.get(segment.id);
+        const captionTrack = !hiddenSet.has('captions') ? captionMap.get(segment.id) : undefined;
 
         return (
           <Sequence
@@ -204,7 +253,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
           >
             {/* Base segment (no transition active) */}
             {!hasTransIn && !hasTransOut && (
-              <SegmentRenderer segment={segment} />
+              <SegmentRenderer segment={segment} skipLayerIds={globalTextLayerIds} />
             )}
 
             {/* Segment with transitions — we need frame-aware rendering */}
@@ -213,6 +262,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
                 segment={segment}
                 transitionIn={transitionIn}
                 transitionOut={transitionOut}
+                skipLayerIds={globalTextLayerIds}
               />
             )}
 
@@ -224,8 +274,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
         );
       })}
 
-      {/* Global audio tracks */}
-      {project.audio.bgm.map((track) =>
+      {/* BGM audio tracks — skip if 'bgm' hidden */}
+      {!hiddenSet.has('bgm') && project.audio.bgm.map((track) =>
         !track.muted && track.src ? (
           <Sequence
             key={track.id}
@@ -238,7 +288,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
         ) : null
       )}
 
-      {project.audio.tts.map((track) =>
+      {/* TTS audio tracks — skip if 'tts' hidden */}
+      {!hiddenSet.has('tts') && project.audio.tts.map((track) =>
         !track.muted && track.src ? (
           <Sequence
             key={track.id}
@@ -251,6 +302,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
         ) : null
       )}
 
+      {/* SFX audio tracks */}
       {project.audio.sfx.map((track) =>
         !track.muted && track.src ? (
           <Sequence
@@ -264,19 +316,45 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ project }) =
         ) : null
       )}
 
-      {/* Overlay tracks — rendered on top of main segments */}
-      {(project.overlayTracks || []).map((oTrack) =>
-        oTrack.clips.map((clip) => (
-          <Sequence
-            key={clip.id}
-            from={clip.startFrame}
-            durationInFrames={clip.durationInFrames}
-            name={`overlay-${clip.id.slice(-6)}`}
-          >
-            <OverlayClipRenderer clip={clip} clipStartFrame={0} />
-          </Sequence>
-        ))
-      )}
+      {/* Overlay tracks — skip individually by track ID */}
+      {(project.overlayTracks || [])
+        .filter(oTrack => !hiddenSet.has(oTrack.id))
+        .map((oTrack) =>
+          oTrack.clips.map((clip) => (
+            <Sequence
+              key={clip.id}
+              from={clip.startFrame}
+              durationInFrames={clip.durationInFrames}
+              name={`overlay-${clip.id.slice(-6)}`}
+            >
+              <OverlayClipRenderer clip={clip} clipStartFrame={0} />
+            </Sequence>
+          ))
+        )}
+
+      {/* Cross-segment text layers — skip if 'text' hidden */}
+      {!hiddenSet.has('text') && crossSegmentTextLayers.map(({ layer, absoluteStart, absoluteDuration }) => (
+        <Sequence
+          key={`global-text-${layer.id}`}
+          from={absoluteStart}
+          durationInFrames={absoluteDuration}
+          name={`text-global-${layer.id.slice(-6)}`}
+        >
+          <div style={{
+            position: 'absolute',
+            left: layer.position.x,
+            top: layer.position.y,
+            width: layer.size.w,
+            height: layer.size.h,
+            opacity: layer.opacity,
+            transform: `rotate(${layer.rotation}deg)`,
+            zIndex: layer.zIndex,
+            overflow: 'visible',
+          }}>
+            <TextLayer text={layer.text!} />
+          </div>
+        </Sequence>
+      ))}
     </AbsoluteFill>
   );
 };
@@ -287,12 +365,14 @@ interface TransitionSegmentProps {
   segment: SegmentComposition;
   transitionIn: TransitionItem | null;
   transitionOut: TransitionItem | null;
+  skipLayerIds?: Set<string>;
 }
 
 const TransitionSegment: React.FC<TransitionSegmentProps> = ({
   segment,
   transitionIn,
   transitionOut,
+  skipLayerIds,
 }) => {
   const frame = useCurrentFrame();
   const dur = segment.durationInFrames;
@@ -307,7 +387,7 @@ const TransitionSegment: React.FC<TransitionSegmentProps> = ({
     // During the transition-in period, this segment is the "incoming" one
     return (
       <TransitionWrapper transition={transitionIn} role="incoming">
-        <SegmentRenderer segment={segment} />
+        <SegmentRenderer segment={segment} skipLayerIds={skipLayerIds} />
       </TransitionWrapper>
     );
   }
@@ -320,13 +400,13 @@ const TransitionSegment: React.FC<TransitionSegmentProps> = ({
 
     return (
       <TransitionOutWrapper transition={transitionOut} relativeFrame={relativeFrame}>
-        <SegmentRenderer segment={segment} />
+        <SegmentRenderer segment={segment} skipLayerIds={skipLayerIds} />
       </TransitionOutWrapper>
     );
   }
 
   // Normal rendering (no transition active at this frame)
-  return <SegmentRenderer segment={segment} />;
+  return <SegmentRenderer segment={segment} skipLayerIds={skipLayerIds} />;
 };
 
 // --- TransitionOutWrapper: manually drives outgoing transition with a relative frame ---

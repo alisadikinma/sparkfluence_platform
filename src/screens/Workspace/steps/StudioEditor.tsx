@@ -63,7 +63,7 @@ export const StudioEditor: React.FC = () => {
 
 // --- Right Panel: Context-Sensitive Properties ---
 const RightPanelContent: React.FC = () => {
-  const { state, dispatch, selectedSegment, selectedLayer } = useStudio();
+  const { state, dispatch, selectedSegment, selectedLayer, selectedOverlayClip, selectedCaptionInfo } = useStudio();
 
   // If a text layer is selected, show TextProperties editor
   if (selectedSegment && selectedLayer && selectedLayer.type === 'text') {
@@ -90,9 +90,132 @@ const RightPanelContent: React.FC = () => {
             })
           }
           onApplyToAll={(sourceLayerId, styleProps, position) =>
-            dispatch({ type: 'APPLY_TEXT_STYLE_TO_ALL', sourceLayerId, styleProps, position })
+            dispatch({ type: 'APPLY_TEXT_STYLE_TO_ALL', sourceLayerId, segmentId: selectedSegment.id, styleProps, position })
           }
         />
+      </div>
+    );
+  }
+
+  // If a caption is selected, show TextProperties-like panel
+  if (selectedCaptionInfo) {
+    const { track } = selectedCaptionInfo;
+    const defaultW = Math.round(1080 * 0.85);
+    const defaultH = 80;
+    // Construct a virtual LayerItem so TextProperties can render
+    const captionAsLayer: import('../../../types/studio').LayerItem = {
+      id: `caption-${track.segmentId}`,
+      type: 'text',
+      src: '',
+      position: track.position ?? { x: Math.round((1080 - defaultW) / 2), y: Math.round(1920 * 0.85 - defaultH) },
+      size: track.size ?? { w: defaultW, h: defaultH },
+      zIndex: 100,
+      opacity: track.opacity ?? 1,
+      rotation: 0,
+      visible: true,
+      locked: false,
+      inFrame: 0,
+      outFrame: 0,
+      text: {
+        content: track.chunks.map(c => c.text).join(' '),
+        fontFamily: track.fontFamily || 'Inter',
+        fontSize: track.fontSize ?? 42,
+        color: track.color || '#FFFFFF',
+        strokeColor: 'transparent',
+        strokeWidth: 0,
+        align: 'center' as const,
+      },
+    };
+
+    const updateThisCaption = (captionChanges: Record<string, unknown>) => {
+      dispatch({ type: 'UPDATE_CAPTION_TRACK', segmentId: track.segmentId, changes: captionChanges });
+    };
+
+    const applyToAllCaptions = () => {
+      const changes: Record<string, unknown> = {};
+      if (track.position) changes.position = track.position;
+      if (track.size) changes.size = track.size;
+      if (track.fontSize != null) changes.fontSize = track.fontSize;
+      if (track.fontFamily) changes.fontFamily = track.fontFamily;
+      if (track.color) changes.color = track.color;
+      if (track.opacity != null) changes.opacity = track.opacity;
+      if (track.highlightColor) changes.highlightColor = track.highlightColor;
+      dispatch({ type: 'UPDATE_ALL_CAPTION_TRACKS', changes });
+    };
+
+    const totalCaptions = (state.project.captions || []).length;
+
+    return (
+      <div className="space-y-3">
+        <button
+          onClick={() => dispatch({ type: 'SELECT_SEGMENT', segmentId: null })}
+          className="flex items-center gap-1 text-xs text-neutral-400 hover:text-white transition-colors"
+        >
+          <ArrowLeft className="w-3 h-3" />
+          <span>Back</span>
+        </button>
+
+        <div className="px-3 py-1.5">
+          <span className="text-[10px] text-emerald-400 font-medium uppercase tracking-wider">Caption Track</span>
+        </div>
+
+        <TextProperties
+          segmentId="captions"
+          layer={captionAsLayer}
+          onUpdate={(changes) => {
+            const captionChanges: Record<string, unknown> = {};
+            if (changes.position) captionChanges.position = changes.position;
+            if (changes.size) captionChanges.size = changes.size;
+            if (changes.opacity != null) captionChanges.opacity = changes.opacity;
+            if (changes.text) {
+              if (changes.text.fontSize != null) captionChanges.fontSize = changes.text.fontSize;
+              if (changes.text.fontFamily) captionChanges.fontFamily = changes.text.fontFamily;
+              if (changes.text.color) captionChanges.color = changes.text.color;
+            }
+            updateThisCaption(captionChanges);
+          }}
+        />
+
+        {/* Karaoke highlight color (only visible when style is karaoke) */}
+        {track.style === 'karaoke' && (
+          <div className="px-3 py-2.5 border-t border-neutral-800">
+            <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">
+              Highlight Color
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={track.highlightColor || '#10B981'}
+                onChange={(e) => updateThisCaption({ highlightColor: e.target.value })}
+                className="w-8 h-8 rounded-lg border border-neutral-700 cursor-pointer bg-transparent"
+              />
+              <input
+                type="text"
+                value={track.highlightColor || '#10B981'}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (/^#[0-9A-Fa-f]{6}$/.test(v)) updateThisCaption({ highlightColor: v });
+                }}
+                className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 font-mono focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Apply to All Captions button */}
+        {totalCaptions > 1 && (
+          <div className="px-3 py-2.5 border-t border-neutral-800">
+            <button
+              onClick={applyToAllCaptions}
+              className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+            >
+              Apply Style to All Captions ({totalCaptions})
+            </button>
+            <p className="text-[10px] text-neutral-600 mt-1">
+              Applies font, size, color, position, opacity{track.style === 'karaoke' ? ', highlight' : ''} to all caption tracks
+            </p>
+          </div>
+        )}
       </div>
     );
   }
@@ -219,6 +342,129 @@ const RightPanelContent: React.FC = () => {
     );
   }
 
+  // If an overlay clip is selected, show its properties (Position, Size, Opacity, Rotation)
+  if (selectedOverlayClip) {
+    const { trackId, clip } = selectedOverlayClip;
+    const updateClip = (changes: Record<string, unknown>) =>
+      dispatch({ type: 'UPDATE_OVERLAY_CLIP', trackId, clipId: clip.id, changes });
+
+    return (
+      <div className="space-y-3">
+        <button
+          onClick={() => dispatch({ type: 'SELECT_SEGMENT', segmentId: null })}
+          className="flex items-center gap-1 text-xs text-neutral-400 hover:text-white transition-colors"
+        >
+          <ArrowLeft className="w-3 h-3" />
+          <span>Back</span>
+        </button>
+
+        {/* Preview thumbnail */}
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">
+            {clip.type === 'image' ? 'Image' : clip.type === 'video' ? 'Video' : 'Text'} Overlay
+          </label>
+          {clip.src && (clip.type === 'image' || clip.type === 'video') && (
+            <div className="w-full aspect-video bg-neutral-900 rounded-lg overflow-hidden mb-2">
+              {clip.type === 'image' ? (
+                <img src={clip.src} alt="" className="w-full h-full object-contain" />
+              ) : (
+                <video src={clip.src} className="w-full h-full object-contain" muted />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Position */}
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">Position</label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">X</label>
+              <input
+                type="number"
+                value={Math.round(clip.position?.x || 0)}
+                onChange={(e) => updateClip({ position: { ...(clip.position || { x: 0, y: 0 }), x: parseInt(e.target.value) || 0 } })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">Y</label>
+              <input
+                type="number"
+                value={Math.round(clip.position?.y || 0)}
+                onChange={(e) => updateClip({ position: { ...(clip.position || { x: 0, y: 0 }), y: parseInt(e.target.value) || 0 } })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Size */}
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">Size</label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">W</label>
+              <input
+                type="number"
+                value={Math.round(clip.size?.w || 324)}
+                onChange={(e) => updateClip({ size: { ...(clip.size || { w: 324, h: 576 }), w: parseInt(e.target.value) || 0 } })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-neutral-500 block mb-0.5">H</label>
+              <input
+                type="number"
+                value={Math.round(clip.size?.h || 576)}
+                onChange={(e) => updateClip({ size: { ...(clip.size || { w: 324, h: 576 }), h: parseInt(e.target.value) || 0 } })}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Rotation */}
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">Rotate</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={360}
+              value={Math.round((clip as any).rotation || 0)}
+              onChange={(e) => updateClip({ rotation: parseInt(e.target.value) || 0 })}
+              className="w-20 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-colors"
+            />
+            <span className="text-[10px] text-neutral-500">°</span>
+          </div>
+        </div>
+
+        {/* Opacity */}
+        <div className="px-3 py-2.5 border-b border-neutral-800">
+          <label className="block text-[10px] text-neutral-500 uppercase tracking-wider font-medium mb-1.5">Opacity</label>
+          <div className="flex items-center justify-between">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round((clip.opacity ?? 1) * 100)}
+              onChange={(e) => updateClip({ opacity: parseInt(e.target.value) / 100 })}
+              className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer bg-neutral-700"
+              style={{
+                background: `linear-gradient(to right, #10B981 0%, #10B981 ${Math.round((clip.opacity ?? 1) * 100)}%, #404040 ${Math.round((clip.opacity ?? 1) * 100)}%, #404040 100%)`,
+              }}
+            />
+            <span className="ml-2 text-xs font-mono text-neutral-400 w-14 text-right">
+              {Math.round((clip.opacity ?? 1) * 100)}%
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // If a segment is selected, show its properties
   if (selectedSegment) {
     return (
@@ -334,16 +580,7 @@ const LEFT_PANEL_TABS: { id: LeftPanelTab; label: string; icon: React.FC<{ class
   { id: 'effects', label: 'Effects', icon: Layers },
 ];
 
-// --- Imported media asset (local blob URL or external URL) ---
-interface MediaAsset {
-  id: string;
-  name: string;
-  type: 'video' | 'image';
-  url: string;
-  durationSec: number; // default 5s for images, detected for video
-  thumbnailUrl: string;
-  addedToTimeline: boolean;
-}
+import type { MediaAsset } from '../../../types/studio';
 
 // --- Past Videos Modal: Query video_generation_jobs (status=2) ---
 interface PastVideo {
@@ -443,11 +680,15 @@ const PastVideosModal: React.FC<{
 // --- Media Tab: CapCut-style grid with Import + segment assets + drag ---
 const MediaTabContent: React.FC = () => {
   const { state, dispatch } = useStudio();
+  const { user } = useAuth();
   const segments = state.project.segments;
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importedAssets, setImportedAssets] = useState<MediaAsset[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showPastVideos, setShowPastVideos] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  // Imported assets from project state (persisted in studio_data)
+  const importedAssets = state.project.mediaAssets || [];
 
   // Track which imported assets are on the timeline (by URL match)
   const timelineUrls = useMemo(() => {
@@ -460,46 +701,75 @@ const MediaTabContent: React.FC = () => {
     return urls;
   }, [segments]);
 
-  // Handle file import
-  const handleFileImport = useCallback((files: FileList | null) => {
-    if (!files) return;
+  // Handle file import — upload to Supabase Storage, then persist in project
+  const handleFileImport = useCallback(async (files: FileList | null) => {
+    if (!files || !user) return;
+    setUploading(true);
 
-    const newAssets: MediaAsset[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isVideo = file.type.startsWith('video/');
       const isImage = file.type.startsWith('image/');
       if (!isVideo && !isImage) continue;
 
-      const blobUrl = URL.createObjectURL(file);
-      const asset: MediaAsset = {
-        id: generateId('media'),
-        name: file.name,
-        type: isVideo ? 'video' : 'image',
-        url: blobUrl,
-        durationSec: isVideo ? 8 : 5, // default; video duration detected below
-        thumbnailUrl: blobUrl,
-        addedToTimeline: false,
-      };
+      const assetId = generateId('media');
+      const ext = file.name.split('.').pop() || (isImage ? 'png' : 'mp4');
+      const storagePath = `${user.id}/${assetId}.${ext}`;
 
-      // For videos, try to get actual duration
-      if (isVideo) {
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.onloadedmetadata = () => {
-          setImportedAssets(prev => prev.map(a =>
-            a.id === asset.id ? { ...a, durationSec: Math.round(video.duration) } : a
-          ));
-          URL.revokeObjectURL(video.src);
-        };
-        video.src = blobUrl;
+      // Upload to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('studio-media')
+        .upload(storagePath, file, {
+          contentType: file.type,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error('Upload failed:', uploadError.message);
+        continue;
       }
 
-      newAssets.push(asset);
+      const { data: urlData } = supabase.storage
+        .from('studio-media')
+        .getPublicUrl(storagePath);
+
+      const publicUrl = urlData.publicUrl;
+
+      // Detect video duration
+      let durationSec = isVideo ? 8 : 5;
+      if (isVideo) {
+        try {
+          const blobUrl = URL.createObjectURL(file);
+          durationSec = await new Promise<number>((resolve) => {
+            const video = document.createElement('video');
+            video.preload = 'metadata';
+            video.onloadedmetadata = () => {
+              resolve(Math.round(video.duration));
+              URL.revokeObjectURL(blobUrl);
+            };
+            video.onerror = () => {
+              resolve(8);
+              URL.revokeObjectURL(blobUrl);
+            };
+            video.src = blobUrl;
+          });
+        } catch { /* default 8s */ }
+      }
+
+      const asset: MediaAsset = {
+        id: assetId,
+        name: file.name,
+        type: isVideo ? 'video' : 'image',
+        url: publicUrl,
+        durationSec,
+        thumbnailUrl: publicUrl,
+      };
+
+      dispatch({ type: 'ADD_MEDIA_ASSET', asset });
     }
 
-    setImportedAssets(prev => [...prev, ...newAssets]);
-  }, []);
+    setUploading(false);
+  }, [user, dispatch]);
 
   // Add imported asset to timeline as a new segment
   const addToTimeline = useCallback((asset: MediaAsset) => {
@@ -521,9 +791,6 @@ const MediaTabContent: React.FC = () => {
     };
 
     dispatch({ type: 'ADD_SEGMENT', segment });
-    setImportedAssets(prev => prev.map(a =>
-      a.id === asset.id ? { ...a, addedToTimeline: true } : a
-    ));
   }, [dispatch]);
 
   // Drag start handler for media assets
@@ -626,6 +893,14 @@ const MediaTabContent: React.FC = () => {
         </div>
       )}
 
+      {/* Uploading indicator */}
+      {uploading && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+          <Loader2 className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
+          <span className="text-xs text-emerald-400">Uploading...</span>
+        </div>
+      )}
+
       {/* Imported assets */}
       {importedAssets.length > 0 && (
         <div className="space-y-1.5">
@@ -638,7 +913,7 @@ const MediaTabContent: React.FC = () => {
                 onDragStart={(e) => handleDragStart(e, asset)}
                 onClick={() => addToTimeline(asset)}
                 className={`relative rounded-lg overflow-hidden cursor-grab active:cursor-grabbing group transition-all hover:ring-1 hover:ring-neutral-600 ${
-                  asset.addedToTimeline || timelineUrls.has(asset.url) ? 'opacity-70' : ''
+                  timelineUrls.has(asset.url) ? 'opacity-70' : ''
                 }`}
               >
                 <div className="aspect-video bg-neutral-900 relative">
@@ -655,7 +930,7 @@ const MediaTabContent: React.FC = () => {
                     <img src={asset.url} alt="" className="w-full h-full object-cover" draggable={false} />
                   )}
 
-                  {(asset.addedToTimeline || timelineUrls.has(asset.url)) && (
+                  {timelineUrls.has(asset.url) && (
                     <div className="absolute top-1 left-1">
                       <span className="text-[8px] font-medium px-1 py-0.5 rounded bg-emerald-500/80 text-white">Added</span>
                     </div>
@@ -1168,12 +1443,17 @@ const TRANSITION_CATEGORIES: TransitionCategory[] = [
 ];
 
 const TransitionsTabContent: React.FC = () => {
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  // Track which categories are expanded — Basic open by default
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['Basic']));
 
-  // Flatten for "All" view or filter by category
-  const visibleCategories = activeCategory
-    ? TRANSITION_CATEGORIES.filter(c => c.name === activeCategory)
-    : TRANSITION_CATEGORIES;
+  const toggleCategory = useCallback((name: string) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
 
   const handleDragStart = useCallback((e: React.DragEvent, transitionType: string) => {
     e.dataTransfer.setData('application/x-studio-transition', JSON.stringify({ type: transitionType }));
@@ -1181,60 +1461,54 @@ const TransitionsTabContent: React.FC = () => {
   }, []);
 
   return (
-    <div className="space-y-2">
-      {/* Category filter chips */}
-      <div className="flex flex-wrap gap-1">
-        <button
-          onClick={() => setActiveCategory(null)}
-          className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
-            !activeCategory
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : 'bg-neutral-800 text-neutral-400 hover:text-neutral-300'
-          }`}
-        >
-          All
-        </button>
-        {TRANSITION_CATEGORIES.map(cat => (
-          <button
-            key={cat.name}
-            onClick={() => setActiveCategory(activeCategory === cat.name ? null : cat.name)}
-            className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
-              activeCategory === cat.name
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                : 'bg-neutral-800 text-neutral-400 hover:text-neutral-300'
-            }`}
-          >
-            {cat.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Transition items by category */}
-      {visibleCategories.map(cat => (
-        <div key={cat.name} className="space-y-1">
-          <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-wider">{cat.name}</span>
-          <div className="grid grid-cols-3 gap-1">
-            {cat.items.map(t => (
-              <div
-                key={t.type}
-                draggable
-                onDragStart={(e) => handleDragStart(e, t.type)}
-                className="flex flex-col items-center gap-0.5 p-1.5 rounded-lg bg-neutral-800/50 hover:bg-neutral-700/70 cursor-grab active:cursor-grabbing transition-colors group"
+    <div className="space-y-0.5">
+      {/* Accordion categories */}
+      {TRANSITION_CATEGORIES.map(cat => {
+        const isExpanded = expandedCategories.has(cat.name);
+        return (
+          <div key={cat.name}>
+            {/* Accordion header */}
+            <button
+              onClick={() => toggleCategory(cat.name)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-neutral-800/60 transition-colors group"
+            >
+              <svg
+                width="10" height="10" viewBox="0 0 16 16" fill="none"
+                className={`text-neutral-500 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
               >
-                <div
-                  className="w-7 h-7 rounded flex items-center justify-center transition-colors"
-                  style={{ backgroundColor: `${cat.color}15`, border: `1px solid ${cat.color}30` }}
-                >
-                  <Sparkles className="w-3 h-3 transition-colors" style={{ color: cat.color }} />
-                </div>
-                <span className="text-[9px] text-neutral-400 group-hover:text-neutral-200 text-center leading-tight truncate w-full">{t.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+                <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }} />
+              <span className="text-[11px] font-medium text-neutral-300 group-hover:text-neutral-100">{cat.name}</span>
+              <span className="text-[9px] text-neutral-600 ml-auto">{cat.items.length}</span>
+            </button>
 
-      <p className="text-[10px] text-neutral-600 pt-1">Drag a transition to the gap between clips on the timeline</p>
+            {/* Accordion body */}
+            {isExpanded && (
+              <div className="grid grid-cols-3 gap-1 px-1 pb-1.5 pt-0.5">
+                {cat.items.map(t => (
+                  <div
+                    key={t.type}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, t.type)}
+                    className="flex flex-col items-center gap-0.5 p-1.5 rounded-lg bg-neutral-800/50 hover:bg-neutral-700/70 cursor-grab active:cursor-grabbing transition-colors group"
+                  >
+                    <div
+                      className="w-7 h-7 rounded flex items-center justify-center transition-colors"
+                      style={{ backgroundColor: `${cat.color}15`, border: `1px solid ${cat.color}30` }}
+                    >
+                      <Sparkles className="w-3 h-3 transition-colors" style={{ color: cat.color }} />
+                    </div>
+                    <span className="text-[9px] text-neutral-400 group-hover:text-neutral-200 text-center leading-tight truncate w-full">{t.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <p className="text-[10px] text-neutral-600 pt-1 px-2">Drag a transition to the gap between clips on the timeline</p>
     </div>
   );
 };
@@ -1503,14 +1777,86 @@ const StudioEditorInner: React.FC = () => {
   // --- Export modal ---
   const [showExportModal, setShowExportModal] = useState(false);
 
+  // Map Studio transition types to FFmpeg xfade transition names
+  const mapTransitionType = useCallback((studioType: string): string => {
+    const map: Record<string, string> = {
+      'fade': 'fade',
+      'cut': 'fade', // no xfade equivalent, use very short fade
+      'dissolve': 'dissolve',
+      'crossfade': 'dissolve',
+      'dip-black': 'fadeblack',
+      'slide-left': 'slideleft',
+      'slide-right': 'slideright',
+      'slide-up': 'slideup',
+      'slide-down': 'slidedown',
+      'push-left': 'slideleft',
+      'push-right': 'slideright',
+      'push-up': 'slideup',
+      'push-down': 'slidedown',
+      'wipe-left': 'wipeleft',
+      'wipe-right': 'wiperight',
+      'wipe-up': 'wipeup',
+      'wipe-down': 'wipedown',
+      'clock-wipe': 'radial',
+      'iris': 'circleopen',
+      'diamond': 'diagtl',
+      'heart': 'circleopen',
+      'star': 'circleopen',
+      'zoom-in': 'zoomin',
+      'zoom-out': 'fadeblack',
+      'zoom-rotate': 'zoomin',
+      'flip-h': 'horzopen',
+      'flip-v': 'vertopen',
+    };
+    return map[studioType] || 'dissolve';
+  }, []);
+
   // Build video segments for combine API from studio project segments
   const exportSegments = useMemo(() => {
+    const fps = state.project.fps || 30;
+
+    // Build transition lookup: fromSegmentId → TransitionItem
+    const transitionMap = new Map<string, typeof state.project.transitions[0]>();
+    for (const t of state.project.transitions) {
+      transitionMap.set(t.betweenSegments[0], t);
+    }
+
     return state.project.segments.map((seg, index) => {
       // Find the first video layer's src URL
       const videoLayer = seg.layers.find(l => l.type === 'video');
       const imageLayer = seg.layers.find(l => l.type === 'image');
       const videoUrl = videoLayer?.src || imageLayer?.src || '';
-      const durationSeconds = seg.durationInFrames / (state.project.fps || 30);
+      const durationSeconds = seg.durationInFrames / fps;
+
+      // Map transition to next segment
+      const transition = transitionMap.get(seg.id);
+      const transitionType = transition ? mapTransitionType(transition.type) : null;
+      const transitionDuration = transition ? transition.durationInFrames / fps : undefined;
+
+      // Collect visible text layers as overlays for FFmpeg drawtext
+      const textOverlays = seg.layers
+        .filter(l => l.type === 'text' && l.visible && l.text?.content)
+        .map(l => ({
+          content: l.text!.content,
+          x: Math.round(l.position.x),
+          y: Math.round(l.position.y),
+          width: Math.round(l.size.w),
+          height: Math.round(l.size.h),
+          font_size: l.text!.fontSize || 48,
+          font_family: l.text!.fontFamily || 'Arial',
+          font_color: l.text!.color || '#FFFFFF',
+          bg_color: undefined,
+          opacity: l.opacity,
+          alignment: (l.text!.align || 'center') as 'left' | 'center' | 'right',
+          bold: false,
+          italic: false,
+          stroke_color: l.text!.strokeColor || undefined,
+          stroke_width: l.text!.strokeWidth || 0,
+          enter_animation: l.animation?.enter || undefined,
+          exit_animation: l.animation?.exit || undefined,
+          start_time: l.inFrame / fps,
+          end_time: l.outFrame / fps,
+        }));
 
       return {
         segment_id: seg.id,
@@ -1520,10 +1866,99 @@ const StudioEditorInner: React.FC = () => {
         duration_seconds: durationSeconds,
         script_text: seg.script || null,
         emotion: seg.emotion || 'neutral',
+        transition_type: transitionType,
+        transition_duration: transitionDuration,
+        text_overlays: textOverlays.length > 0 ? textOverlays : undefined,
       };
     });
-  }, [state.project.segments, state.project.fps]);
+  }, [state.project.segments, state.project.fps, state.project.transitions, mapTransitionType]);
 
+  // Build media overlays (image/video from overlay tracks) with absolute timing
+  const exportMediaOverlays = useMemo(() => {
+    const fps = state.project.fps || 30;
+    const overlayTracks = state.project.overlayTracks || [];
+    if (overlayTracks.length === 0) return [];
+
+    // Calculate cumulative segment start times (accounting for transition overlaps)
+    const segments = state.project.segments;
+    const transitionMap = new Map<string, typeof state.project.transitions[0]>();
+    for (const t of state.project.transitions) {
+      transitionMap.set(t.betweenSegments[0], t);
+    }
+
+    // Build frame→seconds mapping for the final combined video
+    // In the combined video, segments overlap by transition duration
+    const segStartSeconds: number[] = [];
+    let cumulative = 0;
+    for (let i = 0; i < segments.length; i++) {
+      segStartSeconds.push(cumulative);
+      const seg = segments[i];
+      const segDur = seg.durationInFrames / fps;
+      const transition = transitionMap.get(seg.id);
+      const transDur = transition ? transition.durationInFrames / fps : 0;
+      if (i < segments.length - 1 && transDur > 0) {
+        cumulative += segDur - transDur;
+      } else {
+        cumulative += segDur;
+      }
+    }
+    const totalDurationSec = cumulative;
+
+    // Convert absolute frame positions to absolute seconds in the combined video
+    // Overlay clips use absolute startFrame on the studio timeline
+    // Studio timeline: segments concatenated without overlap (frame-based)
+    // Combined video: segments concatenated WITH transition overlap (seconds-based)
+    const frameToAbsoluteSeconds = (frame: number): number => {
+      // Find which segment this frame falls into
+      let frameAcc = 0;
+      for (let i = 0; i < segments.length; i++) {
+        const segFrames = segments[i].durationInFrames;
+        if (frame < frameAcc + segFrames) {
+          const offsetInSeg = (frame - frameAcc) / fps;
+          return segStartSeconds[i] + offsetInSeg;
+        }
+        frameAcc += segFrames;
+      }
+      // Past all segments — clamp to total
+      return totalDurationSec;
+    };
+
+    const mediaOverlays: Array<{
+      type: 'image' | 'video';
+      src: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      opacity: number;
+      start_time: number;
+      end_time: number;
+    }> = [];
+
+    for (const track of overlayTracks) {
+      for (const clip of track.clips) {
+        if (!clip.src) continue;
+        const clipType = clip.type === 'video' ? 'video' : 'image';
+        const startSec = frameToAbsoluteSeconds(clip.startFrame);
+        const endSec = frameToAbsoluteSeconds(clip.startFrame + clip.durationInFrames);
+        if (endSec <= startSec) continue;
+
+        mediaOverlays.push({
+          type: clipType,
+          src: clip.src,
+          x: Math.round(clip.position.x),
+          y: Math.round(clip.position.y),
+          width: Math.round(clip.size.w),
+          height: Math.round(clip.size.h),
+          opacity: clip.opacity,
+          start_time: startSec,
+          end_time: endSec,
+        });
+      }
+    }
+
+    return mediaOverlays;
+  }, [state.project.overlayTracks, state.project.segments, state.project.fps, state.project.transitions]);
 
   // Format frame to MM:SS timecode (legacy)
   const formatTimecode = (frame: number): string => {
@@ -1587,17 +2022,19 @@ const StudioEditorInner: React.FC = () => {
       {/* TOP BAR                                                          */}
       {/* ================================================================ */}
       <div className="flex items-center h-11 px-4 bg-[#161616] border-b border-[#262626] flex-shrink-0">
-        {/* Left: Logo + Back + Title */}
-        <img src="/logo-light.png" alt="Sparkfluence" className="h-6 mr-3" draggable={false} />
+        {/* Left: Back + Logo + Brand + Title */}
         <button
           onClick={handleBack}
-          className="flex items-center gap-1.5 text-neutral-400 hover:text-white text-sm mr-4 transition-colors"
+          className="flex items-center gap-1.5 text-neutral-400 hover:text-white text-sm mr-3 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Back</span>
         </button>
         <div className="h-5 w-px bg-[#262626] mr-3" />
-        <span className="text-sm font-medium text-white truncate max-w-[300px]">
+        <img src="/logo-light.png" alt="Sparkfluence" className="h-6 mr-1.5" draggable={false} />
+        <span className="text-sm font-semibold tracking-wide text-white mr-4">SPARKFLUENCE</span>
+        <div className="h-5 w-px bg-[#262626] mr-3" />
+        <span className="text-sm font-medium text-neutral-300 truncate max-w-[300px]">
           {state.project.title || 'Untitled Project'}
         </span>
         {isSaving && <span className="text-[10px] text-amber-400 ml-2">Saving...</span>}
@@ -1713,7 +2150,7 @@ const StudioEditorInner: React.FC = () => {
                   <Player
                     ref={playerRef}
                     component={VideoComposition}
-                    inputProps={{ project: state.project }}
+                    inputProps={{ project: state.project, hiddenTracks: Array.from(state.hiddenTracks) }}
                     compositionWidth={STUDIO_WIDTH}
                     compositionHeight={STUDIO_HEIGHT}
                     durationInFrames={totalFrames}
@@ -1740,6 +2177,15 @@ const StudioEditorInner: React.FC = () => {
                       }
                     }}
                     onLayerMove={(segId, layerId, position) => {
+                      // Caption move: segId='captions', layerId='caption-{segId}-{idx}'
+                      if (segId === 'captions') {
+                        const match = layerId.match(/^caption-(.+)-(\d+)$/);
+                        if (match) {
+                          const captionSegId = match[1];
+                          dispatch({ type: 'UPDATE_CAPTION_TRACK', segmentId: captionSegId, changes: { position } });
+                        }
+                        return;
+                      }
                       // Check if this is an overlay clip (segId = track.id)
                       const isOverlay = (state.project.overlayTracks || []).some(t => t.id === segId);
                       if (isOverlay) {
@@ -1751,6 +2197,19 @@ const StudioEditorInner: React.FC = () => {
                     }}
                     onLayerResize={(segId, layerId, changes) => {
                       pushHistory('Resize layer');
+                      // Caption resize
+                      if (segId === 'captions') {
+                        const match = layerId.match(/^caption-(.+)-(\d+)$/);
+                        if (match) {
+                          const captionSegId = match[1];
+                          const captionChanges: Record<string, unknown> = {};
+                          if (changes.size) captionChanges.size = changes.size;
+                          if (changes.position) captionChanges.position = changes.position;
+                          if (changes.text?.fontSize) captionChanges.fontSize = changes.text.fontSize;
+                          dispatch({ type: 'UPDATE_CAPTION_TRACK', segmentId: captionSegId, changes: captionChanges });
+                        }
+                        return;
+                      }
                       const isOverlay = (state.project.overlayTracks || []).some(t => t.id === segId);
                       if (isOverlay) {
                         const overlayChanges: any = {};
@@ -1904,11 +2363,35 @@ const StudioEditorInner: React.FC = () => {
       <ExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
+        onComplete={async () => {
+          setShowExportModal(false);
+          // Cleanup studio media from Supabase Storage
+          const mediaAssets = state.project.mediaAssets || [];
+          if (mediaAssets.length > 0 && user) {
+            const paths = mediaAssets.map(a => {
+              const parts = a.url.split('/studio-media/');
+              return parts[1] || '';
+            }).filter(Boolean);
+            if (paths.length > 0) {
+              await supabase.storage.from('studio-media').remove(paths);
+            }
+          }
+          // Update session status to complete
+          if (orderId) {
+            await supabase.from('chat_sessions').update({ status: 'complete' }).eq('order_id', orderId);
+          }
+          // Redirect to planner
+          navigate('/planner');
+        }}
         videoTitle={state.project.title || 'Untitled Video'}
         thumbnailUrl={state.project.segments[0]?.layers.find(l => l.type === 'image')?.src}
         orderId={orderId}
         sessionId={orderId}
         segments={exportSegments}
+        bgmUrl={state.project.audio.bgm.find(t => !t.muted && t.src)?.src || null}
+        bgmVolume={state.project.audio.bgm.find(t => !t.muted && t.src)?.volume ?? 0.2}
+        enableSubtitles={true}
+        mediaOverlays={exportMediaOverlays}
       />
     </div>
   );

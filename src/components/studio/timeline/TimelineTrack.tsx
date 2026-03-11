@@ -4,7 +4,7 @@
 // Video track is taller (60px) to accommodate filmstrip thumbnails.
 // ============================================================================
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import { TimelineClip } from './TimelineClip';
 import type { TimelineClipData } from './types';
 import { STUDIO_FPS } from '../../../types/studio';
@@ -69,6 +69,20 @@ interface TimelineTrackProps {
   onMediaInsert?: (insertIndex: number, mediaData: string) => void;
   /** Callback when user drags a clip to a new time position */
   onMove?: (clipId: string, newStartFrame: number) => void;
+  /** Track key for visibility state (e.g. 'video', 'text-0', 'tts') */
+  trackKey?: string;
+  /** Whether this track is hidden */
+  isHidden?: boolean;
+  /** Callback when visibility is toggled */
+  onToggleVisibility?: (trackKey: string) => void;
+  /** Drag-to-reorder callbacks */
+  onDragStart?: (trackKey: string) => void;
+  onDragOver?: (trackKey: string) => void;
+  onDragEnd?: () => void;
+  /** Whether this track is being dragged over */
+  isDragOver?: boolean;
+  /** Callback to delete all clips in this track */
+  onDeleteTrack?: (trackKey: string) => void;
 }
 
 /** Video track is taller for filmstrip thumbnails; other tracks stay compact */
@@ -105,13 +119,21 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   onTransitionDrop,
   onMediaInsert,
   onMove,
+  trackKey,
+  isHidden,
+  onToggleVisibility,
+  onDragStart: onTrackDragStart,
+  onDragOver: onTrackDragOver,
+  onDragEnd: onTrackDragEnd,
+  isDragOver,
+  onDeleteTrack,
 }) => {
   const trackHeight = TRACK_HEIGHTS[trackType] ?? 40;
   const clipHeight = CLIP_HEIGHTS[trackType] ?? 32;
 
-  // Local track control state (visual only for now — can connect to project state later)
+  // Local track control state
   const [isLocked, setIsLocked] = useState(false);
-  const [isVisible, setIsVisible] = useState(true);
+  const isVisible = !isHidden;
   const [isMuted, setIsMuted] = useState(false);
 
   // Show volume control only for audio-related tracks
@@ -170,15 +192,63 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
     }
   }, [onTransitionDrop, onMediaInsert]);
 
+  // Handle track header drag for reordering
+  const handleHeaderDragStart = useCallback((e: React.DragEvent) => {
+    if (!trackKey || !onTrackDragStart) return;
+    e.dataTransfer.setData('application/x-studio-track-reorder', trackKey);
+    e.dataTransfer.effectAllowed = 'move';
+    onTrackDragStart(trackKey);
+  }, [trackKey, onTrackDragStart]);
+
+  const handleHeaderDragOver = useCallback((e: React.DragEvent) => {
+    if (!trackKey || !onTrackDragOver) return;
+    if (e.dataTransfer.types.includes('application/x-studio-track-reorder')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      onTrackDragOver(trackKey);
+    }
+  }, [trackKey, onTrackDragOver]);
+
+  const handleHeaderDragEnd = useCallback(() => {
+    onTrackDragEnd?.();
+  }, [onTrackDragEnd]);
+
+  const handleHeaderDrop = useCallback((e: React.DragEvent) => {
+    if (!trackKey) return;
+    if (e.dataTransfer.types.includes('application/x-studio-track-reorder')) {
+      e.preventDefault();
+      // Drop is handled by dragEnd on the source element
+    }
+  }, [trackKey]);
+
   return (
-    <div className="flex" style={{ height: trackHeight, opacity: isVisible ? 1 : 0.4 }}>
+    <div
+      className={`flex transition-colors ${isDragOver ? 'bg-emerald-500/10' : ''}`}
+      style={{ height: trackHeight, opacity: isVisible ? 1 : 0.4 }}
+      onDragOver={handleHeaderDragOver}
+      onDrop={handleHeaderDrop}
+    >
       {/* Fixed track header — CapCut-style with icon+label row and controls row */}
       <div
-        className="flex-shrink-0 flex flex-col justify-center border-r border-b border-[#262626] bg-[#161616] px-1.5"
+        className="flex-shrink-0 flex flex-col justify-center border-r border-b border-[#262626] bg-[#161616] px-1"
         style={{ width: HEADER_WIDTH }}
       >
-        {/* Row 1: Icon + Label */}
+        {/* Row 1: Grip + Icon + Label */}
         <div className="flex items-center gap-1 mb-0.5">
+          {/* Drag grip handle */}
+          <div
+            draggable
+            onDragStart={handleHeaderDragStart}
+            onDragEnd={handleHeaderDragEnd}
+            className="text-neutral-600 hover:text-neutral-400 cursor-grab active:cursor-grabbing flex-shrink-0"
+            title="Drag to reorder"
+          >
+            <svg width="8" height="10" viewBox="0 0 8 10" fill="currentColor">
+              <circle cx="2" cy="2" r="1" /><circle cx="6" cy="2" r="1" />
+              <circle cx="2" cy="5" r="1" /><circle cx="6" cy="5" r="1" />
+              <circle cx="2" cy="8" r="1" /><circle cx="6" cy="8" r="1" />
+            </svg>
+          </div>
           <span className="text-neutral-500 flex-shrink-0">{icon}</span>
           <span className="text-[10px] font-medium text-neutral-400 truncate">{label}</span>
         </div>
@@ -195,7 +265,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
             <LockIcon locked={isLocked} />
           </button>
           <button
-            onClick={() => setIsVisible(!isVisible)}
+            onClick={() => trackKey && onToggleVisibility?.(trackKey)}
             className={`p-0.5 rounded transition-colors ${
               !isVisible ? 'text-red-400' : 'text-neutral-600 hover:text-neutral-400'
             }`}
@@ -212,6 +282,18 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
               title={isMuted ? 'Unmute' : 'Mute'}
             >
               <VolumeIcon muted={isMuted} />
+            </button>
+          )}
+          {onDeleteTrack && trackKey && clips.length > 0 && (
+            <button
+              onClick={() => onDeleteTrack(trackKey)}
+              className="p-0.5 rounded transition-colors text-neutral-600 hover:text-red-400 ml-auto"
+              title="Delete all clips in track"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
             </button>
           )}
         </div>

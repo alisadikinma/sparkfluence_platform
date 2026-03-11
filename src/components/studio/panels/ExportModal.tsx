@@ -13,6 +13,40 @@ import { apiEndpoints, API_KEY } from '../../../lib/api';
 
 export type ExportStatus = 'idle' | 'scheduling' | 'combining' | 'polling' | 'done' | 'error';
 
+export interface TextOverlayForCombine {
+  content: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  font_size: number;
+  font_family: string;
+  font_color: string;
+  bg_color?: string;
+  opacity: number;
+  alignment: 'left' | 'center' | 'right';
+  bold: boolean;
+  italic: boolean;
+  stroke_color?: string;
+  stroke_width?: number;
+  enter_animation?: string;
+  exit_animation?: string;
+  start_time: number;
+  end_time: number;
+}
+
+export interface MediaOverlayForCombine {
+  type: 'image' | 'video';
+  src: string;                    // URL to media file
+  x: number;                      // position x in composition
+  y: number;                      // position y in composition
+  width: number;                  // scaled width
+  height: number;                 // scaled height
+  opacity: number;                // 0-1
+  start_time: number;             // absolute seconds in final video
+  end_time: number;               // absolute seconds in final video
+}
+
 export interface VideoSegmentForCombine {
   segment_id: string;
   segment_number: number;
@@ -21,11 +55,19 @@ export interface VideoSegmentForCombine {
   duration_seconds: number;
   script_text?: string | null;
   emotion?: string;
+  /** FFmpeg xfade transition type to NEXT segment */
+  transition_type?: string | null;
+  /** Transition duration in seconds */
+  transition_duration?: number;
+  /** Text overlays to burn into this segment */
+  text_overlays?: TextOverlayForCombine[];
 }
 
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Called when export completes successfully — triggers cleanup + redirect */
+  onComplete?: () => void;
   /** Video title for planner scheduling */
   videoTitle?: string;
   /** Video description */
@@ -38,6 +80,14 @@ interface ExportModalProps {
   sessionId?: string;
   /** Video segments ready for combining */
   segments: VideoSegmentForCombine[];
+  /** BGM audio URL (if user has added background music) */
+  bgmUrl?: string | null;
+  /** BGM volume (0-1) */
+  bgmVolume?: number;
+  /** Whether to enable subtitle burn-in */
+  enableSubtitles?: boolean;
+  /** Media overlays (image/video) with absolute timing for compositing */
+  mediaOverlays?: MediaOverlayForCombine[];
 }
 
 const PLATFORMS = [
@@ -52,12 +102,17 @@ const MAX_POLL_ATTEMPTS = 150; // 12.5 minutes max
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
+  onComplete,
   videoTitle,
   videoDescription,
   thumbnailUrl,
   orderId,
   sessionId,
   segments,
+  bgmUrl,
+  bgmVolume = 0.2,
+  enableSubtitles = true,
+  mediaOverlays,
 }) => {
   const { user } = useAuth();
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
@@ -157,10 +212,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               .eq('id', plannedContentIdRef.current);
           }
 
-          // Auto-close after 2 seconds
+          // Auto-close after 2 seconds → trigger completion callback
           setTimeout(() => {
             resetState();
-            onClose();
+            if (onComplete) {
+              onComplete();
+            } else {
+              onClose();
+            }
           }, 2000);
         } else if (jobData?.status === 'failed') {
           if (pollRef.current) clearInterval(pollRef.current);
@@ -235,19 +294,25 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       // Step 2: Trigger video combine via VPS
       setExportStatus('combining');
 
+      // Check if any segment has a specific transition type
+      const hasTransitions = segments.some(s => s.transition_type);
+
       const requestBody = {
         project_id: orderId || 'project_' + Date.now(),
         session_id: sessionId || orderId || 'session_' + Date.now(),
         segments: segments,
+        media_overlays: mediaOverlays && mediaOverlays.length > 0 ? mediaOverlays : undefined,
         options: {
           enable_transitions: true,
           transition_duration: 0.5,
-          enable_subtitles: false,
+          // Use auto_select when segments carry their own transition types
+          auto_select_transitions: !hasTransitions,
+          enable_subtitles: enableSubtitles,
           subtitle_style: 'tiktok',
           word_by_word: true,
-          enable_bgm: false,
-          music_url: null,
-          bgm_volume: 0.20,
+          enable_bgm: !!bgmUrl,
+          music_url: bgmUrl || null,
+          bgm_volume: bgmVolume,
           duck_during_speech: true,
           normalize_audio: true,
         },
@@ -291,7 +356,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           .eq('id', plannedContentIdRef.current);
       }
     }
-  }, [user?.id, scheduleDate, scheduleTime, selectedPlatforms, videoTitle, videoDescription, thumbnailUrl, orderId, sessionId, segments, startPolling]);
+  }, [user?.id, scheduleDate, scheduleTime, selectedPlatforms, videoTitle, videoDescription, thumbnailUrl, orderId, sessionId, segments, bgmUrl, bgmVolume, enableSubtitles, startPolling]);
 
   if (!isOpen) return null;
 

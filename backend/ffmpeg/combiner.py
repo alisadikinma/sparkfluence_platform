@@ -30,6 +30,7 @@ class VideoSegmentInput:
     script_text: Optional[str] = None
     emotion: str = "neutral"
     transition_type: Optional[TransitionType] = None
+    transition_duration: Optional[float] = None  # per-segment override (seconds)
 
 
 @dataclass
@@ -251,9 +252,11 @@ class VideoCombiner:
             else:
                 trans_type = seg.transition_type or TransitionType.DISSOLVE
             
+            # Use per-segment duration if provided, otherwise config default
+            trans_dur = seg.transition_duration or config.transition_duration
             transitions.append(TransitionConfig(
                 type=trans_type,
-                duration=config.transition_duration
+                duration=trans_dur
             ))
         
         # Apply transitions

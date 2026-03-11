@@ -276,10 +276,8 @@ export function buildProjectFromPipeline(input: PipelineInput, userId: string): 
       layers.push(createImageLayer(seg.imageUrl, durFrames));
     }
 
-    // Text/subtitle layer
-    if (seg.script) {
-      layers.push(createTextLayer(seg.script, durFrames));
-    }
+    // Text layers are NOT auto-generated from script text.
+    // Captions are created on-demand via Auto Captions (Groq Whisper transcription).
 
     const comp: SegmentComposition = {
       id: seg.id || generateId('seg'),
@@ -410,11 +408,9 @@ export function buildProjectFromSession(session: any, userId: string): Sparkflue
       layers.push(createImageLayer(imageUrl, durFrames));
     }
 
-    // Add subtitle/text layer from script
+    // Text layers are NOT auto-generated from script text.
+    // Captions are created on-demand via Auto Captions (Groq Whisper transcription).
     const scriptText = seg.script || '';
-    if (scriptText) {
-      layers.push(createTextLayer(scriptText, durFrames));
-    }
 
     const segType = seg.segmentType || seg.segment_type || seg.type || 'BODY';
     const layout = (seg.layout || 'full') as LayoutType;

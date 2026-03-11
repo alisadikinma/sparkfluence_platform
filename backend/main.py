@@ -235,6 +235,40 @@ class CreateVideoJobsRequest(BaseModel):
 
 # ==================== V2 Models (Enhanced FFmpeg) ====================
 
+class TextOverlayV2(BaseModel):
+    """Text overlay to burn into a video segment via FFmpeg drawtext."""
+    content: str
+    x: int = 0
+    y: int = 0
+    width: int = 1080
+    height: int = 200
+    font_size: int = 48
+    font_family: str = "Arial"
+    font_color: str = "#FFFFFF"
+    bg_color: Optional[str] = None
+    opacity: float = 1.0
+    alignment: str = "center"  # left, center, right
+    bold: bool = False
+    italic: bool = False
+    stroke_color: Optional[str] = None
+    stroke_width: int = 0
+    enter_animation: Optional[str] = None
+    exit_animation: Optional[str] = None
+    start_time: float = 0.0  # seconds from segment start
+    end_time: float = 0.0    # seconds from segment start (0 = full duration)
+
+class MediaOverlayV2(BaseModel):
+    """Image/video overlay to composite onto the combined video via FFmpeg overlay filter."""
+    type: str = "image"              # "image" or "video"
+    src: str                         # URL to media file
+    x: int = 0                       # position x in composition
+    y: int = 0                       # position y in composition
+    width: int = 324                 # scaled width
+    height: int = 576                # scaled height
+    opacity: float = 1.0             # 0-1
+    start_time: float = 0.0          # absolute seconds in final video
+    end_time: float = 0.0            # absolute seconds in final video
+
 class VideoSegmentV2(BaseModel):
     """Enhanced video segment with all metadata."""
     segment_id: str
@@ -244,12 +278,16 @@ class VideoSegmentV2(BaseModel):
     duration_seconds: float
     script_text: Optional[str] = None
     emotion: str = "neutral"
+    transition_type: Optional[str] = None       # FFmpeg xfade type for transition TO next segment
+    transition_duration: Optional[float] = None  # seconds
+    text_overlays: Optional[List[TextOverlayV2]] = None  # Text layers to burn in
 
 class CombineOptionsV2(BaseModel):
     """Enhanced combine options."""
     # Transitions
     enable_transitions: bool = True
     transition_duration: float = 0.5
+    auto_select_transitions: bool = True  # False = use per-segment transition_type
 
     # Subtitles (now supports at combine time)
     enable_subtitles: bool = False
@@ -270,6 +308,7 @@ class CombineVideoRequestV2(BaseModel):
     project_id: str
     session_id: str
     segments: List[VideoSegmentV2]
+    media_overlays: Optional[List[MediaOverlayV2]] = None  # Image/video overlays with absolute timing
     options: CombineOptionsV2 = CombineOptionsV2()
     whisper_data: Optional[Dict[str, Any]] = None  # Optional Whisper transcription
 
@@ -556,7 +595,8 @@ async def combine_final_video_v2(
         request.session_id,
         request.segments,
         request.options,
-        request.whisper_data
+        request.whisper_data,
+        request.media_overlays
     )
 
     return {
@@ -683,7 +723,8 @@ async def process_video_combination_v2(
     session_id: str,
     segments: List[VideoSegmentV2],
     options: CombineOptionsV2,
-    whisper_data: Optional[Dict[str, Any]] = None
+    whisper_data: Optional[Dict[str, Any]] = None,
+    media_overlays: Optional[List[MediaOverlayV2]] = None
 ):
     """
     Enhanced video combination using FFmpeg modules.
@@ -710,24 +751,40 @@ async def process_video_combination_v2(
         def progress_callback(progress: int, step: str):
             update_job_status(job_id, progress, step)
 
-        # Convert segments to VideoSegmentInput
-        segment_inputs = [
-            VideoSegmentInput(
+        # Convert segments to VideoSegmentInput (with per-segment transition types)
+        segment_inputs = []
+        for seg in segments:
+            # Resolve transition type from string to enum
+            trans_type = None
+            if seg.transition_type:
+                try:
+                    trans_type = TransitionType(seg.transition_type)
+                except ValueError:
+                    logger.warning(f"Unknown transition type '{seg.transition_type}', using auto-select")
+
+            segment_inputs.append(VideoSegmentInput(
                 video_url=seg.video_url,
                 segment_type=seg.segment_type,
                 segment_number=seg.segment_number,
                 duration_seconds=seg.duration_seconds,
                 script_text=seg.script_text,
-                emotion=seg.emotion
-            )
-            for seg in segments
-        ]
+                emotion=seg.emotion,
+                transition_type=trans_type,
+                transition_duration=seg.transition_duration
+            ))
+
+        # Use per-segment transition duration if provided (take max from segments)
+        effective_transition_duration = options.transition_duration
+        seg_durations = [s.transition_duration for s in segments if s.transition_duration]
+        if seg_durations:
+            effective_transition_duration = max(seg_durations)
 
         # Build config (subtitles handled separately for partial success)
+        has_per_segment_transitions = any(s.transition_type for s in segments)
         config = CombineConfig(
             enable_transitions=options.enable_transitions,
-            transition_duration=options.transition_duration,
-            auto_select_transitions=True,
+            transition_duration=effective_transition_duration,
+            auto_select_transitions=options.auto_select_transitions and not has_per_segment_transitions,
             enable_subtitles=False,  # We handle subtitles separately
             subtitle_style=options.subtitle_style,
             word_by_word=options.word_by_word
@@ -756,6 +813,208 @@ async def process_video_combination_v2(
         results["combine"]["success"] = True
         current_video = result.output_path
         logger.info(f"[V2] Video segments combined: {current_video}")
+
+        # =================================================================
+        # Step 1b: Burn text overlays (if any segments have text_overlays)
+        # =================================================================
+        has_text_overlays = any(seg.text_overlays for seg in segments)
+        if has_text_overlays:
+            try:
+                update_job_status(job_id, 45, "Burning text overlays")
+                text_overlay_video = work_dir / "with_text.mp4"
+
+                # Calculate cumulative segment start times (accounting for transitions)
+                seg_start_times: list[float] = []
+                cumulative = 0.0
+                for i, seg in enumerate(segments):
+                    seg_start_times.append(cumulative)
+                    trans_dur = seg.transition_duration or options.transition_duration
+                    seg_dur = seg.duration_seconds
+                    if i < len(segments) - 1 and options.enable_transitions:
+                        cumulative += seg_dur - trans_dur
+                    else:
+                        cumulative += seg_dur
+
+                # Build FFmpeg drawtext filter chain
+                drawtext_filters = []
+                for i, seg in enumerate(segments):
+                    if not seg.text_overlays:
+                        continue
+                    seg_start = seg_start_times[i]
+                    for overlay in seg.text_overlays:
+                        # Convert hex color to FFmpeg format (0xRRGGBB with alpha)
+                        color = overlay.font_color.lstrip('#')
+                        alpha_hex = hex(int(overlay.opacity * 255))[2:].zfill(2)
+                        ff_color = f"0x{color}{alpha_hex}"
+
+                        # Calculate absolute start/end times
+                        abs_start = seg_start + overlay.start_time
+                        abs_end = seg_start + (overlay.end_time if overlay.end_time > 0 else seg.duration_seconds)
+
+                        # Escape text for FFmpeg (single quotes, colons, backslashes)
+                        escaped_text = overlay.content.replace("\\", "\\\\").replace("'", "'\\''").replace(":", "\\:")
+
+                        # Determine x position from alignment
+                        if overlay.alignment == 'center':
+                            x_expr = f"(w-text_w)/2"
+                        elif overlay.alignment == 'right':
+                            x_expr = f"w-text_w-{overlay.x}"
+                        else:
+                            x_expr = str(overlay.x)
+
+                        # Build drawtext filter with optional animation
+                        fade_dur = 0.3  # seconds for enter/exit fade
+                        has_enter_anim = overlay.enter_animation and overlay.enter_animation != 'none'
+                        has_exit_anim = overlay.exit_animation and overlay.exit_animation != 'none'
+
+                        # Build alpha expression for fade in/out animations
+                        if has_enter_anim or has_exit_anim:
+                            alpha_parts = []
+                            if has_enter_anim:
+                                # Fade in: alpha ramps 0→1 over fade_dur from abs_start
+                                alpha_parts.append(f"if(lt(t-{abs_start:.3f},{fade_dur}),(t-{abs_start:.3f})/{fade_dur},1)")
+                            if has_exit_anim:
+                                fade_out_start = abs_end - fade_dur
+                                # Fade out: alpha ramps 1→0 over fade_dur before abs_end
+                                alpha_parts.append(f"if(gt(t,{fade_out_start:.3f}),({abs_end:.3f}-t)/{fade_dur},1)")
+                            # Multiply all alpha parts together (enter * exit * base opacity)
+                            if len(alpha_parts) == 2:
+                                alpha_expr = f"'({alpha_parts[0]})*({alpha_parts[1]})'"
+                            else:
+                                alpha_expr = f"'{alpha_parts[0]}'"
+                        else:
+                            alpha_expr = None
+
+                        dt = (
+                            f"drawtext=text='{escaped_text}'"
+                            f":fontsize={overlay.font_size}"
+                            f":fontcolor={ff_color}"
+                            f":x={x_expr}"
+                            f":y={overlay.y}"
+                            f":enable='between(t,{abs_start:.3f},{abs_end:.3f})'"
+                        )
+
+                        if alpha_expr:
+                            dt += f":alpha={alpha_expr}"
+
+                        # Add font if not default
+                        if overlay.font_family and overlay.font_family != 'Arial':
+                            dt += f":fontfile=/usr/share/fonts/truetype/{overlay.font_family.lower()}.ttf"
+
+                        # Add stroke (border) if present
+                        if overlay.stroke_color and overlay.stroke_width > 0:
+                            stroke_color = overlay.stroke_color.lstrip('#')
+                            dt += f":borderw={overlay.stroke_width}:bordercolor=0x{stroke_color}"
+
+                        drawtext_filters.append(dt)
+
+                if drawtext_filters:
+                    vf = ",".join(drawtext_filters)
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-i', str(current_video),
+                        '-vf', vf,
+                        '-c:a', 'copy',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                        str(text_overlay_video)
+                    ]
+
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, stderr = await proc.communicate()
+
+                    if proc.returncode != 0:
+                        raise Exception(f"FFmpeg drawtext failed: {stderr.decode()[:500]}")
+
+                    current_video = text_overlay_video
+                    logger.info(f"[V2] Text overlays burned: {len(drawtext_filters)} overlays")
+
+            except Exception as e:
+                logger.error(f"[V2] Text overlay burn failed (continuing without): {e}")
+                # Non-fatal — continue with video without text overlays
+
+        # =================================================================
+        # Step 1c: Composite media overlays (images/videos from overlay tracks)
+        # =================================================================
+        if media_overlays and len(media_overlays) > 0:
+            try:
+                update_job_status(job_id, 48, "Compositing media overlays")
+                media_overlay_video = work_dir / "with_media_overlays.mp4"
+
+                # Download all overlay media files
+                overlay_inputs = []
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    for idx, mo in enumerate(media_overlays):
+                        ext = '.mp4' if mo.type == 'video' else '.png'
+                        dl_path = work_dir / f"overlay_{idx}{ext}"
+                        try:
+                            resp = await client.get(mo.src)
+                            resp.raise_for_status()
+                            with open(dl_path, 'wb') as f:
+                                f.write(resp.content)
+                            overlay_inputs.append((idx, mo, dl_path))
+                            logger.info(f"[V2] Downloaded overlay {idx}: {dl_path.name} ({dl_path.stat().st_size / 1024:.1f} KB)")
+                        except Exception as dl_err:
+                            logger.warning(f"[V2] Failed to download overlay {idx} ({mo.src[:80]}): {dl_err}")
+
+                if overlay_inputs:
+                    # Build FFmpeg filter_complex for all overlays
+                    # Input 0 = base video, Input 1..N = overlay media
+                    input_args = ['-i', str(current_video)]
+                    for _, _, dl_path in overlay_inputs:
+                        input_args.extend(['-i', str(dl_path)])
+
+                    # Chain overlay filters: base → overlay_0 → overlay_1 → ...
+                    filter_parts = []
+                    prev_label = "0:v"
+                    for i, (idx, mo, dl_path) in enumerate(overlay_inputs):
+                        input_idx = i + 1  # 0 is base video
+                        out_label = f"ov{i}"
+
+                        # Scale overlay to target size
+                        scale_label = f"s{i}"
+                        filter_parts.append(
+                            f"[{input_idx}:v]scale={mo.width}:{mo.height}:force_original_aspect_ratio=decrease,"
+                            f"pad={mo.width}:{mo.height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+                            f"format=rgba,colorchannelmixer=aa={mo.opacity:.2f}[{scale_label}]"
+                        )
+
+                        # Overlay with timing (enable between start_time and end_time)
+                        filter_parts.append(
+                            f"[{prev_label}][{scale_label}]overlay=x={mo.x}:y={mo.y}"
+                            f":enable='between(t,{mo.start_time:.3f},{mo.end_time:.3f})'"
+                            f":format=auto[{out_label}]"
+                        )
+                        prev_label = out_label
+
+                    filter_complex = ";".join(filter_parts)
+
+                    cmd = [
+                        'ffmpeg', '-y',
+                        *input_args,
+                        '-filter_complex', filter_complex,
+                        '-map', f'[{prev_label}]',
+                        '-map', '0:a?',
+                        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                        '-c:a', 'copy',
+                        str(media_overlay_video)
+                    ]
+
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, stderr = await proc.communicate()
+
+                    if proc.returncode != 0:
+                        raise Exception(f"FFmpeg overlay compositing failed: {stderr.decode()[:500]}")
+
+                    current_video = media_overlay_video
+                    logger.info(f"[V2] Media overlays composited: {len(overlay_inputs)} overlays")
+
+            except Exception as e:
+                logger.error(f"[V2] Media overlay compositing failed (continuing without): {e}")
+                # Non-fatal — continue with video without media overlays
 
         # =================================================================
         # Step 2: Parallel preparation - Transcription + BGM Download

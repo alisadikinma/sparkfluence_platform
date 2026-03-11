@@ -15,11 +15,13 @@ import { EffectLayer } from './EffectLayer';
 
 interface SegmentRendererProps {
   segment: SegmentComposition;
+  /** Layer IDs to skip (rendered globally for cross-segment text) */
+  skipLayerIds?: Set<string>;
 }
 
-export const SegmentRenderer: React.FC<SegmentRendererProps> = ({ segment }) => {
+export const SegmentRenderer: React.FC<SegmentRendererProps> = ({ segment, skipLayerIds }) => {
   const sortedLayers = [...segment.layers]
-    .filter(l => l.visible)
+    .filter(l => l.visible && !(skipLayerIds?.has(l.id)))
     .sort((a, b) => a.zIndex - b.zIndex);
 
   return (

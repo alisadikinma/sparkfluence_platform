@@ -168,6 +168,16 @@ export interface TransitionItem {
 }
 
 // --- Top-Level Project ---
+// --- Persisted Media Asset (uploaded to Supabase Storage) ---
+export interface MediaAsset {
+  id: string;
+  name: string;
+  type: 'video' | 'image';
+  url: string;          // Supabase Storage public URL (survives refresh)
+  durationSec: number;
+  thumbnailUrl: string;
+}
+
 export interface SparkfluenceProject {
   id: string;
   userId: string;
@@ -182,6 +192,7 @@ export interface SparkfluenceProject {
   transitions: TransitionItem[];
   captions?: CaptionTrack[];
   overlayTracks?: OverlayTrack[];
+  mediaAssets?: MediaAsset[];  // Imported media persisted via Supabase Storage
 
   createdAt: string;
   updatedAt: string;
@@ -232,6 +243,16 @@ export interface CaptionTrack {
   segmentId: string;
   chunks: CaptionChunk[];
   style: CaptionStyle;
+  // Custom position/size (overrides default bottom-15% center)
+  position?: { x: number; y: number };
+  size?: { w: number; h: number };
+  // Custom text styling (overrides style preset defaults)
+  fontSize?: number;
+  fontFamily?: string;
+  color?: string;
+  opacity?: number;
+  // Karaoke highlight color (default: #10B981 emerald)
+  highlightColor?: string;
 }
 
 // --- Sticker Library ---

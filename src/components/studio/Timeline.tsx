@@ -107,8 +107,8 @@ interface TimelineProps {
 }
 
 export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
-  const { state, dispatch } = useStudio();
-  const { project, playback, zoom, selection } = state;
+  const { state, dispatch, pushHistory } = useStudio();
+  const { project, playback, zoom, selection, hiddenTracks, trackOrder } = state;
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -392,14 +392,17 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
         const dropSeconds = dropX / pixelsPerSecond;
         const startFrame = Math.max(0, Math.round(dropSeconds * STUDIO_FPS));
 
+        // Default overlay: 30% canvas width, centered
+        const overlayW = Math.round(1080 * 0.3);
+        const overlayH = Math.round(1920 * 0.3);
         const clip: OverlayClip = {
           id: generateId('oclip'),
           type: media.type,
           src: media.url,
           startFrame,
           durationInFrames: secondsToFrames(media.durationSec),
-          position: { x: 0, y: 0 },
-          size: { w: 1080, h: 1920 },
+          position: { x: Math.round((1080 - overlayW) / 2), y: Math.round((1920 - overlayH) / 2) },
+          size: { w: overlayW, h: overlayH },
           opacity: 1,
           zIndex: 10,
         };
@@ -567,14 +570,17 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
             startFrame = Math.max(0, Math.round(dropSeconds * STUDIO_FPS));
           }
 
+          // Default overlay: 30% canvas width, centered
+          const overlayW = Math.round(1080 * 0.3);
+          const overlayH = Math.round(1920 * 0.3);
           const clip: OverlayClip = {
             id: generateId('oclip'),
             type: 'image',
             src: media.url,
             startFrame,
             durationInFrames: secondsToFrames(media.durationSec || 5),
-            position: { x: 0, y: 0 },
-            size: { w: 1080, h: 1920 },
+            position: { x: Math.round((1080 - overlayW) / 2), y: Math.round((1920 - overlayH) / 2) },
+            size: { w: overlayW, h: overlayH },
             opacity: 1,
             zIndex: 10,
           };
@@ -752,13 +758,15 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
 
   // Handle text layer trim — adjusts inFrame/outFrame of text layer
   // Allows extending beyond segment boundary (cross-segment text expansion)
+  // Negative inFrame = text starts before segment; outFrame > segDuration = extends past segment
   const handleTextTrim = useCallback(
     (clipId: string, trimStartFrames: number, trimEndFrames: number) => {
       const totalFrames = project.totalDurationInFrames || 1;
       for (const seg of project.segments) {
         const textLayer = seg.layers.find(l => l.id === clipId && l.type === 'text');
         if (textLayer) {
-          const newInFrame = Math.max(0, textLayer.inFrame + trimStartFrames);
+          // Allow negative inFrame (text starts before segment)
+          const newInFrame = Math.max(-seg.startFrame, textLayer.inFrame + trimStartFrames);
           // Allow outFrame beyond segment boundary, clamped to total project duration
           const maxOutFrame = totalFrames - seg.startFrame;
           const newOutFrame = Math.min(maxOutFrame, textLayer.outFrame - trimEndFrames);
@@ -778,6 +786,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
   );
 
   // Handle text layer move — repositions text within project timeline (can cross segment boundaries)
+  // Allows negative inFrame (text starts before its parent segment)
   const handleTextMove = useCallback(
     (clipId: string, newAbsoluteStartFrame: number) => {
       const totalFrames = project.totalDurationInFrames || 1;
@@ -787,26 +796,181 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
 
         const duration = textLayer.outFrame - textLayer.inFrame;
         // Convert absolute frame to relative inFrame within this segment
+        // Allow negative (text starts before segment) — clamped to project start
         const newInFrame = Math.max(-seg.startFrame, newAbsoluteStartFrame - seg.startFrame);
-        // Allow outFrame to extend beyond segment boundary (cross-segment text)
         const newOutFrame = newInFrame + duration;
 
-        // Clamp: can't go before project start or after project end
-        const clampedInFrame = Math.max(0, newInFrame);
+        // Clamp outFrame to project end
         const clampedOutFrame = Math.min(totalFrames - seg.startFrame, newOutFrame);
 
-        if (clampedOutFrame > clampedInFrame) {
+        if (clampedOutFrame > newInFrame) {
           dispatch({
             type: 'UPDATE_LAYER',
             segmentId: seg.id,
             layerId: clipId,
-            changes: { inFrame: clampedInFrame, outFrame: clampedOutFrame },
+            changes: { inFrame: newInFrame, outFrame: clampedOutFrame },
           });
         }
         return;
       }
     },
     [project.segments, project.totalDurationInFrames, dispatch]
+  );
+
+  // Handle track visibility toggle — dispatches to global state
+  const handleToggleTrackVisibility = useCallback(
+    (trackKey: string) => {
+      dispatch({ type: 'TOGGLE_TRACK_VISIBILITY', trackKey });
+    },
+    [dispatch]
+  );
+
+  // --- Track reorder state (use refs to avoid stale closure in dragEnd) ---
+  const [dragOverTrack, setDragOverTrack] = useState<string | null>(null);
+  const dragSourceRef = useRef<string | null>(null);
+  const dragOverRef = useRef<string | null>(null);
+
+  // Build default track key order (overlay tracks, video, text rows, captions, tts, bgm)
+  const defaultTrackKeys = useMemo(() => {
+    const keys: string[] = [];
+    // Overlay tracks
+    for (const { track, clips: oClips } of overlayTrackClips) {
+      if (oClips.length > 0) keys.push(track.id);
+    }
+    // Video
+    keys.push('video');
+    // Text rows
+    for (let i = 0; i < packedTextTracks.length; i++) {
+      keys.push(packedTextTracks.length === 1 ? 'text' : `text-${i}`);
+    }
+    // Captions
+    if (captionClips.length > 0) keys.push('captions');
+    // TTS
+    if (ttsClips.length > 0) keys.push('tts');
+    // BGM
+    if (bgmClips.length > 0) keys.push('bgm');
+    return keys;
+  }, [overlayTrackClips, packedTextTracks, captionClips, ttsClips, bgmClips]);
+
+  // Effective track order — use custom order if available, otherwise default
+  const effectiveTrackOrder = useMemo(() => {
+    if (trackOrder.length === 0) return defaultTrackKeys;
+    // Keep only keys that exist in default, add new ones at the end
+    const ordered: string[] = [];
+    for (const key of trackOrder) {
+      if (defaultTrackKeys.includes(key)) ordered.push(key);
+    }
+    // Append any new tracks not in the saved order
+    for (const key of defaultTrackKeys) {
+      if (!ordered.includes(key)) ordered.push(key);
+    }
+    return ordered;
+  }, [trackOrder, defaultTrackKeys]);
+
+  // Keep a ref of effectiveTrackOrder for use in dragEnd callback
+  const effectiveTrackOrderRef = useRef(effectiveTrackOrder);
+  effectiveTrackOrderRef.current = effectiveTrackOrder;
+
+  const handleTrackDragStart = useCallback((trackKey: string) => {
+    dragSourceRef.current = trackKey;
+  }, []);
+
+  const handleTrackDragOver = useCallback((trackKey: string) => {
+    if (trackKey !== dragSourceRef.current) {
+      dragOverRef.current = trackKey;
+      setDragOverTrack(trackKey);
+    }
+  }, []);
+
+  const handleTrackDragEnd = useCallback(() => {
+    const src = dragSourceRef.current;
+    const dst = dragOverRef.current;
+    if (src && dst && src !== dst) {
+      const newOrder = [...effectiveTrackOrderRef.current];
+      const srcIdx = newOrder.indexOf(src);
+      const dstIdx = newOrder.indexOf(dst);
+      if (srcIdx !== -1 && dstIdx !== -1) {
+        newOrder.splice(srcIdx, 1);
+        newOrder.splice(dstIdx, 0, src);
+        dispatch({ type: 'SET_TRACK_ORDER', order: newOrder });
+      }
+    }
+    dragSourceRef.current = null;
+    dragOverRef.current = null;
+    setDragOverTrack(null);
+  }, [dispatch]);
+
+  // Handle delete all clips in a track
+  const handleDeleteTrack = useCallback(
+    (trackKey: string) => {
+      // Video track — delete all segments
+      if (trackKey === 'video') {
+        pushHistory('Delete all video segments');
+        const segIds = project.segments.map(s => s.id);
+        for (const id of segIds) {
+          dispatch({ type: 'DELETE_SEGMENT', segmentId: id });
+        }
+        return;
+      }
+
+      // Text tracks — remove only the text layers in the specific row
+      if (trackKey === 'text' || trackKey.startsWith('text-')) {
+        const rowIdx = trackKey === 'text' ? 0 : parseInt(trackKey.split('-')[1], 10);
+        const rowClips = packedTextTracks[rowIdx];
+        if (!rowClips || rowClips.length === 0) return;
+
+        pushHistory('Delete text track');
+        // Collect layer IDs from this row
+        const layerIdsToDelete = new Set(rowClips.map(c => c.id));
+        for (const seg of project.segments) {
+          for (const layer of seg.layers) {
+            if (layer.type === 'text' && layerIdsToDelete.has(layer.id)) {
+              dispatch({ type: 'REMOVE_LAYER', segmentId: seg.id, layerId: layer.id });
+            }
+          }
+        }
+        return;
+      }
+
+      // Captions track — remove all captions
+      if (trackKey === 'captions') {
+        pushHistory('Delete captions track');
+        const captionSegIds = (project.captions || []).map(c => c.segmentId);
+        for (const segId of captionSegIds) {
+          dispatch({ type: 'REMOVE_CAPTION', segmentId: segId });
+        }
+        return;
+      }
+
+      // TTS track — remove all TTS audio tracks
+      if (trackKey === 'tts') {
+        pushHistory('Delete TTS track');
+        const ttsIds = project.audio.tts.map(t => t.id);
+        for (const id of ttsIds) {
+          dispatch({ type: 'REMOVE_AUDIO_TRACK', trackType: 'tts', trackId: id });
+        }
+        return;
+      }
+
+      // BGM track — remove all BGM audio tracks
+      if (trackKey === 'bgm') {
+        pushHistory('Delete BGM track');
+        const bgmIds = project.audio.bgm.map(t => t.id);
+        for (const id of bgmIds) {
+          dispatch({ type: 'REMOVE_AUDIO_TRACK', trackType: 'bgm', trackId: id });
+        }
+        return;
+      }
+
+      // Overlay track (by ID)
+      const isOverlay = (project.overlayTracks || []).some(t => t.id === trackKey);
+      if (isOverlay) {
+        pushHistory('Delete overlay track');
+        dispatch({ type: 'REMOVE_OVERLAY_TRACK', trackId: trackKey });
+        return;
+      }
+    },
+    [project, dispatch, pushHistory, packedTextTracks]
   );
 
   // Handle clip click — for video clips, select segment; for text layers, select layer
@@ -828,6 +992,14 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
       }
     },
     [project.segments, dispatch]
+  );
+
+  // Handle caption clip click — selects via 'captions' segmentId convention
+  const handleCaptionClipClick = useCallback(
+    (clipId: string) => {
+      dispatch({ type: 'SELECT_LAYER', segmentId: 'captions', layerId: clipId });
+    },
+    [dispatch]
   );
 
   return (
@@ -895,7 +1067,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
             {/* Tracks area — the track component handles its own header + scrollable clip area */}
             <div
               ref={scrollContainerRef}
-              className={`flex-1 overflow-x-auto overflow-y-auto transition-colors ${
+              className={`flex-1 overflow-x-auto overflow-y-auto transition-colors flex flex-col ${
                 isDropTarget ? 'bg-emerald-500/5 ring-1 ring-inset ring-emerald-500/30' : ''
               }`}
               onScroll={handleScroll}
@@ -903,7 +1075,8 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
               onDragOver={handleTimelineDragOver}
               onDragLeave={handleTimelineDragLeave}
             >
-              <div style={{ width: totalWidth + HEADER_WIDTH, position: 'relative' }}>
+              <div style={{ width: totalWidth + HEADER_WIDTH, margin: 'auto 0' }}>
+              <div style={{ position: 'relative' }}>
                 {/* Empty drop zone ABOVE video track — for dragging overlay videos on top */}
                 <div
                   className="flex"
@@ -926,192 +1099,234 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                   <div className="flex-1 border-b border-[#1E1E1E] bg-[#1A1A1A]" />
                 </div>
 
-                {/* Video Track + Transition Diamonds */}
-                <div className="relative">
-                  {/* Drop position indicator */}
-                  {isDropTarget && dropIndicatorIndex !== null && (() => {
-                    // Calculate pixel position for the drop indicator
-                    let accFrames = 0;
-                    for (let i = 0; i < dropIndicatorIndex && i < project.segments.length; i++) {
-                      accFrames += project.segments[i].durationInFrames;
-                    }
-                    const indicatorPx = (accFrames / STUDIO_FPS) * pixelsPerSecond + HEADER_WIDTH;
+                {/* Drop position indicator */}
+                {isDropTarget && dropIndicatorIndex !== null && (() => {
+                  // Calculate pixel position for the drop indicator
+                  let accFrames = 0;
+                  for (let i = 0; i < dropIndicatorIndex && i < project.segments.length; i++) {
+                    accFrames += project.segments[i].durationInFrames;
+                  }
+                  const indicatorPx = (accFrames / STUDIO_FPS) * pixelsPerSecond + HEADER_WIDTH;
+                  return (
+                    <div
+                      className="absolute top-0 bottom-0 z-30 pointer-events-none"
+                      style={{ left: indicatorPx - 1 }}
+                    >
+                      <div className="w-0.5 h-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                      <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2.5 h-2.5 bg-emerald-400 rounded-full" />
+                    </div>
+                  );
+                })()}
+
+                {/* Dynamically ordered tracks — renders based on effectiveTrackOrder */}
+                {effectiveTrackOrder.map((trackKey) => {
+                  const reorderProps = {
+                    trackKey,
+                    isHidden: hiddenTracks.has(trackKey),
+                    onToggleVisibility: handleToggleTrackVisibility,
+                    onDragStart: handleTrackDragStart,
+                    onDragOver: handleTrackDragOver,
+                    onDragEnd: handleTrackDragEnd,
+                    isDragOver: dragOverTrack === trackKey,
+                    onDeleteTrack: handleDeleteTrack,
+                  };
+
+                  // --- Video Track (with transition diamonds) ---
+                  if (trackKey === 'video') {
                     return (
-                      <div
-                        className="absolute top-0 bottom-0 z-30 pointer-events-none"
-                        style={{ left: indicatorPx - 1 }}
-                      >
-                        <div className="w-0.5 h-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
-                        <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2.5 h-2.5 bg-emerald-400 rounded-full" />
+                      <div key="video" className="relative">
+                        <TimelineTrack
+                          trackType="video"
+                          label="Video"
+                          icon={<VideoIcon />}
+                          clips={videoClips}
+                          pixelsPerSecond={pixelsPerSecond}
+                          onClipClick={handleClipClick}
+                          selectedClipId={selection.segmentId}
+                          onTrim={handleTrim}
+                          activeTool={activeTool}
+                          onSplit={handleSplit}
+                          onTransitionDrop={handleTransitionDrop}
+                          onMediaInsert={handleMediaInsert}
+                          {...reorderProps}
+                        />
+
+                        {/* Transition diamonds between adjacent clips */}
+                        {videoClips.length > 1 && videoClips.slice(0, -1).map((clip, i) => {
+                          const nextClip = videoClips[i + 1];
+                          const clipEndPx = ((clip.startFrame + clip.durationInFrames) / STUDIO_FPS) * pixelsPerSecond;
+                          const nextClipStartPx = (nextClip.startFrame / STUDIO_FPS) * pixelsPerSecond;
+                          const centerPx = (clipEndPx + nextClipStartPx) / 2 + HEADER_WIDTH;
+
+                          const transition = project.transitions.find(
+                            t => t.betweenSegments[0] === clip.id && t.betweenSegments[1] === nextClip.id
+                          ) ?? null;
+
+                          const isPickerOpen = activeTransitionPicker?.fromId === clip.id && activeTransitionPicker?.toId === nextClip.id;
+
+                          return (
+                            <React.Fragment key={`td-${clip.id}-${nextClip.id}`}>
+                              <TransitionDiamond
+                                transition={transition}
+                                fromSegmentId={clip.id}
+                                toSegmentId={nextClip.id}
+                                pixelsPerSecond={pixelsPerSecond}
+                                positionX={centerPx}
+                                onClick={() => {
+                                  if (!transition) {
+                                    handleTransitionDrop(clip.id, nextClip.id, 'fade');
+                                  }
+                                  if (isPickerOpen) {
+                                    setActiveTransitionPicker(null);
+                                  } else {
+                                    setActiveTransitionPicker({ fromId: clip.id, toId: nextClip.id, positionX: centerPx });
+                                  }
+                                }}
+                                onDelete={transition ? () => {
+                                  dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
+                                  setActiveTransitionPicker(null);
+                                } : undefined}
+                              />
+                              {isPickerOpen && (
+                                <TransitionPickerPortal
+                                  anchorX={centerPx}
+                                  scrollContainerRef={scrollContainerRef}
+                                >
+                                  <TransitionPicker
+                                    fromSegmentId={clip.id}
+                                    toSegmentId={nextClip.id}
+                                    currentTransition={transition}
+                                    onSelect={(type: TransitionType, durationFrames: number) => {
+                                      if (transition) {
+                                        dispatch({ type: 'UPDATE_TRANSITION', transitionId: transition.id, changes: { type, durationInFrames: durationFrames } });
+                                      } else {
+                                        handleTransitionDrop(clip.id, nextClip.id, type);
+                                      }
+                                    }}
+                                    onRemove={() => {
+                                      if (transition) {
+                                        dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
+                                      }
+                                    }}
+                                    onClose={() => setActiveTransitionPicker(null)}
+                                  />
+                                </TransitionPickerPortal>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
                       </div>
                     );
-                  })()}
-                  <TimelineTrack
-                    trackType="video"
-                    label="Video"
-                    icon={<VideoIcon />}
-                    clips={videoClips}
-                    pixelsPerSecond={pixelsPerSecond}
-                    onClipClick={handleClipClick}
-                    selectedClipId={selection.segmentId}
-                    onTrim={handleTrim}
-                    activeTool={activeTool}
-                    onSplit={handleSplit}
-                    onTransitionDrop={handleTransitionDrop}
-                    onMediaInsert={handleMediaInsert}
-                  />
+                  }
 
-                  {/* Transition diamonds between adjacent clips */}
-                  {videoClips.length > 1 && videoClips.slice(0, -1).map((clip, i) => {
-                    const nextClip = videoClips[i + 1];
-                    const clipEndPx = ((clip.startFrame + clip.durationInFrames) / STUDIO_FPS) * pixelsPerSecond;
-                    const nextClipStartPx = (nextClip.startFrame / STUDIO_FPS) * pixelsPerSecond;
-                    const centerPx = (clipEndPx + nextClipStartPx) / 2 + HEADER_WIDTH;
-
-                    const transition = project.transitions.find(
-                      t => t.betweenSegments[0] === clip.id && t.betweenSegments[1] === nextClip.id
-                    ) ?? null;
-
-                    const isPickerOpen = activeTransitionPicker?.fromId === clip.id && activeTransitionPicker?.toId === nextClip.id;
-
+                  // --- Text Track rows ---
+                  if (trackKey === 'text' || trackKey.startsWith('text-')) {
+                    const rowIdx = trackKey === 'text' ? 0 : parseInt(trackKey.split('-')[1], 10);
+                    const rowClips = packedTextTracks[rowIdx];
+                    if (!rowClips) return null;
                     return (
-                      <React.Fragment key={`td-${clip.id}-${nextClip.id}`}>
-                        <TransitionDiamond
-                          transition={transition}
-                          fromSegmentId={clip.id}
-                          toSegmentId={nextClip.id}
-                          pixelsPerSecond={pixelsPerSecond}
-                          positionX={centerPx}
-                          onClick={() => {
-                            if (!transition) {
-                              // Create default fade first, then open picker
-                              handleTransitionDrop(clip.id, nextClip.id, 'fade');
-                            }
-                            // Toggle picker popover
-                            if (isPickerOpen) {
-                              setActiveTransitionPicker(null);
-                            } else {
-                              setActiveTransitionPicker({ fromId: clip.id, toId: nextClip.id, positionX: centerPx });
-                            }
-                          }}
-                          onDelete={transition ? () => {
-                            dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
-                            setActiveTransitionPicker(null);
-                          } : undefined}
-                        />
-                        {/* Transition Picker Popover — rendered via portal to avoid overflow clipping */}
-                        {isPickerOpen && (
-                          <TransitionPickerPortal
-                            anchorX={centerPx}
-                            scrollContainerRef={scrollContainerRef}
-                          >
-                            <TransitionPicker
-                              fromSegmentId={clip.id}
-                              toSegmentId={nextClip.id}
-                              currentTransition={transition}
-                              onSelect={(type: TransitionType, durationFrames: number) => {
-                                if (transition) {
-                                  dispatch({ type: 'UPDATE_TRANSITION', transitionId: transition.id, changes: { type, durationInFrames: durationFrames } });
-                                } else {
-                                  handleTransitionDrop(clip.id, nextClip.id, type);
-                                }
-                              }}
-                              onRemove={() => {
-                                if (transition) {
-                                  dispatch({ type: 'REMOVE_TRANSITION', transitionId: transition.id });
-                                }
-                              }}
-                              onClose={() => setActiveTransitionPicker(null)}
-                            />
-                          </TransitionPickerPortal>
-                        )}
-                      </React.Fragment>
+                      <TimelineTrack
+                        key={trackKey}
+                        trackType="text"
+                        label={packedTextTracks.length === 1 ? 'Text' : `T${rowIdx + 1}`}
+                        icon={<TextIcon />}
+                        clips={rowClips}
+                        pixelsPerSecond={pixelsPerSecond}
+                        onClipClick={handleClipClick}
+                        selectedClipId={selection.layerId}
+                        onTrim={handleTextTrim}
+                        onMove={handleTextMove}
+                        activeTool={activeTool}
+                        {...reorderProps}
+                      />
                     );
-                  })}
-                </div>
+                  }
 
-                {/* Text Tracks — packed rows, new row only when clips overlap */}
-                {packedTextTracks.map((rowClips, i) => (
-                  <TimelineTrack
-                    key={`text-row-${i}`}
-                    trackType="text"
-                    label={packedTextTracks.length === 1 ? 'Text' : `T${i + 1}`}
-                    icon={<TextIcon />}
-                    clips={rowClips}
-                    pixelsPerSecond={pixelsPerSecond}
-                    onClipClick={handleClipClick}
-                    selectedClipId={selection.layerId}
-                    onTrim={handleTextTrim}
-                    onMove={handleTextMove}
-                    activeTool={activeTool}
-                  />
-                ))}
+                  // --- Captions Track ---
+                  if (trackKey === 'captions') {
+                    return (
+                      <TimelineTrack
+                        key="captions"
+                        trackType="text"
+                        label="Captions"
+                        icon={<TextIcon />}
+                        clips={captionClips}
+                        pixelsPerSecond={pixelsPerSecond}
+                        onClipClick={handleCaptionClipClick}
+                        selectedClipId={selection.layerId}
+                        {...reorderProps}
+                      />
+                    );
+                  }
 
-                {/* Captions Track — grouped auto-generated captions */}
-                {captionClips.length > 0 && (
-                  <TimelineTrack
-                    trackType="text"
-                    label="Captions"
-                    icon={<TextIcon />}
-                    clips={captionClips}
-                    pixelsPerSecond={pixelsPerSecond}
-                    onClipClick={handleClipClick}
-                    selectedClipId={selection.layerId}
-                  />
-                )}
+                  // --- TTS Track ---
+                  if (trackKey === 'tts') {
+                    return (
+                      <TimelineTrack
+                        key="tts"
+                        trackType="tts"
+                        label="TTS"
+                        icon={<MicIcon />}
+                        clips={ttsClips}
+                        pixelsPerSecond={pixelsPerSecond}
+                        onClipClick={handleClipClick}
+                        selectedClipId={null}
+                        {...reorderProps}
+                      />
+                    );
+                  }
 
-                {/* TTS Track — only show when has clips */}
-                {ttsClips.length > 0 && (
-                  <TimelineTrack
-                    trackType="tts"
-                    label="TTS"
-                    icon={<MicIcon />}
-                    clips={ttsClips}
-                    pixelsPerSecond={pixelsPerSecond}
-                    onClipClick={handleClipClick}
-                    selectedClipId={null}
-                  />
-                )}
+                  // --- BGM Track ---
+                  if (trackKey === 'bgm') {
+                    return (
+                      <TimelineTrack
+                        key="bgm"
+                        trackType="bgm"
+                        label="BGM"
+                        icon={<MusicIcon />}
+                        clips={bgmClips}
+                        pixelsPerSecond={pixelsPerSecond}
+                        onClipClick={handleClipClick}
+                        selectedClipId={null}
+                        {...reorderProps}
+                      />
+                    );
+                  }
 
-                {/* BGM Track — only show when has clips */}
-                {bgmClips.length > 0 && (
-                  <TimelineTrack
-                    trackType="bgm"
-                    label="BGM"
-                    icon={<MusicIcon />}
-                    clips={bgmClips}
-                    pixelsPerSecond={pixelsPerSecond}
-                    onClipClick={handleClipClick}
-                    selectedClipId={null}
-                  />
-                )}
+                  // --- Overlay Track (by ID) ---
+                  const overlayEntry = overlayTrackClips.find(({ track }) => track.id === trackKey);
+                  if (overlayEntry) {
+                    const { track, clips: oClips } = overlayEntry;
+                    return (
+                      <div
+                        key={track.id}
+                        onDragOver={(e) => {
+                          if (e.dataTransfer.types.includes('application/x-studio-media')) {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'copy';
+                          }
+                        }}
+                        onDrop={(e) => { e.preventDefault(); handleOverlayTrackDrop(track.id, e); }}
+                      >
+                        <TimelineTrack
+                          trackType={track.trackType === 'video' ? 'video' : 'text'}
+                          label={track.label}
+                          icon={track.trackType === 'video' ? <VideoIcon /> : <TextIcon />}
+                          clips={oClips}
+                          pixelsPerSecond={pixelsPerSecond}
+                          onClipClick={handleOverlayClipClick}
+                          selectedClipId={selection.layerId}
+                          onTrim={handleOverlayTrim}
+                          onMove={handleOverlayMove}
+                          activeTool={activeTool}
+                          {...reorderProps}
+                        />
+                      </div>
+                    );
+                  }
 
-                {/* Overlay Tracks (Video 2, Text 2, etc.) — only show when has clips */}
-                {overlayTrackClips.filter(({ clips: oClips }) => oClips.length > 0).map(({ track, clips: oClips }) => (
-                  <div
-                    key={track.id}
-                    onDragOver={(e) => {
-                      if (e.dataTransfer.types.includes('application/x-studio-media')) {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'copy';
-                      }
-                    }}
-                    onDrop={(e) => { e.preventDefault(); handleOverlayTrackDrop(track.id, e); }}
-                  >
-                    <TimelineTrack
-                      trackType={track.trackType === 'video' ? 'video' : 'text'}
-                      label={track.label}
-                      icon={track.trackType === 'video' ? <VideoIcon /> : <TextIcon />}
-                      clips={oClips}
-                      pixelsPerSecond={pixelsPerSecond}
-                      onClipClick={handleOverlayClipClick}
-                      selectedClipId={selection.layerId}
-                      onTrim={handleOverlayTrim}
-                      onMove={handleOverlayMove}
-                      activeTool={activeTool}
-                    />
-                  </div>
-                ))}
+                  return null;
+                })}
 
                 {/* Drop zone for creating overlay tracks via drag */}
                 <div
@@ -1145,6 +1360,7 @@ export const Timeline: React.FC<TimelineProps> = ({ activeTool }) => {
                     containerRef={scrollContainerRef as React.RefObject<HTMLDivElement>}
                   />
                 </div>
+              </div>
               </div>
             </div>
           </div>

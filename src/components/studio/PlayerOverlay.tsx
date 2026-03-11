@@ -7,11 +7,16 @@
 // ============================================================================
 
 import React, { useCallback, useRef, useState, useMemo, useEffect } from 'react';
-import { STUDIO_WIDTH, STUDIO_HEIGHT } from '../../types/studio';
+import { STUDIO_WIDTH, STUDIO_HEIGHT, STUDIO_FPS } from '../../types/studio';
 import type { SparkfluenceProject, LayerItem } from '../../types/studio';
 
-/** Estimate text block height in composition pixels based on font size + content length */
-function estimateTextHeight(layer: LayerItem): number {
+/** Estimate layer height in composition pixels */
+function estimateLayerHeight(layer: LayerItem): number {
+  // Image/video overlays: use explicit size
+  if (layer.type === 'image' || layer.type === 'video') {
+    return layer.size.h;
+  }
+  // Text overlays: estimate from font size + content
   const fontSize = layer.text?.fontSize ?? 48;
   const content = layer.text?.content ?? '';
   const boxWidth = layer.size.w;
@@ -84,6 +89,87 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
   ml: 'ew-resize', mr: 'ew-resize', tm: 'ns-resize', bm: 'ns-resize',
 };
 
+/** Snap threshold in composition pixels */
+const SNAP_THRESHOLD = 8;
+const CANVAS_CENTER_X = STUDIO_WIDTH / 2;
+const CANVAS_CENTER_Y = STUDIO_HEIGHT / 2;
+
+interface SnapGuides {
+  /** Vertical line at canvas center X */
+  centerX: boolean;
+  /** Horizontal line at canvas center Y */
+  centerY: boolean;
+  /** Vertical line at object's left/right edge matching canvas center */
+  edgeX: number | null;
+  /** Horizontal line at object's top/bottom edge matching canvas center */
+  edgeY: number | null;
+}
+
+/** Check which alignment guides to show for a given object rect (in composition coords) */
+function computeSnapGuides(
+  x: number, y: number, w: number, h: number
+): SnapGuides {
+  const objCenterX = x + w / 2;
+  const objCenterY = y + h / 2;
+
+  const guides: SnapGuides = {
+    centerX: false,
+    centerY: false,
+    edgeX: null,
+    edgeY: null,
+  };
+
+  // Object center ↔ canvas center
+  if (Math.abs(objCenterX - CANVAS_CENTER_X) < SNAP_THRESHOLD) {
+    guides.centerX = true;
+  }
+  if (Math.abs(objCenterY - CANVAS_CENTER_Y) < SNAP_THRESHOLD) {
+    guides.centerY = true;
+  }
+
+  // Object edges ↔ canvas center (only if center isn't already snapping)
+  if (!guides.centerX) {
+    if (Math.abs(x - CANVAS_CENTER_X) < SNAP_THRESHOLD) guides.edgeX = x;
+    else if (Math.abs(x + w - CANVAS_CENTER_X) < SNAP_THRESHOLD) guides.edgeX = x + w;
+  }
+  if (!guides.centerY) {
+    if (Math.abs(y - CANVAS_CENTER_Y) < SNAP_THRESHOLD) guides.edgeY = y;
+    else if (Math.abs(y + h - CANVAS_CENTER_Y) < SNAP_THRESHOLD) guides.edgeY = y + h;
+  }
+
+  return guides;
+}
+
+/** Apply snap-to-center magnetism, returns adjusted position */
+function applySnap(
+  x: number, y: number, w: number, h: number
+): { x: number; y: number; guides: SnapGuides } {
+  let snappedX = x;
+  let snappedY = y;
+  const objCenterX = x + w / 2;
+  const objCenterY = y + h / 2;
+
+  // Snap object center to canvas center
+  if (Math.abs(objCenterX - CANVAS_CENTER_X) < SNAP_THRESHOLD) {
+    snappedX = CANVAS_CENTER_X - w / 2;
+  } else if (Math.abs(x - CANVAS_CENTER_X) < SNAP_THRESHOLD) {
+    snappedX = CANVAS_CENTER_X;
+  } else if (Math.abs(x + w - CANVAS_CENTER_X) < SNAP_THRESHOLD) {
+    snappedX = CANVAS_CENTER_X - w;
+  }
+
+  if (Math.abs(objCenterY - CANVAS_CENTER_Y) < SNAP_THRESHOLD) {
+    snappedY = CANVAS_CENTER_Y - h / 2;
+  } else if (Math.abs(y - CANVAS_CENTER_Y) < SNAP_THRESHOLD) {
+    snappedY = CANVAS_CENTER_Y;
+  } else if (Math.abs(y + h - CANVAS_CENTER_Y) < SNAP_THRESHOLD) {
+    snappedY = CANVAS_CENTER_Y - h;
+  }
+
+  const guides = computeSnapGuides(snappedX, snappedY, w, h);
+  return { x: snappedX, y: snappedY, guides };
+}
+
 export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   project,
   currentFrame,
@@ -94,6 +180,8 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   onLayerMove,
   onLayerResize,
 }) => {
+  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
+
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragDelta, setDragDelta] = useState<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   const dragDeltaRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
@@ -101,6 +189,9 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
   const [resizeDelta, setResizeDelta] = useState<{ dw: number; dh: number; dx: number; dy: number }>({ dw: 0, dh: 0, dx: 0, dy: 0 });
   const resizeDeltaRef = useRef<{ dw: number; dh: number; dx: number; dy: number }>({ dw: 0, dh: 0, dx: 0, dy: 0 });
+
+  // Snap alignment guides state
+  const [activeGuides, setActiveGuides] = useState<SnapGuides>({ centerX: false, centerY: false, edgeX: null, edgeY: null });
 
   // Measure Remotion's actual content area from the DOM
   const [contentArea, setContentArea] = useState<{ offsetX: number; offsetY: number; scale: number }>({
@@ -148,30 +239,39 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
     ) ?? null;
   }, [project.segments, currentFrame]);
 
-  // Collect all visible text layers: segment layers + overlay text clips
-  const visibleTextLayers = useMemo(() => {
+  // Collect all visible interactive layers: segment text/image layers + overlay clips
+  // Searches ALL segments to catch cross-segment text layers (negative inFrame or extended outFrame)
+  const visibleOverlayLayers = useMemo(() => {
     const result: { segmentId: string; layer: LayerItem }[] = [];
+    const addedIds = new Set<string>();
 
-    if (currentSegment) {
-      const relativeFrame = currentFrame - currentSegment.startFrame;
-      for (const layer of currentSegment.layers) {
-        if (
-          layer.type === 'text' &&
-          layer.visible &&
-          layer.text?.content &&
-          relativeFrame >= layer.inFrame &&
-          relativeFrame < layer.outFrame
-        ) {
-          result.push({ segmentId: currentSegment.id, layer });
+    for (const seg of project.segments) {
+      for (const layer of seg.layers) {
+        if (!layer.visible || addedIds.has(layer.id)) continue;
+        // Check if layer is visible at current frame (accounting for cross-segment extension)
+        const absoluteInFrame = seg.startFrame + layer.inFrame;
+        const absoluteOutFrame = seg.startFrame + layer.outFrame;
+        if (currentFrame < absoluteInFrame || currentFrame >= absoluteOutFrame) continue;
+
+        // Include text layers (with content) and image/lottie overlays (not full-canvas base layers)
+        if (layer.type === 'text' && layer.text?.content) {
+          result.push({ segmentId: seg.id, layer });
+          addedIds.add(layer.id);
+        } else if ((layer.type === 'image' || layer.type === 'lottie') &&
+          !(layer.size.w === STUDIO_WIDTH && layer.size.h === STUDIO_HEIGHT && layer.position.x === 0 && layer.position.y === 0)) {
+          result.push({ segmentId: seg.id, layer });
+          addedIds.add(layer.id);
         }
       }
     }
 
     for (const track of (project.overlayTracks || [])) {
       for (const clip of track.clips) {
-        if (clip.type !== 'text' || !clip.text?.content) continue;
         const clipEnd = clip.startFrame + clip.durationInFrames;
-        if (currentFrame >= clip.startFrame && currentFrame < clipEnd) {
+        if (currentFrame < clip.startFrame || currentFrame >= clipEnd) continue;
+
+        // Support both text and image overlay clips for drag/resize
+        if (clip.type === 'text' && clip.text?.content) {
           const overlayAsLayer: LayerItem = {
             id: clip.id,
             type: 'text',
@@ -188,12 +288,76 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
             text: clip.text,
           };
           result.push({ segmentId: track.id, layer: overlayAsLayer });
+        } else if (clip.type === 'image' || clip.type === 'video') {
+          const overlayAsLayer: LayerItem = {
+            id: clip.id,
+            type: 'image',
+            src: clip.src || '',
+            position: clip.position || { x: Math.round(STUDIO_WIDTH * 0.35), y: Math.round(STUDIO_HEIGHT * 0.35) },
+            size: clip.size || { w: Math.round(STUDIO_WIDTH * 0.3), h: Math.round(STUDIO_HEIGHT * 0.3) },
+            zIndex: clip.zIndex || 10,
+            opacity: clip.opacity ?? 1,
+            rotation: 0,
+            visible: true,
+            locked: false,
+            inFrame: 0,
+            outFrame: clip.durationInFrames,
+          };
+          result.push({ segmentId: track.id, layer: overlayAsLayer });
         }
       }
     }
 
+    // Add active caption chunks as virtual text layers — use stored position/size or defaults
+    for (const track of (project.captions || [])) {
+      const segment = project.segments.find(s => s.id === track.segmentId);
+      if (!segment) continue;
+
+      for (let i = 0; i < track.chunks.length; i++) {
+        const chunk = track.chunks[i];
+        const chunkStartFrame = segment.startFrame + Math.round((chunk.startMs / 1000) * STUDIO_FPS);
+        const chunkEndFrame = segment.startFrame + Math.round((chunk.endMs / 1000) * STUDIO_FPS);
+        if (currentFrame < chunkStartFrame || currentFrame >= chunkEndFrame) continue;
+
+        const clipId = `caption-${track.segmentId}-${i}`;
+        if (addedIds.has(clipId)) continue;
+        addedIds.add(clipId);
+
+        // Use stored position/size from track, or default (bottom 15%, centered, max-width 85%)
+        const defaultW = Math.round(STUDIO_WIDTH * 0.85);
+        const defaultH = 80;
+        const captionW = track.size?.w ?? defaultW;
+        const captionH = track.size?.h ?? defaultH;
+        const captionX = track.position?.x ?? Math.round((STUDIO_WIDTH - captionW) / 2);
+        const captionY = track.position?.y ?? Math.round(STUDIO_HEIGHT * 0.85 - captionH);
+        const captionFontSize = track.fontSize ?? 42;
+
+        const captionAsLayer: LayerItem = {
+          id: clipId,
+          type: 'text',
+          src: '',
+          position: { x: captionX, y: captionY },
+          size: { w: captionW, h: captionH },
+          zIndex: 100,
+          opacity: track.opacity ?? 1,
+          rotation: 0,
+          visible: true,
+          locked: false,
+          inFrame: 0,
+          outFrame: chunkEndFrame - chunkStartFrame,
+          text: {
+            content: chunk.text,
+            fontSize: captionFontSize,
+            fontFamily: track.fontFamily || 'Inter',
+            color: track.color || '#FFFFFF',
+          },
+        };
+        result.push({ segmentId: 'captions', layer: captionAsLayer });
+      }
+    }
+
     return result;
-  }, [currentSegment, currentFrame, project.overlayTracks]);
+  }, [project.segments, currentFrame, project.overlayTracks, project.captions]);
 
   // --- Drag-to-move ---
   const handleMouseDown = useCallback((e: React.MouseEvent, segmentId: string, layer: LayerItem) => {
@@ -216,28 +380,53 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
     dragDeltaRef.current = { dx: 0, dy: 0 };
   }, [onLayerSelect]);
 
+  // Find the layer being dragged to get its width/height for snap computation
+  const draggedLayer = useMemo(() => {
+    if (!dragState) return null;
+    return visibleOverlayLayers.find(
+      v => v.segmentId === dragState.segmentId && v.layer.id === dragState.layerId
+    )?.layer ?? null;
+  }, [dragState, visibleOverlayLayers]);
+
   useEffect(() => {
     if (!dragState) return;
 
     const handleMove = (e: MouseEvent) => {
       const dx = e.clientX - dragState.startMouseX;
       const dy = e.clientY - dragState.startMouseY;
-      dragDeltaRef.current = { dx, dy };
-      setDragDelta({ dx, dy });
+
+      // Compute snap guides for real-time visual feedback
+      if (draggedLayer) {
+        const compX = dragState.startPosX + dx / scale;
+        const compY = dragState.startPosY + dy / scale;
+        const w = draggedLayer.size.w;
+        const h = estimateLayerHeight(draggedLayer);
+        const snap = applySnap(compX, compY, w, h);
+        // Convert snapped position back to screen delta
+        const snappedDx = (snap.x - dragState.startPosX) * scale;
+        const snappedDy = (snap.y - dragState.startPosY) * scale;
+        dragDeltaRef.current = { dx: snappedDx, dy: snappedDy };
+        setDragDelta({ dx: snappedDx, dy: snappedDy });
+        setActiveGuides(snap.guides);
+      } else {
+        dragDeltaRef.current = { dx, dy };
+        setDragDelta({ dx, dy });
+      }
     };
 
     const handleUp = () => {
       const compDx = dragDeltaRef.current.dx / scale;
       const compDy = dragDeltaRef.current.dy / scale;
 
-      const newX = Math.round(Math.max(0, Math.min(STUDIO_WIDTH, dragState.startPosX + compDx)));
-      const newY = Math.round(Math.max(0, Math.min(STUDIO_HEIGHT, dragState.startPosY + compDy)));
+      let newX = Math.round(Math.max(0, Math.min(STUDIO_WIDTH, dragState.startPosX + compDx)));
+      let newY = Math.round(Math.max(0, Math.min(STUDIO_HEIGHT, dragState.startPosY + compDy)));
 
       onLayerMove(dragState.segmentId, dragState.layerId, { x: newX, y: newY });
 
       setDragState(null);
       setDragDelta({ dx: 0, dy: 0 });
       dragDeltaRef.current = { dx: 0, dy: 0 };
+      setActiveGuides({ centerX: false, centerY: false, edgeX: null, edgeY: null });
     };
 
     window.addEventListener('mousemove', handleMove);
@@ -246,7 +435,7 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [dragState, scale, onLayerMove]);
+  }, [dragState, draggedLayer, scale, onLayerMove]);
 
   // --- Resize handles ---
   const handleResizeStart = useCallback((e: React.MouseEvent, segmentId: string, layer: LayerItem, handle: ResizeHandle) => {
@@ -260,7 +449,7 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       startMouseX: e.clientX,
       startMouseY: e.clientY,
       startW: layer.size.w,
-      startH: estimateTextHeight(layer),
+      startH: estimateLayerHeight(layer),
       startX: layer.position.x,
       startY: layer.position.y,
       startFontSize: layer.text?.fontSize ?? 48,
@@ -342,6 +531,7 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       setResizeState(null);
       setResizeDelta({ dw: 0, dh: 0, dx: 0, dy: 0 });
       resizeDeltaRef.current = { dw: 0, dh: 0, dx: 0, dy: 0 };
+      setActiveGuides({ centerX: false, centerY: false, edgeX: null, edgeY: null });
     };
 
     window.addEventListener('mousemove', handleMove);
@@ -366,7 +556,16 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
   if (resizeState) overlayCursor = HANDLE_CURSORS[resizeState.handle];
 
   // Always enable pointer events when something is selected (so user can click to deselect)
-  const hasInteraction = visibleTextLayers.length > 0 || !!isInteracting || !!selectedLayerId;
+  const hasInteraction = visibleOverlayLayers.length > 0 || !!isInteracting || !!selectedLayerId;
+
+  // Guide line positions in screen pixels
+  const guideCenterXpx = offsetX + CANVAS_CENTER_X * scale;
+  const guideCenterYpx = offsetY + CANVAS_CENTER_Y * scale;
+  const canvasTopPx = offsetY;
+  const canvasBottomPx = offsetY + STUDIO_HEIGHT * scale;
+  const canvasLeftPx = offsetX;
+  const canvasRightPx = offsetX + STUDIO_WIDTH * scale;
+  const showAnyGuide = dragState && (activeGuides.centerX || activeGuides.centerY || activeGuides.edgeX !== null || activeGuides.edgeY !== null);
 
   return (
     <div
@@ -377,8 +576,76 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
       }}
       onMouseDown={handleOverlayClick}
     >
-      {visibleTextLayers.map(({ segmentId, layer }) => {
+      {/* CapCut-style alignment guide lines */}
+      {showAnyGuide && (
+        <>
+          {/* Vertical center line */}
+          {activeGuides.centerX && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: guideCenterXpx,
+                top: canvasTopPx,
+                width: 1,
+                height: canvasBottomPx - canvasTopPx,
+                background: '#10B981',
+                boxShadow: '0 0 4px rgba(16,185,129,0.6)',
+                zIndex: 60,
+              }}
+            />
+          )}
+          {/* Horizontal center line */}
+          {activeGuides.centerY && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: canvasLeftPx,
+                top: guideCenterYpx,
+                width: canvasRightPx - canvasLeftPx,
+                height: 1,
+                background: '#10B981',
+                boxShadow: '0 0 4px rgba(16,185,129,0.6)',
+                zIndex: 60,
+              }}
+            />
+          )}
+          {/* Edge-aligned vertical line (object edge at canvas center X) */}
+          {activeGuides.edgeX !== null && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: offsetX + activeGuides.edgeX * scale,
+                top: canvasTopPx,
+                width: 1,
+                height: canvasBottomPx - canvasTopPx,
+                background: '#F59E0B',
+                boxShadow: '0 0 4px rgba(245,158,11,0.5)',
+                zIndex: 60,
+              }}
+            />
+          )}
+          {/* Edge-aligned horizontal line (object edge at canvas center Y) */}
+          {activeGuides.edgeY !== null && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: canvasLeftPx,
+                top: offsetY + activeGuides.edgeY * scale,
+                width: canvasRightPx - canvasLeftPx,
+                height: 1,
+                background: '#F59E0B',
+                boxShadow: '0 0 4px rgba(245,158,11,0.5)',
+                zIndex: 60,
+              }}
+            />
+          )}
+        </>
+      )}
+
+      {visibleOverlayLayers.map(({ segmentId, layer }) => {
         const isSelected = selectedSegmentId === segmentId && selectedLayerId === layer.id;
+        const isHovered = hoveredLayerId === layer.id;
+        const showHandles = (isSelected || isHovered) && !layer.locked;
         const isDragging = dragState?.layerId === layer.id;
         const isResizing = resizeState?.layerId === layer.id;
 
@@ -386,7 +653,7 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
         let previewX = offsetX + layer.position.x * scale;
         let previewY = offsetY + layer.position.y * scale;
         let previewW = layer.size.w * scale;
-        let previewH = estimateTextHeight(layer) * scale;
+        let previewH = estimateLayerHeight(layer) * scale;
 
         if (isDragging) {
           previewX += dragDelta.dx;
@@ -403,10 +670,12 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
         return (
           <div
             key={layer.id}
-            className={`absolute ${
+            className={`absolute transition-[border-color] duration-75 ${
               isSelected
                 ? 'border-2 border-emerald-500 shadow-[0_0_0_1px_rgba(16,185,129,0.3)]'
-                : 'border border-transparent hover:border-dashed hover:border-white/40'
+                : isHovered
+                  ? 'border-2 border-emerald-500/60'
+                  : 'border-2 border-transparent'
             } ${layer.locked ? 'cursor-not-allowed' : 'cursor-move'}`}
             style={{
               left: previewX,
@@ -416,15 +685,19 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
               pointerEvents: 'auto',
             }}
             onMouseDown={(e) => handleMouseDown(e, segmentId, layer)}
+            onMouseEnter={() => setHoveredLayerId(layer.id)}
+            onMouseLeave={() => setHoveredLayerId(prev => prev === layer.id ? null : prev)}
           >
-            {/* Resize handles — visible when selected */}
-            {isSelected && !layer.locked && (
+            {/* Resize handles — visible on hover or when selected */}
+            {showHandles && (
               <>
                 {/* Corner handles — proportional resize + font scale */}
                 {(['tl', 'tr', 'bl', 'br'] as ResizeHandle[]).map(h => (
                   <div
                     key={h}
-                    className="absolute w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white/50 z-10"
+                    className={`absolute w-2.5 h-2.5 rounded-full border border-white/50 z-10 ${
+                      isSelected ? 'bg-emerald-500' : 'bg-emerald-500/70'
+                    }`}
                     style={{
                       top: h.startsWith('t') ? -5 : undefined,
                       bottom: h.startsWith('b') ? -5 : undefined,
@@ -452,10 +725,12 @@ export const PlayerOverlay: React.FC<PlayerOverlayProps> = ({
               </>
             )}
 
-            {/* Label */}
-            {isSelected && (
-              <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[8px] font-medium whitespace-nowrap">
-                {layer.text?.content?.slice(0, 20) || 'Text'}
+            {/* Label — shows on hover or selected */}
+            {(isSelected || isHovered) && (
+              <div className={`absolute -top-5 left-0 px-1.5 py-0.5 rounded text-white text-[8px] font-medium whitespace-nowrap ${
+                isSelected ? 'bg-emerald-500' : 'bg-emerald-500/70'
+              }`}>
+                {layer.type === 'image' ? 'Image' : (layer.text?.content?.slice(0, 20) || 'Text')}
               </div>
             )}
           </div>

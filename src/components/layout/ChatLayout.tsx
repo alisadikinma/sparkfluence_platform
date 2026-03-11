@@ -39,15 +39,18 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   }, [location.pathname]);
 
   // Map session status to the correct workspace step
+  // Always navigate to studio if video generation is done or beyond
   const statusToStep = (status: string, progress?: { currentStep: string }): string => {
+    // If progress indicates studio, go directly
+    if (progress?.currentStep === 'studio') return 'studio';
+    // Video ready or beyond → studio directly (skip video step)
+    if (status === 'video_ready' || status === 'complete') return 'studio';
     // Use progress.currentStep if available (more granular)
     if (progress?.currentStep) return progress.currentStep;
     // Fallback to status-based mapping
     switch (status) {
-      case 'video_ready': return 'video';
       case 'images_ready': return 'images';
       case 'script_ready': return 'images';
-      case 'complete': return 'studio';
       default: return 'script';
     }
   };

@@ -20,6 +20,31 @@
 └── If unsure, ASK FIRST
 ```
 
+### 💬 User Confirmation via AskUserQuestion (MANDATORY)
+```
+RULE: ALWAYS use AskUserQuestion tool for confirmations and decisions.
+      NEVER ask confirmation via plain text — use the modal popup instead.
+
+WHEN to use AskUserQuestion:
+├── Before executing risky/destructive actions (deploy, push, install, delete)
+├── When presenting options for user to choose (A/B/C choices)
+├── Design/flow confirmation before implementation
+├── Any "Mau saya jalankan?" or "Setuju?" moment
+├── Brainstorm results → confirm before proceeding to plan/execute
+└── Any decision point that blocks further progress
+
+WHY: AskUserQuestion shows a clean modal popup with checkboxes/options,
+     making it easier for the user to respond vs. scrolling through text.
+     It also clearly separates decision points from output noise.
+
+FORMAT TIPS:
+├── Use clear, concise question titles
+├── Provide selectable options when there are discrete choices
+├── Include "Something else" option when appropriate
+├── Keep descriptions short — user can see the context above
+└── For yes/no confirmations, still use AskUserQuestion (not plain text)
+```
+
 ### 📝 CLAUDE.md Self-Maintenance (MANDATORY)
 ```
 After EVERY code change session, you MUST:
@@ -494,7 +519,7 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 
 **Architecture:**
 - Entry: `src/screens/Workspace/steps/StudioEditor.tsx` — wraps `StudioProvider`, 3-panel layout
-- State: `src/contexts/StudioContext.tsx` — useReducer + undo/redo history (50 max), 30+ actions
+- State: `src/contexts/StudioContext.tsx` — useReducer + undo/redo history (50 max), 30+ actions. Includes `hiddenTracks: Set<string>`, `trackOrder: string[]`
 - Types: `src/types/studio.ts` — SparkfluenceProject, LayerItem, CaptionTrack, etc.
 - Composition: `src/lib/composition.ts` — factories, frame math, buildProjectFromSession
 - Remotion: `src/remotion/VideoComposition.tsx` — renders segments, transitions, captions
@@ -511,13 +536,13 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 **Components (`src/components/studio/`):**
 | Component | Purpose |
 |-----------|---------|
-| `Timeline.tsx` | Multi-track timeline (Video, Text, TTS, BGM) with ruler + playhead |
+| `Timeline.tsx` | Multi-track timeline (Video, Text, TTS, BGM) with ruler + playhead + track reorder |
 | `Toolbar.tsx` | Select/Split/Delete tools + undo/redo + zoom |
 | `timeline/TimelineRuler.tsx` | Time ruler with tick marks |
-| `timeline/TimelineTrack.tsx` | Single track row with clip rendering |
+| `timeline/TimelineTrack.tsx` | Single track row with clip rendering + drag-reorder grip + visibility toggle |
 | `timeline/TimelineClip.tsx` | Draggable segment clip on track |
 | `timeline/AudioClip.tsx` | Audio clip with waveform visualization |
-| `timeline/Playhead.tsx` | Current frame indicator (draggable) |
+| `timeline/Playhead.tsx` | Current frame indicator (draggable, GPU-accelerated via translateX) |
 | `timeline/TransitionDiamond.tsx` | Diamond between clips for transitions |
 | `panels/TransitionPicker.tsx` | Popover with 6 transition types + duration |
 | `panels/AudioProperties.tsx` | Volume, fades, mute, envelope preview |
@@ -528,7 +553,7 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 **Remotion Layers (`src/remotion/layers/`):**
 | Layer | Purpose |
 |-------|---------|
-| `SegmentRenderer.tsx` | Renders all layers for a segment |
+| `SegmentRenderer.tsx` | Renders all layers for a segment (supports `skipLayerIds` for cross-segment text) |
 | `VideoLayer.tsx` | Video playback layer |
 | `ImageLayer.tsx` | Static image layer |
 | `TextLayer.tsx` | Text overlay with animation |
@@ -541,16 +566,28 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - Remotion Player preview (9:16) with bidirectional frame sync
 - Multi-track timeline with zoom (Ctrl+wheel), ruler click-to-seek
 - Drag-reorder segments, trim handles, split tool
+- **Track reorder:** Drag grip handle (6-dot icon) to reorder tracks up/down. Uses refs (`dragSourceRef`, `dragOverRef`, `effectiveTrackOrderRef`) to avoid stale closures in native drag events. State: `trackOrder: string[]` in StudioContext, `SET_TRACK_ORDER` action.
+- **Track visibility:** Per-track hide/show via eye icon. State: `hiddenTracks: Set<string>` in StudioContext, `TOGGLE_TRACK_VISIBILITY` action. Hidden tracks are disabled in both timeline rendering AND Remotion player (`VideoComposition` receives `hiddenTracks` prop). Text tracks use unique keys (`text`, `text-0`, `text-1`) so hiding one doesn't hide all.
+- **Cross-segment text:** Text layers can be trimmed/moved beyond segment boundaries (negative `inFrame`, extended `outFrame`). `VideoComposition` extracts cross-segment text layers and renders them as global Remotion `Sequence` elements. `SegmentRenderer` accepts `skipLayerIds` to avoid double-rendering.
 - 6 transition types (fade, slide, wipe, flip, clock-wipe, iris)
 - Audio tracks (TTS, BGM, SFX) with waveform bars + volume envelope
 - Auto captions via Groq Whisper with 6 style presets
 - 6 text templates (Headline, Subtitle, Lower Third, Callout, Countdown, Price Tag)
-- Context-sensitive right panel (segment properties / audio properties / text properties / image properties with opacity)
+- Context-sensitive right panel (segment properties / audio properties / text properties / image properties / **overlay clip properties** with Position, Size, Rotation, Opacity)
+- **"Apply Style to All Text"** scoped to same segment only (not all text across project). Action includes `segmentId`.
 - Imported images drag-to-timeline create **overlay layers** (not insert as segment). Pipeline media inserts as segments.
-- PlayerOverlay: 8-point resize handles (corner = proportional + font size scale, edge = width/height only). Selection rectangle persists while selected (deselect by clicking empty area).
+- Overlay clips: default 30% canvas size, centered, `objectFit: 'contain'` (no cropping), rotation support
+- Overlay tracks render ABOVE Video track in timeline (CapCut-style ordering)
+- `selectedOverlayClip` getter in StudioContext resolves overlay clip selection for properties panel
+- **PlayerOverlay:** 8-point resize handles (corner = proportional + font size scale, edge = width/height only). Selection rectangle shows on **hover** (semi-transparent emerald border) AND selected (solid emerald). Resize handles + label visible on hover or selected. Searches ALL segments for visible text/image layers at current frame (not just current segment) — supports cross-segment text selection. Supports both text layers AND image/video overlay clips.
 - Fullscreen player: CSS `fixed inset-0 z-[60]` overlay, toggle via `F` key or button, exit via `Esc`
+- **Playhead:** Uses `transform: translateX()` + `willChange: 'transform'` for GPU-accelerated, jitter-free positioning (not `left:` which causes layout thrashing).
 - Keyboard shortcuts: Space, Ctrl+Z/Shift+Z, Ctrl+S, V/S/Del, F (fullscreen), Esc (exit fullscreen), Arrow keys, Home/End
 - Auto-save to `chat_sessions.studio_data` (3s debounce)
+- **Media persistence:** Imported media uploaded to Supabase Storage `studio-media` bucket (not blob URLs). Stored in `project.mediaAssets[]` (type `MediaAsset` in `types/studio.ts`).
+- **Export completion flow:** Export done → cleanup `studio-media` storage files → update session status to `complete` → redirect to `/planner`
+- **Storage cleanup:** `cleanup_studio_media_bucket(days_old)` SQL function, scheduled weekly via pg_cron (`0 3 * * 0`)
+- Migration: `supabase/migrations/20260311000000_create_studio_media_bucket.sql`
 
 ### Design System
 - Color palette: warm charcoal + emerald (NOT AI purple)
@@ -1010,6 +1047,15 @@ git log --oneline -10
 | Voice inconsistent across video segments | Check `voice_prompts` table has a profile entry (`is_profile_avatar=true`). If missing, user hasn't uploaded/analyzed voice in Profile > Voice tab. Fallback: `generateVoiceCharacter()` creates one on-the-fly. |
 | Voice analysis fails in Profile | Check `analyze-voice` edge function deployed. Needs `gemini` keys in `api_keys_pool`. Audio must be accessible URL (Supabase storage public bucket). |
 | B-Roll shows lip-sync / talking faces | `getBRollAudioDirective()` enforces "ZERO visible human speech". Check prompt includes the off-screen narration block. If using Grok, lip-sync control is limited (known limitation). |
+| Overlay covers entire canvas | Default size should be 30% canvas (`{w: 324, h: 576}`), centered. Check `handleOverlayTrackDrop` / `handleEmptyAreaDrop` in Timeline.tsx |
+| Overlay image cropped | OverlayClipRenderer uses `objectFit: 'contain'` (NOT 'cover'). Check OverlayClipRenderer.tsx |
+| Overlay properties panel not showing | `selectedOverlayClip` in StudioContext resolves overlay clips from `overlayTracks`. Click dispatches `SELECT_LAYER` with `segmentId=track.id`. Check `selectedOverlayClip` getter. |
+| Imported media lost on refresh | Media should upload to `studio-media` Supabase Storage bucket and persist in `project.mediaAssets[]`. Check `handleFileImport` in StudioEditor.tsx |
+| Track reorder not working | Uses refs (`dragSourceRef`, `dragOverRef`, `effectiveTrackOrderRef`) to avoid stale closures. `onDragEnd` must be on the grip handle (not outer div). `handleTrackDragEnd` reads refs, not state. |
+| Hiding one text track hides all | Text tracks need unique keys: `text` (single row) or `text-0`/`text-1` (multi-row). `hiddenTracks.has(trackKey)` must match the unique key. |
+| Apply Style to All Text affects all tracks | `APPLY_TEXT_STYLE_TO_ALL` action must include `segmentId` to scope to same segment only. |
+| Playhead shaking/jittering | Playhead uses `transform: translateX()` + `willChange: 'transform'` (not `left:`). If jitter returns, check for layout-triggering properties. |
+| Text layer not selectable in Player | PlayerOverlay searches ALL segments (not just current) using absolute frame positions. Cross-segment text with negative `inFrame` or extended `outFrame` is found by `absoluteInFrame = seg.startFrame + layer.inFrame`. |
 
 ---
 

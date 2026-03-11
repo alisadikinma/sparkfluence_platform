@@ -45,6 +45,10 @@ interface StudioState {
   zoom: number;
   activePanel: 'media' | 'stickers' | 'effects' | 'text' | 'audio';
   isDirty: boolean;
+  /** Track keys that are hidden (e.g. 'video', 'text', 'tts', 'bgm', 'sfx', 'captions', overlay track IDs) */
+  hiddenTracks: Set<string>;
+  /** Custom track rendering order — array of track keys. Empty = default order. */
+  trackOrder: string[];
 }
 
 // --- Actions ---
@@ -80,6 +84,8 @@ type StudioAction =
   | { type: 'UPDATE_CAPTION_CHUNK'; segmentId: string; chunkIndex: number; changes: Partial<CaptionChunk> }
   | { type: 'REMOVE_CAPTION'; segmentId: string }
   | { type: 'SET_CAPTION_STYLE'; style: CaptionStyle }
+  | { type: 'UPDATE_CAPTION_TRACK'; segmentId: string; changes: Partial<CaptionTrack> }
+  | { type: 'UPDATE_ALL_CAPTION_TRACKS'; changes: Partial<CaptionTrack> }
   // Overlay track management
   | { type: 'ADD_OVERLAY_TRACK'; trackType: 'video' | 'text'; initialClip?: OverlayClip }
   | { type: 'REMOVE_OVERLAY_TRACK'; trackId: string }
@@ -87,12 +93,16 @@ type StudioAction =
   | { type: 'UPDATE_OVERLAY_CLIP'; trackId: string; clipId: string; changes: Partial<OverlayClip> }
   | { type: 'MOVE_OVERLAY_CLIP'; trackId: string; clipId: string; startFrame: number }
   | { type: 'REMOVE_OVERLAY_CLIP'; trackId: string; clipId: string }
-  | { type: 'APPLY_TEXT_STYLE_TO_ALL'; sourceLayerId: string; styleProps: Partial<NonNullable<LayerItem['text']>>; position?: { x: number; y: number } }
+  | { type: 'APPLY_TEXT_STYLE_TO_ALL'; sourceLayerId: string; segmentId: string; styleProps: Partial<NonNullable<LayerItem['text']>>; position?: { x: number; y: number } }
   | { type: 'MOVE_TEXT_LAYER'; segmentId: string; layerId: string; position: { x: number; y: number } }
   | { type: 'MOVE_ALL_TEXT_LAYERS'; sourceLayerId: string; position: { x: number; y: number } }
   | { type: 'RESTORE_PROJECT'; project: SparkfluenceProject } // for undo/redo
   | { type: 'SET_PIPELINE_MEDIA'; media: PipelineMediaItem[] }
-  | { type: 'MARK_CLEAN' };
+  | { type: 'ADD_MEDIA_ASSET'; asset: import('../types/studio').MediaAsset }
+  | { type: 'REMOVE_MEDIA_ASSET'; assetId: string }
+  | { type: 'MARK_CLEAN' }
+  | { type: 'TOGGLE_TRACK_VISIBILITY'; trackKey: string }
+  | { type: 'SET_TRACK_ORDER'; order: string[] };
 
 // --- Reducer ---
 function studioReducer(state: StudioState, action: StudioAction): StudioState {
@@ -195,18 +205,21 @@ function studioReducer(state: StudioState, action: StudioAction): StudioState {
     }
 
     case 'APPLY_TEXT_STYLE_TO_ALL': {
-      // Apply text style + position to ALL text layers across ALL segments (except source)
-      const segments = state.project.segments.map(seg => ({
-        ...seg,
-        layers: seg.layers.map(l => {
-          if (l.type !== 'text' || l.id === action.sourceLayerId || !l.text) return l;
-          const updated = { ...l, text: { ...l.text, ...action.styleProps } };
-          if (action.position) {
-            updated.position = { ...action.position };
-          }
-          return updated;
-        }),
-      }));
+      // Apply text style + position to text layers in the SAME segment only (not other tracks)
+      const segments = state.project.segments.map(seg => {
+        if (seg.id !== action.segmentId) return seg;
+        return {
+          ...seg,
+          layers: seg.layers.map(l => {
+            if (l.type !== 'text' || l.id === action.sourceLayerId || !l.text) return l;
+            const updated = { ...l, text: { ...l.text, ...action.styleProps } };
+            if (action.position) {
+              updated.position = { ...action.position };
+            }
+            return updated;
+          }),
+        };
+      });
       return {
         ...state,
         isDirty: true,
@@ -591,6 +604,29 @@ function studioReducer(state: StudioState, action: StudioAction): StudioState {
       };
     }
 
+    case 'UPDATE_CAPTION_TRACK': {
+      const captions = (state.project.captions || []).map(track =>
+        track.segmentId === action.segmentId ? { ...track, ...action.changes } : track
+      );
+      return {
+        ...state,
+        isDirty: true,
+        project: { ...state.project, captions },
+      };
+    }
+
+    case 'UPDATE_ALL_CAPTION_TRACKS': {
+      const captions = (state.project.captions || []).map(track => ({
+        ...track,
+        ...action.changes,
+      }));
+      return {
+        ...state,
+        isDirty: true,
+        project: { ...state.project, captions },
+      };
+    }
+
     // --- Overlay Track Actions ---
 
     case 'ADD_OVERLAY_TRACK': {
@@ -682,6 +718,34 @@ function studioReducer(state: StudioState, action: StudioAction): StudioState {
     case 'MARK_CLEAN':
       return { ...state, isDirty: false };
 
+    case 'TOGGLE_TRACK_VISIBILITY': {
+      const next = new Set(state.hiddenTracks);
+      if (next.has(action.trackKey)) next.delete(action.trackKey);
+      else next.add(action.trackKey);
+      return { ...state, hiddenTracks: next };
+    }
+
+    case 'SET_TRACK_ORDER':
+      return { ...state, trackOrder: action.order };
+
+    case 'ADD_MEDIA_ASSET': {
+      const existing = state.project.mediaAssets || [];
+      return {
+        ...state,
+        isDirty: true,
+        project: { ...state.project, mediaAssets: [...existing, action.asset] },
+      };
+    }
+
+    case 'REMOVE_MEDIA_ASSET': {
+      const assets = (state.project.mediaAssets || []).filter(a => a.id !== action.assetId);
+      return {
+        ...state,
+        isDirty: true,
+        project: { ...state.project, mediaAssets: assets },
+      };
+    }
+
     default:
       return state;
   }
@@ -713,6 +777,8 @@ const initialState: StudioState = {
   zoom: 1,
   activePanel: 'media',
   isDirty: false,
+  hiddenTracks: new Set(),
+  trackOrder: [],
 };
 
 // --- Context ---
@@ -723,6 +789,9 @@ interface StudioContextValue {
   // Convenience getters
   selectedSegment: SegmentComposition | null;
   selectedLayer: LayerItem | null;
+  selectedOverlayClip: { trackId: string; clip: import('../types/studio').OverlayClip } | null;
+  /** Resolved caption track when selection is segmentId='captions' */
+  selectedCaptionInfo: { track: CaptionTrack; chunkIndex: number } | null;
 
   // History
   undo: () => void;
@@ -787,11 +856,34 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     ? selectedSegment.layers.find(l => l.id === state.selection.layerId) ?? null
     : null;
 
+  // Also check overlay tracks for selected clip
+  const selectedOverlayClip = (() => {
+    if (!state.selection.layerId || selectedLayer) return null; // segment layer takes priority
+    for (const track of (state.project.overlayTracks || [])) {
+      const clip = track.clips.find(c => c.id === state.selection.layerId);
+      if (clip) return { trackId: track.id, clip };
+    }
+    return null;
+  })();
+
+  // Resolve caption track selection (segmentId='captions', layerId='caption-{segId}-{idx}')
+  const selectedCaptionInfo = (() => {
+    if (state.selection.segmentId !== 'captions' || !state.selection.layerId) return null;
+    const match = state.selection.layerId.match(/^caption-(.+)-(\d+)$/);
+    if (!match) return null;
+    const [, segId, idxStr] = match;
+    const track = (state.project.captions || []).find(t => t.segmentId === segId);
+    if (!track) return null;
+    return { track, chunkIndex: parseInt(idxStr, 10) };
+  })();
+
   const value: StudioContextValue = {
     state,
     dispatch,
     selectedSegment,
     selectedLayer,
+    selectedOverlayClip,
+    selectedCaptionInfo,
     undo,
     redo,
     canUndo: undoStack.current.length > 0,

@@ -7,7 +7,7 @@
 import React, { useMemo } from 'react';
 import { useCurrentFrame, interpolate } from 'remotion';
 import type { CaptionTrack, CaptionChunk, CaptionStyle } from '../../types/studio';
-import { STUDIO_FPS, STUDIO_WIDTH } from '../../types/studio';
+import { STUDIO_FPS, STUDIO_WIDTH, STUDIO_HEIGHT } from '../../types/studio';
 
 interface CaptionLayerProps {
   track: CaptionTrack;
@@ -135,9 +135,10 @@ interface KaraokeTextProps {
   chunk: CaptionChunk;
   currentTimeMs: number;
   styleConfig: CaptionStyleConfig;
+  highlightColor: string;
 }
 
-const KaraokeText: React.FC<KaraokeTextProps> = ({ chunk, currentTimeMs, styleConfig }) => {
+const KaraokeText: React.FC<KaraokeTextProps> = ({ chunk, currentTimeMs, styleConfig, highlightColor }) => {
   const words = chunk.text.split(' ');
   const chunkDurationMs = chunk.endMs - chunk.startMs;
   const wordDuration = chunkDurationMs / Math.max(words.length, 1);
@@ -156,7 +157,7 @@ const KaraokeText: React.FC<KaraokeTextProps> = ({ chunk, currentTimeMs, styleCo
           highlightProgress = (currentTimeMs - wordStartMs) / wordDuration;
         }
 
-        const color = highlightProgress > 0.5 ? '#10B981' : styleConfig.color;
+        const color = highlightProgress > 0.5 ? highlightColor : styleConfig.color;
 
         return (
           <span
@@ -192,13 +193,67 @@ export const CaptionLayer: React.FC<CaptionLayerProps> = ({ track, segmentStartF
   // Fade in/out animation
   const chunkDurationMs = activeChunk.endMs - activeChunk.startMs;
   const fadeMs = Math.min(100, chunkDurationMs * 0.15);
-  const opacity = interpolate(
+  const fadeOpacity = interpolate(
     currentTimeMs,
     [activeChunk.startMs, activeChunk.startMs + fadeMs, activeChunk.endMs - fadeMs, activeChunk.endMs],
     [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
   );
 
+  // Track-level overrides for position, size, and styling
+  const hasCustomPosition = track.position != null;
+  const trackOpacity = (track.opacity ?? 1) * fadeOpacity;
+  const fontSize = track.fontSize ?? styleConfig.fontSize;
+  const fontFamily = track.fontFamily ?? styleConfig.fontFamily;
+  const color = track.color ?? styleConfig.color;
+  const highlightColor = track.highlightColor ?? '#10B981';
+
+  // Custom absolute positioning mode (when user has moved the caption)
+  if (hasCustomPosition) {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          left: track.position!.x,
+          top: track.position!.y,
+          width: track.size?.w ?? Math.round(STUDIO_WIDTH * 0.85),
+          height: track.size?.h ?? 80,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 100,
+          opacity: trackOpacity,
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          style={{
+            textAlign: 'center',
+            fontFamily,
+            fontSize,
+            fontWeight: styleConfig.fontWeight,
+            color,
+            textShadow: styleConfig.textShadow,
+            background: styleConfig.background,
+            borderRadius: styleConfig.borderRadius,
+            padding: styleConfig.padding,
+            WebkitTextStroke: styleConfig.WebkitTextStroke,
+            letterSpacing: styleConfig.letterSpacing,
+            lineHeight: 1.3,
+            wordBreak: 'break-word',
+          }}
+        >
+          {track.style === 'karaoke' ? (
+            <KaraokeText chunk={activeChunk} currentTimeMs={currentTimeMs} styleConfig={{ ...styleConfig, fontSize, fontFamily, color }} highlightColor={highlightColor} />
+          ) : (
+            activeChunk.text
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Default bottom-15% centered positioning
   return (
     <div
       style={{
@@ -210,7 +265,7 @@ export const CaptionLayer: React.FC<CaptionLayerProps> = ({ track, segmentStartF
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 100,
-        opacity,
+        opacity: trackOpacity,
         pointerEvents: 'none',
       }}
     >
@@ -218,10 +273,10 @@ export const CaptionLayer: React.FC<CaptionLayerProps> = ({ track, segmentStartF
         style={{
           maxWidth: STUDIO_WIDTH * 0.85,
           textAlign: 'center',
-          fontFamily: styleConfig.fontFamily,
-          fontSize: styleConfig.fontSize,
+          fontFamily,
+          fontSize,
           fontWeight: styleConfig.fontWeight,
-          color: styleConfig.color,
+          color,
           textShadow: styleConfig.textShadow,
           background: styleConfig.background,
           borderRadius: styleConfig.borderRadius,
@@ -233,11 +288,7 @@ export const CaptionLayer: React.FC<CaptionLayerProps> = ({ track, segmentStartF
         }}
       >
         {track.style === 'karaoke' ? (
-          <KaraokeText
-            chunk={activeChunk}
-            currentTimeMs={currentTimeMs}
-            styleConfig={styleConfig}
-          />
+          <KaraokeText chunk={activeChunk} currentTimeMs={currentTimeMs} styleConfig={{ ...styleConfig, fontSize, fontFamily, color }} />
         ) : (
           activeChunk.text
         )}

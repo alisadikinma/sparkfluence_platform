@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   LayoutDashboard, Calendar, Sparkles, Clapperboard, Target, Image,
   Settings, LogOut, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Trash2,
@@ -102,6 +102,34 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [showHistoryPopup, setShowHistoryPopup] = useState(false);
+  const historyPopupRef = useRef<HTMLDivElement>(null);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Close history popup on click outside or Escape
+  useEffect(() => {
+    if (!showHistoryPopup) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        historyPopupRef.current && !historyPopupRef.current.contains(e.target as Node) &&
+        historyButtonRef.current && !historyButtonRef.current.contains(e.target as Node)
+      ) {
+        setShowHistoryPopup(false);
+      }
+    };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowHistoryPopup(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showHistoryPopup]);
 
   const logoSrc = theme === 'dark' ? '/logo-light.png' : '/logo-dark.png';
   const groupedSessions = groupSessionsByDate(sessions);
@@ -203,46 +231,104 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       <div className="h-px bg-[#262626] mx-3" />
 
       {/* History Section — Scrollable */}
-      <div className="flex-1 overflow-y-auto px-2 py-3">
+      <div className={`flex-1 ${collapsed ? 'overflow-visible' : 'overflow-y-auto'} px-2 py-3`}>
         {!collapsed ? (
           <p className="text-[11px] font-semibold text-[#78716C] uppercase tracking-wider px-3 mb-2">
             History
           </p>
         ) : (
-          /* Collapsed: history icon with count badge */
-          <div className="flex flex-col items-center mb-2">
-            <div className="relative">
-              <Clock className="w-[18px] h-[18px] text-[#78716C]" />
+          /* Collapsed: single history icon with count badge + click popup */
+          <div className="flex flex-col items-center relative">
+            <button
+              ref={historyButtonRef}
+              onClick={() => setShowHistoryPopup(!showHistoryPopup)}
+              className={`relative p-2 rounded-lg transition-colors ${
+                showHistoryPopup
+                  ? 'bg-[#161616] text-[#FAFAF9]'
+                  : 'text-[#78716C] hover:text-[#FAFAF9] hover:bg-[#161616]'
+              }`}
+              title="Session history"
+            >
+              <Clock className="w-[18px] h-[18px]" />
               {sessions.length > 0 && (
-                <span className="absolute -top-1.5 -right-2 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-bold bg-[#10B981] text-white rounded-full px-1">
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[9px] font-bold bg-[#10B981] text-white rounded-full px-1">
                   {sessions.length > 99 ? '99+' : sessions.length}
                 </span>
               )}
-            </div>
+            </button>
+
+            {/* History popup */}
+            {showHistoryPopup && (
+              <div
+                ref={historyPopupRef}
+                className="absolute left-[calc(100%+12px)] top-0 w-[240px] max-h-[400px] overflow-y-auto bg-[#161616] border border-[#262626] rounded-xl shadow-2xl z-50"
+              >
+                <div className="px-3 pt-3 pb-1.5">
+                  <p className="text-[11px] font-semibold text-[#78716C] uppercase tracking-wider">History</p>
+                </div>
+
+                {sessions.length === 0 ? (
+                  <p className="text-[11px] text-[#57534E] px-3 py-4 text-center">
+                    No sessions yet.
+                  </p>
+                ) : (
+                  <div className="px-1.5 pb-2 space-y-2">
+                    {groupOrder.map((groupName) => {
+                      const groupSessions = groupedSessions[groupName];
+                      if (!groupSessions || groupSessions.length === 0) return null;
+
+                      return (
+                        <div key={groupName}>
+                          <p className="text-[10px] font-medium text-[#57534E] uppercase tracking-wider px-2 mb-0.5">
+                            {groupName}
+                          </p>
+                          <div className="space-y-0.5">
+                            {groupSessions.map((session) => {
+                              const typeConfig = SESSION_TYPE_CONFIG[session.sessionType];
+                              const isActive = activeSessionId === session.orderId;
+                              const isComplete = session.status === 'complete';
+
+                              return (
+                                <button
+                                  key={session.orderId}
+                                  onClick={() => {
+                                    onSessionClick(session.orderId);
+                                    setShowHistoryPopup(false);
+                                  }}
+                                  className={`
+                                    flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-left transition-colors
+                                    ${isActive
+                                      ? 'bg-[#0B0E14] border border-[#262626]'
+                                      : 'hover:bg-[#0B0E14]/60'
+                                    }
+                                  `}
+                                >
+                                  <div className={`flex-shrink-0 ${isComplete ? 'text-green-500' : typeConfig.color}`}>
+                                    {isComplete
+                                      ? <Check className="w-3.5 h-3.5" />
+                                      : <typeConfig.icon className="w-3.5 h-3.5" />
+                                    }
+                                  </div>
+                                  <span className={`text-[12px] truncate ${isActive ? 'text-[#FAFAF9] font-medium' : 'text-[#A8A29E]'}`}>
+                                    {session.title}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
         {collapsed ? (
-          // Collapsed: show recent session icons below the history indicator
-          <div className="flex flex-col items-center gap-2">
-            {sessions.slice(0, 5).map((session) => {
-              const typeConfig = SESSION_TYPE_CONFIG[session.sessionType];
-              return (
-                <button
-                  key={session.orderId}
-                  onClick={() => onSessionClick(session.orderId)}
-                  title={session.title}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                    activeSessionId === session.orderId
-                      ? `${typeConfig.bgColor} ${typeConfig.color}`
-                      : 'hover:bg-[#161616] text-[#78716C]'
-                  }`}
-                >
-                  <typeConfig.icon className="w-4 h-4" />
-                </button>
-              );
-            })}
-          </div>
+          // Collapsed: no icon stack — popup handles everything
+          null
         ) : (
           // Expanded: grouped list
           <div className="space-y-3">

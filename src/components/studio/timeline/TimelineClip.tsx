@@ -196,7 +196,7 @@ export const TimelineClip: React.FC<TimelineClipProps> = ({
         </div>
       )}
 
-      {/* Video poster fallback — when thumbnail generation failed (CORS) */}
+      {/* Media fallback — video poster or tiled image (CapCut-style repeat) */}
       {hasMediaFallback && (
         <div className="absolute inset-0 overflow-hidden">
           {clip.isVideo ? (
@@ -209,12 +209,18 @@ export const TimelineClip: React.FC<TimelineClipProps> = ({
               onLoadedMetadata={(e) => { (e.target as HTMLVideoElement).currentTime = 0.5; }}
             />
           ) : (
-            <img
-              src={clip.mediaSrc}
-              alt=""
-              className="w-full h-full object-cover"
-              draggable={false}
-            />
+            <div className="flex h-full">
+              {Array.from({ length: Math.max(1, Math.ceil(effectiveWidth / tileWidth)) }).map((_, i) => (
+                <img
+                  key={i}
+                  src={clip.mediaSrc}
+                  alt=""
+                  className="h-full flex-shrink-0 object-cover"
+                  style={{ width: tileWidth }}
+                  draggable={false}
+                />
+              ))}
+            </div>
           )}
         </div>
       )}

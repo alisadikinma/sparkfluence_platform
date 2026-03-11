@@ -23,6 +23,7 @@ export const OverlayClipRenderer: React.FC<OverlayClipRendererProps> = ({
   // Don't render if outside clip bounds
   if (relativeFrame < 0 || relativeFrame >= clip.durationInFrames) return null;
 
+  const rotation = (clip as any).rotation || 0;
   const style: React.CSSProperties = {
     position: 'absolute',
     left: clip.position.x,
@@ -31,6 +32,7 @@ export const OverlayClipRenderer: React.FC<OverlayClipRendererProps> = ({
     height: clip.size.h,
     opacity: clip.opacity,
     zIndex: clip.zIndex,
+    transform: rotation ? `rotate(${rotation}deg)` : undefined,
   };
 
   if (clip.type === 'video' && clip.src) {
@@ -38,7 +40,7 @@ export const OverlayClipRenderer: React.FC<OverlayClipRendererProps> = ({
       <div style={style}>
         <OffthreadVideo
           src={clip.src}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
           muted
         />
       </div>
@@ -50,7 +52,7 @@ export const OverlayClipRenderer: React.FC<OverlayClipRendererProps> = ({
       <div style={style}>
         <Img
           src={clip.src}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
       </div>
     );
