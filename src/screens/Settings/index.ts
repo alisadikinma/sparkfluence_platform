@@ -5,3 +5,4 @@ export { LinkedAccounts } from './LinkedAccounts';
 export { Notifications } from './Notifications';
 export { BrandingKit } from './BrandingKit';
 export { SocialAccounts } from './SocialAccounts';
+export { OAuthCallback } from './OAuthCallback';

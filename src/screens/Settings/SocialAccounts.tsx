@@ -116,7 +116,8 @@ function buildInstagramOAuthUrl(): string {
   // Must use production domain — Meta requires HTTPS redirect URIs
   const prodOrigin = import.meta.env.VITE_OAUTH_REDIRECT_ORIGIN || 'https://sparkfluence.studio';
   const callbackUrl = `${prodOrigin}/settings/social-accounts/callback`;
-  const scopes = 'instagram_basic,instagram_content_publish,pages_show_list,business_management';
+  // New Instagram API scopes (2024+): instagram_basic/content_publish deprecated
+  const scopes = 'instagram_business_basic,instagram_business_content_publish,pages_show_list,business_management';
 
   return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code`;
 }

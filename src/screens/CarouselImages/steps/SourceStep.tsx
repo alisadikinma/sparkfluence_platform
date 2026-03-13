@@ -119,13 +119,26 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
         { body: { shortcode, source_url_id: insertedRow.id } },
       );
 
-      // supabase.functions.invoke returns { data, error } — data contains the full JSON body
-      const apiError = fetchResult?.error || fetchError;
-      const isNoToken = fetchResult?.error?.code === 'NO_IG_TOKEN' || fetchError?.message?.includes('NO_IG_TOKEN');
+      // supabase.functions.invoke: non-2xx → data=null, error.context=Response
+      // Parse the actual JSON body from error.context when available
+      let errorBody: any = null;
+      if (fetchError && (fetchError as any).context) {
+        try {
+          errorBody = await (fetchError as any).context.json();
+        } catch { /* ignore parse errors */ }
+      }
+
+      const isNoToken =
+        errorBody?.error?.code === 'NO_IG_TOKEN' ||
+        fetchResult?.error?.code === 'NO_IG_TOKEN';
 
       if (fetchError || !fetchResult?.success) {
-        // Update status to failed
-        const errorMsg = fetchResult?.error?.message || fetchError?.message || 'Unknown error';
+        const errorMsg =
+          errorBody?.error?.message ||
+          fetchResult?.error?.message ||
+          fetchError?.message ||
+          'Unknown error';
+
         await supabase
           .from('carousel_source_urls')
           .update({
