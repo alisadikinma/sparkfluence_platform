@@ -16,7 +16,7 @@ import { Register } from "./screens/Register";
 import { PublicLayout } from "./components/layout";
 import { Welcome } from "./screens/Welcome";
 import { Dashboard } from "./screens/Dashboard";
-import { Settings, PlanBilling, Profile, LinkedAccounts, Notifications, BrandingKit, SocialAccounts, OAuthCallback } from "./screens/Settings";
+import { Settings, PlanBilling, Profile, Notifications, BrandingKit, SocialAccounts, OAuthCallback } from "./screens/Settings";
 import { Billing } from "./screens/Billing";
 import { Onboarding } from "./screens/Onboarding";
 import { NicheRecommendations } from "./screens/NicheRecommendations";
@@ -101,7 +101,6 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/settings" element={<ChatLayout><Settings /></ChatLayout>} />
                     <Route path="/settings/plan-billing" element={<ChatLayout><PlanBilling /></ChatLayout>} />
                     <Route path="/settings/profile" element={<ChatLayout><Profile /></ChatLayout>} />
-                    <Route path="/settings/linked-accounts" element={<ChatLayout><LinkedAccounts /></ChatLayout>} />
                     <Route path="/settings/notifications" element={<ChatLayout><Notifications /></ChatLayout>} />
                     <Route path="/settings/branding" element={<ChatLayout><BrandingKit /></ChatLayout>} />
                     <Route path="/settings/social-accounts" element={<ChatLayout><SocialAccounts /></ChatLayout>} />

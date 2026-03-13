@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { Card, CardContent } from "../../components/ui/card";
-import { UserCircle, Link2, Bell, CreditCard, Palette, Share2, ChevronRight, LogOut } from "lucide-react";
+import { UserCircle, Bell, CreditCard, Palette, Share2, ChevronRight, LogOut } from "lucide-react";
 
 export const Settings = (): JSX.Element => {
   const navigate = useNavigate();
@@ -34,11 +34,11 @@ export const Settings = (): JSX.Element => {
       color: "from-[#7c3aed] to-[#6d28d9]",
     },
     {
-      icon: Link2,
-      title: t.settings.tabs.linkedAccounts,
-      description: t.settings.descriptions.linkedAccounts,
-      path: "/settings/linked-accounts",
-      color: "from-[#ec4899] to-[#d946ef]",
+      icon: Share2,
+      title: 'Social Accounts',
+      description: 'Connect Instagram, YouTube, TikTok, and LinkedIn',
+      path: "/settings/social-accounts",
+      color: "from-[#ec4899] to-[#f43f5e]",
     },
     {
       icon: Bell,
@@ -53,13 +53,6 @@ export const Settings = (): JSX.Element => {
       description: 'Logo, colors, fonts, and watermark for all features',
       path: "/settings/branding",
       color: "from-[#10b981] to-[#059669]",
-    },
-    {
-      icon: Share2,
-      title: 'Social Accounts',
-      description: 'Connect Instagram, TikTok, and LinkedIn for publishing',
-      path: "/settings/social-accounts",
-      color: "from-[#ec4899] to-[#f43f5e]",
     },
     {
       icon: CreditCard,

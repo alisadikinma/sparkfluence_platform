@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import {
-  Instagram, Linkedin, Music2, Plus, Star, StarOff,
+  Instagram, Linkedin, Music2, Youtube, Plus, Star, StarOff,
   Loader2, AlertCircle, CheckCircle2, Clock, RefreshCw,
   MoreHorizontal, Trash2, ExternalLink, Shield, X,
   ArrowLeft
@@ -56,7 +56,17 @@ const PLATFORMS: PlatformConfig[] = [
     textColor: 'text-pink-400',
     phase: 1,
     enabled: true,
-    scopes: 'instagram_basic,instagram_content_publish,pages_show_list,business_management',
+  },
+  {
+    id: 'youtube',
+    name: 'YouTube',
+    icon: Youtube,
+    color: 'from-red-500 to-red-700',
+    bgColor: 'bg-red-500/10',
+    borderColor: 'border-red-500/20',
+    textColor: 'text-red-400',
+    phase: 1,
+    enabled: true,
   },
   {
     id: 'tiktok',
@@ -145,7 +155,9 @@ export const SocialAccounts: React.FC = () => {
     if (!user) return;
     try {
       setError(null);
-      const { data, error: fetchError } = await supabase
+
+      // Fetch from social_accounts (Instagram, TikTok, LinkedIn)
+      const { data: socialData, error: socialError } = await supabase
         .from('social_accounts')
         .select('*')
         .eq('user_id', user.id)
@@ -153,8 +165,33 @@ export const SocialAccounts: React.FC = () => {
         .order('is_default', { ascending: false })
         .order('created_at', { ascending: true });
 
-      if (fetchError) throw fetchError;
-      setAccounts((data as SocialAccount[]) || []);
+      if (socialError) throw socialError;
+
+      // Fetch YouTube from linked_accounts table
+      const { data: ytData } = await supabase
+        .from('linked_accounts')
+        .select('id, platform, platform_username, connected_at')
+        .eq('user_id', user.id)
+        .eq('platform', 'youtube');
+
+      // Map YouTube linked_accounts to SocialAccount shape
+      const ytAccounts: SocialAccount[] = (ytData || []).map((yt) => ({
+        id: yt.id,
+        user_id: user.id,
+        platform: 'youtube' as const,
+        platform_user_id: yt.id,
+        account_label: yt.platform_username ? `@${yt.platform_username}` : null,
+        username: yt.platform_username || '',
+        profile_picture_url: null,
+        token_expires_at: null,
+        is_default: true,
+        is_active: true,
+        scopes: null,
+        created_at: yt.connected_at,
+        updated_at: yt.connected_at,
+      }));
+
+      setAccounts([...(socialData as SocialAccount[] || []), ...ytAccounts]);
     } catch (err: any) {
       console.error('Failed to fetch social accounts:', err);
       setError(err.message || 'Failed to load connected accounts');
@@ -208,11 +245,21 @@ export const SocialAccounts: React.FC = () => {
     setActionLoading((prev) => ({ ...prev, [accountId]: true }));
     setConfirmDisconnect(null);
     try {
-      const { error: deleteError } = await supabase
-        .from('social_accounts')
-        .delete()
-        .eq('id', accountId);
-      if (deleteError) throw deleteError;
+      // Check if this is a YouTube account (stored in linked_accounts)
+      const account = accounts.find((a) => a.id === accountId);
+      if (account?.platform === 'youtube') {
+        const { error: deleteError } = await supabase
+          .from('linked_accounts')
+          .delete()
+          .eq('id', accountId);
+        if (deleteError) throw deleteError;
+      } else {
+        const { error: deleteError } = await supabase
+          .from('social_accounts')
+          .delete()
+          .eq('id', accountId);
+        if (deleteError) throw deleteError;
+      }
 
       setAccounts((prev) => prev.filter((a) => a.id !== accountId));
     } catch (err: any) {
@@ -240,12 +287,34 @@ export const SocialAccounts: React.FC = () => {
     }
   };
 
-  const handleConnect = (platform: PlatformConfig) => {
+  const handleConnect = async (platform: PlatformConfig) => {
     if (!platform.enabled) return;
 
     if (platform.id === 'instagram') {
       const oauthUrl = buildInstagramOAuthUrl();
       window.location.href = oauthUrl;
+      return;
+    }
+
+    if (platform.id === 'youtube') {
+      if (!user) return;
+      setActionLoading((prev) => ({ ...prev, 'youtube-connect': true }));
+      try {
+        const { data, error: invokeError } = await supabase.functions.invoke('oauth-youtube/init', {
+          body: { user_id: user.id },
+        });
+        if (invokeError) throw invokeError;
+        if (data?.success && data?.data?.auth_url) {
+          window.location.href = data.data.auth_url;
+        } else {
+          throw new Error(data?.error?.message || 'Failed to get YouTube auth URL');
+        }
+      } catch (err: any) {
+        setError(err.message || 'Failed to connect YouTube');
+      } finally {
+        setActionLoading((prev) => ({ ...prev, 'youtube-connect': false }));
+      }
+      return;
     }
     // TikTok and LinkedIn: placeholder for future phases
   };
