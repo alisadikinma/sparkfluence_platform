@@ -112,14 +112,15 @@ function getStatusConfig(status: AccountStatus) {
 // ─── Instagram OAuth Builder ───
 
 function buildInstagramOAuthUrl(): string {
-  // Use Instagram App ID (not Facebook App ID) for Instagram Login flow
-  const appId = import.meta.env.VITE_INSTAGRAM_APP_ID || '';
+  // Facebook Login flow — industry standard for Instagram Business/Creator accounts.
+  // Instagram Business accounts are managed via Facebook Pages, so Meta requires
+  // Facebook Login for API access (used by Buffer, Hootsuite, Later, etc.)
+  const appId = import.meta.env.VITE_META_APP_ID || '';
   const prodOrigin = import.meta.env.VITE_OAUTH_REDIRECT_ORIGIN || 'https://sparkfluence.studio';
   const callbackUrl = `${prodOrigin}/settings/social-accounts/callback`;
-  // Instagram API scopes (must be enabled in Meta App > Use cases > Permissions)
   const scopes = 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages';
 
-  return `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code&enable_fb_login=0`;
+  return `https://www.facebook.com/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code`;
 }
 
 // ─── Component ───
@@ -360,9 +361,16 @@ export const SocialAccounts: React.FC = () => {
                 {/* Account List */}
                 <div className="px-5 py-3">
                   {platformAccounts.length === 0 ? (
-                    <div className="flex items-center justify-center py-8 text-neutral-500 text-sm">
-                      <Shield className="w-4 h-4 mr-2 opacity-50" />
-                      No {platform.name} accounts connected
+                    <div className="flex flex-col items-center justify-center py-8 text-neutral-500 text-sm">
+                      <div className="flex items-center">
+                        <Shield className="w-4 h-4 mr-2 opacity-50" />
+                        No {platform.name} accounts connected
+                      </div>
+                      {platform.id === 'instagram' && (
+                        <p className="text-xs text-neutral-600 mt-2 text-center max-w-xs">
+                          You'll sign in via Facebook to connect your Instagram Business account — this is the standard method used by all social media tools.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">

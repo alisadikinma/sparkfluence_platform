@@ -79,54 +79,48 @@ async function instagramExchangeCode(
   code: string,
   redirectUri: string,
 ) {
-  // Instagram Login flow uses Instagram App ID/Secret (not Facebook App ID)
-  const appId = Deno.env.get('INSTAGRAM_APP_ID') || Deno.env.get('META_APP_ID');
-  const appSecret = Deno.env.get('INSTAGRAM_APP_SECRET') || Deno.env.get('META_APP_SECRET');
+  // Facebook Login flow — industry standard for Instagram Business/Creator accounts.
+  // Uses META_APP_ID / META_APP_SECRET (Facebook App credentials).
+  const appId = Deno.env.get('META_APP_ID');
+  const appSecret = Deno.env.get('META_APP_SECRET');
 
   if (!appId || !appSecret) {
     return errorResponse(
       'MISSING_META_CREDENTIALS',
-      'INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET not configured',
+      'META_APP_ID or META_APP_SECRET not configured',
       500,
     );
   }
 
   // ------------------------------------------------------------------
-  // Step 1: Exchange authorization code for short-lived IG token
-  // Instagram Login flow: instagram.com/oauth/authorize → api.instagram.com
+  // Step 1: Exchange authorization code for short-lived FB token
+  // Facebook Login: facebook.com/dialog/oauth → graph.facebook.com
   // ------------------------------------------------------------------
-  const tokenParams = new URLSearchParams({
-    client_id: appId,
-    client_secret: appSecret,
-    grant_type: 'authorization_code',
-    redirect_uri: redirectUri,
-    code,
-  });
+  const tokenUrl = new URL('https://graph.facebook.com/v21.0/oauth/access_token');
+  tokenUrl.searchParams.set('client_id', appId);
+  tokenUrl.searchParams.set('client_secret', appSecret);
+  tokenUrl.searchParams.set('redirect_uri', redirectUri);
+  tokenUrl.searchParams.set('code', code);
 
-  const shortTokenResp = await fetch('https://api.instagram.com/oauth/access_token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: tokenParams.toString(),
-  });
+  const shortTokenResp = await fetch(tokenUrl.toString());
 
   if (!shortTokenResp.ok) {
     const errBody = await shortTokenResp.text();
-    console.error('IG short token error:', shortTokenResp.status, errBody);
+    console.error('FB short token error:', shortTokenResp.status, errBody);
     return errorResponse(
       'IG_CODE_EXCHANGE_FAILED',
-      `Instagram code exchange failed (${shortTokenResp.status}): ${errBody}`,
+      `Facebook code exchange failed (${shortTokenResp.status}): ${errBody}`,
       502,
     );
   }
 
   const shortTokenData = await shortTokenResp.json();
   const shortToken: string = shortTokenData.access_token;
-  const igUserId: string = String(shortTokenData.user_id);
 
-  if (!shortToken || !igUserId) {
+  if (!shortToken) {
     return errorResponse(
       'IG_CODE_EXCHANGE_INVALID',
-      'Instagram returned an invalid token response',
+      'Facebook returned an invalid token response',
       502,
     );
   }
@@ -134,19 +128,20 @@ async function instagramExchangeCode(
   // ------------------------------------------------------------------
   // Step 2: Exchange short-lived token for long-lived token (60 days)
   // ------------------------------------------------------------------
-  const longTokenUrl = new URL('https://graph.instagram.com/access_token');
-  longTokenUrl.searchParams.set('grant_type', 'ig_exchange_token');
+  const longTokenUrl = new URL('https://graph.facebook.com/v21.0/oauth/access_token');
+  longTokenUrl.searchParams.set('grant_type', 'fb_exchange_token');
+  longTokenUrl.searchParams.set('client_id', appId);
   longTokenUrl.searchParams.set('client_secret', appSecret);
-  longTokenUrl.searchParams.set('access_token', shortToken);
+  longTokenUrl.searchParams.set('fb_exchange_token', shortToken);
 
   const longTokenResp = await fetch(longTokenUrl.toString());
 
   if (!longTokenResp.ok) {
     const errBody = await longTokenResp.text();
-    console.error('IG long token error:', longTokenResp.status, errBody);
+    console.error('FB long token error:', longTokenResp.status, errBody);
     return errorResponse(
       'IG_LONG_TOKEN_FAILED',
-      `Instagram long-lived token exchange failed (${longTokenResp.status})`,
+      `Facebook long-lived token exchange failed (${longTokenResp.status})`,
       502,
     );
   }
@@ -158,40 +153,83 @@ async function instagramExchangeCode(
   if (!longToken) {
     return errorResponse(
       'IG_LONG_TOKEN_INVALID',
-      'Instagram returned an invalid long-lived token',
+      'Facebook returned an invalid long-lived token',
       502,
     );
   }
 
   // ------------------------------------------------------------------
-  // Step 3: Fetch IG user profile
+  // Step 3: Find Instagram Business account linked to Facebook Pages
+  // FB token → /me/accounts (Pages) → each Page's instagram_business_account
   // ------------------------------------------------------------------
-  let username = '';
-  let profilePictureUrl: string | null = null;
-  let accountType = '';
-  let mediaCount = 0;
+  const accountType = 'BUSINESS';
 
-  const profileUrl = new URL('https://graph.instagram.com/v21.0/me');
-  profileUrl.searchParams.set('fields', 'user_id,username,account_type,profile_picture_url,media_count');
-  profileUrl.searchParams.set('access_token', longToken);
+  // 3a: Get user's Facebook Pages (may have multiple pages with IG accounts)
+  const pagesUrl = new URL('https://graph.facebook.com/v21.0/me/accounts');
+  pagesUrl.searchParams.set('fields', 'id,name,instagram_business_account');
+  pagesUrl.searchParams.set('access_token', longToken);
 
-  const profileResp = await fetch(profileUrl.toString());
+  const pagesResp = await fetch(pagesUrl.toString());
 
-  if (profileResp.ok) {
-    const profileData = await profileResp.json();
-    username = profileData.username || '';
-    profilePictureUrl = profileData.profile_picture_url || null;
-    accountType = profileData.account_type || 'BUSINESS';
-    mediaCount = profileData.media_count || 0;
-  } else {
-    console.warn('IG profile fetch failed:', profileResp.status, await profileResp.text());
+  interface IGAccountInfo {
+    igUserId: string;
+    igPageId: string;
+    username: string;
+    profilePictureUrl: string | null;
+    mediaCount: number;
   }
 
-  // page_id not available via Instagram Login — set null
-  const igPageId: string | null = null;
+  const igAccounts: IGAccountInfo[] = [];
+
+  if (pagesResp.ok) {
+    const pagesData = await pagesResp.json();
+    const pages = pagesData.data || [];
+
+    // Collect ALL pages with Instagram Business accounts
+    for (const page of pages) {
+      if (page.instagram_business_account?.id) {
+        igAccounts.push({
+          igUserId: page.instagram_business_account.id,
+          igPageId: page.id,
+          username: '',
+          profilePictureUrl: null,
+          mediaCount: 0,
+        });
+      }
+    }
+  }
+
+  if (igAccounts.length === 0) {
+    return errorResponse(
+      'NO_IG_ACCOUNT',
+      'No Instagram Business account found linked to your Facebook Pages. Make sure your Instagram is a Business or Creator account connected to a Facebook Page.',
+      400,
+    );
+  }
+
+  // 3b: Fetch profile details for each IG account
+  for (const acct of igAccounts) {
+    const profileUrl = new URL(`https://graph.facebook.com/v21.0/${acct.igUserId}`);
+    profileUrl.searchParams.set('fields', 'id,username,profile_picture_url,media_count,ig_id');
+    profileUrl.searchParams.set('access_token', longToken);
+
+    const profileResp = await fetch(profileUrl.toString());
+
+    if (profileResp.ok) {
+      const profileData = await profileResp.json();
+      acct.username = profileData.username || '';
+      acct.profilePictureUrl = profileData.profile_picture_url || null;
+      acct.mediaCount = profileData.media_count || 0;
+      if (profileData.ig_id) {
+        acct.igUserId = String(profileData.ig_id);
+      }
+    } else {
+      console.warn(`IG profile fetch failed for ${acct.igUserId}:`, profileResp.status);
+    }
+  }
 
   // ------------------------------------------------------------------
-  // Step 5: Check if this is the first IG account (for is_default)
+  // Step 5: Check existing IG accounts count (for is_default logic)
   // ------------------------------------------------------------------
   const supabase = getServiceClient();
 
@@ -202,46 +240,65 @@ async function instagramExchangeCode(
     .eq('platform', 'instagram')
     .eq('is_active', true);
 
-  const isFirstAccount = (existingCount ?? 0) === 0;
+  const hasNoExistingAccounts = (existingCount ?? 0) === 0;
 
   // ------------------------------------------------------------------
-  // Step 6: Upsert into social_accounts
+  // Step 6: Upsert ALL found IG accounts into social_accounts
   // ------------------------------------------------------------------
   const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+  const connectedAccounts: Array<Record<string, unknown>> = [];
 
-  const { data: account, error: upsertError } = await supabase
-    .from('social_accounts')
-    .upsert(
-      {
-        user_id: userId,
-        platform: 'instagram' as const,
-        platform_user_id: igUserId,
-        account_label: username ? `@${username}` : null,
-        username,
-        profile_picture_url: profilePictureUrl,
-        access_token: longToken,
-        refresh_token: null, // IG long-lived tokens don't use refresh_token
-        token_expires_at: tokenExpiresAt,
-        ig_page_id: igPageId,
-        is_default: isFirstAccount,
-        is_active: true,
-        scopes: ['instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'],
-        metadata: {
-          account_type: accountType,
-          media_count: mediaCount,
-          connected_at: new Date().toISOString(),
+  for (let i = 0; i < igAccounts.length; i++) {
+    const acct = igAccounts[i];
+    // First account is default only if user has no existing IG accounts
+    const isDefault = hasNoExistingAccounts && i === 0;
+
+    const { data: account, error: upsertError } = await supabase
+      .from('social_accounts')
+      .upsert(
+        {
+          user_id: userId,
+          platform: 'instagram' as const,
+          platform_user_id: acct.igUserId,
+          account_label: acct.username ? `@${acct.username}` : null,
+          username: acct.username,
+          profile_picture_url: acct.profilePictureUrl,
+          access_token: longToken,
+          refresh_token: null,
+          token_expires_at: tokenExpiresAt,
+          ig_page_id: acct.igPageId,
+          is_default: isDefault,
+          is_active: true,
+          scopes: ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_messages'],
+          metadata: {
+            account_type: accountType,
+            media_count: acct.mediaCount,
+            connected_at: new Date().toISOString(),
+          },
         },
-      },
-      { onConflict: 'user_id,platform,platform_user_id' },
-    )
-    .select()
-    .single();
+        { onConflict: 'user_id,platform,platform_user_id' },
+      )
+      .select()
+      .single();
 
-  if (upsertError) {
-    console.error('social_accounts upsert error:', upsertError);
+    if (upsertError) {
+      console.error(`social_accounts upsert error for ${acct.username}:`, upsertError);
+      continue; // Don't fail entire flow if one account fails
+    }
+
+    connectedAccounts.push({
+      account_id: account.id,
+      username: acct.username,
+      profile_picture_url: acct.profilePictureUrl,
+      ig_page_id: acct.igPageId,
+      is_default: account.is_default,
+    });
+  }
+
+  if (connectedAccounts.length === 0) {
     return errorResponse(
       'DB_UPSERT_FAILED',
-      `Failed to store account: ${upsertError.message}`,
+      'Failed to store any Instagram accounts',
       500,
     );
   }
@@ -249,15 +306,10 @@ async function instagramExchangeCode(
   return jsonResponse({
     success: true,
     data: {
-      account_id: account.id,
       platform: 'instagram',
-      username,
-      account_type: accountType,
-      profile_picture_url: profilePictureUrl,
-      ig_page_id: igPageId,
+      accounts_connected: connectedAccounts.length,
+      accounts: connectedAccounts,
       token_expires_at: tokenExpiresAt,
-      is_default: account.is_default,
-      is_new: isFirstAccount,
     },
   });
 }

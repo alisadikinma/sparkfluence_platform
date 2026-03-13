@@ -46,8 +46,16 @@ export const OAuthCallback: React.FC = () => {
         },
       });
 
+      // supabase.functions.invoke puts non-2xx response body in error.context (a Response object)
+      let errorBody: any = null;
+      if (error && (error as any).context) {
+        try {
+          errorBody = await (error as any).context.json();
+        } catch { /* ignore parse errors */ }
+      }
+
       if (error || !data?.success) {
-        const msg = data?.error?.message || error?.message || 'Failed to connect Instagram account.';
+        const msg = errorBody?.error?.message || data?.error?.message || error?.message || 'Failed to connect Instagram account.';
         setStatus('error');
         setErrorMsg(msg);
         return;
@@ -79,7 +87,7 @@ export const OAuthCallback: React.FC = () => {
           <>
             <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-4" />
             <h2 className="text-lg font-semibold text-neutral-200 mb-2">Instagram Connected!</h2>
-            <p className="text-sm text-neutral-500">Redirecting to Social Accounts...</p>
+            <p className="text-sm text-neutral-500">Redirecting to Social Accounts{'\u2026'}</p>
           </>
         )}
 
