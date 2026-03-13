@@ -118,7 +118,10 @@ function buildInstagramOAuthUrl(): string {
   const appId = import.meta.env.VITE_META_APP_ID || '';
   const prodOrigin = import.meta.env.VITE_OAUTH_REDIRECT_ORIGIN || 'https://sparkfluence.studio';
   const callbackUrl = `${prodOrigin}/settings/social-accounts/callback`;
-  const scopes = 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages';
+  // Facebook Login scopes for Instagram Business API access
+  // instagram_business_* scopes are ONLY for Instagram Login flow
+  // Facebook Login uses these traditional scopes instead
+  const scopes = 'pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,instagram_manage_insights';
 
   return `https://www.facebook.com/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code`;
 }
