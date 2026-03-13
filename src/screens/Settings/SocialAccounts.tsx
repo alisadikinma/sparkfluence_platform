@@ -467,7 +467,7 @@ export const SocialAccounts: React.FC = () => {
                               </button>
 
                               {menuOpen === account.id && (
-                                <div className="absolute right-0 top-full mt-1 w-48 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-10 py-1">
+                                <div className="absolute right-0 bottom-full mb-1 w-48 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50 py-1">
                                   {status === 'expired' && (
                                     <button
                                       onClick={() => {
