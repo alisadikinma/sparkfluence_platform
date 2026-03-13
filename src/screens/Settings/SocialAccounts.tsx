@@ -117,7 +117,7 @@ function buildInstagramOAuthUrl(): string {
   const prodOrigin = import.meta.env.VITE_OAUTH_REDIRECT_ORIGIN || 'https://sparkfluence.studio';
   const callbackUrl = `${prodOrigin}/settings/social-accounts/callback`;
   // Scopes must match permissions enabled in Meta App > Use cases > Permissions and features
-  const scopes = 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages';
+  const scopes = 'instagram_basic,instagram_content_publish,pages_show_list,business_management';
 
   return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code`;
 }
