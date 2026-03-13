@@ -112,14 +112,14 @@ function getStatusConfig(status: AccountStatus) {
 // ─── Instagram OAuth Builder ───
 
 function buildInstagramOAuthUrl(): string {
+  // Use Instagram App ID (not Facebook App ID) for Instagram Login flow
   const appId = import.meta.env.VITE_INSTAGRAM_APP_ID || '';
-  // Must use production domain — Meta requires HTTPS redirect URIs
   const prodOrigin = import.meta.env.VITE_OAUTH_REDIRECT_ORIGIN || 'https://sparkfluence.studio';
   const callbackUrl = `${prodOrigin}/settings/social-accounts/callback`;
-  // Scopes must match permissions enabled in Meta App > Use cases > Permissions and features
-  const scopes = 'instagram_basic,instagram_content_publish,pages_show_list,business_management';
+  // Instagram API scopes (must be enabled in Meta App > Use cases > Permissions)
+  const scopes = 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages';
 
-  return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code`;
+  return `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=${encodeURIComponent(scopes)}&response_type=code&enable_fb_login=0`;
 }
 
 // ─── Component ───

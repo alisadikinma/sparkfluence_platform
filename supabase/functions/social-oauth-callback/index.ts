@@ -79,19 +79,21 @@ async function instagramExchangeCode(
   code: string,
   redirectUri: string,
 ) {
-  const appId = Deno.env.get('META_APP_ID');
-  const appSecret = Deno.env.get('META_APP_SECRET');
+  // Instagram Login flow uses Instagram App ID/Secret (not Facebook App ID)
+  const appId = Deno.env.get('INSTAGRAM_APP_ID') || Deno.env.get('META_APP_ID');
+  const appSecret = Deno.env.get('INSTAGRAM_APP_SECRET') || Deno.env.get('META_APP_SECRET');
 
   if (!appId || !appSecret) {
     return errorResponse(
       'MISSING_META_CREDENTIALS',
-      'META_APP_ID or META_APP_SECRET not configured',
+      'INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET not configured',
       500,
     );
   }
 
   // ------------------------------------------------------------------
-  // Step 1: Exchange authorization code for short-lived token
+  // Step 1: Exchange authorization code for short-lived IG token
+  // Instagram Login flow: instagram.com/oauth/authorize → api.instagram.com
   // ------------------------------------------------------------------
   const tokenParams = new URLSearchParams({
     client_id: appId,
@@ -151,7 +153,7 @@ async function instagramExchangeCode(
 
   const longTokenData = await longTokenResp.json();
   const longToken: string = longTokenData.access_token;
-  const expiresIn: number = longTokenData.expires_in; // seconds (typically 5184000 = 60 days)
+  const expiresIn: number = longTokenData.expires_in || 5184000; // 60 days default
 
   if (!longToken) {
     return errorResponse(
@@ -162,52 +164,31 @@ async function instagramExchangeCode(
   }
 
   // ------------------------------------------------------------------
-  // Step 3: Fetch user profile
+  // Step 3: Fetch IG user profile
   // ------------------------------------------------------------------
-  const profileUrl = new URL('https://graph.instagram.com/me');
-  profileUrl.searchParams.set('fields', 'id,username,account_type,media_count,profile_picture_url');
-  profileUrl.searchParams.set('access_token', longToken);
-
-  const profileResp = await fetch(profileUrl.toString());
-
   let username = '';
   let profilePictureUrl: string | null = null;
   let accountType = '';
   let mediaCount = 0;
 
+  const profileUrl = new URL('https://graph.instagram.com/v21.0/me');
+  profileUrl.searchParams.set('fields', 'user_id,username,account_type,profile_picture_url,media_count');
+  profileUrl.searchParams.set('access_token', longToken);
+
+  const profileResp = await fetch(profileUrl.toString());
+
   if (profileResp.ok) {
     const profileData = await profileResp.json();
     username = profileData.username || '';
     profilePictureUrl = profileData.profile_picture_url || null;
-    accountType = profileData.account_type || '';
+    accountType = profileData.account_type || 'BUSINESS';
     mediaCount = profileData.media_count || 0;
   } else {
-    // Non-fatal — we can still store the account without profile info
-    console.warn('IG profile fetch failed:', profileResp.status);
+    console.warn('IG profile fetch failed:', profileResp.status, await profileResp.text());
   }
 
-  // ------------------------------------------------------------------
-  // Step 4: Try to get page_id for Business/Creator accounts
-  // ------------------------------------------------------------------
-  let igPageId: string | null = null;
-
-  if (accountType === 'BUSINESS' || accountType === 'CREATOR') {
-    try {
-      const pagesUrl = new URL('https://graph.facebook.com/v21.0/me/accounts');
-      pagesUrl.searchParams.set('access_token', longToken);
-
-      const pagesResp = await fetch(pagesUrl.toString());
-      if (pagesResp.ok) {
-        const pagesData = await pagesResp.json();
-        if (pagesData.data?.length > 0) {
-          igPageId = pagesData.data[0].id;
-        }
-      }
-    } catch (pageErr) {
-      // Non-fatal — page_id is optional
-      console.warn('IG page_id fetch failed:', pageErr);
-    }
-  }
+  // page_id not available via Instagram Login — set null
+  const igPageId: string | null = null;
 
   // ------------------------------------------------------------------
   // Step 5: Check if this is the first IG account (for is_default)
