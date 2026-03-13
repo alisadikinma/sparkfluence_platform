@@ -22,6 +22,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
     { id: 'scriptGen', icon: 'Sparkles', label: 'Script Gen', path: '/script-gen' },
     { id: 'creatorLab', icon: 'Clapperboard', label: 'Creator Lab', path: '/creator-lab' },
     { id: 'adStudio', icon: 'Target', label: 'Ad Studio', path: '/ad-studio' },
+    { id: 'carouselImages', icon: 'GalleryHorizontalEnd', label: 'Carousel Images', path: '/carousel-images' },
     { id: 'gallery', icon: 'Image', label: 'Gallery', path: '/gallery' },
   ];
 
@@ -32,7 +33,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   const activeSessionId = useMemo(() => {
     const parts = location.pathname.split('/');
     // Routes like /script-gen/:orderId or /creator-lab/:orderId
-    if (parts.length >= 3 && ['script-gen', 'creator-lab', 'ad-studio'].includes(parts[1])) {
+    if (parts.length >= 3 && ['script-gen', 'creator-lab', 'ad-studio', 'carousel-images'].includes(parts[1])) {
       return parts[2] || null;
     }
     return null;

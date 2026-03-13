@@ -341,7 +341,9 @@ RULE: Where a key comes from depends on whether it needs ROTATION.
    ├── VEO_API_KEY            — Google Veo video — single key
    ├── YOUTUBE_CLIENT_ID      — YouTube OAuth — single key
    ├── YOUTUBE_CLIENT_SECRET  — YouTube OAuth — single key
-   └── FONNTE_API_TOKEN       — WhatsApp notifications — single key
+   ├── FONNTE_API_TOKEN       — WhatsApp notifications — single key
+   ├── META_APP_ID            — Instagram OAuth App ID — single key
+   └── META_APP_SECRET        — Instagram OAuth App Secret — single key
 
 ❌ COMMON ERROR: "No OpenRouter API key available"
    → Means: api_keys_pool has NO active openrouter keys (all exhausted or none added)
@@ -442,6 +444,10 @@ SOURCE_BADGE_CONFIG: Record<TrendingSource, { label, bg, text, border }>
 | `/creator-lab/:orderId` | Workspace | Active session |
 | `/ad-studio` | AdStudio | Ad script tool |
 | `/ad-studio/:orderId` | Workspace | Active session |
+| `/carousel-images` | CarouselHome | Carousel project listing |
+| `/carousel-images/:projectId` | CarouselWorkspace | Active carousel project |
+| `/carousel-images/:projectId/:step` | CarouselWorkspace | Step navigation (source/generate/edit/video/publish) |
+| `/settings/branding` | BrandingKit | Brand kit editor + AI wizard |
 
 ### Workspace 2-Column Layout (1280px+)
 ```
@@ -613,6 +619,126 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 
 ---
 
+## Carousel Image Feature (Phase 1-4 Complete)
+
+### Architecture
+- **Route:** `/carousel-images` (top-level ChatSidebar menu, `GalleryHorizontalEnd` icon)
+- **Workspace:** 5 steps: Source → Generate → Edit → Video → Publish
+- **Design doc:** `docs/plans/2026-03-11-carousel-image-feature-design.md`
+
+### Components
+| Component | File | Purpose |
+|-----------|------|---------|
+| CarouselHome | `src/screens/CarouselImages/CarouselHome.tsx` | Project listing, create/delete, search |
+| CarouselWorkspace | `src/screens/CarouselImages/CarouselWorkspace.tsx` | 5-step workspace with step bar |
+| SourceStep | `src/screens/CarouselImages/steps/SourceStep.tsx` | IG URL import + manual upload + drag-drop |
+| GenerateStep | `src/screens/CarouselImages/steps/GenerateStep.tsx` | Comparison grid (source vs generated), AI/Manual mode |
+| BrandingKit | `src/screens/Settings/BrandingKit.tsx` | Picker → Wizard → Templates → Editor views |
+| VideoStep | `src/screens/CarouselImages/steps/VideoStep.tsx` | Motion preset selector, duration, video generation via GeminiGen, Realtime status |
+| PublishStep | `src/screens/CarouselImages/steps/PublishStep.tsx` | 4-platform caption editor (IG/TikTok/LinkedIn/Threads), AI generation, quick schedule |
+
+### Hooks
+| Hook | File | Purpose |
+|------|------|---------|
+| `useBrandingKit` | `src/hooks/useBrandingKit.ts` | CRUD for `user_branding_kit` table |
+
+### Edge Functions
+| Function | Purpose |
+|----------|---------|
+| `generate-brand-kit` | AI Brand Wizard: `callLLM()` (temp 0.8) → 3 kit options (Safe/Bold/Contrast) |
+| `fetch-instagram-media` | IG URL → oEmbed API (v21.0) → Graph API → media_urls. Requires OAuth token (Phase 3). |
+| `analyze-carousel-source` | Stage 1 Rebrand: `callLLM()` with `geminiFirst:true` → multimodal analysis per slide → SlideAnalysis JSON |
+| `generate-carousel-images` | Stage 2 Rebrand: RAG knowledge injection + LLM prompt build → fal.ai image gen. A-ROLL: nano-banana-edit (face ref), B-ROLL: seedream-v4 |
+| `generate-carousel-captions` | Caption generation: `callLLM()` → 4 platform-specific captions (IG/TikTok/LinkedIn/Threads) with hashtags. Enforces per-platform char/hashtag limits. |
+
+### RAG Knowledge Files (`_shared/knowledge/carousel/`)
+| File | Export | Content |
+|------|--------|---------|
+| `hook-science.ts` | `HOOK_SCIENCE_KNOWLEDGE` | Hook psychology, scroll-stop science |
+| `visual-action-bank.ts` | `VISUAL_ACTION_BANK_KNOWLEDGE` | 16 visual action hooks |
+| `carousel-rebranding.ts` | `CAROUSEL_REBRANDING_KNOWLEDGE` | Rebranding pipeline rules |
+| `prompt-formulas.ts` | `PROMPT_FORMULAS_KNOWLEDGE` | Image prompt formulas |
+| `caption-copywriting.ts` | `CAPTION_COPYWRITING_KNOWLEDGE` | Caption writing rules |
+| `cinematography-lut.ts` | `CINEMATOGRAPHY_LUT_KNOWLEDGE` | Emotion→expression→camera LUT |
+
+### Branding Kit
+- **Route:** `/settings/branding` (also accessible from Settings page)
+- **Table:** `user_branding_kit` — 1 kit per user (UNIQUE user_id), hybrid flat+JSONB
+- **AI Wizard:** 4-step (Niche→Audience→Vibe→Color) → `generate-brand-kit` → 3 options
+- **Templates:** 24 presets in `src/lib/brandingTemplates.ts` (12 niches × light/dark)
+- **Editor:** Accordion (Identity, Colors, Typography, Watermark) + live CSS carousel preview
+- **Fonts:** 20 curated Google Fonts from `CURATED_FONTS` constant
+
+### Generation Modes
+- **AI Generate** (default): Full fal.ai pipeline — analyze → prompt → generate
+- **Manual Upload:** AI builds prompt only, user generates externally, uploads result
+- **Per-slide hybrid:** e.g. 9 AI + 1 manual. `carousel_slides.generation_method` ('ai'|'manual')
+- **AI Text toggle:** ON = 5-paragraph prompt (visual+text), OFF = 4-paragraph (visual only, text from editor)
+
+### Comparison Grid (GenerateStep)
+- 2-column: source (IG originals) left, generated/uploaded right
+- Per-slide: segment type dropdown (AI auto-tagged), video toggle (HOOK+CTA default), regen, delete, view prompt, manual upload
+- Global: Regenerate All, Copy All Prompts, Approve & Continue
+- Collapsible advanced: reference image, creator face toggle, additional note
+
+### Video Step (VideoStep)
+- **4 Motion Presets:** Subtle Zoom (default), Dynamic Pan, Parallax Layers, Custom
+- **Duration selector:** 5s / 8s (default) / 10s per slide
+- **Video toggle:** Per-slide enable/disable (HOOK+CTA auto-checked)
+- **Cost estimate:** X videos × $0.015 = displayed
+- **Generation:** Reuses `generate-videos` edge fn with `carousel_mode: true`
+- **Realtime:** Supabase postgres_changes subscription on `video_generation_jobs`
+- **Preview:** Video modal with play + download on completed slides
+- **Types:** `MOTION_PRESETS` config in `types/carousel.ts`
+
+### Publish Step (PublishStep)
+- **4 Platforms:** Instagram (2200 chars, 30 hashtags), TikTok (4000 chars, 5 hashtags), LinkedIn (3000 chars, 5 hashtags), Threads (500 chars, 3 hashtags)
+- **Caption generation:** `generate-carousel-captions` edge fn → per-platform caption + hashtags
+- **Editor:** Tab-based (IG/TikTok/LinkedIn/Threads), per-tab textarea with char/hashtag count bars
+- **Quick schedule:** Datetime picker + timezone selector (account connection placeholder for Phase 3)
+- **Types:** `CaptionPlatform`, `PlatformCaption`, `PLATFORM_SPECS` in `types/carousel.ts`
+- **Platform colors:** Instagram=pink, TikTok=cyan, LinkedIn=blue, Threads=neutral
+
+### Social Accounts & Scheduling (Phase 3)
+
+- **Route:** `/settings/social-accounts` (Settings menu, Share2 icon, pink gradient)
+- **Component:** `src/screens/Settings/SocialAccounts.tsx` — OAuth connect/disconnect, default toggle, token expiry status
+- **Edge Function:** `social-oauth-callback` — Instagram OAuth code → short-lived token → long-lived token (60 days) → profile → page_id → upsert. TikTok/LinkedIn return NOT_IMPLEMENTED stubs.
+- **Tables:**
+  - `social_accounts` — Multi-account per platform (1 user → N IG/TikTok/LinkedIn). UNIQUE(user_id, platform, platform_user_id). `is_default` trigger ensures single default per platform. Encrypted `access_token`/`refresh_token`, `token_expires_at`, `ig_page_id`.
+  - `scheduled_posts` — Post queue from all features (carousel/creator_lab/ad_studio). Status: pending→publishing→published/failed/cancelled. `schedule_type` (now/scheduled), timezone, retry_count.
+- **Migration:** `supabase/migrations/20260312100000_social_accounts_and_scheduling.sql`
+- **Secrets:** `META_APP_ID`, `META_APP_SECRET` (Deno.env — single key, no rotation needed)
+- **Platforms:** Instagram (Phase 1, active OAuth), TikTok (Phase 2, "Coming Soon"), LinkedIn (Phase 3, "Coming Soon")
+
+### Analytics Dashboard (Phase 4)
+
+- **Dashboard Tabs:** Overview | Analytics | Scheduling | Automation (Soon) | Inbox (Soon). Tab state via URL `?tab=analytics`.
+- **AnalyticsTab** (`src/screens/Dashboard/AnalyticsTab.tsx`, 1462 lines): 8-section analytics with native SVG charts (no Tremor dependency).
+  - Overview Cards (4 metric cards with trend indicators)
+  - Per-Post Table (sortable, filterable, paginated)
+  - Slide Type Breakdown (horizontal bar chart per segment type)
+  - Engagement Funnel (Impressions→Reach→Likes→Comments→Shares→Saves)
+  - Time Trends (SVG line chart, toggleable metrics)
+  - A/B Experiments (side-by-side comparison, significance score)
+  - Engagement Heatmap (slide position 1-10, color intensity)
+  - Audience Demographics (age bars, gender donut, locations, active hours)
+- **SchedulingTab** (`src/screens/Dashboard/SchedulingTab.tsx`): List + Calendar view, status filter pills, real `scheduled_posts` queries with `social_accounts` join.
+- **Edge Function:** `fetch-instagram-insights` — IG Insights API v21.0 → `post_analytics` + `audience_insights` tables. Modes: posts/demographics/both. Token from `social_accounts`.
+- **Tables:**
+  - `post_analytics` — Per-post metrics (JSONB: impressions, reach, likes, comments, shares, saves, engagement_rate). UNIQUE(social_account_id, platform_post_id). `slide_metrics` JSONB for per-slide position data.
+  - `ab_experiments` — A/B test tracking: variant_a/b post refs, winner, significance_score (NUMERIC 5,4), status (active/completed/cancelled).
+  - `audience_insights` — Demographics snapshots: age_distribution, gender_split, top_locations, active_hours, follower_count. UNIQUE(social_account_id, date).
+- **Migration:** `supabase/migrations/20260312200000_analytics_tables.sql`
+- **Types:** `src/types/analytics.ts` — PostAnalytics, ABExperiment, AudienceInsight, Demographics, row mappers, CONTENT_TYPE_CONFIG, PLATFORM_CONFIG, SLIDE_TYPE_COLORS
+
+### Remaining Phases
+
+- Phase 5: Canvas Image Editor (fabric.js)
+- Phase 6: ManyChat Automation + Inbox
+
+---
+
 ## Sparkfluence Design System (ALWAYS APPLY)
 
 ### Color Palette
@@ -699,7 +825,7 @@ D:\Projects\sparkfluence_platform\
 │   │   ├── layout\           # ChatLayout, ChatSidebar, PublicLayout, Navbar
 │   │   └── features\         # VoiceRecorder, ImageGeneration
 │   ├── contexts\             # Auth, Onboarding, Language, Theme, Workspace
-│   ├── hooks\                # useAuth, useChatSessions, useSessionPersistence
+│   ├── hooks\                # useAuth, useChatSessions, useSessionPersistence, useBrandingKit
 │   ├── lib\
 │   │   ├── supabase.ts       # Supabase client
 │   │   └── orderIdGenerator.ts
@@ -709,7 +835,7 @@ D:\Projects\sparkfluence_platform\
 │   ├── functions\            # Edge Functions (Deno)
 │   │   ├── _shared\          # Shared utilities
 │   │   │   ├── config\       # aiModels.ts (IMAGE_MODELS, VIDEO_MODELS, TTS)
-│   │   │   ├── knowledge\    # Slang (08-10), hooks (11), ad-studio (01-07)
+│   │   │   ├── knowledge\    # Slang (08-10), hooks (11), ad-studio (01-07), carousel/ (6 RAG files)
 │   │   │   ├── prompts\      # Prompt builders (seefluencer, beastMozi, slangValidator...)
 │   │   │   ├── lookups\      # cinematography, slang, videoSpecs, productKeywords
 │   │   │   └── apiKeyRotation.ts  # Key pool rotation logic
@@ -720,7 +846,11 @@ D:\Projects\sparkfluence_platform\
 │   │   ├── generate-music\
 │   │   ├── analyze-voice\               # Voice anchor analysis (Gemini multimodal)
 │   │   ├── generate-topic-suggestions\  # LLM + trending
-│   │   └── fetch-trending-data\         # 5-source collector
+│   │   ├── fetch-trending-data\         # 5-source collector
+│   │   ├── generate-brand-kit\          # AI Brand Wizard (callLLM → 3 kit options)
+│   │   ├── fetch-instagram-media\       # IG URL → oEmbed → Graph API → media_urls
+│   │   ├── analyze-carousel-source\     # Stage 1 Rebrand (Gemini multimodal analysis)
+│   │   └── generate-carousel-images\    # Stage 2 Rebrand (RAG + fal.ai per-slide)
 │   └── migrations\
 ├── backend\
 │   ├── main.py               # FastAPI + FFmpeg
@@ -876,6 +1006,15 @@ B-ROLL:  fal-seedream-v4 → fal-qwen-image → flux-schnell
 | `voice_prompts` | Voice anchor per user/avatar — `voice_prompt_block` (cached prompt), `gender`, `voice_age`, `voice_tone`, `voice_accent`, `voice_pace`. Unique: `(user_id) WHERE is_profile_avatar=true AND avatar_id IS NULL` |
 | `video_jobs` | VPS video processing jobs |
 | `video_generation_jobs` | GeminiGen video job tracking: status 0=pending 1=processing 2=completed 3=failed, Realtime-enabled |
+| `user_branding_kit` | Per-user brand kit: logo, handle, 5-color palette, font, watermark, text presets. UNIQUE(user_id). Hybrid flat+JSONB columns. |
+| `carousel_projects` | Carousel project metadata: project_id (SF-YYYYMMDD-XXXX), title, status (draft→source_ready→generated→edited→video_ready→published), generation_mode (ai/manual), slide_count, branding_kit_id |
+| `carousel_source_urls` | Source URLs per project: IG shortcode, media_urls (JSONB array), scrape_status (pending/fetching/completed/failed), source_order |
+| `carousel_slides` | Generated slides: slide_order, slide_type (HOOK/BODY/CTA/CAROUSEL/TESTIMONIAL/STATS), analysis_data (JSONB), image_url, prompt, generation_method (ai/manual), video_enabled |
+| `social_accounts` | Multi-account OAuth per platform (IG/TikTok/LinkedIn). UNIQUE(user_id, platform, platform_user_id). `is_default` trigger, encrypted tokens, `token_expires_at`, `ig_page_id`. |
+| `scheduled_posts` | Post scheduling queue (carousel/creator_lab/ad_studio). Status: pending→publishing→published→failed→cancelled. `schedule_type` (now/scheduled), timezone, retry_count. |
+| `post_analytics` | Per-post IG metrics (JSONB: impressions, reach, likes, comments, shares, saves, engagement_rate). UNIQUE(social_account_id, platform_post_id). `slide_metrics` for per-slide position data. |
+| `ab_experiments` | A/B test tracking: variant_a/b post refs, winner, significance_score, status (active/completed/cancelled). |
+| `audience_insights` | Demographics snapshots: age_distribution, gender_split, top_locations, active_hours, follower_count. UNIQUE(social_account_id, date). |
 
 ### Job Status Codes
 
@@ -1177,4 +1316,4 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 ---
 
 **Last Updated:** March 2026
-**Version:** 7.2 (+ GeminiGen.AI video provider: VEO 3.1 / Grok 3 sequential queue + webhook + Realtime)
+**Version:** 7.6 (+ Carousel Image Phase 1-4: Branding Kit, Source Library, Rebrand Engine, Comparison Grid, Video Conversion, Caption Generation, OAuth Social Accounts, Post Scheduling, Analytics Dashboard)

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { Card, CardContent } from "../../components/ui/card";
-import { UserCircle, Link2, Bell, CreditCard, ChevronRight, LogOut } from "lucide-react";
+import { UserCircle, Link2, Bell, CreditCard, Palette, Share2, ChevronRight, LogOut } from "lucide-react";
 
 export const Settings = (): JSX.Element => {
   const navigate = useNavigate();
@@ -46,6 +46,20 @@ export const Settings = (): JSX.Element => {
       description: t.settings.descriptions.notifications,
       path: "/settings/notifications",
       color: "from-[#06b6d4] to-[#0891b2]",
+    },
+    {
+      icon: Palette,
+      title: 'Brand Kit',
+      description: 'Logo, colors, fonts, and watermark for all features',
+      path: "/settings/branding",
+      color: "from-[#10b981] to-[#059669]",
+    },
+    {
+      icon: Share2,
+      title: 'Social Accounts',
+      description: 'Connect Instagram, TikTok, and LinkedIn for publishing',
+      path: "/settings/social-accounts",
+      color: "from-[#ec4899] to-[#f43f5e]",
     },
     {
       icon: CreditCard,

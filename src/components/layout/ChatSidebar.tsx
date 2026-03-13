@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   LayoutDashboard, Calendar, Sparkles, Clapperboard, Target, Image,
+  GalleryHorizontalEnd,
   Settings, LogOut, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Trash2,
   Check, Clock
 } from 'lucide-react';
@@ -48,7 +49,7 @@ interface ChatSidebarProps {
 
 // Icon mapping
 const iconMap: Record<string, React.ComponentType<any>> = {
-  LayoutDashboard, Calendar, Sparkles, Clapperboard, Target, Image, Settings,
+  LayoutDashboard, Calendar, Sparkles, Clapperboard, Target, Image, GalleryHorizontalEnd, Settings,
 };
 
 // Session type config

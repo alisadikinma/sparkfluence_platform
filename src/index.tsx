@@ -16,7 +16,7 @@ import { Register } from "./screens/Register";
 import { PublicLayout } from "./components/layout";
 import { Welcome } from "./screens/Welcome";
 import { Dashboard } from "./screens/Dashboard";
-import { Settings, PlanBilling, Profile, LinkedAccounts, Notifications } from "./screens/Settings";
+import { Settings, PlanBilling, Profile, LinkedAccounts, Notifications, BrandingKit, SocialAccounts } from "./screens/Settings";
 import { Billing } from "./screens/Billing";
 import { Onboarding } from "./screens/Onboarding";
 import { NicheRecommendations } from "./screens/NicheRecommendations";
@@ -36,6 +36,7 @@ import { ChatHome } from "./screens/ChatHome";
 import { Workspace } from "./screens/Workspace";
 import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 import { StudioEditor } from "./screens/Workspace/steps/StudioEditor";
+import { CarouselHome, CarouselWorkspace } from "./screens/CarouselImages";
 
 // Wrapper component for smooth scroll
 const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -102,6 +103,8 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/settings/profile" element={<ChatLayout><Profile /></ChatLayout>} />
                     <Route path="/settings/linked-accounts" element={<ChatLayout><LinkedAccounts /></ChatLayout>} />
                     <Route path="/settings/notifications" element={<ChatLayout><Notifications /></ChatLayout>} />
+                    <Route path="/settings/branding" element={<ChatLayout><BrandingKit /></ChatLayout>} />
+                    <Route path="/settings/social-accounts" element={<ChatLayout><SocialAccounts /></ChatLayout>} />
                     <Route path="/app/billing" element={<ChatLayout><Billing /></ChatLayout>} />
                     <Route path="/billing" element={<ChatLayout><Billing /></ChatLayout>} />
 
@@ -145,6 +148,11 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/ad-studio/:orderId/:step" element={
                       <ChatLayout><WorkspaceProvider><Workspace /></WorkspaceProvider></ChatLayout>
                     } />
+
+                    {/* ═══ Carousel Images ═══ */}
+                    <Route path="/carousel-images" element={<ChatLayout><CarouselHome /></ChatLayout>} />
+                    <Route path="/carousel-images/:projectId" element={<ChatLayout><CarouselWorkspace /></ChatLayout>} />
+                    <Route path="/carousel-images/:projectId/:step" element={<ChatLayout><CarouselWorkspace /></ChatLayout>} />
 
                       {/* Admin only - Engine Test Dashboard */}
                       <Route path="/sparkfluence-engine-test" element={<SparkfluenceEngineTest />} />

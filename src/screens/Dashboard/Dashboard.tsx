@@ -1,13 +1,30 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { supabase } from "../../lib/supabase";
 import { PlatformIcons } from "../../components/ui/platform-icons";
+import { AnalyticsTab } from "./AnalyticsTab";
+import { SchedulingTab } from "./SchedulingTab";
 import {
   Sparkles, Calendar, TrendingUp, Clock, ArrowUpRight,
-  Heart, ChevronRight
+  Heart, ChevronRight, LayoutDashboard, BarChart3, CalendarDays,
+  Zap, MessageSquare
 } from "lucide-react";
+
+// ═══ Tab Definitions ═══
+
+const TABS = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  { id: 'scheduling', label: 'Scheduling', icon: CalendarDays },
+  { id: 'automation', label: 'Automation', icon: Zap, comingSoon: true },
+  { id: 'inbox', label: 'Inbox', icon: MessageSquare, comingSoon: true },
+] as const;
+
+type TabId = typeof TABS[number]['id'];
+
+// ═══ Overview Tab Types ═══
 
 interface PlannedContent {
   id: string;
@@ -29,7 +46,6 @@ interface CreatorGalleryItem {
   likes: number;
 }
 
-// Sample creator gallery data
 const sampleCreatorGallery: CreatorGalleryItem[] = [
   { id: 1, name: 'Rizky Ananda', avatar: 'https://i.pravatar.cc/150?img=1', image: 'https://images.pexels.com/photos/4974915/pexels-photo-4974915.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 11100 },
   { id: 2, name: 'Salsabila Putri', avatar: 'https://i.pravatar.cc/150?img=5', image: 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 33300 },
@@ -39,14 +55,219 @@ const sampleCreatorGallery: CreatorGalleryItem[] = [
   { id: 6, name: 'Ahmad Fauzi', avatar: 'https://i.pravatar.cc/150?img=7', image: 'https://images.pexels.com/photos/3184418/pexels-photo-3184418.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 15700 },
 ];
 
+// ═══ Overview Tab Component ═══
+
+const OverviewContent: React.FC<{
+  weeklyContent: PlannedContent[];
+  navigate: ReturnType<typeof useNavigate>;
+  t: any;
+  language: string;
+}> = ({ weeklyContent, navigate, t, language }) => {
+  const userName = '';
+
+  const formatDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const localeMap: Record<string, string> = { 'id': 'id-ID', 'en': 'en-US', 'hi': 'hi-IN' };
+    return date.toLocaleDateString(localeMap[language] || 'en-US', { day: '2-digit', month: 'long', year: 'numeric' });
+  };
+
+  const formatLikes = (num: number): string => {
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+  };
+
+  const quickActions = [
+    {
+      icon: Sparkles,
+      title: t.dashboard.quickActionsData.createNow,
+      subtitle: t.dashboard.quickActionsData.createNowDesc,
+      onClick: () => navigate('/script-lab'),
+      bgColor: 'bg-gradient-to-br from-emerald-500/20 to-emerald-500/5',
+      iconBg: 'bg-emerald-500',
+    },
+    {
+      icon: Calendar,
+      title: t.dashboard.quickActionsData.openPlanner,
+      subtitle: t.dashboard.quickActionsData.openPlannerDesc,
+      onClick: () => navigate('/planner'),
+      bgColor: 'bg-gradient-to-br from-blue-500/20 to-blue-500/5',
+      iconBg: 'bg-blue-500',
+    },
+    {
+      icon: TrendingUp,
+      title: t.dashboard.quickActionsData.checkInsight,
+      subtitle: t.dashboard.quickActionsData.checkInsightDesc,
+      onClick: () => {},
+      bgColor: 'bg-gradient-to-br from-pink-500/20 to-pink-500/5',
+      iconBg: 'bg-pink-500',
+      disabled: true,
+    },
+  ];
+
+  return (
+    <>
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        {quickActions.map((action, index) => (
+          <button
+            key={index}
+            onClick={action.onClick}
+            disabled={action.disabled}
+            className={`${action.bgColor} border border-border-default rounded-xl p-4 flex items-center gap-4 hover:border-primary/50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            <div className={`${action.iconBg} w-12 h-12 rounded-xl flex items-center justify-center`}>
+              <action.icon className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h3 className="text-text-primary font-semibold">{action.title}</h3>
+              <p className="text-text-secondary text-sm">{action.subtitle}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Content Plan This Week */}
+      <section className="mb-8">
+        <h2 className="text-lg font-semibold text-text-primary mb-4">
+          {t.dashboard.contentPlan.title}
+        </h2>
+
+        {weeklyContent.length === 0 ? (
+          <div className="bg-card border border-border-default rounded-xl p-8 text-center">
+            <p className="text-text-secondary mb-4">
+              {t.dashboard.contentPlan.noContent}
+            </p>
+            <button
+              onClick={() => navigate('/planner')}
+              className="text-primary font-medium hover:underline"
+            >
+              {t.dashboard.contentPlan.scheduleNow} →
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {weeklyContent.map((content) => (
+              <div
+                key={content.id}
+                onClick={() => navigate('/planner')}
+                className="bg-card border border-border-default rounded-xl p-4 hover:border-primary/50 transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="bg-surface text-text-primary text-xs px-2 py-1 rounded">
+                    {formatDate(content.scheduled_date)}
+                  </span>
+                  <ArrowUpRight className="w-4 h-4 text-text-muted" />
+                </div>
+                <h3 className="text-text-primary font-medium mb-3 line-clamp-2 min-h-[48px]">
+                  {content.title}
+                </h3>
+                <div className="flex items-center justify-between">
+                  <PlatformIcons platforms={content.platforms} size="sm" />
+                  <div className="flex items-center gap-1 bg-primary/20 px-2 py-1 rounded text-primary text-xs">
+                    <Clock className="w-3 h-3" />
+                    {content.scheduled_time?.slice(0, 5) || '07:00'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Creator Gallery */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-text-primary">
+              {t.dashboard.creatorGallery.title}
+            </h2>
+            <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
+              {t.dashboard.creatorGallery.new}
+            </span>
+          </div>
+          <button
+            onClick={() => navigate('/history')}
+            className="flex items-center gap-1 text-text-secondary hover:text-text-primary text-sm transition-colors"
+          >
+            {t.dashboard.creatorGallery.viewAll}
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {sampleCreatorGallery.map((item) => (
+            <div
+              key={item.id}
+              className="relative group rounded-xl overflow-hidden aspect-[4/5]"
+            >
+              <img
+                src={item.image}
+                alt={item.name}
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+              <div className="absolute bottom-0 left-0 right-0 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={item.avatar}
+                      alt={item.name}
+                      className="w-7 h-7 rounded-full object-cover border-2 border-white/20"
+                    />
+                    <span className="text-white text-sm font-medium truncate">
+                      {item.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 text-white/80 text-sm">
+                    <Heart className="w-4 h-4" />
+                    {formatLikes(item.likes)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+};
+
+// ═══ Coming Soon Placeholder ═══
+
+const ComingSoonTab: React.FC<{ title: string; description: string }> = ({ title, description }) => (
+  <div className="flex flex-col items-center justify-center py-20">
+    <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-4">
+      <Zap className="w-8 h-8 text-neutral-600" />
+    </div>
+    <h3 className="text-lg font-semibold text-neutral-200 mb-2">{title}</h3>
+    <p className="text-sm text-neutral-500 text-center max-w-md">{description}</p>
+    <span className="mt-4 px-3 py-1 rounded-full text-xs font-medium bg-neutral-800 text-neutral-400">
+      Coming in Phase 6
+    </span>
+  </div>
+);
+
+// ═══ Main Dashboard Component ═══
+
 export const Dashboard = (): JSX.Element => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, loading: authLoading } = useAuth();
   const { t, language } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [weeklyContent, setWeeklyContent] = useState<PlannedContent[]>([]);
   const [tokenBalance, setTokenBalance] = useState(200);
+
+  const activeTab = (searchParams.get('tab') as TabId) || 'overview';
   const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Creator';
+
+  const setActiveTab = (tab: TabId) => {
+    if (tab === 'overview') {
+      setSearchParams({});
+    } else {
+      setSearchParams({ tab });
+    }
+  };
 
   useEffect(() => {
     const initDashboard = async () => {
@@ -75,7 +296,7 @@ export const Dashboard = (): JSX.Element => {
 
           if (hasAnyData) {
             if (!profile.onboarding_completed) {
-              await supabase.from("user_profiles").update({ 
+              await supabase.from("user_profiles").update({
                 onboarding_completed: true
               }).eq("user_id", user.id);
             }
@@ -121,52 +342,9 @@ export const Dashboard = (): JSX.Element => {
     initDashboard();
   }, [user, navigate]);
 
-  const formatDate = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    const localeMap: Record<string, string> = {
-      'id': 'id-ID',
-      'en': 'en-US',
-      'hi': 'hi-IN',
-    };
-    return date.toLocaleDateString(localeMap[language] || 'en-US', { day: '2-digit', month: 'long', year: 'numeric' });
-  };
-
-  const formatLikes = (num: number): string => {
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toString();
-  };
-
   const getGreeting = (): string => {
     return t.dashboard.greeting.replace('{name}', userName);
   };
-
-  const quickActions = [
-    {
-      icon: Sparkles,
-      title: t.dashboard.quickActionsData.createNow,
-      subtitle: t.dashboard.quickActionsData.createNowDesc,
-      onClick: () => navigate('/script-lab'),
-      bgColor: 'bg-gradient-to-br from-emerald-500/20 to-emerald-500/5',
-      iconBg: 'bg-emerald-500',
-    },
-    {
-      icon: Calendar,
-      title: t.dashboard.quickActionsData.openPlanner,
-      subtitle: t.dashboard.quickActionsData.openPlannerDesc,
-      onClick: () => navigate('/planner'),
-      bgColor: 'bg-gradient-to-br from-blue-500/20 to-blue-500/5',
-      iconBg: 'bg-blue-500',
-    },
-    {
-      icon: TrendingUp,
-      title: t.dashboard.quickActionsData.checkInsight,
-      subtitle: t.dashboard.quickActionsData.checkInsightDesc,
-      onClick: () => {},
-      bgColor: 'bg-gradient-to-br from-pink-500/20 to-pink-500/5',
-      iconBg: 'bg-pink-500',
-      disabled: true,
-    },
-  ];
 
   if (loading) {
     return (
@@ -177,134 +355,83 @@ export const Dashboard = (): JSX.Element => {
   }
 
   return (
-    <main className="pt-8 pb-8 px-4 sm:px-6 lg:px-8">
-          {/* Greeting */}
-          <h1 className="text-xl sm:text-2xl font-semibold text-text-primary mb-6">
-            {getGreeting()}
-          </h1>
+    <div className="w-full h-full flex flex-col">
+      {/* Header with Greeting + Tabs */}
+      <div className="px-4 sm:px-6 lg:px-8 pt-6 pb-0">
+        <h1 className="text-xl sm:text-2xl font-semibold text-text-primary mb-4">
+          {getGreeting()}
+        </h1>
 
-          {/* Quick Actions */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-            {quickActions.map((action, index) => (
+        {/* Tab Bar */}
+        <div className="flex items-center gap-1 border-b border-border-default">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            const isComingSoon = 'comingSoon' in tab && tab.comingSoon;
+
+            return (
               <button
-                key={index}
-                onClick={action.onClick}
-                disabled={action.disabled}
-                className={`${action.bgColor} border border-border-default rounded-xl p-4 flex items-center gap-4 hover:border-primary/50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed`}
+                key={tab.id}
+                onClick={() => !isComingSoon && setActiveTab(tab.id)}
+                className={`
+                  flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all relative
+                  ${isActive
+                    ? 'text-emerald-400'
+                    : isComingSoon
+                      ? 'text-neutral-600 cursor-not-allowed'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }
+                `}
               >
-                <div className={`${action.iconBg} w-12 h-12 rounded-xl flex items-center justify-center`}>
-                  <action.icon className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-text-primary font-semibold">{action.title}</h3>
-                  <p className="text-text-secondary text-sm">{action.subtitle}</p>
-                </div>
+                <Icon className="w-4 h-4" />
+                {tab.label}
+                {isComingSoon && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-500">
+                    Soon
+                  </span>
+                )}
+                {isActive && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500 rounded-t" />
+                )}
               </button>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+      </div>
 
-          {/* Content Plan This Week */}
-          <section className="mb-8">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">
-              {t.dashboard.contentPlan.title}
-            </h2>
+      {/* Tab Content */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 lg:px-8 pt-6 pb-8">
+        {activeTab === 'overview' && (
+          <OverviewContent
+            weeklyContent={weeklyContent}
+            navigate={navigate}
+            t={t}
+            language={language}
+          />
+        )}
 
-            {weeklyContent.length === 0 ? (
-              <div className="bg-card border border-border-default rounded-xl p-8 text-center">
-                <p className="text-text-secondary mb-4">
-                  {t.dashboard.contentPlan.noContent}
-                </p>
-                <button
-                  onClick={() => navigate('/planner')}
-                  className="text-primary font-medium hover:underline"
-                >
-                  {t.dashboard.contentPlan.scheduleNow} →
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {weeklyContent.map((content) => (
-                  <div
-                    key={content.id}
-                    onClick={() => navigate('/planner')}
-                    className="bg-card border border-border-default rounded-xl p-4 hover:border-primary/50 transition-all cursor-pointer"
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="bg-surface text-text-primary text-xs px-2 py-1 rounded">
-                        {formatDate(content.scheduled_date)}
-                      </span>
-                      <ArrowUpRight className="w-4 h-4 text-text-muted" />
-                    </div>
-                    <h3 className="text-text-primary font-medium mb-3 line-clamp-2 min-h-[48px]">
-                      {content.title}
-                    </h3>
-                    <div className="flex items-center justify-between">
-                      <PlatformIcons platforms={content.platforms} size="sm" />
-                      <div className="flex items-center gap-1 bg-primary/20 px-2 py-1 rounded text-primary text-xs">
-                        <Clock className="w-3 h-3" />
-                        {content.scheduled_time?.slice(0, 5) || '07:00'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+        {activeTab === 'analytics' && user && (
+          <AnalyticsTab userId={user.id} />
+        )}
 
-          {/* Creator Gallery */}
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold text-text-primary">
-                  {t.dashboard.creatorGallery.title}
-                </h2>
-                <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
-                  {t.dashboard.creatorGallery.new}
-                </span>
-              </div>
-              <button
-                onClick={() => navigate('/history')}
-                className="flex items-center gap-1 text-text-secondary hover:text-text-primary text-sm transition-colors"
-              >
-                {t.dashboard.creatorGallery.viewAll}
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+        {activeTab === 'scheduling' && user && (
+          <SchedulingTab userId={user.id} />
+        )}
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {sampleCreatorGallery.map((item) => (
-                <div
-                  key={item.id}
-                  className="relative group rounded-xl overflow-hidden aspect-[4/5]"
-                >
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                  <div className="absolute bottom-0 left-0 right-0 p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={item.avatar}
-                          alt={item.name}
-                          className="w-7 h-7 rounded-full object-cover border-2 border-white/20"
-                        />
-                        <span className="text-white text-sm font-medium truncate">
-                          {item.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1 text-white/80 text-sm">
-                        <Heart className="w-4 h-4" />
-                        {formatLikes(item.likes)}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-    </main>
+        {activeTab === 'automation' && (
+          <ComingSoonTab
+            title="Automation"
+            description="Build Instagram DM automation flows with a visual builder. Trigger responses to comments and messages automatically."
+          />
+        )}
+
+        {activeTab === 'inbox' && (
+          <ComingSoonTab
+            title="Inbox"
+            description="View and manage all your Instagram conversations in one place. Track automation interactions and reply manually."
+          />
+        )}
+      </div>
+    </div>
   );
 };
