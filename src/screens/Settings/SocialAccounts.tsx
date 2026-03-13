@@ -7,7 +7,7 @@ import {
   MoreHorizontal, Trash2, ExternalLink, Shield, X,
   ArrowLeft
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 // ─── Types ───
 
@@ -141,13 +141,31 @@ function buildInstagramOAuthUrl(): string {
 export const SocialAccounts: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+
+  // Handle YouTube OAuth callback query params (?success=youtube_connected&channel=...)
+  useEffect(() => {
+    const success = searchParams.get('success');
+    const channel = searchParams.get('channel');
+    const errorParam = searchParams.get('error');
+
+    if (success === 'youtube_connected' && channel) {
+      setSuccessMsg(`YouTube connected: ${channel}`);
+      setSearchParams({}, { replace: true });
+      fetchAccounts();
+    } else if (errorParam) {
+      setError(`YouTube connection failed: ${errorParam}`);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams]);
 
   // ─── Fetch Accounts ───
 
@@ -364,6 +382,20 @@ export const SocialAccounts: React.FC = () => {
             Manage your social media accounts for publishing and analytics
           </p>
         </div>
+
+        {/* Success Banner */}
+        {successMsg && (
+          <div className="flex items-center gap-3 p-3 mb-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            <span>{successMsg}</span>
+            <button
+              onClick={() => setSuccessMsg(null)}
+              className="ml-auto p-1 hover:bg-emerald-500/20 rounded transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Global Error */}
         {error && (

@@ -103,6 +103,7 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/settings/profile" element={<ChatLayout><Profile /></ChatLayout>} />
                     <Route path="/settings/notifications" element={<ChatLayout><Notifications /></ChatLayout>} />
                     <Route path="/settings/branding" element={<ChatLayout><BrandingKit /></ChatLayout>} />
+                    <Route path="/settings/linked-accounts" element={<Navigate to="/settings/social-accounts" replace />} />
                     <Route path="/settings/social-accounts" element={<ChatLayout><SocialAccounts /></ChatLayout>} />
                     <Route path="/settings/social-accounts/callback" element={<OAuthCallback />} />
                     <Route path="/app/billing" element={<ChatLayout><Billing /></ChatLayout>} />
