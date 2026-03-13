@@ -448,6 +448,8 @@ SOURCE_BADGE_CONFIG: Record<TrendingSource, { label, bg, text, border }>
 | `/carousel-images/:projectId` | CarouselWorkspace | Active carousel project |
 | `/carousel-images/:projectId/:step` | CarouselWorkspace | Step navigation (source/generate/edit/video/publish) |
 | `/settings/branding` | BrandingKit | Brand kit editor + AI wizard |
+| `/settings/social-accounts` | SocialAccounts | OAuth connect/disconnect per platform |
+| `/settings/social-accounts/callback` | ⚠️ **TODO** | OAuth callback handler (not yet created) |
 
 ### Workspace 2-Column Layout (1280px+)
 ```
@@ -642,14 +644,17 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 |------|------|---------|
 | `useBrandingKit` | `src/hooks/useBrandingKit.ts` | CRUD for `user_branding_kit` table |
 
-### Edge Functions
+### Edge Functions (ALL DEPLOYED)
+
 | Function | Purpose |
 |----------|---------|
 | `generate-brand-kit` | AI Brand Wizard: `callLLM()` (temp 0.8) → 3 kit options (Safe/Bold/Contrast) |
-| `fetch-instagram-media` | IG URL → oEmbed API (v21.0) → Graph API → media_urls. Requires OAuth token (Phase 3). |
+| `fetch-instagram-media` | IG URL → oEmbed API (v21.0) → Graph API → media_urls. Requires OAuth token from `social_accounts`. |
 | `analyze-carousel-source` | Stage 1 Rebrand: `callLLM()` with `geminiFirst:true` → multimodal analysis per slide → SlideAnalysis JSON |
 | `generate-carousel-images` | Stage 2 Rebrand: RAG knowledge injection + LLM prompt build → fal.ai image gen. A-ROLL: nano-banana-edit (face ref), B-ROLL: seedream-v4 |
-| `generate-carousel-captions` | Caption generation: `callLLM()` → 4 platform-specific captions (IG/TikTok/LinkedIn/Threads) with hashtags. Enforces per-platform char/hashtag limits. |
+| `generate-carousel-captions` | Caption generation: `callLLM()` → 4 platform-specific captions (IG/TikTok/LinkedIn/Threads) with hashtags. Enforces per-platform char/hashtag limits. Persists to `carousel_projects.settings` JSONB. |
+| `social-oauth-callback` | IG OAuth: code → short-lived → long-lived token (60 days) → profile → upsert `social_accounts`. Also handles refresh + disconnect. |
+| `fetch-instagram-insights` | IG Insights API v21.0 → `post_analytics` + `audience_insights` tables. Modes: posts/demographics/both. |
 
 ### RAG Knowledge Files (`_shared/knowledge/carousel/`)
 | File | Export | Content |
@@ -704,11 +709,20 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - **Route:** `/settings/social-accounts` (Settings menu, Share2 icon, pink gradient)
 - **Component:** `src/screens/Settings/SocialAccounts.tsx` — OAuth connect/disconnect, default toggle, token expiry status
 - **Edge Function:** `social-oauth-callback` — Instagram OAuth code → short-lived token → long-lived token (60 days) → profile → page_id → upsert. TikTok/LinkedIn return NOT_IMPLEMENTED stubs.
+- **OAuth Flow (Instagram):**
+  1. User clicks "Connect" → redirected to `https://www.facebook.com/v21.0/dialog/oauth?...`
+  2. Redirect URI: `${VITE_OAUTH_REDIRECT_ORIGIN}/settings/social-accounts/callback` (default: `https://sparkfluence.studio`)
+  3. Meta redirects back with `?code=xxx` → frontend calls `social-oauth-callback` edge fn with `{ action: 'exchange_code', platform: 'instagram', code, redirect_uri }`
+  4. Edge fn: code → short-lived token → long-lived token (60 days) → profile → page_id → upsert to `social_accounts`
+  5. Scopes: `instagram_basic,instagram_content_publish,pages_show_list,business_management`
+  6. **Meta App:** "Sparkfluence Studio" (App ID in `VITE_INSTAGRAM_APP_ID`). Use cases: "Manage messaging & content on Instagram" + "Embed Facebook, Instagram and Threads content in other websites"
+  7. **⚠️ Callback route handler** (`/settings/social-accounts/callback`) — needs to be created in `index.tsx` to capture the `?code=` param and exchange it
 - **Tables:**
   - `social_accounts` — Multi-account per platform (1 user → N IG/TikTok/LinkedIn). UNIQUE(user_id, platform, platform_user_id). `is_default` trigger ensures single default per platform. Encrypted `access_token`/`refresh_token`, `token_expires_at`, `ig_page_id`.
   - `scheduled_posts` — Post queue from all features (carousel/creator_lab/ad_studio). Status: pending→publishing→published/failed/cancelled. `schedule_type` (now/scheduled), timezone, retry_count.
 - **Migration:** `supabase/migrations/20260312100000_social_accounts_and_scheduling.sql`
 - **Secrets:** `META_APP_ID`, `META_APP_SECRET` (Deno.env — single key, no rotation needed)
+- **Frontend env:** `VITE_INSTAGRAM_APP_ID` (App ID), `VITE_OAUTH_REDIRECT_ORIGIN` (default `https://sparkfluence.studio`)
 - **Platforms:** Instagram (Phase 1, active OAuth), TikTok (Phase 2, "Coming Soon"), LinkedIn (Phase 3, "Coming Soon")
 
 ### Analytics Dashboard (Phase 4)
@@ -732,9 +746,16 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - **Migration:** `supabase/migrations/20260312200000_analytics_tables.sql`
 - **Types:** `src/types/analytics.ts` — PostAnalytics, ABExperiment, AudienceInsight, Demographics, row mappers, CONTENT_TYPE_CONFIG, PLATFORM_CONFIG, SLIDE_TYPE_COLORS
 
+### Important Patterns
+
+- **Carousel uses `projectId` for routing** (e.g. `SF-20260312-XHRJ`), NOT `orderId` like script-gen/creator-lab. DB `id` (UUID) is used for FK/queries, `projectId` (TEXT) for URL routes.
+- **Edge function response access:** `supabase.functions.invoke()` returns `{ data, error }` where `data` is the full JSON body. So caption data is at `data.data.captions`, NOT `data.captions`.
+- **JSONB merge pattern:** For nested settings updates, read current → shallow spread → update (see `generate-carousel-captions` caption persistence).
+- **IG Import requires OAuth token.** Without connected IG account, returns `NO_IG_TOKEN`. Manual upload works without OAuth.
+
 ### Remaining Phases
 
-- Phase 5: Canvas Image Editor (fabric.js)
+- Phase 5: Canvas Image Editor (fabric.js) — EditStep already has ~1935 line fabric.js implementation
 - Phase 6: ManyChat Automation + Inbox
 
 ---
@@ -1102,9 +1123,13 @@ Why: callLLM handles both providers, auto-fallback, key rotation, 429/402 handli
 :: Frontend (.env)
 VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=xxx
+VITE_INSTAGRAM_APP_ID=xxx              :: Meta App ID for IG OAuth
+VITE_OAUTH_REDIRECT_ORIGIN=https://sparkfluence.studio  :: OAuth callback domain (Meta requires HTTPS)
 
 :: Supabase Secrets (ask before setting) — only keys NOT in api_keys_pool
 FAL_AI_API_KEY=key_id:key_secret
+META_APP_ID=xxx                        :: Instagram OAuth App ID (same as VITE_INSTAGRAM_APP_ID)
+META_APP_SECRET=xxx                    :: Instagram OAuth App Secret
 
 :: ❌ DEPRECATED — these are now in api_keys_pool table, NOT in env/secrets:
 ::    GEMINI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY
@@ -1195,6 +1220,13 @@ git log --oneline -10
 | Apply Style to All Text affects all tracks | `APPLY_TEXT_STYLE_TO_ALL` action must include `segmentId` to scope to same segment only. |
 | Playhead shaking/jittering | Playhead uses `transform: translateX()` + `willChange: 'transform'` (not `left:`). If jitter returns, check for layout-triggering properties. |
 | Text layer not selectable in Player | PlayerOverlay searches ALL segments (not just current) using absolute frame positions. Cross-segment text with negative `inFrame` or extended `outFrame` is found by `absoluteInFrame = seg.startFrame + layer.inFrame`. |
+| Carousel 404 on `carousel_projects` | Migration `20260312000000_carousel_and_branding_tables.sql` not deployed. Run `supabase db push`. |
+| Carousel IG import CORS error | Edge function `fetch-instagram-media` not deployed. Run `supabase functions deploy fetch-instagram-media --no-verify-jwt`. |
+| Carousel IG import 401 (NO_IG_TOKEN) | No IG account connected. User must connect IG at `/settings/social-accounts`. Requires `META_APP_ID` + `META_APP_SECRET` secrets set + Meta App configured. |
+| Carousel captions empty after generate | `supabase.functions.invoke()` response nesting: use `data.data.captions` not `data.captions`. |
+| Carousel RLS policy fails (uuid = text) | `carousel_projects` has both `id` (UUID) and `project_id` (TEXT). RLS subqueries must qualify: `carousel_source_urls.project_id` not just `project_id` (ambiguous resolution). |
+| IG OAuth "invalid redirect URI" | Redirect URI in Meta App must match exactly: `https://sparkfluence.studio/settings/social-accounts/callback`. Must be HTTPS (no localhost). |
+| Carousel VideoStep "Continue" does nothing | Check `useNavigate` import + `navigate()` call in `handleContinueToPublish`. |
 
 ---
 
@@ -1316,4 +1348,4 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 ---
 
 **Last Updated:** March 2026
-**Version:** 7.6 (+ Carousel Image Phase 1-4: Branding Kit, Source Library, Rebrand Engine, Comparison Grid, Video Conversion, Caption Generation, OAuth Social Accounts, Post Scheduling, Analytics Dashboard)
+**Version:** 7.7 (+ Carousel Phase 1-4 deployed: 3 DB migrations, 7 edge functions, IG OAuth flow, Meta App setup, RLS uuid/text fix, response path fixes)
