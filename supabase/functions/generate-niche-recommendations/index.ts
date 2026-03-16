@@ -131,23 +131,23 @@ serve(async (req) => {
     for (const query of queries) {
       console.log(`  → Searching: "${query.substring(0, 50)}..."`);
 
-      const { data: tavilyData, error: tavilyError } = await callTavilyHybrid(supabase, query, {
+      const tavilyResult = await callTavilyHybrid(supabase, query, {
         searchDepth: 'basic',
         maxResults: 5,
         includeAnswer: true,
       });
 
-      if (tavilyError || !tavilyData) {
-        console.warn(`  ⚠ Search error: ${tavilyError}`);
+      if (tavilyResult.error || !tavilyResult.success) {
+        console.warn(`  ⚠ Search error: ${tavilyResult.error}`);
         continue;
       }
 
-      if (tavilyData.answer) {
-        tavilyAnswer = tavilyData.answer;
+      if (tavilyResult.answer) {
+        tavilyAnswer = tavilyResult.answer;
       }
 
       // Extract key insights from results
-      (tavilyData.results || []).forEach((r: any) => {
+      tavilyResult.results.forEach((r: any) => {
         if (r.content && r.content.length > 50) {
           researchResults.push(`[${r.title}]: ${r.content.substring(0, 300)}`);
         }

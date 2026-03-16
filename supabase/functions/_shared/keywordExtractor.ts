@@ -199,14 +199,14 @@ export async function enrichWithTavily(
       includeAnswer: true
     })
 
-    if (result.error || !result.data) {
+    if (result.error || !result.success) {
       console.warn(`[Tavily Enrich] Error: ${result.error}`)
       return null
     }
 
     // Extract useful info from Tavily response
-    const answer = result.data.answer || ''
-    const results = result.data.results || []
+    const answer = result.answer || ''
+    const results = result.results || []
 
     // Parse visual elements from search results
     const visualElements: string[] = []

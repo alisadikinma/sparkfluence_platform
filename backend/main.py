@@ -2202,6 +2202,167 @@ async def process_post_process(job_id: str, request: PostProcessRequest):
         cleanup_directory(work_dir)
 
 
+# ==================== Instagram Media Scraper ====================
+
+import re
+import json
+import random
+
+_IG_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "Cache-Control": "max-age=0",
+}
+
+
+async def _scrape_via_playwright(shortcode: str) -> list[dict] | None:
+    """
+    Primary method: Playwright headless Chromium renders the full Instagram page.
+    Extracts carousel images from the main post article ONLY — ignores recommended posts.
+
+    Strategy:
+    1. Navigate carousel arrows to load all slides
+    2. Extract <img> src from the main article container only
+    3. Filter to high-res CDN images (not thumbnails/profile pics)
+    """
+    try:
+        from playwright.async_api import async_playwright  # type: ignore
+    except ImportError:
+        logger.warning("[IG Scraper] playwright not installed — run: pip install playwright && playwright install chromium")
+        return None
+
+    url = f"https://www.instagram.com/p/{shortcode}/"
+    POST_IMAGE_PATHS = ("t51.82787-15", "t51.29350-15", "t51.2885-15")
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            ctx = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 900},
+                locale="en-US",
+            )
+            page = await ctx.new_page()
+
+            await page.goto(url, timeout=30000, wait_until="networkidle")
+            await page.wait_for_timeout(2000)
+
+            # Click through carousel "Next" arrows to load all slides
+            for _ in range(20):  # max 20 slides safety limit
+                try:
+                    next_btn = page.locator('button[aria-label="Next"]')
+                    if await next_btn.count() > 0 and await next_btn.is_visible():
+                        await next_btn.click()
+                        await page.wait_for_timeout(800)
+                    else:
+                        break
+                except Exception:
+                    break
+
+            # Extract images from the MAIN post article only (first <article> element)
+            # This avoids grabbing recommended/related post images
+            image_urls = await page.evaluate("""
+                () => {
+                    const article = document.querySelector('article');
+                    if (!article) return [];
+
+                    const imgs = article.querySelectorAll('img');
+                    const cdnPaths = ['t51.82787-15', 't51.29350-15', 't51.2885-15'];
+                    const seen = new Set();
+                    const result = [];
+
+                    for (const img of imgs) {
+                        const src = img.src || '';
+                        // Only high-res CDN post images (not profile pics, not UI icons)
+                        if (cdnPaths.some(p => src.includes(p)) && img.naturalWidth > 300) {
+                            const base = src.split('?')[0];
+                            if (!seen.has(base)) {
+                                seen.add(base);
+                                result.push(src);
+                            }
+                        }
+                    }
+                    return result;
+                }
+            """)
+
+            await browser.close()
+
+        if image_urls:
+            result = [{"url": u, "mediaType": "IMAGE"} for u in image_urls]
+            logger.info(f"[IG Scraper] Playwright succeeded: {len(result)} images (from article only)")
+            return result
+
+        logger.warning(f"[IG Scraper] Playwright: page loaded but no post images found in article")
+        return None
+
+    except Exception as e:
+        logger.warning(f"[IG Scraper] Playwright failed: {e}")
+        return None
+
+
+async def _scrape_instagram_post(shortcode: str) -> list[dict] | None:
+    """
+    Scrape Instagram post media URLs using Playwright headless browser.
+    Playwright renders the full page like a real browser, bypassing bot detection.
+    """
+    urls = await _scrape_via_playwright(shortcode)
+    if urls:
+        return urls
+
+    logger.warning(f"[IG Scraper] All methods failed for shortcode: {shortcode}")
+    return None
+
+
+@app.get("/api/instagram/media")
+async def fetch_instagram_media(
+    url: str,
+    api_key: str = Header(..., alias="x-api-key"),
+):
+    """
+    Scrape media URLs from a public Instagram post.
+
+    Query params:
+      url — full Instagram post URL (e.g. https://www.instagram.com/p/ABC123/)
+
+    Returns:
+      { success: true, data: { media_urls: [...], total_items: N } }
+    """
+    verify_api_key(api_key)
+
+    # Extract shortcode from URL
+    match = re.search(r'instagram\.com/(?:p|reel)/([A-Za-z0-9_-]+)', url)
+    if not match:
+        raise HTTPException(status_code=400, detail="Invalid Instagram URL. Expected format: https://instagram.com/p/SHORTCODE/")
+
+    shortcode = match.group(1)
+    logger.info(f"[IG Scraper] Fetching media for shortcode: {shortcode}")
+
+    media_urls = await _scrape_instagram_post(shortcode)
+
+    if not media_urls:
+        raise HTTPException(
+            status_code=404,
+            detail="Could not fetch media. Post may be private, deleted, or Instagram is blocking requests."
+        )
+
+    return {
+        "success": True,
+        "data": {
+            "shortcode": shortcode,
+            "media_urls": media_urls,
+            "total_items": len(media_urls),
+        }
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

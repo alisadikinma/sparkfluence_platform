@@ -114,8 +114,8 @@ MULTILINE COMMANDS:
 |-------|------------|
 | Frontend | React 18 + TypeScript + Vite + Tailwind + Shadcn UI |
 | Backend | Supabase (PostgreSQL + pgvector + Auth + Edge Functions + Storage) |
-| Video Processing | Python FastAPI + FFmpeg (VPS) |
-| AI - Script | **OpenRouter** `google/gemini-2.5-flash-lite` **(PRIMARY, PAID)** → Gemini 2.0 Flash direct (FREE fallback) |
+| Video Processing | Python FastAPI + FFmpeg + Playwright (VPS) |
+| AI - Script | **OpenRouter** `google/gemini-2.5-flash-lite` (text) / `google/gemini-2.5-flash` (vision) **(PRIMARY, PAID)** → Gemini 2.5 Flash direct (FREE fallback) |
 | AI - Images | fal.ai: Nano Banana Edit (CREATOR) + Seedream v4 / Qwen (B-ROLL) |
 | AI - Video | GeminiGen.AI: VEO 3.1 Fast HD (DEFAULT) + Grok 3 (Aurora engine) |
 | AI - TTS | fal.ai: Chatterbox Turbo (voice cloning) |
@@ -124,14 +124,17 @@ MULTILINE COMMANDS:
 
 ### ⚠️ AI Model Priority (NEVER GET THIS WRONG)
 ```
-🟢 PRIMARY (PAID)  → OpenRouter: google/gemini-2.5-flash-lite
+🟢 PRIMARY (PAID)  → OpenRouter (auto-detected model):
+   Text-only: google/gemini-2.5-flash-lite (cheaper, faster)
+   Vision/multimodal: google/gemini-2.5-flash (image_url content auto-detected)
    Used by: ALL AI features — generate-script, generate-topic-suggestions,
    generate-niche-suggestions, analyze-image, generate-video-prompt,
-   rewrite-visual-direction, autoShorten, fetch_trending.py (AI Creative + Challenges)
+   rewrite-visual-direction, autoShorten, fetch_trending.py, validate-slide-content
 
-🟡 FALLBACK (FREE)  → Gemini Direct: gemini-2.0-flash (via Google API key)
+🟡 FALLBACK (FREE)  → Gemini Direct: gemini-2.5-flash (via Google API key)
    Used ONLY when: OpenRouter keys exhausted (429/402) or unavailable
    This is a FREE tier fallback — rate limits are strict
+   ⚠️ gemini-2.0-flash going away June 1, 2026 — migrated to gemini-2.5-flash
 
 ❌ NEVER treat Gemini direct as primary. OpenRouter has PAID credit = always try first.
 ❌ NEVER write new code that calls Gemini direct without trying OpenRouter first.
@@ -233,7 +236,7 @@ MULTILINE COMMANDS:
 │                         │                                   │
 │                         ▼                                   │
 │  PYTHON BACKEND (VPS)                                       │
-│  └── FastAPI + FFmpeg (video combining, subtitles)         │
+│  └── FastAPI + FFmpeg + Playwright (video, subtitles, IG)  │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -271,6 +274,14 @@ callLLM(supabase, messages, options?)
 // Options: { temperature?, maxTokens?, model?, geminiModel?, geminiFirst? }
 // Default: OpenRouter primary → Gemini fallback
 // geminiFirst: true → Gemini primary → OpenRouter fallback
+// ✅ Smart model selection: auto-detects multimodal content (image_url in messages)
+//    Text-only → google/gemini-2.5-flash-lite (cheaper)
+//    Vision/multimodal → google/gemini-2.5-flash (image-capable)
+//    Manual `model` override always takes precedence
+// ✅ Gemini fallback: gemini-2.5-flash (migrated from gemini-2.0-flash, going away June 2026)
+// ✅ Supports multimodal messages (image_url content) — toGeminiParts() auto-converts
+//    OpenAI-format image_url → Gemini inlineData (fetches image, base64 encodes)
+// ✅ Provider logging: logs success/failure + provider used at each step
 
 // Tavily search (auto-rotation)
 callTavilyHybrid(supabase, query, options)
@@ -633,7 +644,7 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 |-----------|------|---------|
 | CarouselHome | `src/screens/CarouselImages/CarouselHome.tsx` | Project listing, create/delete, search |
 | CarouselWorkspace | `src/screens/CarouselImages/CarouselWorkspace.tsx` | 5-step workspace with step bar |
-| SourceStep | `src/screens/CarouselImages/steps/SourceStep.tsx` | IG URL import + manual upload + drag-drop |
+| SourceStep | `src/screens/CarouselImages/steps/SourceStep.tsx` | IG URL import (Python backend primary + edge fn fallback) + manual upload + drag-drop + per-image validation badges |
 | GenerateStep | `src/screens/CarouselImages/steps/GenerateStep.tsx` | Comparison grid (source vs generated), AI/Manual mode |
 | BrandingKit | `src/screens/Settings/BrandingKit.tsx` | Picker → Wizard → Templates → Editor views |
 | VideoStep | `src/screens/CarouselImages/steps/VideoStep.tsx` | Motion preset selector, duration, video generation via GeminiGen, Realtime status |
@@ -649,10 +660,11 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 | Function | Purpose |
 |----------|---------|
 | `generate-brand-kit` | AI Brand Wizard: `callLLM()` (temp 0.8) → 3 kit options (Safe/Bold/Contrast) |
-| `fetch-instagram-media` | IG URL → oEmbed API (v21.0) → Graph API → media_urls. Requires OAuth token from `social_accounts`. |
+| `fetch-instagram-media` | IG URL → oEmbed + Graph API (fallback). Frontend tries Python backend (Playwright) FIRST, edge fn is fallback. Requires OAuth token from `social_accounts` for Graph API path. |
 | `analyze-carousel-source` | Stage 1 Rebrand: `callLLM()` with `geminiFirst:true` → multimodal analysis per slide → SlideAnalysis JSON |
 | `generate-carousel-images` | Stage 2 Rebrand: RAG knowledge injection + LLM prompt build → fal.ai image gen. A-ROLL: nano-banana-edit (face ref), B-ROLL: seedream-v4 |
 | `generate-carousel-captions` | Caption generation: `callLLM()` → 4 platform-specific captions (IG/TikTok/LinkedIn/Threads) with hashtags. Enforces per-platform char/hashtag limits. Persists to `carousel_projects.settings` JSONB. |
+| `validate-slide-content` | Per-slide fact-check: Step 1 `callLLM()` multimodal vision (auto-selects `gemini-2.5-flash` for image_url) → extract claim + claim_type. Step 2 `callTavilyHybrid()` (web search, 5 results). Returns `valid`/`unverifiable` + `confidence` (0-1) + `provider` info. Detailed logging at each step. |
 | `social-oauth-callback` | IG OAuth: code → short-lived → long-lived token (60 days) → profile → upsert `social_accounts`. Also handles refresh + disconnect. |
 | `fetch-instagram-insights` | IG Insights API v21.0 → `post_analytics` + `audience_insights` tables. Modes: posts/demographics/both. |
 
@@ -751,7 +763,10 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - **Carousel uses `projectId` for routing** (e.g. `SF-20260312-XHRJ`), NOT `orderId` like script-gen/creator-lab. DB `id` (UUID) is used for FK/queries, `projectId` (TEXT) for URL routes.
 - **Edge function response access:** `supabase.functions.invoke()` returns `{ data, error }` where `data` is the full JSON body. So caption data is at `data.data.captions`, NOT `data.captions`.
 - **JSONB merge pattern:** For nested settings updates, read current → shallow spread → update (see `generate-carousel-captions` caption persistence).
-- **IG Import requires OAuth token.** Without connected IG account, returns `NO_IG_TOKEN`. Manual upload works without OAuth.
+- **IG Import: Python backend PRIMARY, edge fn FALLBACK.** Frontend checks `VITE_BACKEND_URL` + `VITE_BACKEND_API_KEY` → calls `GET /api/instagram/media?url=...` (Playwright headless Chromium scraper). If backend unreachable, falls back to `fetch-instagram-media` edge fn (requires OAuth token from `social_accounts`). Manual upload works without either.
+- **IG Import duplicate prevention:** DELETE by `project_id + shortcode` before INSERT on every re-import. `handleClearAll` resets all sources + validation state.
+- **Per-slide content validation:** SourceStep auto-validates each image via `validate-slide-content` edge fn. Validation badges: green=Valid, red=Review!, amber=Kept, gray=Unverified. `validatedKeysRef` (Set) prevents re-runs. `sourceUrlsRef` + while loop ensures mid-import images are picked up. `canProceed` blocks Continue until all images have definitive status.
+- **Lenis scroll fix:** `/carousel-images` MUST be in `LENIS_DISABLED_PATTERNS` in `useSmoothScroll.ts` — Lenis intercepts wheel events at `<html>` level, breaking `<main overflow-y-auto>` scroll in ChatLayout.
 
 ### Remaining Phases
 
@@ -869,12 +884,13 @@ D:\Projects\sparkfluence_platform\
 │   │   ├── generate-topic-suggestions\  # LLM + trending
 │   │   ├── fetch-trending-data\         # 5-source collector
 │   │   ├── generate-brand-kit\          # AI Brand Wizard (callLLM → 3 kit options)
-│   │   ├── fetch-instagram-media\       # IG URL → oEmbed → Graph API → media_urls
+│   │   ├── fetch-instagram-media\       # IG URL → oEmbed → Graph API (fallback for Python backend)
 │   │   ├── analyze-carousel-source\     # Stage 1 Rebrand (Gemini multimodal analysis)
-│   │   └── generate-carousel-images\    # Stage 2 Rebrand (RAG + fal.ai per-slide)
+│   │   ├── generate-carousel-images\    # Stage 2 Rebrand (RAG + fal.ai per-slide)
+│   │   └── validate-slide-content\      # Per-slide fact-check (LLM vision + Tavily search)
 │   └── migrations\
 ├── backend\
-│   ├── main.py               # FastAPI + FFmpeg
+│   ├── main.py               # FastAPI + FFmpeg + IG Scraper (Playwright)
 │   ├── api_key_pool.py       # Pool-based API key rotation (Python mirror of apiKeyRotation.ts)
 │   ├── fetch_trending.py     # Trending data fetcher (cron 8h)
 │   └── setup_cron.sh         # Cron job scheduler
@@ -1125,6 +1141,8 @@ VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=xxx
 VITE_INSTAGRAM_APP_ID=xxx              :: Meta App ID for IG OAuth
 VITE_OAUTH_REDIRECT_ORIGIN=https://sparkfluence.studio  :: OAuth callback domain (Meta requires HTTPS)
+VITE_BACKEND_URL=http://localhost:8000  :: Python backend URL (IG scraper, FFmpeg)
+VITE_BACKEND_API_KEY=xxx               :: Python backend API key
 
 :: Supabase Secrets (ask before setting) — only keys NOT in api_keys_pool
 FAL_AI_API_KEY=key_id:key_secret
@@ -1227,6 +1245,11 @@ git log --oneline -10
 | Carousel RLS policy fails (uuid = text) | `carousel_projects` has both `id` (UUID) and `project_id` (TEXT). RLS subqueries must qualify: `carousel_source_urls.project_id` not just `project_id` (ambiguous resolution). |
 | IG OAuth "invalid redirect URI" | Redirect URI in Meta App must match exactly: `https://sparkfluence.studio/settings/social-accounts/callback`. Must be HTTPS (no localhost). |
 | Carousel VideoStep "Continue" does nothing | Check `useNavigate` import + `navigate()` call in `handleContinueToPublish`. |
+| Carousel scroll not working | `/carousel-images` MUST be in `LENIS_DISABLED_PATTERNS` (`useSmoothScroll.ts`). Lenis hijacks wheel events at `<html>` level, breaking `<main overflow-y-auto>` in ChatLayout. |
+| Carousel validation stuck "Checking..." | `validatingRef.current` blocks new runs. The while loop in `runValidation` reads `sourceUrlsRef.current` each iteration to pick up mid-import images. If validation loops forever, check `validatedKeysRef` key format: `${source.id}-${imageIndex}`. |
+| Carousel validation uses Gemini not OpenRouter | `callLLM` multimodal: OpenRouter passes `image_url` directly (model fetches), but Instagram CDN URLs often blocked. Gemini fallback uses `toGeminiParts()` which fetches image server-side → base64 `inlineData`. This is expected behavior, not a bug. |
+| Carousel re-import shows duplicates | DELETE by `project_id + shortcode` must happen BEFORE INSERT. Check RLS delete policy on `carousel_source_urls`. |
+| Python IG scraper fails | Check Playwright installed: `pip install playwright && playwright install chromium`. Backend endpoint: `GET /api/instagram/media?url=...` with `x-api-key` header. |
 
 ---
 
@@ -1348,4 +1371,4 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 ---
 
 **Last Updated:** March 2026
-**Version:** 7.7 (+ Carousel Phase 1-4 deployed: 3 DB migrations, 7 edge functions, IG OAuth flow, Meta App setup, RLS uuid/text fix, response path fixes)
+**Version:** 7.8 (+ validate-slide-content edge fn, Python IG scraper (Playwright), callLLM multimodal support, Lenis scroll fix for carousel, SourceStep validation UI)

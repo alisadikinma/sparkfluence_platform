@@ -422,30 +422,59 @@ export async function callTavilyHybrid(
     maxResults?: number;
     includeAnswer?: boolean;
   } = {}
-): Promise<{ data: any; error: string | null; source: 'pool' | null }> {
+): Promise<{ success: boolean; results: any[]; answer?: string; error: string | null; source: 'pool' | null }> {
   const result = await callWithRotationHybrid(supabase, 'tavily', async (apiKey) => {
-    const response = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query,
-        search_depth: options.searchDepth || 'basic',
-        max_results: options.maxResults || 10,
-        include_answer: options.includeAnswer ?? true,
-        include_raw_content: false,
-        include_images: false
-      })
-    });
+    // 10s timeout to prevent hanging
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const data = await response.json();
-    return { data, status: response.status };
+    try {
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query,
+          search_depth: options.searchDepth || 'basic',
+          max_results: options.maxResults || 10,
+          include_answer: options.includeAnswer ?? true,
+          include_raw_content: false,
+          include_images: false
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+      const data = await response.json();
+
+      console.log(`[Tavily] Status: ${response.status} | Results: ${data.results?.length ?? 0} | Query: "${query.slice(0, 60)}"`);
+
+      // Log error responses from Tavily
+      if (data.detail || data.error) {
+        console.warn(`[Tavily] API error: ${data.detail || data.error}`);
+      }
+
+      return { data, status: response.status };
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        console.warn(`[Tavily] Request timed out after 10s for query: "${query.slice(0, 60)}"`);
+        throw new Error('Tavily request timed out (10s)');
+      }
+      throw err;
+    }
   });
 
+  // Normalize response — extract results array for easier consumption
+  const tavilyData = result.data || {};
+  const results = tavilyData.results || [];
+
   return {
-    data: result.data,
+    success: results.length > 0,
+    results,
+    answer: tavilyData.answer || undefined,
     error: result.error,
     source: result.source
   };
@@ -793,6 +822,11 @@ export async function callGroqTranscribe(
  * Default: OpenRouter (PAID, reliable) → Gemini (FREE fallback)
  * geminiFirst: Gemini (FREE) → OpenRouter (PAID fallback)
  *
+ * Smart model selection:
+ *   - Multimodal (image_url content) → google/gemini-2.5-flash (vision-capable)
+ *   - Text-only → google/gemini-2.5-flash-lite (cheaper, faster)
+ *   - Manual `model` override always takes precedence
+ *
  * Returns normalized { success, content, provider, error } — no raw API parsing needed.
  */
 export async function callLLM(
@@ -801,9 +835,9 @@ export async function callLLM(
   options: {
     temperature?: number;
     maxTokens?: number;
-    /** OpenRouter model (default: google/gemini-2.5-flash-lite) */
+    /** OpenRouter model override (auto-detected if not set: vision → gemini-2.5-flash, text → gemini-2.5-flash-lite) */
     model?: string;
-    /** Gemini model (default: gemini-2.0-flash) */
+    /** Gemini model (default: gemini-2.5-flash) */
     geminiModel?: string;
     /** Try Gemini first, OpenRouter as fallback (default: false) */
     geminiFirst?: boolean;
@@ -811,8 +845,19 @@ export async function callLLM(
 ): Promise<{ success: boolean; content: string | null; provider: string; error?: string }> {
   const temperature = options.temperature ?? 0.8;
   const maxTokens = options.maxTokens || 2048;
-  const orModel = options.model || 'google/gemini-2.5-flash-lite';
-  const geminiModel = options.geminiModel || 'gemini-2.0-flash';
+
+  // Auto-detect multimodal: check if any message has image_url content
+  const hasMultimodal = messages.some(m =>
+    Array.isArray(m.content) && (m.content as any[]).some((item: any) => item.type === 'image_url')
+  );
+
+  // Smart model selection: vision-capable model for multimodal, lite for text-only
+  const orModel = options.model || (hasMultimodal ? 'google/gemini-2.5-flash' : 'google/gemini-2.5-flash-lite');
+  const geminiModel = options.geminiModel || 'gemini-2.5-flash';
+
+  if (hasMultimodal) {
+    console.log(`[callLLM] Multimodal detected → using ${orModel} (OpenRouter) / ${geminiModel} (Gemini)`);
+  }
 
   const tryOpenRouter = async () => {
     const result = await callWithRotationHybrid(supabase, 'openrouter', async (apiKey) => {
@@ -839,10 +884,56 @@ export async function callLLM(
     return { success: !!content, content, provider: `openrouter:${orModel}`, error: result.error || undefined };
   };
 
+  // Convert OpenAI-format content (string or array) → Gemini parts array
+  const toGeminiParts = async (content: any): Promise<any[]> => {
+    if (typeof content === 'string') return [{ text: content }];
+    if (!Array.isArray(content)) return [{ text: String(content) }];
+
+    const parts: any[] = [];
+    for (const item of content) {
+      if (item.type === 'text') {
+        parts.push({ text: item.text });
+      } else if (item.type === 'image_url') {
+        const url: string = item.image_url?.url;
+        if (url) {
+          try {
+            const resp = await fetch(url);
+            const buf = await resp.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
+            parts.push({
+              inlineData: {
+                mimeType: resp.headers.get('content-type') || 'image/jpeg',
+                data: btoa(bin),
+              },
+            });
+          } catch {
+            // If image fetch fails, skip it — text parts still proceed
+          }
+        }
+      }
+    }
+    return parts;
+  };
+
   const tryGemini = async () => {
     const systemMsg = messages.find(m => m.role === 'system')?.content || '';
-    const userMsg = messages.find(m => m.role === 'user')?.content || '';
-    const combinedPrompt = systemMsg ? `${systemMsg}\n\n${userMsg}` : userMsg;
+    const userContent = messages.find(m => m.role === 'user')?.content;
+
+    // Build Gemini parts — handle both plain text and multimodal arrays
+    let geminiParts: any[];
+    if (Array.isArray(userContent)) {
+      geminiParts = await toGeminiParts(userContent);
+    } else {
+      const text = systemMsg ? `${systemMsg}\n\n${userContent || ''}` : (userContent || '');
+      geminiParts = [{ text }];
+    }
+
+    // Prepend system message as first text part when multimodal
+    if (Array.isArray(userContent) && systemMsg) {
+      geminiParts.unshift({ text: systemMsg });
+    }
 
     const result = await callWithRotationHybrid(supabase, 'gemini', async (apiKey) => {
       const response = await fetch(
@@ -851,7 +942,7 @@ export async function callLLM(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: combinedPrompt }] }],
+            contents: [{ parts: geminiParts }],
             generationConfig: { temperature, maxOutputTokens: maxTokens }
           })
         }
@@ -875,13 +966,15 @@ export async function callLLM(
 
   const primaryResult = await primary();
   if (primaryResult.success && primaryResult.content) {
+    console.log(`[callLLM] ✅ Success via ${primaryResult.provider}`);
     return primaryResult;
   }
 
-  console.log(`[callLLM] Primary (${primaryResult.provider}) failed: ${primaryResult.error}. Trying fallback...`);
+  console.log(`[callLLM] ❌ Primary (${primaryResult.provider}) failed: ${primaryResult.error}. Trying fallback...`);
 
   const fallbackResult = await fallback();
   if (fallbackResult.success && fallbackResult.content) {
+    console.log(`[callLLM] ✅ Fallback success via ${fallbackResult.provider}`);
     return fallbackResult;
   }
 
