@@ -104,8 +104,11 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   const [renamingSession, setRenamingSession] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [showHistoryPopup, setShowHistoryPopup] = useState(false);
+  const [showProfilePopup, setShowProfilePopup] = useState(false);
   const historyPopupRef = useRef<HTMLDivElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const profilePopupRef = useRef<HTMLDivElement>(null);
+  const profileButtonRef = useRef<HTMLButtonElement>(null);
 
   // Close history popup on click outside or Escape
   useEffect(() => {
@@ -131,6 +134,31 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       document.removeEventListener('keydown', handleEscape);
     };
   }, [showHistoryPopup]);
+
+  // Close profile popup on click outside or Escape
+  useEffect(() => {
+    if (!showProfilePopup) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        profilePopupRef.current && !profilePopupRef.current.contains(e.target as Node) &&
+        profileButtonRef.current && !profileButtonRef.current.contains(e.target as Node)
+      ) {
+        setShowProfilePopup(false);
+      }
+    };
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowProfilePopup(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showProfilePopup]);
 
   const logoSrc = theme === 'dark' ? '/logo-light.png' : '/logo-dark.png';
   const groupedSessions = groupSessionsByDate(sessions);
@@ -440,17 +468,76 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
 
       {/* User Profile Section (bottom) */}
       <div className="border-t border-[#262626] px-3 py-3">
-        <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'}`}>
-          {/* Avatar */}
-          <div className="w-8 h-8 rounded-full bg-[#161616] border border-[#262626] flex-shrink-0 overflow-hidden">
-            {userAvatarUrl ? (
-              <img src={userAvatarUrl} alt={userName} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-[#78716C] text-xs font-bold">
-                {userName.charAt(0).toUpperCase()}
+        <div className={`flex items-center ${collapsed ? 'justify-center relative' : 'gap-3'}`}>
+          {/* Avatar — clickable when collapsed to show settings popup */}
+          {collapsed ? (
+            <button
+              ref={profileButtonRef}
+              onClick={() => setShowProfilePopup(!showProfilePopup)}
+              className="w-8 h-8 rounded-full bg-[#161616] border border-[#262626] flex-shrink-0 overflow-hidden hover:ring-2 hover:ring-[#10B981]/50 transition-all"
+              title="Profile & Settings"
+            >
+              {userAvatarUrl ? (
+                <img src={userAvatarUrl} alt={userName} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-[#78716C] text-xs font-bold">
+                  {userName.charAt(0).toUpperCase()}
+                </div>
+              )}
+            </button>
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-[#161616] border border-[#262626] flex-shrink-0 overflow-hidden">
+              {userAvatarUrl ? (
+                <img src={userAvatarUrl} alt={userName} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-[#78716C] text-xs font-bold">
+                  {userName.charAt(0).toUpperCase()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Profile popup (collapsed mode only) */}
+          {collapsed && showProfilePopup && (
+            <div
+              ref={profilePopupRef}
+              className="absolute left-[calc(100%+12px)] bottom-0 w-[200px] bg-[#161616] border border-[#262626] rounded-xl shadow-2xl z-50 overflow-hidden"
+            >
+              {/* User info header */}
+              <div className="px-3 py-3 border-b border-[#262626]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#0B0E14] border border-[#262626] flex-shrink-0 overflow-hidden">
+                    {userAvatarUrl ? (
+                      <img src={userAvatarUrl} alt={userName} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-[#78716C] text-xs font-bold">
+                        {userName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[12px] font-medium text-[#FAFAF9] truncate">{userName}</p>
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* Menu items */}
+              <div className="p-1.5 space-y-0.5">
+                <button
+                  onClick={() => { onSettingsClick(); setShowProfilePopup(false); }}
+                  className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-[#A8A29E] hover:text-[#FAFAF9] hover:bg-[#0B0E14] transition-colors"
+                >
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-[13px]">Settings</span>
+                </button>
+                <button
+                  onClick={() => { onLogout(); setShowProfilePopup(false); }}
+                  className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-lg text-[#A8A29E] hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  <LogOut className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-[13px]">Logout</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {!collapsed && (
             <>

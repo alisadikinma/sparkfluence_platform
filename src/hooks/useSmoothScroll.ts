@@ -10,6 +10,7 @@ const LENIS_DISABLED_PATTERNS = [
   /^\/script-gen/,
   /^\/creator-lab/,
   /^\/ad-studio/,
+  /^\/carousel-images/,
   /^\/dashboard/,
   /^\/planner/,
   /^\/gallery/,

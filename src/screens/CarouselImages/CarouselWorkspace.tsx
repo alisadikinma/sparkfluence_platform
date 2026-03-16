@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Check } from 'lucide-react';
+import { ArrowLeft, Check, Pencil } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { CarouselProject, CarouselProjectRow } from '../../types/carousel';
@@ -55,6 +55,9 @@ export const CarouselWorkspace: React.FC = () => {
   const { user } = useAuth();
   const [project, setProject] = useState<CarouselProject | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   const currentStep = (step as StepId) || 'source';
 
@@ -77,6 +80,27 @@ export const CarouselWorkspace: React.FC = () => {
   useEffect(() => {
     fetchProject();
   }, [fetchProject]);
+
+  // Inline title editing
+  const startEditTitle = () => {
+    if (!project) return;
+    setTitleDraft(project.title);
+    setEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  };
+
+  const saveTitle = async () => {
+    if (!project || !titleDraft.trim()) { setEditingTitle(false); return; }
+    const newTitle = titleDraft.trim();
+    await supabase.from('carousel_projects').update({ title: newTitle }).eq('id', project.id);
+    setProject(prev => prev ? { ...prev, title: newTitle } : prev);
+    setEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') saveTitle();
+    if (e.key === 'Escape') setEditingTitle(false);
+  };
 
   // Navigate to step
   const goToStep = (stepId: StepId) => {
@@ -106,9 +130,9 @@ export const CarouselWorkspace: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0B0E14]">
-      {/* Header */}
-      <div className="flex items-center gap-4 px-6 py-4 border-b border-neutral-800">
+    <div className="bg-[#0B0E14]">
+      {/* Header — sticky so it stays visible while scrolling */}
+      <div className="sticky top-0 z-10 flex items-center gap-4 px-6 py-4 border-b border-neutral-800 bg-[#0B0E14]">
         <button
           onClick={() => navigate('/carousel-images')}
           className="p-1.5 rounded-md text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
@@ -116,13 +140,33 @@ export const CarouselWorkspace: React.FC = () => {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-neutral-200 truncate">{project.title}</h2>
+          {editingTitle ? (
+            <input
+              ref={titleInputRef}
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={handleTitleKeyDown}
+              autoFocus
+              className="text-sm font-semibold text-neutral-200 bg-neutral-800 border border-emerald-500/50 rounded px-2 py-0.5 outline-none focus:border-emerald-500 w-64 max-w-full"
+            />
+          ) : (
+            <button
+              onClick={startEditTitle}
+              className="group flex items-center gap-1.5 text-left"
+            >
+              <h2 className="text-sm font-semibold text-neutral-200 truncate group-hover:text-emerald-400 transition-colors">
+                {project.title}
+              </h2>
+              <Pencil className="w-3 h-3 text-neutral-600 group-hover:text-emerald-400 transition-colors flex-shrink-0" />
+            </button>
+          )}
           <p className="text-xs text-neutral-500">{project.projectId}</p>
         </div>
       </div>
 
-      {/* Step Bar */}
-      <div className="flex items-center gap-1 px-6 py-3 border-b border-neutral-800/50">
+      {/* Step Bar — sticky below header */}
+      <div className="sticky top-[65px] z-10 flex items-center gap-1 px-6 py-3 border-b border-neutral-800/50 bg-[#0B0E14]">
         {STEPS.map((s, i) => {
           const status = getStepStatus(s.id, project.status);
           const isCurrent = s.id === currentStep;
@@ -163,7 +207,7 @@ export const CarouselWorkspace: React.FC = () => {
       </div>
 
       {/* Step Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div>
         {currentStep === 'source' && (
           <SourceStep project={project} onProjectUpdate={fetchProject} />
         )}

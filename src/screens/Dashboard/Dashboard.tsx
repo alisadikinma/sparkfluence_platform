@@ -7,9 +7,10 @@ import { PlatformIcons } from "../../components/ui/platform-icons";
 import { AnalyticsTab } from "./AnalyticsTab";
 import { SchedulingTab } from "./SchedulingTab";
 import {
-  Sparkles, Calendar, TrendingUp, Clock, ArrowUpRight,
-  Heart, ChevronRight, LayoutDashboard, BarChart3, CalendarDays,
-  Zap, MessageSquare
+  Calendar, Clock, ArrowUpRight,
+  ChevronRight, LayoutDashboard, BarChart3, CalendarDays,
+  Zap, MessageSquare, Clapperboard, GalleryHorizontalEnd,
+  Plus, Layers, CheckCircle2, ImageIcon, FileVideo, FileText
 } from "lucide-react";
 
 // ═══ Tab Definitions ═══
@@ -38,32 +39,44 @@ interface PlannedContent {
   final_video_url: string | null;
 }
 
-interface CreatorGalleryItem {
-  id: number;
-  name: string;
-  avatar: string;
-  image: string;
-  likes: number;
+interface CarouselProject {
+  id: string;
+  project_id: string;
+  title: string;
+  status: string;
+  slide_count: number;
+  updated_at: string;
 }
 
-const sampleCreatorGallery: CreatorGalleryItem[] = [
-  { id: 1, name: 'Rizky Ananda', avatar: 'https://i.pravatar.cc/150?img=1', image: 'https://images.pexels.com/photos/4974915/pexels-photo-4974915.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 11100 },
-  { id: 2, name: 'Salsabila Putri', avatar: 'https://i.pravatar.cc/150?img=5', image: 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 33300 },
-  { id: 3, name: 'Citra Anggraini', avatar: 'https://i.pravatar.cc/150?img=9', image: 'https://images.pexels.com/photos/3184292/pexels-photo-3184292.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 44400 },
-  { id: 4, name: 'Budi Santoso', avatar: 'https://i.pravatar.cc/150?img=3', image: 'https://images.pexels.com/photos/3184339/pexels-photo-3184339.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 22500 },
-  { id: 5, name: 'Dewi Lestari', avatar: 'https://i.pravatar.cc/150?img=10', image: 'https://images.pexels.com/photos/3184360/pexels-photo-3184360.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 18900 },
-  { id: 6, name: 'Ahmad Fauzi', avatar: 'https://i.pravatar.cc/150?img=7', image: 'https://images.pexels.com/photos/3184418/pexels-photo-3184418.jpeg?auto=compress&cs=tinysrgb&w=400', likes: 15700 },
-];
+// ═══ Status config for Carousel ═══
+
+const CAROUSEL_STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  draft:        { label: 'Draft',       color: 'text-neutral-400', bg: 'bg-neutral-800' },
+  source_ready: { label: 'Source Ready', color: 'text-blue-400',    bg: 'bg-blue-500/10' },
+  generated:    { label: 'Generated',   color: 'text-amber-400',   bg: 'bg-amber-500/10' },
+  edited:       { label: 'Edited',      color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  video_ready:  { label: 'Video Ready', color: 'text-violet-400',  bg: 'bg-violet-500/10' },
+  published:    { label: 'Published',   color: 'text-green-400',   bg: 'bg-green-500/10' },
+};
+
+const CAROUSEL_STATUS_ICON: Record<string, React.ComponentType<any>> = {
+  draft:        FileText,
+  source_ready: ImageIcon,
+  generated:    Layers,
+  edited:       Layers,
+  video_ready:  FileVideo,
+  published:    CheckCircle2,
+};
 
 // ═══ Overview Tab Component ═══
 
 const OverviewContent: React.FC<{
   weeklyContent: PlannedContent[];
+  carouselProjects: CarouselProject[];
   navigate: ReturnType<typeof useNavigate>;
   t: any;
   language: string;
-}> = ({ weeklyContent, navigate, t, language }) => {
-  const userName = '';
+}> = ({ weeklyContent, carouselProjects, navigate, t, language }) => {
 
   const formatDate = (dateStr: string): string => {
     const date = new Date(dateStr);
@@ -71,99 +84,129 @@ const OverviewContent: React.FC<{
     return date.toLocaleDateString(localeMap[language] || 'en-US', { day: '2-digit', month: 'long', year: 'numeric' });
   };
 
-  const formatLikes = (num: number): string => {
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toString();
+  const formatRelativeTime = (dateStr: string): string => {
+    const now = new Date();
+    const date = new Date(dateStr);
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
   };
 
   const quickActions = [
     {
-      icon: Sparkles,
-      title: t.dashboard.quickActionsData.createNow,
-      subtitle: t.dashboard.quickActionsData.createNowDesc,
-      onClick: () => navigate('/script-lab'),
-      bgColor: 'bg-gradient-to-br from-emerald-500/20 to-emerald-500/5',
+      icon: Clapperboard,
+      title: 'Creator Lab',
+      subtitle: 'Create viral video content',
+      onClick: () => navigate('/creator-lab'),
+      gradient: 'from-emerald-500/20 via-emerald-500/8 to-transparent',
       iconBg: 'bg-emerald-500',
+      border: 'hover:border-emerald-500/40',
+      badge: null,
     },
     {
       icon: Calendar,
-      title: t.dashboard.quickActionsData.openPlanner,
-      subtitle: t.dashboard.quickActionsData.openPlannerDesc,
+      title: 'Content Planner',
+      subtitle: 'Plan & schedule posts',
       onClick: () => navigate('/planner'),
-      bgColor: 'bg-gradient-to-br from-blue-500/20 to-blue-500/5',
+      gradient: 'from-blue-500/20 via-blue-500/8 to-transparent',
       iconBg: 'bg-blue-500',
+      border: 'hover:border-blue-500/40',
+      badge: weeklyContent.length > 0 ? `${weeklyContent.length} this week` : null,
     },
     {
-      icon: TrendingUp,
-      title: t.dashboard.quickActionsData.checkInsight,
-      subtitle: t.dashboard.quickActionsData.checkInsightDesc,
-      onClick: () => {},
-      bgColor: 'bg-gradient-to-br from-pink-500/20 to-pink-500/5',
-      iconBg: 'bg-pink-500',
-      disabled: true,
+      icon: GalleryHorizontalEnd,
+      title: 'Carousel Images',
+      subtitle: 'Create scroll-stopping slides',
+      onClick: () => navigate('/carousel-images'),
+      gradient: 'from-violet-500/20 via-violet-500/8 to-transparent',
+      iconBg: 'bg-violet-500',
+      border: 'hover:border-violet-500/40',
+      badge: carouselProjects.length > 0 ? `${carouselProjects.length} projects` : null,
     },
   ];
 
   return (
     <>
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
         {quickActions.map((action, index) => (
           <button
             key={index}
             onClick={action.onClick}
-            disabled={action.disabled}
-            className={`${action.bgColor} border border-border-default rounded-xl p-4 flex items-center gap-4 hover:border-primary/50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`
+              bg-gradient-to-br ${action.gradient}
+              border border-neutral-800 ${action.border}
+              rounded-xl p-4 flex items-center gap-4 transition-all duration-200
+              text-left group cursor-pointer
+            `}
           >
-            <div className={`${action.iconBg} w-12 h-12 rounded-xl flex items-center justify-center`}>
-              <action.icon className="w-6 h-6 text-white" />
+            <div className={`${action.iconBg} w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg group-hover:scale-105 transition-transform duration-200`}>
+              <action.icon className="w-5 h-5 text-white" />
             </div>
-            <div>
-              <h3 className="text-text-primary font-semibold">{action.title}</h3>
-              <p className="text-text-secondary text-sm">{action.subtitle}</p>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-[#F5F5F5] font-semibold text-sm">{action.title}</h3>
+              <p className="text-neutral-500 text-xs mt-0.5">{action.subtitle}</p>
             </div>
+            {action.badge && (
+              <span className="text-[10px] font-medium text-neutral-400 bg-neutral-800 px-2 py-1 rounded-full flex-shrink-0">
+                {action.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
       {/* Content Plan This Week */}
       <section className="mb-8">
-        <h2 className="text-lg font-semibold text-text-primary mb-4">
-          {t.dashboard.contentPlan.title}
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-[#F5F5F5]">
+            {t.dashboard.contentPlan.title}
+          </h2>
+          <button
+            onClick={() => navigate('/planner')}
+            className="flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+          >
+            Open Planner
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
 
         {weeklyContent.length === 0 ? (
-          <div className="bg-card border border-border-default rounded-xl p-8 text-center">
-            <p className="text-text-secondary mb-4">
-              {t.dashboard.contentPlan.noContent}
-            </p>
-            <button
-              onClick={() => navigate('/planner')}
-              className="text-primary font-medium hover:underline"
-            >
+          <div
+            onClick={() => navigate('/planner')}
+            className="border border-dashed border-neutral-800 rounded-xl p-6 text-center cursor-pointer hover:border-neutral-700 hover:bg-neutral-900/30 transition-all group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-neutral-800 flex items-center justify-center mx-auto mb-3 group-hover:bg-neutral-700 transition-colors">
+              <Calendar className="w-5 h-5 text-neutral-500" />
+            </div>
+            <p className="text-sm text-neutral-500 mb-2">{t.dashboard.contentPlan.noContent}</p>
+            <span className="text-xs font-medium text-blue-400">
               {t.dashboard.contentPlan.scheduleNow} →
-            </button>
+            </span>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {weeklyContent.map((content) => (
               <div
                 key={content.id}
                 onClick={() => navigate('/planner')}
-                className="bg-card border border-border-default rounded-xl p-4 hover:border-primary/50 transition-all cursor-pointer"
+                className="bg-neutral-900 border border-neutral-800 hover:border-neutral-700 rounded-xl p-4 cursor-pointer transition-all duration-200 group"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <span className="bg-surface text-text-primary text-xs px-2 py-1 rounded">
+                  <span className="bg-neutral-800 text-neutral-400 text-[11px] px-2 py-0.5 rounded font-medium">
                     {formatDate(content.scheduled_date)}
                   </span>
-                  <ArrowUpRight className="w-4 h-4 text-text-muted" />
+                  <ArrowUpRight className="w-3.5 h-3.5 text-neutral-600 group-hover:text-neutral-400 transition-colors" />
                 </div>
-                <h3 className="text-text-primary font-medium mb-3 line-clamp-2 min-h-[48px]">
+                <h3 className="text-[#F5F5F5] text-sm font-medium mb-3 line-clamp-2 min-h-[40px] leading-snug">
                   {content.title}
                 </h3>
                 <div className="flex items-center justify-between">
                   <PlatformIcons platforms={content.platforms} size="sm" />
-                  <div className="flex items-center gap-1 bg-primary/20 px-2 py-1 rounded text-primary text-xs">
+                  <div className="flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded text-emerald-400 text-xs">
                     <Clock className="w-3 h-3" />
                     {content.scheduled_time?.slice(0, 5) || '07:00'}
                   </div>
@@ -174,59 +217,95 @@ const OverviewContent: React.FC<{
         )}
       </section>
 
-      {/* Creator Gallery */}
+      {/* Carousel Projects */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-text-primary">
-              {t.dashboard.creatorGallery.title}
-            </h2>
-            <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
-              {t.dashboard.creatorGallery.new}
-            </span>
+            <h2 className="text-sm font-semibold text-[#F5F5F5]">Carousel Projects</h2>
+            {carouselProjects.length > 0 && (
+              <span className="bg-violet-500/10 text-violet-400 border border-violet-500/20 text-[10px] px-2 py-0.5 rounded-full font-medium">
+                {carouselProjects.length}
+              </span>
+            )}
           </div>
           <button
-            onClick={() => navigate('/history')}
-            className="flex items-center gap-1 text-text-secondary hover:text-text-primary text-sm transition-colors"
+            onClick={() => navigate('/carousel-images')}
+            className="flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
           >
-            {t.dashboard.creatorGallery.viewAll}
-            <ChevronRight className="w-4 h-4" />
+            View All
+            <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {sampleCreatorGallery.map((item) => (
-            <div
-              key={item.id}
-              className="relative group rounded-xl overflow-hidden aspect-[4/5]"
-            >
-              <img
-                src={item.image}
-                alt={item.name}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-              <div className="absolute bottom-0 left-0 right-0 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <img
-                      src={item.avatar}
-                      alt={item.name}
-                      className="w-7 h-7 rounded-full object-cover border-2 border-white/20"
-                    />
-                    <span className="text-white text-sm font-medium truncate">
-                      {item.name}
+        {carouselProjects.length === 0 ? (
+          /* Empty state — CTA to create first carousel */
+          <div
+            onClick={() => navigate('/carousel-images')}
+            className="border border-dashed border-neutral-800 rounded-xl p-8 cursor-pointer hover:border-violet-500/30 hover:bg-violet-500/5 transition-all group"
+          >
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mb-3 group-hover:bg-violet-500/20 transition-colors">
+                <GalleryHorizontalEnd className="w-6 h-6 text-violet-400" />
+              </div>
+              <p className="text-sm font-medium text-neutral-400 mb-1">No carousel projects yet</p>
+              <p className="text-xs text-neutral-600 mb-4 max-w-xs">
+                Import Instagram slides or upload images to create your first AI-rebrand carousel
+              </p>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-400 bg-violet-500/10 border border-violet-500/20 px-3 py-1.5 rounded-lg group-hover:bg-violet-500/20 transition-colors">
+                <Plus className="w-3.5 h-3.5" />
+                Create Carousel
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {carouselProjects.map((project) => {
+              const statusCfg = CAROUSEL_STATUS_CONFIG[project.status] || CAROUSEL_STATUS_CONFIG.draft;
+              const StatusIcon = CAROUSEL_STATUS_ICON[project.status] || FileText;
+
+              return (
+                <div
+                  key={project.id}
+                  onClick={() => navigate(`/carousel-images/${project.project_id}`)}
+                  className="bg-neutral-900 border border-neutral-800 hover:border-violet-500/30 rounded-xl p-4 cursor-pointer transition-all duration-200 group"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className={`${statusCfg.bg} ${statusCfg.color} flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-full`}>
+                      <StatusIcon className="w-3 h-3" />
+                      {statusCfg.label}
+                    </div>
+                    <ArrowUpRight className="w-3.5 h-3.5 text-neutral-600 group-hover:text-violet-400 transition-colors" />
+                  </div>
+
+                  <h3 className="text-[#F5F5F5] text-sm font-medium mb-3 line-clamp-1">
+                    {project.title || 'Untitled Project'}
+                  </h3>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 text-xs text-neutral-500">
+                      <Layers className="w-3 h-3" />
+                      {project.slide_count ?? 0} slides
+                    </div>
+                    <span className="text-[11px] text-neutral-600">
+                      {formatRelativeTime(project.updated_at)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1 text-white/80 text-sm">
-                    <Heart className="w-4 h-4" />
-                    {formatLikes(item.likes)}
-                  </div>
                 </div>
+              );
+            })}
+
+            {/* New project CTA card */}
+            <button
+              onClick={() => navigate('/carousel-images')}
+              className="border border-dashed border-neutral-800 hover:border-violet-500/30 hover:bg-violet-500/5 rounded-xl p-4 flex flex-col items-center justify-center gap-2 transition-all duration-200 group min-h-[100px]"
+            >
+              <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center group-hover:bg-violet-500/20 transition-colors">
+                <Plus className="w-4 h-4 text-neutral-500 group-hover:text-violet-400 transition-colors" />
               </div>
-            </div>
-          ))}
-        </div>
+              <span className="text-xs text-neutral-500 group-hover:text-neutral-400 transition-colors">New Carousel</span>
+            </button>
+          </div>
+        )}
       </section>
     </>
   );
@@ -256,10 +335,10 @@ export const Dashboard = (): JSX.Element => {
   const { t, language } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [weeklyContent, setWeeklyContent] = useState<PlannedContent[]>([]);
-  const [tokenBalance, setTokenBalance] = useState(200);
+  const [carouselProjects, setCarouselProjects] = useState<CarouselProject[]>([]);
 
   const activeTab = (searchParams.get('tab') as TabId) || 'overview';
-  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Creator';
+  const userName = user?.user_metadata?.full_name || user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'Creator';
 
   const setActiveTab = (tab: TabId) => {
     if (tab === 'overview') {
@@ -323,14 +402,15 @@ export const Dashboard = (): JSX.Element => {
 
         if (contentData) setWeeklyContent(contentData);
 
-        // Fetch token balance
-        const { data: tokenData } = await supabase
-          .from("user_tokens")
-          .select("balance")
+        // Fetch recent carousel projects
+        const { data: carouselData } = await supabase
+          .from("carousel_projects")
+          .select("id, project_id, title, status, slide_count, updated_at")
           .eq("user_id", user.id)
-          .maybeSingle();
+          .order("updated_at", { ascending: false })
+          .limit(5);
 
-        if (tokenData) setTokenBalance(tokenData.balance);
+        if (carouselData) setCarouselProjects(carouselData);
 
       } catch (err) {
         console.error("Error initializing dashboard:", err);
@@ -348,8 +428,8 @@ export const Dashboard = (): JSX.Element => {
 
   if (loading) {
     return (
-      <div className="flex w-full h-full bg-page items-center justify-center">
-        <div className="text-text-primary text-xl">{t.common.loading}</div>
+      <div className="flex w-full h-full bg-[#0B0E14] items-center justify-center">
+        <div className="text-neutral-400 text-sm">{t.common.loading}</div>
       </div>
     );
   }
@@ -358,12 +438,12 @@ export const Dashboard = (): JSX.Element => {
     <div className="w-full h-full flex flex-col">
       {/* Header with Greeting + Tabs */}
       <div className="px-4 sm:px-6 lg:px-8 pt-6 pb-0">
-        <h1 className="text-xl sm:text-2xl font-semibold text-text-primary mb-4">
+        <h1 className="text-xl sm:text-2xl font-semibold text-[#F5F5F5] mb-4">
           {getGreeting()}
         </h1>
 
         {/* Tab Bar */}
-        <div className="flex items-center gap-1 border-b border-border-default">
+        <div className="flex items-center gap-1 border-b border-neutral-800">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -374,19 +454,19 @@ export const Dashboard = (): JSX.Element => {
                 key={tab.id}
                 onClick={() => !isComingSoon && setActiveTab(tab.id)}
                 className={`
-                  flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all relative
+                  flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all relative whitespace-nowrap
                   ${isActive
                     ? 'text-emerald-400'
                     : isComingSoon
-                      ? 'text-neutral-600 cursor-not-allowed'
-                      : 'text-neutral-400 hover:text-neutral-200'
+                      ? 'text-neutral-700 cursor-not-allowed'
+                      : 'text-neutral-500 hover:text-neutral-200'
                   }
                 `}
               >
                 <Icon className="w-4 h-4" />
                 {tab.label}
                 {isComingSoon && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-500">
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-neutral-800 text-neutral-600">
                     Soon
                   </span>
                 )}
@@ -404,6 +484,7 @@ export const Dashboard = (): JSX.Element => {
         {activeTab === 'overview' && (
           <OverviewContent
             weeklyContent={weeklyContent}
+            carouselProjects={carouselProjects}
             navigate={navigate}
             t={t}
             language={language}

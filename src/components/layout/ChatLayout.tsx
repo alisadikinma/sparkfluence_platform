@@ -1,8 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ChatSidebar } from './ChatSidebar';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useChatSessions } from '../../hooks/useChatSessions';
+import { supabase } from '../../lib/supabase';
+import { getAvatarWithCache } from '../../lib/avatarCache';
 
 interface ChatLayoutProps {
   children: React.ReactNode;
@@ -13,17 +15,31 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
   const location = useLocation();
   const { user, signOut } = useAuth();
   const [collapsed, setCollapsed] = useState(true);
+  const [resolvedAvatarUrl, setResolvedAvatarUrl] = useState<string | null>(null);
   const { sessions, deleteSession, renameSession } = useChatSessions();
+
+  // Fetch avatar: user_profiles table (uploaded) → OAuth metadata (Google picture/avatar_url)
+  useEffect(() => {
+    if (!user?.id) return;
+    getAvatarWithCache(supabase, user.id).then(url => {
+      if (url) {
+        setResolvedAvatarUrl(url);
+      } else {
+        const oauthAvatar = user.user_metadata?.avatar_url || user.user_metadata?.picture || null;
+        setResolvedAvatarUrl(oauthAvatar);
+      }
+    });
+  }, [user?.id]);
 
   // Menu items (NO Settings — lives in user profile area at sidebar bottom)
   const menuItems = [
     { id: 'dashboard', icon: 'LayoutDashboard', label: 'Dashboard', path: '/dashboard' },
     { id: 'planner', icon: 'Calendar', label: 'Planner', path: '/planner' },
-    { id: 'scriptGen', icon: 'Sparkles', label: 'Script Gen', path: '/script-gen' },
+    // { id: 'scriptGen', icon: 'Sparkles', label: 'Script Gen', path: '/script-gen' }, // TEMP DISABLED
     { id: 'creatorLab', icon: 'Clapperboard', label: 'Creator Lab', path: '/creator-lab' },
-    { id: 'adStudio', icon: 'Target', label: 'Ad Studio', path: '/ad-studio' },
+    // { id: 'adStudio', icon: 'Target', label: 'Ad Studio', path: '/ad-studio' }, // TEMP DISABLED
     { id: 'carouselImages', icon: 'GalleryHorizontalEnd', label: 'Carousel Images', path: '/carousel-images' },
-    { id: 'gallery', icon: 'Image', label: 'Gallery', path: '/gallery' },
+    // { id: 'gallery', icon: 'Image', label: 'Gallery', path: '/gallery' }, // TEMP DISABLED
   ];
 
   // Determine active menu from current path
@@ -84,7 +100,7 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
         onDeleteSession={(orderId) => deleteSession(orderId)}
         onRenameSession={(orderId, newTitle) => renameSession(orderId, newTitle)}
         userName={user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'User'}
-        userAvatarUrl={user?.user_metadata?.avatar_url || null}
+        userAvatarUrl={resolvedAvatarUrl}
         onSettingsClick={() => navigate('/settings')}
         onLogout={async () => { await signOut(); navigate('/login'); }}
         collapsed={collapsed}
