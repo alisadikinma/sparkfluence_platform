@@ -3,14 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import {
   Instagram, Upload, Link2,
   Loader2, ImageIcon, ChevronRight, X, ExternalLink, Trash2, AlertCircle,
-  CheckCircle2, ShieldAlert, RotateCcw, Eye, Info
+  CheckCircle2, ShieldAlert, RotateCcw, Eye, Info, Globe
 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
 import type {
-  CarouselProject, CarouselSourceUrl, CarouselSourceUrlRow,
+  CarouselProject, CarouselSourceUrl, CarouselSourceUrlRow, CarouselLanguage, CarouselLanguageSettings,
 } from '../../../types/carousel';
-import { mapCarouselSourceUrlRow } from '../../../types/carousel';
+import { mapCarouselSourceUrlRow, CAROUSEL_LANGUAGES, DEFAULT_LANGUAGE_SETTINGS } from '../../../types/carousel';
 
 type ValidationStatus = 'idle' | 'validating' | 'valid' | 'invalid' | 'unverifiable';
 
@@ -43,6 +43,26 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
   const [importError, setImportError] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Language setting — persisted to localStorage as default for new projects
+  const LANG_STORAGE_KEY = 'sparkfluence_carousel_language';
+  const [languageSettings, setLanguageSettings] = useState<CarouselLanguageSettings>(() => {
+    // Priority: project settings > localStorage > default
+    if (project.settings?.language) return project.settings.language;
+    try {
+      const cached = localStorage.getItem(LANG_STORAGE_KEY);
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return DEFAULT_LANGUAGE_SETTINGS;
+  });
+
+  const updateLanguage = (update: Partial<CarouselLanguageSettings>) => {
+    setLanguageSettings(prev => {
+      const next = { ...prev, ...update };
+      localStorage.setItem(LANG_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   // Validation state — keyed by `${sourceId}-${imageIndex}`
   // Persisted to localStorage so status survives browser refresh
@@ -586,19 +606,26 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
         }
       }
 
+      // Persist language setting to project settings
+      const currentSettings = project.settings || {};
+      const settingsWithLang = { ...currentSettings, language: languageSettings };
+
       if (derivedTitle) {
         await supabase.from('carousel_projects').update({
           status: 'source_ready',
           title: derivedTitle,
+          settings: settingsWithLang,
         }).eq('id', project.id);
       } else {
         await supabase.from('carousel_projects')
-          .update({ status: 'source_ready' })
+          .update({ status: 'source_ready', settings: settingsWithLang })
           .eq('id', project.id);
       }
     } else {
+      const currentSettings = project.settings || {};
+      const settingsWithLang = { ...currentSettings, language: languageSettings };
       await supabase.from('carousel_projects')
-        .update({ status: 'source_ready' })
+        .update({ status: 'source_ready', settings: settingsWithLang })
         .eq('id', project.id);
     }
 
@@ -937,6 +964,65 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
           </>
         ) : null}
       </div>
+
+      {/* Language Setting */}
+      {sourceUrls.length > 0 && (
+        <div className="px-6 pb-6">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Globe className="w-4 h-4 text-emerald-400" />
+              <h4 className="text-sm font-medium text-neutral-200">Output Language</h4>
+            </div>
+            <div className="flex items-center gap-4">
+              {/* Primary Language */}
+              <div className="flex-1">
+                <label className="text-[11px] text-neutral-500 mb-1 block">Headline (Primary)</label>
+                <select
+                  value={languageSettings.primary}
+                  onChange={e => updateLanguage({ primary: e.target.value as CarouselLanguage })}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-200 px-3 py-2 outline-none focus:border-emerald-500 transition-colors"
+                >
+                  {Object.entries(CAROUSEL_LANGUAGES).map(([code, lang]) => (
+                    <option key={code} value={code}>{lang.flag} {lang.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Subtitle Language */}
+              <div className="flex-1">
+                <label className="text-[11px] text-neutral-500 mb-1 block">Subtitle (Secondary)</label>
+                <select
+                  value={languageSettings.subtitle}
+                  onChange={e => updateLanguage({ subtitle: e.target.value as CarouselLanguage | 'none' })}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-200 px-3 py-2 outline-none focus:border-emerald-500 transition-colors"
+                >
+                  <option value="none">None (monolingual)</option>
+                  {Object.entries(CAROUSEL_LANGUAGES)
+                    .filter(([code]) => code !== languageSettings.primary)
+                    .map(([code, lang]) => (
+                      <option key={code} value={code}>{lang.flag} {lang.label}</option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Preview */}
+              <div className="flex-1">
+                <label className="text-[11px] text-neutral-500 mb-1 block">Preview</label>
+                <div className="bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2">
+                  <p className="text-sm font-bold text-white leading-tight">
+                    {languageSettings.primary === 'id' ? 'RAHASIA GILA' : languageSettings.primary === 'hi' ? 'पागल रहस्य' : 'INSANE SECRET'}
+                  </p>
+                  {languageSettings.subtitle !== 'none' && (
+                    <p className="text-[11px] text-amber-400 mt-0.5">
+                      {languageSettings.subtitle === 'en' ? 'The Insane Secret Behind...' : languageSettings.subtitle === 'id' ? 'Rahasia Gila di Balik...' : 'इसके पीछे का पागल रहस्य...'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sticky footer — fixed to bottom, no gap */}
       <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-neutral-800 bg-[#0B0E14]/95 backdrop-blur-sm px-6 py-3 flex items-center justify-between">

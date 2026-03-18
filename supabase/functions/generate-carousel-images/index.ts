@@ -52,6 +52,7 @@ serve(async (req) => {
       action,
       hook_category,
       visual_action,
+      language_settings,
     } = body;
 
     if (!project_id) {
@@ -197,6 +198,13 @@ serve(async (req) => {
         ? `The primary subject is the creator from the provided reference image — this is the most important face in the image, must match the reference image exactly. maintain exact appearance, facial features, skin tone, and distinguishing characteristics from the provided reference image. The creator's face must be the sharpest and most detailed face in the frame. Do not blend or morph the creator's face with any other face.`
         : 'The creator — a confident, expressive content creator.';
 
+      // Language settings — bilingual headline (primary) + subtitle (secondary)
+      const langMap: Record<string, string> = { id: 'Indonesian', en: 'English', hi: 'Hindi' };
+      const primaryLang = langMap[language_settings?.primary] || 'Indonesian';
+      const subtitleLang = language_settings?.subtitle && language_settings.subtitle !== 'none'
+        ? langMap[language_settings.subtitle] || null
+        : null;
+
       // Build LLM prompt — Nano Banana Pro 5-paragraph format
       const promptSystem = `You are an expert cinematic AI image prompt builder using Nano Banana Pro format.
 Generate a single merged prompt (80-200 words, up to 250 for complex compositions with text overlay).
@@ -221,7 +229,8 @@ Texture: Micro-imperfections from 6 categories (skin pores, stray hair, fabric c
 Cinematic reference (film/DP style).
 
 ${ai_text_mode ? `P4 — TEXT OVERLAY (USE EXACTLY THIS TEXT — DO NOT CHANGE THE HEADLINE):
-Bottom half of the image has a smooth dark gradient zone. Extremely large, bold, impactful condensed uppercase text reading "${sourceHeadline}" with the words ${accentWordsList} in ${accentColorName}. Remaining text in white. The text uses the largest possible font size that fills the width, extra bold weight, positioned starting from the vertical center of the image extending downward, not crammed at the very bottom. Below the main headline, an English subtitle line in ${accentColorName} at slightly smaller size, creating clear visual hierarchy — the subtitle must not be white like the main headline.
+LANGUAGE RULE: The headline text MUST be written in ${primaryLang}. ${subtitleLang ? `Below the main headline, add a ${subtitleLang} subtitle translation in ${accentColorName} at slightly smaller size — the subtitle must not be white like the main headline.` : 'No subtitle language — monolingual mode.'}
+Bottom half of the image has a smooth dark gradient zone. Extremely large, bold, impactful condensed uppercase text reading "${sourceHeadline}" with the words ${accentWordsList} in ${accentColorName}. Remaining text in white. The text uses the largest possible font size that fills the width, extra bold weight, positioned starting from the vertical center of the image extending downward, not crammed at the very bottom.${subtitleLang ? ` Below the main headline, a ${subtitleLang} translation subtitle in ${accentColorName} at slightly smaller size, creating clear visual hierarchy.` : ''}
 ${logoUrl ? `Render the creator's brand icon centered in the middle of the image as a small circular badge at thirty percent opacity, positioned directly above the @handle watermark.` : ''}
 "${handleText}" as a watermark in white, centered in the middle of the image directly below the brand icon, thirty percent opacity, subtle background mark only.
 ${slide.slide_type !== 'CTA' ? '"SWIPE (GESER) >" in small white text positioned directly beneath the headline text with minimal gap.' : ''}
@@ -255,6 +264,7 @@ TOPIC: ${sourceHeadline}
 MOOD: ${analysis.visualStyle?.mood || 'professional'}
 SUBJECT: ${analysis.subjectDetection?.description || 'none'}
 CONTENT CATEGORY: ${analysis.contentCategory || 'lifestyle'}
+LANGUAGE: Headline in ${primaryLang}${subtitleLang ? `, subtitle in ${subtitleLang}` : ' (monolingual)'}
 EMOTIONAL ARC: ${arcBeat.beat} (Intensity ${arcBeat.intensity}/6)
 ${slide.slide_type === 'HOOK' ? `HOOK CATEGORY: ${effectiveHookCategory}\nVISUAL ACTION: ${effectiveVisualAction}` : ''}
 ${analysis.foreshadowType || slide.slide_type === 'FORE' ? `FORESHADOW TYPE: ${analysis.foreshadowType || 'steps_tease'}` : ''}

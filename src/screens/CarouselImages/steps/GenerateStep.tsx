@@ -336,6 +336,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
           image_models: imageModels,
           hook_category: selectedHook?.hookCategory || null,
           visual_action: selectedHook?.visualAction || null,
+          language_settings: project.settings?.language || null,
         },
       });
 

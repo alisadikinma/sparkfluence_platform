@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Check, Pencil } from 'lucide-react';
+import { ArrowLeft, Check, Pencil, RefreshCw, Loader2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { CarouselProject, CarouselProjectRow } from '../../types/carousel';
@@ -58,6 +58,7 @@ export const CarouselWorkspace: React.FC = () => {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const [redetectingTitle, setRedetectingTitle] = useState(false);
 
   const currentStep = (step as StepId) || 'source';
 
@@ -100,6 +101,47 @@ export const CarouselWorkspace: React.FC = () => {
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') saveTitle();
     if (e.key === 'Escape') setEditingTitle(false);
+  };
+
+  // Re-detect title from source images via vision analysis
+  const redetectTitle = async () => {
+    if (!project || redetectingTitle) return;
+    setRedetectingTitle(true);
+    try {
+      // Get source image URLs (first image = HOOK)
+      const { data: sources } = await supabase
+        .from('carousel_source_urls')
+        .select('media_urls')
+        .eq('project_id', project.id)
+        .order('source_order')
+        .limit(1);
+
+      const firstUrl = sources?.[0]?.media_urls?.[0]?.url;
+      if (!firstUrl) { setRedetectingTitle(false); return; }
+
+      // Call analyze-carousel-source with just the HOOK image
+      const { data, error } = await supabase.functions.invoke('analyze-carousel-source', {
+        body: {
+          project_id: project.id,
+          image_urls: [firstUrl],
+          ai_text_mode: true,
+          slide_types: { 0: 'HOOK' },
+        },
+      });
+
+      if (!error && data?.success) {
+        const topic = data?.data?.slides?.[0]?.topic;
+        if (topic) {
+          const newTitle = String(topic).slice(0, 80);
+          await supabase.from('carousel_projects').update({ title: newTitle }).eq('id', project.id);
+          setProject(prev => prev ? { ...prev, title: newTitle } : prev);
+        }
+      }
+    } catch (err) {
+      console.error('[CarouselWorkspace] redetectTitle error:', err);
+    } finally {
+      setRedetectingTitle(false);
+    }
   };
 
   // Navigate to step
@@ -151,15 +193,27 @@ export const CarouselWorkspace: React.FC = () => {
               className="text-sm font-semibold text-neutral-200 bg-neutral-800 border border-emerald-500/50 rounded px-2 py-0.5 outline-none focus:border-emerald-500 w-64 max-w-full"
             />
           ) : (
-            <button
-              onClick={startEditTitle}
-              className="group flex items-center gap-1.5 text-left"
-            >
-              <h2 className="text-sm font-semibold text-neutral-200 truncate group-hover:text-emerald-400 transition-colors">
-                {project.title}
-              </h2>
-              <Pencil className="w-3 h-3 text-neutral-600 group-hover:text-emerald-400 transition-colors flex-shrink-0" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={startEditTitle}
+                className="group flex items-center gap-1.5 text-left"
+              >
+                <h2 className="text-sm font-semibold text-neutral-200 truncate group-hover:text-emerald-400 transition-colors">
+                  {project.title}
+                </h2>
+                <Pencil className="w-3 h-3 text-neutral-600 group-hover:text-emerald-400 transition-colors flex-shrink-0" />
+              </button>
+              <button
+                onClick={redetectTitle}
+                disabled={redetectingTitle}
+                title="Re-detect title from source images"
+                className="p-1 rounded hover:bg-neutral-800 text-neutral-600 hover:text-emerald-400 transition-colors disabled:opacity-50"
+              >
+                {redetectingTitle
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <RefreshCw className="w-3 h-3" />}
+              </button>
+            </div>
           )}
           <p className="text-xs text-neutral-500">{project.projectId}</p>
         </div>

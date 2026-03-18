@@ -38,11 +38,30 @@ export interface CarouselProject {
   updatedAt: string;
 }
 
+export type CarouselLanguage = 'id' | 'en' | 'hi';
+
+export interface CarouselLanguageSettings {
+  primary: CarouselLanguage;    // headline language
+  subtitle: CarouselLanguage | 'none'; // subtitle language (or none for monolingual)
+}
+
+export const CAROUSEL_LANGUAGES: Record<CarouselLanguage, { label: string; native: string; flag: string }> = {
+  id: { label: 'Indonesian', native: 'Bahasa Indonesia', flag: '🇮🇩' },
+  en: { label: 'English', native: 'English', flag: '🇺🇸' },
+  hi: { label: 'Hindi', native: 'हिन्दी', flag: '🇮🇳' },
+};
+
+export const DEFAULT_LANGUAGE_SETTINGS: CarouselLanguageSettings = {
+  primary: 'id',
+  subtitle: 'en',
+};
+
 export interface CarouselProjectSettings {
   aspectRatio?: string; // default '4:5'
   slideCount?: number;
   imageModel?: string;
   skippedSlideIds?: string[];
+  language?: CarouselLanguageSettings;
 }
 
 // --- DB row (snake_case) ---
