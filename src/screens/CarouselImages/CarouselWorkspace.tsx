@@ -62,10 +62,10 @@ export const CarouselWorkspace: React.FC = () => {
 
   const currentStep = (step as StepId) || 'source';
 
-  // Fetch project
+  // Fetch project — only shows full-page loading on initial load (project === null)
+  // Subsequent refreshes (from onProjectUpdate) silently update data without unmounting children
   const fetchProject = useCallback(async () => {
     if (!user || !projectId) return;
-    setLoading(true);
     const { data, error } = await supabase
       .from('carousel_projects')
       .select('*')
