@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Instagram, Upload, Search, MoreHorizontal, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Instagram, Upload, Search, Trash2, ExternalLink, ImageIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { CarouselProject, CarouselProjectRow } from '../../types/carousel';
@@ -31,6 +31,7 @@ export const CarouselHome: React.FC = () => {
   const [projects, setProjects] = useState<CarouselProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
 
   // Fetch projects on mount
   const fetchProjects = useCallback(async () => {
@@ -43,7 +44,41 @@ export const CarouselHome: React.FC = () => {
       .order('updated_at', { ascending: false });
 
     if (!error && data) {
-      setProjects(data.map((row: CarouselProjectRow) => mapCarouselProjectRow(row)));
+      const mapped = data.map((row: CarouselProjectRow) => mapCarouselProjectRow(row));
+      setProjects(mapped);
+
+      // Fetch thumbnails: generated HOOK slide > first generated slide > first source image
+      const thumbMap: Record<string, string> = {};
+      for (const row of data) {
+        // Try generated slides first (HOOK slide preferred)
+        const { data: slides } = await supabase
+          .from('carousel_slides')
+          .select('image_url, slide_type')
+          .eq('project_id', row.id)
+          .not('image_url', 'is', null)
+          .order('slide_order', { ascending: true });
+
+        if (slides && slides.length > 0) {
+          const hookSlide = slides.find((s: any) => s.slide_type === 'HOOK');
+          thumbMap[row.id] = hookSlide?.image_url || slides[0].image_url;
+          continue;
+        }
+
+        // Fallback: first source image
+        const { data: sources } = await supabase
+          .from('carousel_source_urls')
+          .select('media_urls')
+          .eq('project_id', row.id)
+          .order('source_order', { ascending: true })
+          .limit(1);
+
+        if (sources && sources.length > 0 && sources[0].media_urls?.length > 0) {
+          const firstMedia = sources[0].media_urls[0];
+          // media_urls items can be objects {url, mediaType} or plain strings
+          thumbMap[row.id] = typeof firstMedia === 'string' ? firstMedia : firstMedia.url;
+        }
+      }
+      setThumbnails(thumbMap);
     }
     setLoading(false);
   }, [user]);
@@ -72,8 +107,32 @@ export const CarouselHome: React.FC = () => {
     }
   };
 
-  // Delete project
+  // Delete project + cleanup storage
   const handleDelete = async (projectId: string) => {
+    // Cleanup stored images from Supabase Storage
+    const proj = projects.find(p => p.projectId === projectId);
+    if (proj) {
+      try {
+        const { data: sources } = await supabase
+          .from('carousel_source_urls')
+          .select('shortcode')
+          .eq('project_id', (proj as any).id);
+        if (sources) {
+          for (const src of sources) {
+            if (!src.shortcode) continue;
+            const { data: files } = await supabase.storage
+              .from('carousel-sources')
+              .list(`instagram/${src.shortcode}`);
+            if (files?.length) {
+              await supabase.storage
+                .from('carousel-sources')
+                .remove(files.map(f => `instagram/${src.shortcode}/${f.name}`));
+            }
+          }
+        }
+      } catch { /* ignore cleanup errors */ }
+    }
+
     const { error } = await supabase
       .from('carousel_projects')
       .delete()
@@ -151,19 +210,6 @@ export const CarouselHome: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* New project card */}
-            <button
-              onClick={handleNewProject}
-              className="flex flex-col items-center justify-center gap-3 min-h-[180px] bg-neutral-900/50 border border-dashed border-neutral-700 rounded-xl hover:border-emerald-500/50 hover:bg-neutral-900 transition-all group"
-            >
-              <div className="w-10 h-10 rounded-lg bg-neutral-800 group-hover:bg-emerald-500/10 flex items-center justify-center transition-colors">
-                <Plus className="w-5 h-5 text-neutral-500 group-hover:text-emerald-400 transition-colors" />
-              </div>
-              <span className="text-sm text-neutral-500 group-hover:text-neutral-300 transition-colors">
-                New Project
-              </span>
-            </button>
-
             {/* Project cards */}
             {filteredProjects.map((project) => {
               const statusCfg = STATUS_CONFIG[project.status] || STATUS_CONFIG.draft;
@@ -174,9 +220,20 @@ export const CarouselHome: React.FC = () => {
                   onClick={() => navigate(`/carousel-images/${project.projectId}/source`)}
                   className="group bg-neutral-900 border border-neutral-800 rounded-xl p-4 cursor-pointer hover:border-neutral-700 transition-all"
                 >
-                  {/* Thumbnail placeholder */}
-                  <div className="aspect-[4/3] bg-neutral-800 rounded-lg mb-3 flex items-center justify-center overflow-hidden">
-                    <Instagram className="w-8 h-8 text-neutral-700" />
+                  {/* Thumbnail */}
+                  <div className="aspect-video bg-neutral-800 rounded-lg mb-3 flex items-center justify-center overflow-hidden">
+                    {thumbnails[project.id] ? (
+                      <img
+                        src={thumbnails[project.id]}
+                        alt={project.title}
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                          (e.target as HTMLImageElement).parentElement!.querySelector('.thumb-fallback')?.classList.remove('hidden');
+                        }}
+                      />
+                    ) : null}
+                    <ImageIcon className={`w-8 h-8 text-neutral-700 thumb-fallback ${thumbnails[project.id] ? 'hidden' : ''}`} />
                   </div>
 
                   {/* Info */}

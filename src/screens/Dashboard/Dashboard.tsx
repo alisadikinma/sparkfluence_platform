@@ -385,32 +385,45 @@ export const Dashboard = (): JSX.Element => {
           }
         }
 
-        // Fetch weekly content plan
+        // Fetch weekly content plan (current week: Sunday to Saturday)
         const today = new Date();
-        const nextWeek = new Date(today);
-        nextWeek.setDate(nextWeek.getDate() + 7);
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
 
         const { data: contentData } = await supabase
           .from("planned_content")
           .select("*")
           .eq("user_id", user.id)
-          .gte("scheduled_date", today.toISOString().split("T")[0])
-          .lte("scheduled_date", nextWeek.toISOString().split("T")[0])
+          .gte("scheduled_date", startOfWeek.toISOString().split("T")[0])
+          .lte("scheduled_date", endOfWeek.toISOString().split("T")[0])
           .order("scheduled_date", { ascending: true })
           .order("scheduled_time", { ascending: true })
-          .limit(4);
+          .limit(8);
 
         if (contentData) setWeeklyContent(contentData);
 
         // Fetch recent carousel projects
-        const { data: carouselData } = await supabase
+        const { data: carouselData, error: carouselError } = await supabase
           .from("carousel_projects")
-          .select("id, project_id, title, status, slide_count, updated_at")
+          .select("*")
           .eq("user_id", user.id)
           .order("updated_at", { ascending: false })
           .limit(5);
 
-        if (carouselData) setCarouselProjects(carouselData);
+        if (carouselError) {
+          console.error("Dashboard - Carousel fetch error:", carouselError);
+        } else if (carouselData) {
+          setCarouselProjects(carouselData.map((row: any) => ({
+            id: row.id,
+            project_id: row.project_id,
+            title: row.title,
+            status: row.status,
+            slide_count: row.slide_count ?? 0,
+            updated_at: row.updated_at,
+          })));
+        }
 
       } catch (err) {
         console.error("Error initializing dashboard:", err);

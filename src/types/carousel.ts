@@ -42,6 +42,7 @@ export interface CarouselProjectSettings {
   aspectRatio?: string; // default '4:5'
   slideCount?: number;
   imageModel?: string;
+  skippedSlideIds?: string[];
 }
 
 // --- DB row (snake_case) ---
@@ -134,8 +135,53 @@ export interface SlideAnalysis {
   subjectDetection: {
     hasCreator: boolean;
     hasProduct: boolean;
+    hasBrandLogo?: boolean;
+    brandNames?: string[];
     description: string;
   };
+  // Enhanced vision fields (from multimodal analysis)
+  contentCategory?: string;
+  factualClaims?: string[];
+  emotionalTone?: string;
+  subjectReferences?: SubjectReference[];
+  // Hook/CTA specific (detected by LLM)
+  hookCategory?: string;
+  foreshadowType?: string;
+  ctaType?: string;
+  // AI Decision Engine outputs (from generate-carousel-images)
+  autoDecisions?: AutoDecisions;
+}
+
+export interface SubjectReference {
+  type: 'product' | 'brand_logo' | 'source_logo' | 'unique_object';
+  name: string;
+  needsReference: boolean;
+}
+
+export interface AutoDecisions {
+  hookCategory?: string;
+  visualAction?: string;
+  cameraVariant?: 'A' | 'B' | 'C';
+  headlineScore?: number;
+  headlineRewritten?: boolean;
+  rewrittenHeadline?: string;
+  foreshadowType?: string;
+  ctaType?: string;
+  emotionalArc?: { intensity: number; beat: string };
+  costume?: string;
+  propInteraction?: string;
+  variantRotation?: 'A' | 'B' | 'C';
+  wowScore?: number;
+  contentCategory?: string;
+}
+
+export interface HookOption {
+  rank: 'PRIMARY' | 'SECONDARY' | 'WILDCARD';
+  hookCategory: string;
+  visualAction: string;
+  sampleHeadline: string;
+  vibe: string;
+  psychology: string;
 }
 
 export interface CarouselSlideRow {

@@ -59,22 +59,28 @@ serve(async (req) => {
 
     console.log(`[analyze-carousel-source] ${image_urls.length} images, pre-classified: ${hasPreClassified ? 'YES' : 'NO'}`);
 
-    // Build image descriptions for LLM
-    const imageDescriptions = image_urls.map((url: string, i: number) =>
-      `Slide ${i + 1}: ${url}`
-    ).join('\n');
-
     // Build system prompt — enrichment mode skips segment type classification
     const systemPrompt = hasPreClassified
       ? buildEnrichmentPrompt(ai_text_mode, slide_types, image_urls.length)
       : buildFullClassificationPrompt(ai_text_mode);
 
-    const userPrompt = `Analyze these ${image_urls.length} carousel slides:\n\n${imageDescriptions}\n\nReturn a JSON array with ${image_urls.length} analysis objects. Strict JSON only.`;
+    // Build multimodal user message — send actual images for vision analysis
+    // callLLM() auto-detects image_url content → selects gemini-2.5-flash (vision-capable)
+    // toGeminiParts() fetches images server-side → base64 inlineData (works when CDN blocks data center IPs)
+    const userContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+    for (let i = 0; i < image_urls.length; i++) {
+      userContent.push({ type: 'image_url', image_url: { url: image_urls[i] } });
+      userContent.push({ type: 'text', text: `Above is slide ${i + 1}.` });
+    }
+    userContent.push({
+      type: 'text',
+      text: `Analyze these ${image_urls.length} carousel slides. Return a JSON array with ${image_urls.length} analysis objects. Strict JSON only.`,
+    });
 
     const result = await callLLM(supabase, [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ], { temperature: 0.3, maxTokens: 4096, geminiFirst: true });
+      { role: 'user', content: userContent },
+    ], { temperature: 0.3, maxTokens: 4096 });
 
     console.log(`[analyze-carousel-source] LLM provider: ${result.provider}`);
 
@@ -119,12 +125,17 @@ serve(async (req) => {
           // Merge: keep validation data, add visual enrichment
           const mergedAnalysis = {
             ...(existing.analysis_data || {}),
-            // Enrichment fields from LLM
+            // Enrichment fields from LLM vision
             topic: a.topic,
             textContent: a.textContent,
             layout: a.layout,
             visualStyle: a.visualStyle,
             subjectDetection: a.subjectDetection,
+            // New fields from enhanced multimodal vision
+            contentCategory: a.contentCategory || null,
+            factualClaims: a.factualClaims || [],
+            emotionalTone: a.emotionalTone || null,
+            subjectReferences: a.subjectReferences || [],
             // Hook/CTA specific (if LLM detected)
             hookCategory: a.hookCategory || null,
             foreshadowType: a.foreshadowType || null,
@@ -198,6 +209,7 @@ function buildEnrichmentPrompt(aiTextMode: boolean, slideTypes: Record<number, s
   }).join(', ');
 
   return `You are an expert carousel image analyst for social media rebranding.
+You are analyzing ACTUAL IMAGES sent as multimodal content — look at every visual detail carefully.
 
 Slide types are ALREADY classified: ${typesList}
 DO NOT re-classify segment types — focus ONLY on extracting visual details.
@@ -207,7 +219,7 @@ OUTPUT FORMAT: Strict JSON array, one object per slide. No markdown, no code blo
 Per slide, extract:
 {
   "slideIndex": <0-based>,
-  "topic": "<main topic/message of this slide>",
+  "topic": "<detailed topic/message of this slide — be specific, not generic>",
   "textContent": ["<line 1>", "<line 2>", ...],
   "layout": "<full|split-left|split-right|text-overlay|minimal|graphic>",
   "visualStyle": {
@@ -217,19 +229,34 @@ Per slide, extract:
   },
   "subjectDetection": {
     "hasCreator": <true if human face is prominent>,
-    "hasProduct": <true if product is shown>,
+    "hasProduct": <true if specific product is shown>,
+    "hasBrandLogo": <true if any brand/company logo is visible>,
+    "brandNames": ["<detected brand names — Google, Apple, etc.>"],
     "description": "<brief description of main subject>"
   },
-  "hookCategory": "<curiosity_gap|visual_shock|problem_solver|plot_twist|speed_value|null>",
+  "contentCategory": "<tech|beauty|finance|food|fitness|lifestyle|business|education|health|travel|entertainment|fashion|productivity|creative|news|other>",
+  "factualClaims": ["<any statistics, numbers, data claims visible in the image>"],
+  "emotionalTone": "<urgent|curious|confident|warm|shocked|playful|serious|motivational>",
+  "subjectReferences": [<objects needing reference images for accuracy, or empty array>],
+  "hookCategory": "<visual_shock|negative_bias|curiosity_gap|relatability|speed_value|null>",
   "foreshadowType": "<steps_tease|fear_urgency|quiz_choice|visual_tease|null>",
   "ctaType": "<polarize|question|identity_tag|engagement_reward|null>"
 }
+
+SUBJECT REFERENCE DETECTION (subjectReferences array):
+Flag items where AI image generation would produce INACCURATE results without a reference image:
+- Specific product models (e.g. "iPhone 16 Pro" — AI may generate wrong design)
+- Company/brand logos (e.g. "Google logo" — AI may generate wrong logo)
+- Source/publication logos (e.g. "SIPRI logo" — credibility requires accuracy)
+- Unique objects (e.g. "cyborg cockroach" — AI has no training data)
+Format each as: { "type": "product|brand_logo|source_logo|unique_object", "name": "<specific name>", "needsReference": true }
+If nothing needs a reference, return an empty array [].
 
 ADDITIONAL FIELDS (fill based on slide type):
 - For HOOK slides: detect hookCategory from the visual/text style
 - For FORE slides: detect foreshadowType from the messaging pattern
 - For CTA slides: detect ctaType from the call-to-action pattern
-- For BODY slides: set all three to null
+- For BODY slides: set hookCategory, foreshadowType, ctaType to null
 
 ${aiTextMode
   ? 'AI TEXT MODE: ON — Extract ALL visible text verbatim for AI to re-render.'
@@ -241,6 +268,7 @@ ${aiTextMode
  */
 function buildFullClassificationPrompt(aiTextMode: boolean): string {
   return `You are an expert carousel image analyst for social media rebranding.
+You are analyzing ACTUAL IMAGES sent as multimodal content — look at every visual detail carefully.
 
 Analyze each slide image from the source carousel and extract structured information.
 
@@ -249,7 +277,7 @@ OUTPUT FORMAT: Strict JSON array, one object per slide. No markdown, no code blo
 Per slide, extract:
 {
   "slideIndex": <0-based>,
-  "topic": "<main topic/message of this slide>",
+  "topic": "<detailed topic/message of this slide — be specific, not generic>",
   "textContent": ["<line 1>", "<line 2>", ...],
   "layout": "<full|split-left|split-right|text-overlay|minimal|graphic>",
   "visualStyle": {
@@ -260,10 +288,24 @@ Per slide, extract:
   "segmentType": "<HOOK|FORE|BODY|CTA>",
   "subjectDetection": {
     "hasCreator": <true if human face is prominent>,
-    "hasProduct": <true if product is shown>,
+    "hasProduct": <true if specific product is shown>,
+    "hasBrandLogo": <true if any brand/company logo is visible>,
+    "brandNames": ["<detected brand names>"],
     "description": "<brief description of main subject>"
-  }
+  },
+  "contentCategory": "<tech|beauty|finance|food|fitness|lifestyle|business|education|health|travel|entertainment|fashion|productivity|creative|news|other>",
+  "factualClaims": ["<any statistics, numbers, data claims visible>"],
+  "emotionalTone": "<urgent|curious|confident|warm|shocked|playful|serious|motivational>",
+  "subjectReferences": [<objects needing reference images, or empty array>]
 }
+
+SUBJECT REFERENCE DETECTION (subjectReferences array):
+Flag items where AI image generation would produce INACCURATE results without a reference image:
+- Specific product models: { "type": "product", "name": "<model>", "needsReference": true }
+- Company/brand logos: { "type": "brand_logo", "name": "<brand>", "needsReference": true }
+- Source/publication logos: { "type": "source_logo", "name": "<source>", "needsReference": true }
+- Unique objects: { "type": "unique_object", "name": "<object>", "needsReference": true }
+If nothing needs a reference, return an empty array [].
 
 SEGMENT TYPE RULES:
 - Slide 1 → HOOK (always)

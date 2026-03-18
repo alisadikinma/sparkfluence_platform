@@ -147,6 +147,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearUserLocalStorage();
       }
 
+      // Skip state updates if user ID hasn't changed (token refresh, duplicate SIGNED_IN)
+      // This prevents cascade re-renders across the entire app on window focus
+      const isSameUser = newUserId && newUserId === previousUserId.current;
+      if (isSameUser && isInitialized.current && (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN')) {
+        // Only update session (for fresh token), NOT user (same reference = no re-render)
+        setSession(newSession);
+        return;
+      }
+
       // Update previous user ID tracking
       previousUserId.current = newUserId;
 

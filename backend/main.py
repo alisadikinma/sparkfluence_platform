@@ -24,8 +24,9 @@ from api_key_pool import get_pool
 # Import webhook handler for GeminiGen auto-retry
 from webhook_handler import router as webhook_router
 
-# Load environment variables from root .env
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
+# Load environment variables — backend/.env first (has service role key), then root .env
+load_dotenv(dotenv_path=Path(__file__).parent / '.env')
+load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env', override=False)
 
 # Configure logging
 logging.basicConfig(
@@ -156,6 +157,30 @@ class SupabaseHelper:
             response.raise_for_status()
             return response.json()
     
+    async def upload_to_storage(self, bucket: str, path: str, data: bytes, content_type: str = 'image/jpeg') -> str | None:
+        """Upload file to Supabase Storage and return public URL."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.url}/storage/v1/object/{bucket}/{path}",
+                    headers={
+                        'apikey': self.key,
+                        'Authorization': f'Bearer {self.key}',
+                        'Content-Type': content_type,
+                        'x-upsert': 'true',
+                    },
+                    content=data,
+                    timeout=30.0,
+                )
+                if response.status_code in (200, 201):
+                    return f"{self.url}/storage/v1/object/public/{bucket}/{path}"
+                else:
+                    logger.warning(f"[Storage] Upload failed: {response.status_code} {response.text[:200]}")
+                    return None
+        except Exception as e:
+            logger.warning(f"[Storage] Upload error: {e}")
+            return None
+
     async def select_jsonb_contains(self, table: str, column: str, key: str, value: str) -> List[Dict]:
         """Select records where JSONB column contains key=value."""
         async with httpx.AsyncClient() as client:
@@ -2224,13 +2249,11 @@ _IG_BROWSER_HEADERS = {
 
 async def _scrape_via_playwright(shortcode: str) -> list[dict] | None:
     """
-    Primary method: Playwright headless Chromium renders the full Instagram page.
-    Extracts carousel images from the main post article ONLY — ignores recommended posts.
+    Primary method: Playwright headless Chromium renders the Instagram embed page.
 
-    Strategy:
-    1. Navigate carousel arrows to load all slides
-    2. Extract <img> src from the main article container only
-    3. Filter to high-res CDN images (not thumbnails/profile pics)
+    Strategy: slide-by-slide with smart wait that skips already-collected images.
+    The key fix: wait_for_new_image() polls until it finds an image NOT in
+    collected_bases (not just different from last), preventing wrap-around false stops.
     """
     try:
         from playwright.async_api import async_playwright  # type: ignore
@@ -2251,56 +2274,110 @@ async def _scrape_via_playwright(shortcode: str) -> list[dict] | None:
             )
             page = await ctx.new_page()
 
-            await page.goto(url, timeout=30000, wait_until="networkidle")
-            await page.wait_for_timeout(2000)
+            # ── Network interception: capture ALL CDN post image URLs ──
+            import re as re_mod
+            cdn_captures: list[dict] = []  # {url, nc_oc}
+            cdn_bases: set[str] = set()
 
-            # Click through carousel "Next" arrows to load all slides
-            for _ in range(20):  # max 20 slides safety limit
+            def on_response(response):
+                resp_url = response.url
+                if not any(p in resp_url for p in POST_IMAGE_PATHS):
+                    return
+                if any(t in resp_url for t in ('s150x150', 's320x320', 'p150x150', 's240x240')):
+                    return
+                base = resp_url.split('?')[0]
+                if base not in cdn_bases:
+                    cdn_bases.add(base)
+                    # Extract _nc_oc for post grouping
+                    nc_match = re_mod.search(r'_nc_oc=([A-Za-z0-9]+)', resp_url)
+                    nc_oc = nc_match.group(1) if nc_match else None
+                    cdn_captures.append({"url": resp_url, "nc_oc": nc_oc})
+                    logger.info(f"[IG Scraper] Network #{len(cdn_captures)}: nc_oc={nc_oc and nc_oc[:8]}")
+
+            page.on("response", on_response)
+
+            # ── Load embed page ──
+            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/"
+            await page.goto(embed_url, timeout=30000, wait_until="networkidle")
+            await page.wait_for_timeout(2000)
+            logger.info(f"[IG Scraper] Embed loaded: {len(cdn_captures)} CDN captures")
+
+            # ── Navigate carousel to trigger loading of ALL slides ──
+            stale = 0
+            prev_count = len(cdn_captures)
+            for _ in range(20):
                 try:
-                    next_btn = page.locator('button[aria-label="Next"]')
-                    if await next_btn.count() > 0 and await next_btn.is_visible():
-                        await next_btn.click()
-                        await page.wait_for_timeout(800)
-                    else:
-                        break
+                    clicked = False
+                    for sel in ['button[aria-label="Next"]', 'button[aria-label="Go Forward"]']:
+                        btn = page.locator(sel)
+                        if await btn.count() > 0 and await btn.is_visible():
+                            await btn.click()
+                            clicked = True
+                            break
+                    if not clicked:
+                        await page.keyboard.press("ArrowRight")
                 except Exception:
+                    pass
+                await page.wait_for_timeout(1200)
+
+                if len(cdn_captures) > prev_count:
+                    prev_count = len(cdn_captures)
+                    stale = 0
+                else:
+                    stale += 1
+                if stale >= 3:
                     break
 
-            # Extract images from the MAIN post article only (first <article> element)
-            # This avoids grabbing recommended/related post images
-            image_urls = await page.evaluate("""
-                () => {
-                    const article = document.querySelector('article');
-                    if (!article) return [];
+            logger.info(f"[IG Scraper] After navigation: {len(cdn_captures)} total CDN captures")
 
-                    const imgs = article.querySelectorAll('img');
-                    const cdnPaths = ['t51.82787-15', 't51.29350-15', 't51.2885-15'];
-                    const seen = new Set();
-                    const result = [];
+            # ── Filter: keep only images from THIS post (same _nc_oc) ──
+            # Carousel slides share the same _nc_oc hash.
+            # Recommendation images from other posts have different hashes.
+            image_urls = []
+            if cdn_captures:
+                # Use the _nc_oc of the first capture as the carousel's group key
+                first_nc_oc = cdn_captures[0]["nc_oc"]
 
-                    for (const img of imgs) {
-                        const src = img.src || '';
-                        // Only high-res CDN post images (not profile pics, not UI icons)
-                        if (cdnPaths.some(p => src.includes(p)) && img.naturalWidth > 300) {
-                            const base = src.split('?')[0];
-                            if (!seen.has(base)) {
-                                seen.add(base);
-                                result.push(src);
-                            }
-                        }
-                    }
-                    return result;
-                }
-            """)
+                if first_nc_oc:
+                    image_urls = [c["url"] for c in cdn_captures if c["nc_oc"] == first_nc_oc]
+                    others = len(cdn_captures) - len(image_urls)
+                    logger.info(f"[IG Scraper] _nc_oc filter: {len(image_urls)} carousel + {others} other posts filtered out")
+                else:
+                    # No _nc_oc found — take all captures
+                    image_urls = [c["url"] for c in cdn_captures]
+                    logger.info(f"[IG Scraper] No _nc_oc param, using all {len(image_urls)}")
 
+            # ── Fallback: direct page if embed got too few ──
+            if len(image_urls) < 2:
+                logger.info(f"[IG Scraper] Only {len(image_urls)} from embed, trying direct page...")
+                await page.goto(url, timeout=30000, wait_until="networkidle")
+                await page.wait_for_timeout(3000)
+                for _ in range(20):
+                    try:
+                        next_btn = page.locator('button[aria-label="Next"]')
+                        if await next_btn.count() > 0 and await next_btn.is_visible():
+                            await next_btn.click()
+                            await page.wait_for_timeout(1000)
+                        else:
+                            break
+                    except Exception:
+                        break
+                # Re-filter new captures
+                if first_nc_oc:
+                    image_urls = [c["url"] for c in cdn_captures if c["nc_oc"] == first_nc_oc]
+                else:
+                    image_urls = [c["url"] for c in cdn_captures]
+                logger.info(f"[IG Scraper] After direct page: {len(image_urls)}")
+
+            logger.info(f"[IG Scraper] Final: {len(image_urls)} slides captured")
             await browser.close()
 
         if image_urls:
             result = [{"url": u, "mediaType": "IMAGE"} for u in image_urls]
-            logger.info(f"[IG Scraper] Playwright succeeded: {len(result)} images (from article only)")
+            logger.info(f"[IG Scraper] Playwright succeeded: {len(result)} images")
             return result
 
-        logger.warning(f"[IG Scraper] Playwright: page loaded but no post images found in article")
+        logger.warning(f"[IG Scraper] Playwright: no post images found")
         return None
 
     except Exception as e:
@@ -2353,12 +2430,45 @@ async def fetch_instagram_media(
             detail="Could not fetch media. Post may be private, deleted, or Instagram is blocking requests."
         )
 
+    # Download images from Instagram CDN and upload to Supabase Storage
+    # Instagram CDN blocks cross-origin requests, so we proxy via storage
+    stored_urls = []
+    if supabase.url and supabase.key:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for i, item in enumerate(media_urls):
+                try:
+                    img_resp = await client.get(item["url"], headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer": "https://www.instagram.com/",
+                    })
+                    if img_resp.status_code == 200:
+                        content_type = img_resp.headers.get("content-type", "image/jpeg")
+                        ext = "jpg" if "jpeg" in content_type or "jpg" in content_type else "png" if "png" in content_type else "webp" if "webp" in content_type else "jpg"
+                        storage_path = f"instagram/{shortcode}/slide_{i+1}.{ext}"
+                        public_url = await supabase.upload_to_storage(
+                            "carousel-sources", storage_path, img_resp.content, content_type
+                        )
+                        if public_url:
+                            stored_urls.append({"url": public_url, "mediaType": item["mediaType"]})
+                            logger.info(f"[IG Scraper] Stored slide {i+1} → {storage_path}")
+                        else:
+                            stored_urls.append(item)  # fallback to CDN URL
+                    else:
+                        logger.warning(f"[IG Scraper] Failed to download slide {i+1}: HTTP {img_resp.status_code}")
+                        stored_urls.append(item)  # fallback to CDN URL
+                except Exception as e:
+                    logger.warning(f"[IG Scraper] Error downloading slide {i+1}: {e}")
+                    stored_urls.append(item)  # fallback to CDN URL
+    else:
+        stored_urls = media_urls
+        logger.warning("[IG Scraper] Supabase not configured — returning raw CDN URLs (may have CORS issues)")
+
     return {
         "success": True,
         "data": {
             "shortcode": shortcode,
-            "media_urls": media_urls,
-            "total_items": len(media_urls),
+            "media_urls": stored_urls,
+            "total_items": len(stored_urls),
         }
     }
 

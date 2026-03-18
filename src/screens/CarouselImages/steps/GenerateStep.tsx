@@ -9,7 +9,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
 import { useBrandingKit } from '../../../hooks/useBrandingKit';
 import type {
-  CarouselProject, CarouselSlide, CarouselSlideRow, CarouselSlideType,
+  CarouselProject, CarouselSlide, CarouselSlideRow, CarouselSlideType, HookOption, SubjectReference,
 } from '../../../types/carousel';
 import { mapCarouselSlideRow, SLIDE_TYPE_CONFIG } from '../../../types/carousel';
 import { CreatorConfigModal } from '../components/CreatorConfigModal';
@@ -133,7 +133,9 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
   const [aiTextMode, setAiTextMode] = useState(project.aiTextMode);
   const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
   const [regeneratingSlide, setRegeneratingSlide] = useState<string | null>(null);
-  const [skippedSlides, setSkippedSlides] = useState<Set<string>>(new Set());
+  const [skippedSlides, setSkippedSlides] = useState<Set<string>>(
+    new Set(project.settings?.skippedSlideIds || [])
+  );
   const [imageModels, setImageModels] = useState<ImageModelSettings>({
     aRoll: 'fal-nano-banana-edit',
     bRoll: 'fal-seedream-v4',
@@ -141,6 +143,12 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
 
   const [configModal, setConfigModal] = useState<{ slide: CarouselSlide; index: number } | null>(null);
   const hasAutoAnalyzed = useRef(false);
+
+  // Hook selection state (user confirms before generation)
+  const [hookOptions, setHookOptions] = useState<HookOption[]>([]);
+  const [selectedHook, setSelectedHook] = useState<HookOption | null>(null);
+  const [loadingHooks, setLoadingHooks] = useState(false);
+  const [subjectRefs, setSubjectRefs] = useState<SubjectReference[]>([]);
 
   // Fetch slides from DB
   const fetchSlides = useCallback(async () => {
@@ -192,11 +200,13 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
       s.analysisData?.visualStyle?.dominantColors?.length === 0
     );
 
+    hasAutoAnalyzed.current = true;
+
     if (needsEnrichment) {
-      hasAutoAnalyzed.current = true;
-      handleAnalyze();
-    } else {
-      hasAutoAnalyzed.current = true;
+      handleAnalyze().catch(err => {
+        console.error('[GenerateStep] auto-analyze error:', err);
+        setAnalyzing(false);
+      });
     }
   }, [loading, slides, sourceImages]);
 
@@ -209,29 +219,73 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
     if (sourceImages.length === 0) return;
     setAnalyzing(true);
 
-    const slideTypes: Record<number, string> = {};
-    slides.forEach(s => { slideTypes[s.slideIndex] = s.slideType; });
+    try {
+      const slideTypes: Record<number, string> = {};
+      slides.forEach(s => { slideTypes[s.slideIndex] = s.slideType; });
 
-    const { data, error } = await supabase.functions.invoke('analyze-carousel-source', {
-      body: {
-        project_id: project.id,
-        image_urls: sourceImages,
-        ai_text_mode: aiTextMode,
-        slide_types: slideTypes,
-      },
-    });
+      const { data, error } = await supabase.functions.invoke('analyze-carousel-source', {
+        body: {
+          project_id: project.id,
+          image_urls: sourceImages,
+          ai_text_mode: aiTextMode,
+          slide_types: slideTypes,
+        },
+      });
 
-    if (!error && data?.success) {
-      await fetchSlides();
-      if (project.title === 'Untitled Carousel') {
-        const topic = data?.data?.slides?.[0]?.topic;
-        if (topic) {
-          await supabase.from('carousel_projects').update({ title: String(topic).slice(0, 80) }).eq('id', project.id);
-          onProjectUpdate();
+      if (!error && data?.success) {
+        await fetchSlides();
+        if (project.title === 'Untitled Carousel' || project.title === 'Untitled Project') {
+          const topic = data?.data?.slides?.[0]?.topic;
+          if (topic) {
+            await supabase.from('carousel_projects').update({ title: String(topic).slice(0, 80) }).eq('id', project.id);
+            onProjectUpdate();
+          }
         }
+        // Extract subject references from analysis
+        const allRefs: SubjectReference[] = [];
+        for (const s of (data?.data?.slides || [])) {
+          if (s.subjectReferences?.length) {
+            for (const ref of s.subjectReferences) {
+              if (ref.needsReference && !allRefs.some(r => r.name === ref.name)) {
+                allRefs.push(ref);
+              }
+            }
+          }
+        }
+        setSubjectRefs(allRefs);
+
+        // Auto-request hook suggestions after analysis
+        await fetchHookSuggestions();
       }
+    } catch (err) {
+      console.error('[GenerateStep] handleAnalyze error:', err);
+    } finally {
+      setAnalyzing(false);
     }
-    setAnalyzing(false);
+  };
+
+  // Fetch hook category suggestions from edge function
+  const fetchHookSuggestions = async () => {
+    setLoadingHooks(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-carousel-images', {
+        body: {
+          project_id: project.id,
+          action: 'suggest_hooks',
+        },
+      });
+
+      if (!error && data?.success && data?.data?.hookOptions) {
+        setHookOptions(data.data.hookOptions);
+        // Auto-select PRIMARY
+        const primary = data.data.hookOptions.find((o: HookOption) => o.rank === 'PRIMARY');
+        if (primary) setSelectedHook(primary);
+      }
+    } catch (err) {
+      console.error('[GenerateStep] fetchHookSuggestions error:', err);
+    } finally {
+      setLoadingHooks(false);
+    }
   };
 
   // Ensure framework slides exist in DB before generating
@@ -258,48 +312,67 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
   };
 
   // Generate images
+  const [generateError, setGenerateError] = useState<string | null>(null);
+
   const handleGenerate = async (slideIds?: string[]) => {
     setGenerating(true);
+    setGenerateError(null);
 
-    // Ensure framework slots are in DB
-    await ensureFrameworkSlidesInDB();
+    try {
+      // Ensure framework slots are in DB
+      await ensureFrameworkSlidesInDB();
 
-    const idsToGenerate = slideIds || frameworkSlides
-      .filter(f => !skippedSlides.has(f.slide.id))
-      .map(f => f.slide.id)
-      .filter(id => !id.startsWith('framework-'));
+      const idsToGenerate = slideIds || frameworkSlides
+        .filter(f => !skippedSlides.has(f.slide.id))
+        .map(f => f.slide.id)
+        .filter(id => !id.startsWith('framework-'));
 
-    const { data, error } = await supabase.functions.invoke('generate-carousel-images', {
-      body: {
-        project_id: project.id,
-        slide_ids: idsToGenerate,
-        branding_kit: brandingKit,
-        ai_text_mode: aiTextMode,
-        image_models: imageModels,
-      },
-    });
+      const { data, error } = await supabase.functions.invoke('generate-carousel-images', {
+        body: {
+          project_id: project.id,
+          slide_ids: idsToGenerate,
+          branding_kit: brandingKit,
+          ai_text_mode: aiTextMode,
+          image_models: imageModels,
+          hook_category: selectedHook?.hookCategory || null,
+          visual_action: selectedHook?.visualAction || null,
+        },
+      });
 
-    if (!error && data?.success) {
-      await fetchSlides();
-      onProjectUpdate();
+      if (error) {
+        setGenerateError(error.message || 'Edge function error');
+      } else if (!data?.success) {
+        setGenerateError(data?.error?.message || 'Generation failed');
+      } else {
+        await fetchSlides();
+        onProjectUpdate();
+      }
+    } catch (err: any) {
+      setGenerateError(err?.message || 'Unexpected error during generation');
+    } finally {
+      setGenerating(false);
     }
-    setGenerating(false);
   };
 
   const handleRegenerateSlide = async (slideId: string) => {
     setRegeneratingSlide(slideId);
 
-    // If framework-generated, ensure it's in DB first
-    if (slideId.startsWith('framework-')) {
-      await ensureFrameworkSlidesInDB();
-      const f = frameworkSlides.find(f => f.slide.id === slideId);
-      if (f && !f.slide.id.startsWith('framework-')) {
-        slideId = f.slide.id;
+    try {
+      // If framework-generated, ensure it's in DB first
+      if (slideId.startsWith('framework-')) {
+        await ensureFrameworkSlidesInDB();
+        const f = frameworkSlides.find(f => f.slide.id === slideId);
+        if (f && !f.slide.id.startsWith('framework-')) {
+          slideId = f.slide.id;
+        }
       }
-    }
 
-    await handleGenerate([slideId]);
-    setRegeneratingSlide(null);
+      await handleGenerate([slideId]);
+    } catch {
+      // Error already handled in handleGenerate
+    } finally {
+      setRegeneratingSlide(null);
+    }
   };
 
   const handleToggleVideo = async (slideId: string, value: boolean) => {
@@ -313,6 +386,11 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
       const next = new Set(prev);
       if (next.has(slideId)) next.delete(slideId);
       else next.add(slideId);
+      // Persist to project settings
+      const currentSettings = project.settings || {};
+      supabase.from('carousel_projects').update({
+        settings: { ...currentSettings, skippedSlideIds: Array.from(next) },
+      }).eq('id', project.id).then();
       return next;
     });
   };
@@ -418,7 +496,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                 className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-800 disabled:text-neutral-600 text-white rounded-lg px-4 py-2 text-xs font-medium transition-colors"
               >
                 {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                {generating ? 'Generating...' : `Generate ${activeFramework.length} Slides`}
+                {generating ? 'Generating...' : readyCount > 0 ? `Regenerate ${activeFramework.length} Slides` : `Generate ${activeFramework.length} Slides`}
               </button>
             )}
 
@@ -464,6 +542,84 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
           </div>
         )}
 
+        {generateError && (
+          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
+            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <p className="text-xs text-red-400 flex-1">{generateError}</p>
+            <button onClick={() => setGenerateError(null)} className="text-red-400/50 hover:text-red-400">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Subject Reference Alerts */}
+        {subjectRefs.length > 0 && (
+          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg mb-4">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-amber-300 mb-1">Reference images recommended for accuracy:</p>
+                <ul className="text-xs text-amber-400/80 space-y-0.5">
+                  {subjectRefs.map((ref, i) => (
+                    <li key={i}>
+                      {ref.name} ({ref.type.replace('_', ' ')}) — AI may generate inaccurate design
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[11px] text-amber-400/50 mt-1">Use per-slide config to upload reference images, or skip for AI's best guess.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Hook Selection (user confirms before generation) */}
+        {hookOptions.length > 0 && !loading && frameworkSlides.length > 0 && (
+          <div className="mb-6">
+            <p className="text-xs text-neutral-400 mb-2">Choose a creative direction for your HOOK slide:</p>
+            <div className="grid grid-cols-3 gap-3">
+              {hookOptions.map((option) => {
+                const isSelected = selectedHook?.hookCategory === option.hookCategory;
+                const rankColors: Record<string, string> = {
+                  'PRIMARY': 'text-emerald-400',
+                  'SECONDARY': 'text-amber-400',
+                  'WILDCARD': 'text-cyan-400',
+                };
+                const borderColors: Record<string, string> = {
+                  'PRIMARY': 'border-emerald-500 ring-2 ring-emerald-500/20',
+                  'SECONDARY': 'border-amber-500 ring-2 ring-amber-500/20',
+                  'WILDCARD': 'border-cyan-500 ring-2 ring-cyan-500/20',
+                };
+                return (
+                  <button
+                    key={option.hookCategory}
+                    onClick={() => setSelectedHook(option)}
+                    className={`bg-neutral-900 border-2 rounded-xl p-3 text-left transition-all ${
+                      isSelected ? borderColors[option.rank] || 'border-emerald-500' : 'border-neutral-800 hover:border-neutral-600'
+                    }`}
+                  >
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${rankColors[option.rank] || 'text-neutral-400'}`}>
+                      {option.rank}
+                    </span>
+                    <h4 className="text-sm font-semibold text-neutral-200 mt-1 capitalize">
+                      {option.hookCategory.replace(/_/g, ' ')}
+                    </h4>
+                    <p className="text-xs text-neutral-500 mt-0.5">{option.visualAction.replace(/_/g, ' ')}</p>
+                    <p className="text-[11px] text-neutral-400 mt-2 line-clamp-2">{option.vibe}</p>
+                    <p className="text-[10px] text-neutral-600 mt-1 italic">"{option.sampleHeadline}"</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {loadingHooks && (
+          <div className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Generating hook options...
+          </div>
+        )}
+
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-12">
@@ -494,7 +650,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
             {/* Slide Rows — framework-enforced order */}
             {frameworkSlides.map((f, i) => {
               const { slide, sourceUrl, isFrameworkGenerated } = f;
-              const typeConfig = SLIDE_TYPE_CONFIG[slide.slideType];
+              const typeConfig = SLIDE_TYPE_CONFIG[slide.slideType] || SLIDE_TYPE_CONFIG.BODY;
               const isRegenerating = regeneratingSlide === slide.id;
               const isSkipped = skippedSlides.has(slide.id);
               const isCreator = isCreatorSlide(slide.slideType);
@@ -578,8 +734,40 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                       </div>
                     )}
 
-                    {/* Prompt preview on hover */}
-                    {slide.prompt && (
+                    {/* AI Decision Badge */}
+                    {slide.analysisData?.autoDecisions && slide.imageUrl && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-2 pt-6">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {slide.slideType === 'HOOK' && slide.analysisData.autoDecisions.hookCategory && (
+                            <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                              {slide.analysisData.autoDecisions.hookCategory.replace(/_/g, ' ')}
+                            </span>
+                          )}
+                          {slide.slideType === 'HOOK' && slide.analysisData.autoDecisions.visualAction && (
+                            <span className="text-[9px] text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded">
+                              {slide.analysisData.autoDecisions.visualAction.replace(/_/g, ' ')}
+                            </span>
+                          )}
+                          {slide.analysisData.autoDecisions.emotionalArc && (
+                            <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                              {slide.analysisData.autoDecisions.emotionalArc.beat} {slide.analysisData.autoDecisions.emotionalArc.intensity}/6
+                            </span>
+                          )}
+                          {slide.analysisData.autoDecisions.wowScore != null && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                              slide.analysisData.autoDecisions.wowScore >= 7 ? 'text-emerald-400 bg-emerald-500/10' :
+                              slide.analysisData.autoDecisions.wowScore >= 6 ? 'text-amber-400 bg-amber-500/10' :
+                              'text-red-400 bg-red-500/10'
+                            }`}>
+                              WOW {slide.analysisData.autoDecisions.wowScore}/8
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Prompt preview on hover (when no autoDecisions) */}
+                    {slide.prompt && !slide.analysisData?.autoDecisions && (
                       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <p className="text-[9px] text-neutral-400 line-clamp-2">{slide.prompt.slice(0, 120)}...</p>
                       </div>
@@ -637,15 +825,25 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                       {isSkipped ? 'Skipped' : 'Skip'}
                     </button>
 
-                    {/* Per-slide actions: Regen, Copy Prompt, Upload, Delete */}
+                    {/* Per-slide actions: Generate/Regen, Copy Prompt, Upload, Delete */}
                     <div className="flex gap-1 flex-wrap">
                       <button
                         onClick={() => handleRegenerateSlide(slide.id)}
                         disabled={isRegenerating || isSkipped}
-                        className="flex-1 flex items-center justify-center gap-1 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-neutral-400 rounded-lg px-2 py-1.5 text-[10px] transition-colors"
-                        title="Regenerate"
+                        className={`flex-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[10px] transition-colors disabled:opacity-40 ${
+                          slide.imageUrl
+                            ? 'bg-neutral-800 hover:bg-neutral-700 text-neutral-400'
+                            : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
+                        }`}
+                        title={slide.imageUrl ? 'Regenerate this slide' : 'Generate this slide'}
                       >
-                        <RefreshCw className={`w-3 h-3 ${isRegenerating ? 'animate-spin' : ''}`} />
+                        {isRegenerating ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : slide.imageUrl ? (
+                          <RefreshCw className="w-3 h-3" />
+                        ) : (
+                          <Wand2 className="w-3 h-3" />
+                        )}
                       </button>
 
                       <button

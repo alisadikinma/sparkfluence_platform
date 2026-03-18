@@ -19,8 +19,8 @@ interface MenuItem {
 interface ChatSession {
   orderId: string;
   title: string;
-  sessionType: 'script_gen' | 'creator_lab' | 'ad_studio';
-  status: 'draft' | 'script_ready' | 'images_ready' | 'video_ready' | 'complete';
+  sessionType: 'script_gen' | 'creator_lab' | 'ad_studio' | 'carousel';
+  status: string;
   updatedAt: string;
   progress?: {
     totalSegments: number;
@@ -53,10 +53,11 @@ const iconMap: Record<string, React.ComponentType<any>> = {
 };
 
 // Session type config
-const SESSION_TYPE_CONFIG = {
+const SESSION_TYPE_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: React.ComponentType<any> }> = {
   script_gen: { label: 'Script', color: 'text-amber-500', bgColor: 'bg-amber-500/10', icon: Sparkles },
   creator_lab: { label: 'Creator', color: 'text-emerald-500', bgColor: 'bg-emerald-500/10', icon: Clapperboard },
   ad_studio: { label: 'Ad', color: 'text-violet-500', bgColor: 'bg-violet-500/10', icon: Target },
+  carousel: { label: 'Carousel', color: 'text-pink-500', bgColor: 'bg-pink-500/10', icon: GalleryHorizontalEnd },
 };
 
 // Group sessions by date
@@ -189,7 +190,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       {/* Logo + Collapse Toggle */}
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <button
-          onClick={() => onMenuClick('/')}
+          onClick={() => onMenuClick('/dashboard')}
           className={`flex items-center gap-2.5 hover:opacity-80 transition-opacity ${collapsed ? 'justify-center w-full' : ''}`}
         >
           <img className="w-8 h-8 flex-shrink-0" alt="Logo" src={logoSrc} />
@@ -424,10 +425,15 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                             {/* Progress badge */}
                             {session.progress && !isRenaming && (
                               <p className="text-[10px] text-[#57534E] mt-0.5">
-                                {session.progress.currentStep === 'images' && `${session.progress.imagesCompleted}/${session.progress.totalSegments} images`}
-                                {session.progress.currentStep === 'video' && `${session.progress.videosCompleted}/${session.progress.totalSegments} videos`}
-                                {session.progress.currentStep === 'script' && 'Scripting...'}
-                                {session.progress.currentStep === 'studio' && 'In Studio'}
+                                {session.sessionType === 'carousel'
+                                  ? `${session.progress.totalSegments} slides`
+                                  : <>
+                                      {session.progress.currentStep === 'images' && `${session.progress.imagesCompleted}/${session.progress.totalSegments} images`}
+                                      {session.progress.currentStep === 'video' && `${session.progress.videosCompleted}/${session.progress.totalSegments} videos`}
+                                      {session.progress.currentStep === 'script' && 'Scripting...'}
+                                      {session.progress.currentStep === 'studio' && 'In Studio'}
+                                    </>
+                                }
                               </p>
                             )}
                           </div>

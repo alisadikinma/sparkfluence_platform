@@ -39,17 +39,19 @@ export const useSmoothScroll = () => {
       infinite: false,
     });
 
+    let rafId: number;
     function raf(time: number) {
       lenis.raf(time);
-      requestAnimationFrame(raf);
+      rafId = requestAnimationFrame(raf);
     }
 
-    requestAnimationFrame(raf);
+    rafId = requestAnimationFrame(raf);
 
     // Add lenis class to html element
     document.documentElement.classList.add('lenis');
 
     return () => {
+      cancelAnimationFrame(rafId);
       lenis.destroy();
       document.documentElement.classList.remove('lenis');
     };

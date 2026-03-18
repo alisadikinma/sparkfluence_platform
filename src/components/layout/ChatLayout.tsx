@@ -77,6 +77,12 @@ export const ChatLayout: React.FC<ChatLayoutProps> = ({ children }) => {
     const session = sessions.find(s => s.orderId === orderId);
     if (!session) return;
 
+    // Carousel projects use different routing
+    if (session.sessionType === 'carousel') {
+      navigate(`/carousel-images/${orderId}/source`);
+      return;
+    }
+
     const routeMap: Record<string, string> = {
       script_gen: '/script-gen',
       creator_lab: '/creator-lab',

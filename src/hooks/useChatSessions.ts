@@ -32,8 +32,8 @@ export interface ChatSessionRow {
 export interface ChatSessionSummary {
   orderId: string;
   title: string;
-  sessionType: 'script_gen' | 'creator_lab' | 'ad_studio';
-  status: ChatSessionRow['status'];
+  sessionType: 'script_gen' | 'creator_lab' | 'ad_studio' | 'carousel';
+  status: ChatSessionRow['status'] | string;
   updatedAt: string;
   progress?: {
     totalSegments: number;
@@ -95,6 +95,7 @@ export function useChatSessions() {
     setError(null);
 
     try {
+      // Fetch chat sessions
       const { data, error: fetchError } = await supabase
         .from('chat_sessions')
         .select('*')
@@ -103,7 +104,39 @@ export function useChatSessions() {
         .limit(50);
 
       if (fetchError) throw fetchError;
-      setSessions((data || []).map(rowToSummary));
+      const chatSessions = (data || []).map(rowToSummary);
+
+      // Also fetch carousel projects for sidebar history
+      const { data: carouselData, error: carouselError } = await supabase
+        .from('carousel_projects')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(20);
+
+      if (carouselError) {
+        console.error('[useChatSessions] carousel fetch error:', carouselError);
+      }
+
+      const carouselSessions: ChatSessionSummary[] = (carouselData || []).map((row: any) => ({
+        orderId: row.project_id,
+        title: row.title || 'Untitled Carousel',
+        sessionType: 'carousel' as const,
+        status: row.status || 'draft',
+        updatedAt: row.updated_at,
+        progress: (row.slide_count ?? 0) > 0 ? {
+          totalSegments: row.slide_count,
+          imagesCompleted: 0,
+          videosCompleted: 0,
+          currentStep: 'images' as const,
+        } : undefined,
+      }));
+
+      // Merge and sort by updatedAt
+      const allSessions = [...chatSessions, ...carouselSessions]
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+      setSessions(allSessions);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch sessions');
       console.error('[useChatSessions] fetchSessions error:', err);

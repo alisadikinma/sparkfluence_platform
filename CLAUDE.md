@@ -661,8 +661,8 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 |----------|---------|
 | `generate-brand-kit` | AI Brand Wizard: `callLLM()` (temp 0.8) → 3 kit options (Safe/Bold/Contrast) |
 | `fetch-instagram-media` | IG URL → oEmbed + Graph API (fallback). Frontend tries Python backend (Playwright) FIRST, edge fn is fallback. Requires OAuth token from `social_accounts` for Graph API path. |
-| `analyze-carousel-source` | Stage 1 Rebrand: `callLLM()` with `geminiFirst:true` → multimodal analysis per slide → SlideAnalysis JSON |
-| `generate-carousel-images` | Stage 2 Rebrand: RAG knowledge injection + LLM prompt build → fal.ai image gen. A-ROLL: nano-banana-edit (face ref), B-ROLL: seedream-v4 |
+| `analyze-carousel-source` | Stage 1 Rebrand: `callLLM()` multimodal vision (image_url content) → deep per-slide analysis with topic, contentCategory, emotionalTone, subjectReferences (4-category auto-detection), brandNames |
+| `generate-carousel-images` | Stage 2 Rebrand: User-confirmed hook selection (suggest_hooks action) + 9 RAG knowledge files + prop interaction + emotional arc + WOW 6/8 gate enforcement + fal.ai image gen + Supabase Storage persistence. A-ROLL: nano-banana-edit, B-ROLL: seedream-v4 |
 | `generate-carousel-captions` | Caption generation: `callLLM()` → 4 platform-specific captions (IG/TikTok/LinkedIn/Threads) with hashtags. Enforces per-platform char/hashtag limits. Persists to `carousel_projects.settings` JSONB. |
 | `validate-slide-content` | Per-slide fact-check: Step 1 `callLLM()` multimodal vision (auto-selects `gemini-2.5-flash` for image_url) → extract claim + claim_type. Step 2 `callTavilyHybrid()` (web search, 5 results). Returns `valid`/`unverifiable` + `confidence` (0-1) + `provider` info. Detailed logging at each step. |
 | `social-oauth-callback` | IG OAuth: code → short-lived → long-lived token (60 days) → profile → upsert `social_accounts`. Also handles refresh + disconnect. |
@@ -671,12 +671,15 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 ### RAG Knowledge Files (`_shared/knowledge/carousel/`)
 | File | Export | Content |
 |------|--------|---------|
-| `hook-science.ts` | `HOOK_SCIENCE_KNOWLEDGE` | Hook psychology, scroll-stop science |
-| `visual-action-bank.ts` | `VISUAL_ACTION_BANK_KNOWLEDGE` | 16 visual action hooks |
-| `carousel-rebranding.ts` | `CAROUSEL_REBRANDING_KNOWLEDGE` | Rebranding pipeline rules |
-| `prompt-formulas.ts` | `PROMPT_FORMULAS_KNOWLEDGE` | Image prompt formulas |
-| `caption-copywriting.ts` | `CAPTION_COPYWRITING_KNOWLEDGE` | Caption writing rules |
-| `cinematography-lut.ts` | `CINEMATOGRAPHY_LUT_KNOWLEDGE` | Emotion→expression→camera LUT |
+| `hook-science.ts` | `HOOK_SCIENCE_KNOWLEDGE` | Hook psychology, 5 categories, topic→hook mapping, engagement benchmarks |
+| `visual-action-bank.ts` | `VISUAL_ACTION_BANK_KNOWLEDGE` | 5+8 expression libraries, 5 lighting presets, 15 camera variants (A/B/C) |
+| `hook-formula-bank.ts` | `HOOK_FORMULA_BANK_KNOWLEDGE` | 52 viral hook formulas × 8 psychology categories |
+| `prompt-formulas.ts` | `PROMPT_FORMULAS_KNOWLEDGE` | 5-paragraph Nano Banana Pro format, 12 rendering rules, 3 text overlay rules, hook scoring gate |
+| `carousel-rebranding.ts` | `CAROUSEL_REBRANDING_KNOWLEDGE` | 5-step rebranding pipeline, 4 slide templates, style conversion matrix |
+| `caption-copywriting.ts` | `CAPTION_COPYWRITING_KNOWLEDGE` | 4 platform caption formulas, CTA psychology, hashtag strategy |
+| `cinematography-lut.ts` | `CINEMATOGRAPHY_LUT_KNOWLEDGE` | 12 emotion→setup LUTs, 7 lighting patterns, 8 film stocks |
+| `prop-interaction-system.ts` | `PROP_INTERACTION_SYSTEM_KNOWLEDGE` | 12 topic→prop banks, prop×action matrix, hook→prop rules, 5-step decision tree |
+| `emotional-arc.ts` | `EMOTIONAL_ARC_KNOWLEDGE` | Roller coaster intensity mapping, beat→visual treatment, mini-hook placement |
 
 ### Branding Kit
 - **Route:** `/settings/branding` (also accessible from Settings page)
@@ -767,6 +770,11 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - **IG Import duplicate prevention:** DELETE by `project_id + shortcode` before INSERT on every re-import. `handleClearAll` resets all sources + validation state.
 - **Per-slide content validation:** SourceStep auto-validates each image via `validate-slide-content` edge fn. Validation badges: green=Valid, red=Review!, amber=Kept, gray=Unverified. `validatedKeysRef` (Set) prevents re-runs. `sourceUrlsRef` + while loop ensures mid-import images are picked up. `canProceed` blocks Continue until all images have definitive status.
 - **Lenis scroll fix:** `/carousel-images` MUST be in `LENIS_DISABLED_PATTERNS` in `useSmoothScroll.ts` — Lenis intercepts wheel events at `<html>` level, breaking `<main overflow-y-auto>` scroll in ChatLayout.
+- **Hook selection flow:** After analysis, GenerateStep calls `generate-carousel-images` with `action: 'suggest_hooks'` → returns 3 options (PRIMARY/SECONDARY/WILDCARD). User selects before generation. Selected `hook_category` + `visual_action` passed to generation call.
+- **Image persistence:** Generated images now uploaded to `carousel-images` Supabase Storage bucket via `persistImageToStorage()`. Falls back to fal.ai CDN URL on upload failure. File path: `{projectId}/slide-{index}-{timestamp}.png`.
+- **AI Decision badges:** After generation, `carousel_slides.analysis_data.autoDecisions` stores hookCategory, visualAction, emotionalArc, wowScore. GenerateStep renders these as colored badges on each slide card.
+- **WOW gate enforcement:** `scoreWOWGate()` now enforces 6/8 minimum. If < 6, retries once with missing element feedback via `callLLM()`. Proceeds with warning if still < 6 after retry.
+- **Dead code fix:** `prompt-formulas.ts` was imported but NEVER used in `buildRagContext()`. Now injected for ALL slide types (rendering rules prevent Nano Banana artifacts).
 
 ### Remaining Phases
 
@@ -1250,6 +1258,11 @@ git log --oneline -10
 | Carousel validation uses Gemini not OpenRouter | `callLLM` multimodal: OpenRouter passes `image_url` directly (model fetches), but Instagram CDN URLs often blocked. Gemini fallback uses `toGeminiParts()` which fetches image server-side → base64 `inlineData`. This is expected behavior, not a bug. |
 | Carousel re-import shows duplicates | DELETE by `project_id + shortcode` must happen BEFORE INSERT. Check RLS delete policy on `carousel_source_urls`. |
 | Python IG scraper fails | Check Playwright installed: `pip install playwright && playwright install chromium`. Backend endpoint: `GET /api/instagram/media?url=...` with `x-api-key` header. |
+| Carousel generated image not relevant to topic | analyze-carousel-source now uses multimodal vision (`image_url` content type). If still generic, check `contentCategory` extraction in analysis response. |
+| Carousel image disappears after refresh | Images now persisted to Supabase Storage `carousel-images` bucket. Check `persistImageToStorage()` in generate-carousel-images. Falls back to fal.ai CDN URL on failure. |
+| Carousel WOW score < 6 after retry | Check `prompt-formulas.ts` is injected in `buildRagContext()` (was dead code before fix). Also check `getMissingWOWElements()` feedback is being sent. |
+| Hook selection not showing in GenerateStep | analyze-carousel-source must return `contentCategory` field. Check multimodal vision is working (image_url content in messages). |
+| Prompt-formulas RAG not working | Was dead code — imported but never used in `buildRagContext()`. Fixed: now injected for ALL slide types. |
 
 ---
 

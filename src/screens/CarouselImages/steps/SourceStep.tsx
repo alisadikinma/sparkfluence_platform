@@ -125,9 +125,14 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
     setValidationMap(prev => ({ ...prev, [key]: { status: 'validating' } }));
 
     try {
+      // 30s timeout to prevent stuck "Checking..." state
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+
       const { data, error } = await supabase.functions.invoke('validate-slide-content', {
         body: { image_url: url },
       });
+      clearTimeout(timeout);
 
       if (error || !data?.success) {
         setValidationMap(prev => ({ ...prev, [key]: { status: 'unverifiable' } }));
@@ -153,29 +158,67 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
     }
   }, []);
 
-  // Auto-validate images — single pass, no re-loop on failure
+  // Auto-validate images — re-scans for new images after each validation
+  // so progressively-loaded images are picked up without missing any
   const runValidation = useCallback(async () => {
     if (validatingRef.current) return;
     validatingRef.current = true;
 
-    const pending: { key: string; url: string }[] = [];
-    for (const src of sourceUrlsRef.current) {
-      if (!src.mediaUrls) continue;
-      src.mediaUrls.forEach((m, idx) => {
-        const key = `${src.id}-${idx}`;
-        if (!validatedKeysRef.current.has(key)) {
-          pending.push({ key, url: m.url });
+    // Mark all currently-known pending images as 'validating' upfront
+    const markPendingAsValidating = () => {
+      const toMark: string[] = [];
+      for (const src of sourceUrlsRef.current) {
+        if (!src.mediaUrls) continue;
+        src.mediaUrls.forEach((_, idx) => {
+          const key = `${src.id}-${idx}`;
+          if (!validatedKeysRef.current.has(key)) toMark.push(key);
+        });
+      }
+      if (toMark.length > 0) {
+        setValidationMap(prev => {
+          const updated = { ...prev };
+          for (const key of toMark) {
+            if (!updated[key] || updated[key].status === 'idle') {
+              updated[key] = { status: 'validating' };
+            }
+          }
+          return updated;
+        });
+      }
+    };
+
+    markPendingAsValidating();
+
+    // While loop: re-scan sourceUrlsRef each iteration to pick up newly-added images
+    let idle = 0;
+    while (validatingRef.current) {
+      // Find next un-validated image
+      let next: { key: string; url: string } | null = null;
+      for (const src of sourceUrlsRef.current) {
+        if (!src.mediaUrls) continue;
+        for (let idx = 0; idx < src.mediaUrls.length; idx++) {
+          const key = `${src.id}-${idx}`;
+          if (!validatedKeysRef.current.has(key)) {
+            next = { key, url: src.mediaUrls[idx].url };
+            break;
+          }
         }
-      });
-    }
+        if (next) break;
+      }
 
-    for (const { key, url } of pending) {
-      // Allow Clear All to cancel mid-run
-      if (!validatingRef.current) break;
+      if (!next) {
+        // No pending images — wait briefly then re-check (new images might be loading)
+        idle++;
+        if (idle >= 3) break; // 3 consecutive empty scans = done
+        await new Promise(r => setTimeout(r, 500));
+        markPendingAsValidating();
+        continue;
+      }
 
-      validatedKeysRef.current.add(key);
-      await validateSingle(key, url);
-
+      idle = 0;
+      validatedKeysRef.current.add(next.key);
+      await validateSingle(next.key, next.url);
+      markPendingAsValidating(); // mark any newly-added images
       await new Promise(r => setTimeout(r, 300));
     }
 
@@ -199,10 +242,15 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
     return match ? match[1] : null;
   };
 
+  // Placeholder state for progressive loading
+  const [importPlaceholders, setImportPlaceholders] = useState<number>(0);
+  const [importProgress, setImportProgress] = useState<string>('');
+
   const handleImportUrls = async () => {
     if (!urlInput.trim()) return;
     setImporting(true);
     setImportError(null);
+    setImportProgress('Connecting to Instagram...');
 
     const urls = urlInput.split('\n').map(u => u.trim()).filter(u => u.length > 0);
     const currentOrder = sourceUrls.length;
@@ -252,6 +300,7 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
       // Step 1: Python backend (works locally + VPS, bypasses Meta API restrictions)
       if (backendUrl && backendApiKey) {
         try {
+          setImportProgress('Fetching carousel slides...');
           const backendResp = await fetch(
             `${backendUrl}/api/instagram/media?url=${encodeURIComponent(url)}`,
             { headers: { 'x-api-key': backendApiKey } },
@@ -260,6 +309,9 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
             const backendData = await backendResp.json();
             if (backendData?.data?.media_urls?.length > 0) {
               mediaUrls = backendData.data.media_urls;
+              // Show placeholders immediately once we know how many slides
+              setImportPlaceholders(mediaUrls.length);
+              setImportProgress(`Found ${mediaUrls.length} slides. Saving...`);
             }
           }
         } catch {
@@ -269,6 +321,7 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
 
       // Step 2: Edge function fallback (uses Meta Graph API + oEmbed)
       if (!mediaUrls) {
+        setImportProgress('Trying alternative import...');
         const { data: insertedRow, error: insertError } = await supabase
           .from('carousel_source_urls')
           .insert({
@@ -320,29 +373,56 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
         continue;
       }
 
-      // Backend succeeded — save directly to DB (no pending row needed)
-      const { error: insertError2 } = await supabase
-        .from('carousel_source_urls')
-        .insert({
-          project_id: project.id,
-          source_url: url,
-          shortcode,
-          media_urls: mediaUrls,
-          source_order: currentOrder + i,
-          scrape_status: 'completed',
-        });
+      // Backend succeeded — save each slide progressively (one-by-one UI update)
+      for (let slideIdx = 0; slideIdx < mediaUrls.length; slideIdx++) {
+        setImportProgress(`Saving slide ${slideIdx + 1} of ${mediaUrls.length}...`);
 
-      if (insertError2) {
-        setImportError(`Failed to save: ${url}`);
-        continue;
+        // Insert ONE slide at a time so fetchSources shows progress
+        if (slideIdx === 0) {
+          // First slide: insert the source row with first media
+          const { error: insertError2 } = await supabase
+            .from('carousel_source_urls')
+            .insert({
+              project_id: project.id,
+              source_url: url,
+              shortcode,
+              media_urls: [mediaUrls[slideIdx]],
+              source_order: currentOrder + i,
+              scrape_status: 'completed',
+            });
+          if (insertError2) {
+            setImportError(`Failed to save: ${url}`);
+            break;
+          }
+        } else {
+          // Subsequent slides: update media_urls array to add the new slide
+          const { data: existing } = await supabase
+            .from('carousel_source_urls')
+            .select('id, media_urls')
+            .eq('project_id', project.id)
+            .eq('shortcode', shortcode)
+            .single();
+          if (existing) {
+            const updated = [...(existing.media_urls || []), mediaUrls[slideIdx]];
+            await supabase
+              .from('carousel_source_urls')
+              .update({ media_urls: updated })
+              .eq('id', existing.id);
+          }
+        }
+
+        // Refresh UI after each slide is saved
+        await fetchSources();
+        anySuccess = true;
       }
-
-      anySuccess = true;
     }
 
     setUrlInput('');
+    // Final fetch for edge function fallback path (where progressive save wasn't used)
     if (anySuccess) await fetchSources();
     setImporting(false);
+    setImportPlaceholders(0);
+    setImportProgress('');
   };
 
   const handleFileUpload = async (files: FileList | File[]) => {
@@ -394,13 +474,40 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
   const handleClearAll = async () => {
     // Cancel any running validation loop before clearing state
     validatingRef.current = false;
+
+    // Cleanup stored images from Supabase Storage
+    const shortcodes = sourceUrls
+      .map(s => s.shortcode)
+      .filter(Boolean) as string[];
+    for (const sc of shortcodes) {
+      try {
+        const { data: files } = await supabase.storage
+          .from('carousel-sources')
+          .list(`instagram/${sc}`);
+        if (files && files.length > 0) {
+          await supabase.storage
+            .from('carousel-sources')
+            .remove(files.map(f => `instagram/${sc}/${f.name}`));
+        }
+      } catch { /* ignore cleanup errors */ }
+    }
+
     await supabase.from('carousel_source_urls').delete().eq('project_id', project.id);
+
+    // Reset project title + status back to draft
+    await supabase
+      .from('carousel_projects')
+      .update({ title: 'Untitled Carousel', status: 'draft' })
+      .eq('id', project.id);
+
     sourceUrlsRef.current = [];
     setSourceUrls([]);
     setValidationMap({});
     validatedKeysRef.current = new Set();
-    // Clear persisted validation cache
     localStorage.removeItem(validationCacheKey);
+
+    // Notify parent to re-fetch project (updates title in header)
+    onProjectUpdate();
   };
 
   const handleProceed = async () => {
@@ -454,7 +561,7 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
     }
 
     // Auto-derive title from validation claims (first meaningful claim or reason)
-    if (project.title === 'Untitled Carousel') {
+    if (project.title === 'Untitled Carousel' || project.title === 'Untitled Project') {
       let derivedTitle = '';
 
       // Try to find a meaningful claim from validation data
@@ -606,21 +713,57 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
           </div>
         )}
 
+        {/* Import progress bar */}
+        {importing && importProgress && (
+          <div className="flex items-center gap-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg mb-4">
+            <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
+            <p className="text-xs text-emerald-400 flex-1">{importProgress}</p>
+          </div>
+        )}
+
+        {/* Placeholder skeleton grid during import — shows remaining unloaded slots */}
+        {importing && importPlaceholders > 0 && sourceUrls.length === 0 && (
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 mb-4">
+            {Array.from({ length: importPlaceholders }).map((_, idx) => (
+              <div
+                key={`placeholder-${idx}`}
+                className="aspect-[4/5] bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden animate-pulse"
+              >
+                <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center">
+                    <span className="text-xs text-neutral-600 font-medium">{idx + 1}</span>
+                  </div>
+                  <div className="h-2 w-12 bg-neutral-800 rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Importing indicator when images already showing (progressive) */}
+        {importing && !importProgress && sourceUrls.length === 0 && (
+          <div className="flex items-center gap-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg mb-4">
+            <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
+            <p className="text-xs text-emerald-400 flex-1">Importing from Instagram...</p>
+          </div>
+        )}
+
         {/* Source Grid */}
         {loading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" />
           </div>
-        ) : sourceUrls.length === 0 ? (
+        ) : sourceUrls.length === 0 && !importing ? (
           <div className="text-center py-10 bg-neutral-900/40 border border-neutral-800 rounded-xl">
             <ImageIcon className="w-8 h-8 mx-auto mb-2 text-neutral-700" />
             <p className="text-xs text-neutral-500">No source images yet. Import from Instagram or upload manually.</p>
           </div>
-        ) : (
+        ) : sourceUrls.length > 0 ? (
           <>
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] text-neutral-500">
-                {totalMedia} image{totalMedia !== 1 ? 's' : ''} ready
+                {importing && importPlaceholders > 0
+                  ? `${totalMedia} / ${importPlaceholders} images loaded`
+                  : `${totalMedia} image${totalMedia !== 1 ? 's' : ''} ready`}
               </p>
               <button
                 onClick={handleClearAll}
@@ -707,10 +850,7 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
                             {vStatus === 'validating' && (
                               <><Loader2 className="w-3 h-3 animate-spin" /> Checking...</>
                             )}
-                            {vStatus === 'valid' && !vResult?.needs_verification && (
-                              <><CheckCircle2 className="w-3 h-3" /> {vResult?.reason?.slice(0, 20) || 'Auto-pass'}</>
-                            )}
-                            {vStatus === 'valid' && vResult?.needs_verification && (
+                            {vStatus === 'valid' && (
                               <><CheckCircle2 className="w-3 h-3" /> Verified</>
                             )}
                             {vStatus === 'invalid' && !vResult?.confirmed && (
@@ -777,9 +917,25 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
                   </div>
                 );
               })}
+              {/* Remaining placeholder slots during progressive import */}
+              {importing && importPlaceholders > 0 && (() => {
+                const remaining = importPlaceholders - totalMedia;
+                if (remaining <= 0) return null;
+                return Array.from({ length: remaining }).map((_, idx) => (
+                  <div
+                    key={`remaining-${idx}`}
+                    className="aspect-square bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden animate-pulse"
+                  >
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 text-neutral-700 animate-spin" />
+                      <span className="text-[9px] text-neutral-600">Loading...</span>
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
           </>
-        )}
+        ) : null}
       </div>
 
       {/* Sticky footer — fixed to bottom, no gap */}
