@@ -234,12 +234,12 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
 
       if (!error && data?.success) {
         await fetchSlides();
-        if (project.title === 'Untitled Carousel' || project.title === 'Untitled Project') {
-          const topic = data?.data?.slides?.[0]?.topic;
-          if (topic) {
-            await supabase.from('carousel_projects').update({ title: String(topic).slice(0, 80) }).eq('id', project.id);
-            onProjectUpdate();
-          }
+        // Always update title from vision-analyzed topic (HOOK slide = slide 0)
+        // IG import sets title from caption metadata which often doesn't match the actual visual headline
+        const topic = data?.data?.slides?.[0]?.topic;
+        if (topic) {
+          await supabase.from('carousel_projects').update({ title: String(topic).slice(0, 80) }).eq('id', project.id);
+          onProjectUpdate();
         }
         // Extract subject references from analysis
         const allRefs: SubjectReference[] = [];
