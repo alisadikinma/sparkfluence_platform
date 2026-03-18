@@ -119,6 +119,14 @@ export const CarouselWorkspace: React.FC = () => {
       const firstUrl = sources?.[0]?.media_urls?.[0]?.url;
       if (!firstUrl) { setRedetectingTitle(false); return; }
 
+      // Ensure we have a valid session before calling edge function
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session) {
+        console.error('[CarouselWorkspace] No active session — cannot call edge function');
+        setRedetectingTitle(false);
+        return;
+      }
+
       // Call analyze-carousel-source with just the HOOK image
       const { data, error } = await supabase.functions.invoke('analyze-carousel-source', {
         body: {
@@ -129,7 +137,9 @@ export const CarouselWorkspace: React.FC = () => {
         },
       });
 
-      if (!error && data?.success) {
+      if (error) {
+        console.error('[CarouselWorkspace] redetectTitle edge fn error:', error);
+      } else if (data?.success) {
         const topic = data?.data?.slides?.[0]?.topic;
         if (topic) {
           const newTitle = String(topic).slice(0, 80);
