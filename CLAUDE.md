@@ -1,5 +1,14 @@
 # Sparkfluence - Claude Project Instructions
 
+## 🧠 Vault Context Link
+
+Pre-read MANDATORY via `obsidian` MCP `read-note`:
+- `20-Projects/SPARKFLUENCE/README.md` — current state, decisions, blockers
+- `30-Knowledge/content-strategy-shared.md` — virality framework, Gen Z patterns
+- `10-Identity/ali.md` — voice & style (auto-loaded)
+
+Persist decisions: append ke vault README "Decision Log" via `obsidian` MCP `edit-note`. JANGAN minta user re-explain creator persona / niche routing yang sudah ada di vault.
+
 ## ⚠️ CRITICAL RULES (NON-NEGOTIABLE)
 
 ### 🔒 Permission Required Before Execution
@@ -458,6 +467,7 @@ SOURCE_BADGE_CONFIG: Record<TrendingSource, { label, bg, text, border }>
 | `/carousel-images` | CarouselHome | Carousel project listing |
 | `/carousel-images/:projectId` | CarouselWorkspace | Active carousel project |
 | `/carousel-images/:projectId/:step` | CarouselWorkspace | Step navigation (source/generate/edit/video/publish) |
+| `/carousel-images/:projectId/edit-slide/:slideId` | SlideCanvasEditor | Standalone canvas editor for single slide (new tab) |
 | `/settings/branding` | BrandingKit | Brand kit editor + AI wizard |
 | `/settings/social-accounts` | SocialAccounts | OAuth connect/disconnect per platform |
 | `/settings/social-accounts/callback` | ⚠️ **TODO** | OAuth callback handler (not yet created) |
@@ -636,16 +646,17 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 
 ### Architecture
 - **Route:** `/carousel-images` (top-level ChatSidebar menu, `GalleryHorizontalEnd` icon)
-- **Workspace:** 5 steps: Source → Generate → Edit → Video → Publish
+- **Workspace:** 4 steps: Source → Generate → Video → Publish (Edit step removed — editing via Photopea in Generate page)
 - **Design doc:** `docs/plans/2026-03-11-carousel-image-feature-design.md`
 
 ### Components
 | Component | File | Purpose |
 |-----------|------|---------|
-| CarouselHome | `src/screens/CarouselImages/CarouselHome.tsx` | Project listing, create/delete, search |
+| CarouselHome | `src/screens/CarouselImages/CarouselHome.tsx` | Project listing, create/delete, search, branding check modal on create |
 | CarouselWorkspace | `src/screens/CarouselImages/CarouselWorkspace.tsx` | 5-step workspace with step bar |
 | SourceStep | `src/screens/CarouselImages/steps/SourceStep.tsx` | IG URL import (Python backend primary + edge fn fallback) + manual upload + drag-drop + per-image validation badges |
-| GenerateStep | `src/screens/CarouselImages/steps/GenerateStep.tsx` | Comparison grid (source vs generated), AI/Manual mode |
+| GenerateStep | `src/screens/CarouselImages/steps/GenerateStep.tsx` | Comparison grid (source vs generated), AI/Manual/Copy Source mode, per-slide ref badges, visibilitychange auto-refresh |
+| SlideCanvasEditor | `src/screens/CarouselImages/components/SlideCanvasEditor.tsx` | Photopea-powered image editor (new tab). Auto-loads brand logo + handle as layers. "Save to Sparkfluence" uploads PNG to Storage. |
 | BrandingKit | `src/screens/Settings/BrandingKit.tsx` | Picker → Wizard → Templates → Editor views |
 | VideoStep | `src/screens/CarouselImages/steps/VideoStep.tsx` | Motion preset selector, duration, video generation via GeminiGen, Realtime status |
 | PublishStep | `src/screens/CarouselImages/steps/PublishStep.tsx` | 4-platform caption editor (IG/TikTok/LinkedIn/Threads), AI generation, quick schedule |
@@ -692,7 +703,8 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 ### Generation Modes
 - **AI Generate** (default): Full fal.ai pipeline — analyze → prompt → generate
 - **Manual Upload:** AI builds prompt only, user generates externally, uploads result
-- **Per-slide hybrid:** e.g. 9 AI + 1 manual. `carousel_slides.generation_method` ('ai'|'manual')
+- **Copy Source:** Source image copied as-is (for screenshots/conversations), user edits in canvas editor. `generation_method: 'copy_source'`
+- **Per-slide hybrid:** e.g. 9 AI + 1 manual + 1 copy_source. `carousel_slides.generation_method` ('ai'|'manual'|'copy_source')
 - **AI Text toggle:** ON = 5-paragraph prompt (visual+text), OFF = 4-paragraph (visual only, text from editor)
 
 ### Comparison Grid (GenerateStep)
@@ -781,10 +793,24 @@ Full-screen 3-panel editor at `/script-gen/:orderId/studio`, `/creator-lab/:orde
 - **Prop interaction in prompts:** `PROP_INTERACTION_SYSTEM_KNOWLEDGE` injected for HOOK slides via `buildRagContext()`. Contains 12 topic→prop banks, prop×action interaction matrix, hook→prop selection rules.
 - **Dead code fix:** `prompt-formulas.ts` was imported but NEVER used in `buildRagContext()`. Now injected for ALL slide types (12 rendering rules + 3 text overlay enforcement rules prevent Nano Banana rendering artifacts).
 - **CarouselWorkspace re-render fix:** `fetchProject()` does NOT set `loading=true` on subsequent calls (only initial load starts with `loading=true`). This prevents GenerateStep from unmounting→remounting on every `onProjectUpdate()` which caused infinite re-render loops (auto-analyze → title update → onProjectUpdate → fetchProject → loading → unmount → remount → auto-analyze → loop).
+- **Copy Source mode:** `→ COPY` arrow between source and generated. After copy: source goes blank, arrow becomes `← REVERSE` (amber). Reverse restores source and clears generated. `generation_method: 'copy_source'`. "Edit in Canvas" button opens `SlideCanvasEditor` in new tab. `visibilitychange` auto-refreshes slides on tab return.
+- **FORE/CTA source hidden:** Source column (left) always empty for FORE and CTA slide types — they're Sparkfluence framework segments, not source segments. Only HOOK and BODY show source images + Copy arrow.
+- **Photopea integration:** `SlideCanvasEditor` embeds photopea.com via iframe + postMessage API. Image loaded as ArrayBuffer on Photopea ready signal (`'done'` message). "Save to Sparkfluence" triggers `app.activeDocument.saveToOE("png")` → receives ArrayBuffer back → uploads to Supabase Storage → updates `carousel_slides.image_url`. Dark theme, full Photoshop-like editing (brush, eraser, layers, text, filters, clone stamp, etc.).
+- **Photopea auto-branding layers:** On editor open, auto-loads brand logo (resized ~15%, top-left, 70% opacity) + brand handle text (white, 36px, 70% opacity) as separate Photopea layers from `useBrandingKit`. User just moves/resizes. Uses Photopea ExtendScript API (`postMessage` with JS code strings).
+- **Branding check on page entry:** `CarouselHome` checks `useBrandingKit` for `logoUrl` + `handleText` on mount (not just project create). Missing → modal with "Setup Branding Kit" (opens `/settings/branding` in new tab via `window.open()`) + "Skip" button. Skip saves `sparkfluence_carousel_branding_skip` to localStorage.
+- **Multi-reference images:** Config modals (Creator + B-Roll) support selecting multiple reference images. Stored as JSON array string in `carousel_slides.reference_image_url` TEXT column. `parseReferenceUrls()` / `serializeReferenceUrls()` (exported const arrow functions) in `types/carousel.ts`. Edge function parses JSON array for `image_urls` in fal.ai calls. Invalid URLs filtered (must start with `http://` or `https://`).
+- **Per-slide subject reference auto-pass:** `subjectReferences` from `analysis_data` passed to config modals as prop. Pre-fills stock image search with reference name (e.g., "Apple AirPod") instead of generic slide text. Badges on slide cards: amber if no reference attached, emerald/green if reference images selected. "Image Reference:" label above thumbnails in controls column.
+- **Prompt-only mode:** `generate-carousel-images` accepts `prompt_only: true` — generates LLM prompt, saves to `carousel_slides.prompt`, skips fal.ai. Auto-triggered when hook is selected (`useEffect` on `selectedHook`). FORE/CTA without `analysis_data` borrow analysis from HOOK slide. "View Prompt" visible for all AI slides, hidden for `copy_source` slides.
+- **Page numbers removed from AI prompt:** Page numbers no longer rendered by AI in generated images. Removed from P4 prompt (both ai_text_mode ON and OFF). `totalSlides` still queried for emotional arc/visual rules context.
+- **IG import URL dedup:** `SourceStep` deduplicates `media_urls` by URL (via `Set`) before inserting slides from Python scraper response.
+- **Competitor brand removal strengthened:** P5 prompt explicitly lists category badges to remove (TECHNOLOGY, LIFESTYLE, etc.). `handleText` defaults to `null` (not `'@brand'`) when no branding kit — omits watermark entirely.
+- **SWIPE text emphasis:** Prompt uses `EXACT text "SWIPE (GESER) >" — render these exact words, never rephrase` to prevent AI from rendering wrong text.
+- **fal.ai error handling:** Per-slide errors from fal.ai shown in red banner (not browser crash). Edge function extracts readable error detail from fal.ai response JSON. `generateError` state displayed in GenerateStep UI.
+- **Edit step removed from workflow:** Steps now 4: Source → Generate → Video → Publish (was 5). Editing done in Generate page via Photopea. Legacy `/edit` URL redirects to `/generate`. "Approve & Continue" navigates to Video step.
 
 ### Remaining Phases
 
-- Phase 5: Canvas Image Editor (fabric.js) — EditStep already has ~1935 line fabric.js implementation
+- Phase 5: Canvas Image Editor (fabric.js) — EditStep still exists (~1935 lines) but removed from step bar. Photopea integration replaces per-slide editing needs.
 - Phase 6: ManyChat Automation + Inbox
 
 ---
@@ -1273,6 +1299,18 @@ git log --oneline -10
 | Title doesn't match visual headline | `GenerateStep.handleAnalyze()` now ALWAYS updates title from vision-analyzed topic (not just when "Untitled"). SourceStep derives title from validation claims which often don't match actual visual headline. |
 | Reload title 401 Unauthorized | Edge function not deployed, or no auth session. `redetectTitle()` checks `supabase.auth.getSession()` before calling. Deploy edge fn: `supabase functions deploy analyze-carousel-source --no-verify-jwt`. |
 | Language not applied to generated images | Check `carousel_projects.settings.language` has been saved (SourceStep persists on Continue). Check `generate-carousel-images` receives `language_settings` param. Prompt P4 should show `LANGUAGE RULE:` with primary + subtitle language. |
+| @@brand watermark appears | `handleText` defaults to `null` when no branding kit (not `'@brand'`). P4 watermark line is conditional: `${handleText ? ... : ''}`. |
+| TECHNOLOGY badge still in generated image | P5 now explicitly lists category badges to remove. If AI still renders them, check `carousel-rebranding.ts` RAG context is injected. |
+| Reference images not passed to fal.ai | Multi-reference stored as JSON array in `reference_image_url` TEXT column. Edge function parses with `JSON.parse()` fallback to single URL. Invalid URLs filtered (`http://`/`https://` only). Check `refImages`/`validRefImages` in generate-carousel-images. |
+| fal.ai "Invalid URL scheme" error | Reference URL is empty/malformed. Edge function now filters URLs with `startsWith('http')`. Check `parseReferenceUrls()` in `types/carousel.ts`. |
+| Branding modal keeps appearing | Skip saves `sparkfluence_carousel_branding_skip` to localStorage. Check `localStorage.getItem()` on CarouselHome mount. |
+| Branding modal not appearing | Check `useBrandingKit` returns `kit` with `logoUrl`/`handleText`. Modal triggers on mount via `useEffect`, not just project create. |
+| View Prompt not showing for FORE/CTA | Edge function needs `prompt_only` mode deployed. FORE/CTA without `analysis_data` borrow from HOOK slide. Check `hasAutoPrompted` ref + `selectedHook` state in GenerateStep. |
+| FORE/CTA source image showing | `showSource` checks `!isFrameworkType` — FORE/CTA always hidden on source side. If still showing, check `slide.slideType` value from DB. |
+| Copy Source duplicates image | After copy, source side goes blank (`showSource = false` when `isCopied`). Reverse (`handleReverseCopy`) sets `image_url: null, generation_method: 'ai'`. |
+| Photopea branding layers not loading | Brand logo/text layers load with ~2s/3s delays via `setTimeout`. Check `brandingKit.logoUrl`/`handleText` from `useBrandingKit`. `brandingAddedRef` prevents duplicate loading. |
+| Generate error crashes browser | `handleGenerate` has try-catch + `generateError` state → red banner. Per-slide fal.ai errors shown with detail. If still crashing, check for unhandled promise rejections outside `handleGenerate`. |
+| `parseReferenceUrls is not defined` | Must be `export const` arrow function (not `function` declaration). Vite HMR can fail with hoisting. Check `types/carousel.ts` exports. |
 
 ---
 
@@ -1394,4 +1432,4 @@ const result = await fal.subscribe("fal-ai/kling-video/v2.5-turbo/standard/image
 ---
 
 **Last Updated:** March 2026
-**Version:** 8.0 (+ carousel gen full port: multimodal vision fix, hook selection UI, image persistence, WOW gate enforcement, bilingual language setting, reload title, emotional arc, prop interaction system, re-render loop fix)
+**Version:** 8.2 (+ carousel gen overhaul: Copy Source with Reverse, Photopea editor with auto-branding layers, FORE/CTA source hidden, prompt-only mode, 4-step workflow, multi-reference images, fal.ai error handling, branding check on entry, per-slide reference auto-pass)
