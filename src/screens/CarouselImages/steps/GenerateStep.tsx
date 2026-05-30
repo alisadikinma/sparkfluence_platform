@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Wand2, Upload, RefreshCw, Copy, ChevronRight,
   Loader2, AlertCircle, Trash2, Eye, Video, ImageIcon,
-  Clipboard, X, Settings2, SkipForward, ArrowRight
+  Clipboard, X, Settings2, SkipForward, ArrowRight, ArrowLeft, Pencil
 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
@@ -54,12 +54,11 @@ function enforceFramework(rawSlides: CarouselSlide[], sourceImages: string[]): A
     result.push({ slide: { ...s, slideType: 'HOOK' }, sourceUrl: s.sourceImageUrl || sourceImages[0] || null, isFrameworkGenerated: false });
   }
 
-  // FORE — always slot 2. If source has no FORE, create empty framework slot
+  // FORE — slot 2. If source has no FORE, create framework slot (generated side only)
   if (fores.length > 0) {
     const s = fores[0];
     result.push({ slide: s, sourceUrl: s.sourceImageUrl || sourceImages[s.slideIndex] || null, isFrameworkGenerated: false });
   } else {
-    // Create a framework-only FORE (no source image)
     result.push({
       slide: createFrameworkSlide('FORE', result.length, rawSlides[0]?.projectId || ''),
       sourceUrl: null,
@@ -80,7 +79,7 @@ function enforceFramework(rawSlides: CarouselSlide[], sourceImages: string[]): A
     }
   }
 
-  // CTA — always last. If source has no CTA, create empty framework slot
+  // CTA — last slot. If source has no CTA, create framework slot (generated side only)
   if (ctas.length > 0) {
     const s = ctas[0];
     result.push({ slide: s, sourceUrl: s.sourceImageUrl || sourceImages[s.slideIndex] || null, isFrameworkGenerated: false });
@@ -141,7 +140,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
     bRoll: 'fal-seedream-v4',
   });
 
-  const [configModal, setConfigModal] = useState<{ slide: CarouselSlide; index: number } | null>(null);
+  const [configModal, setConfigModal] = useState<{ slide: CarouselSlide; index: number; subjectRefs: SubjectReference[] } | null>(null);
   const hasAutoAnalyzed = useRef(false);
 
   // Hook selection state (user confirms before generation)
@@ -166,6 +165,17 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
   }, [project.id]);
 
   useEffect(() => { fetchSlides(); }, [fetchSlides]);
+
+  // Auto-refresh slides when tab regains focus (e.g., returning from canvas editor)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSlides();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [fetchSlides]);
 
   // Fetch source images
   const [sourceImages, setSourceImages] = useState<string[]>([]);
@@ -314,6 +324,35 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
   // Generate images
   const [generateError, setGenerateError] = useState<string | null>(null);
 
+  // Generate prompts only (no image generation) — makes prompts available for View/Copy
+  const handleGeneratePrompts = async () => {
+    try {
+      await ensureFrameworkSlidesInDB();
+      const ids = frameworkSlides
+        .filter(f => !skippedSlides.has(f.slide.id) && !f.slide.prompt && f.slide.generationMethod !== 'copy_source')
+        .map(f => f.slide.id)
+        .filter(id => !id.startsWith('framework-'));
+      if (ids.length === 0) return;
+
+      await supabase.functions.invoke('generate-carousel-images', {
+        body: {
+          project_id: project.id,
+          slide_ids: ids,
+          branding_kit: brandingKit,
+          ai_text_mode: aiTextMode,
+          image_models: imageModels,
+          hook_category: selectedHook?.hookCategory || null,
+          visual_action: selectedHook?.visualAction || null,
+          language_settings: project.settings?.language || null,
+          prompt_only: true,
+        },
+      });
+      await fetchSlides();
+    } catch (err) {
+      console.error('[GenerateStep] prompt generation error:', err);
+    }
+  };
+
   const handleGenerate = async (slideIds?: string[]) => {
     setGenerating(true);
     setGenerateError(null);
@@ -345,6 +384,12 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
       } else if (!data?.success) {
         setGenerateError(data?.error?.message || 'Generation failed');
       } else {
+        // Check for per-slide errors in results
+        const failedSlides = (data.results || []).filter((r: any) => !r.success);
+        if (failedSlides.length > 0) {
+          const errorMsgs = failedSlides.map((r: any) => r.error || 'Unknown error').join('; ');
+          setGenerateError(`${failedSlides.length} slide(s) failed: ${errorMsgs}`);
+        }
         await fetchSlides();
         onProjectUpdate();
       }
@@ -354,6 +399,18 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
       setGenerating(false);
     }
   };
+
+  // Auto-generate prompts when hook is selected (so user can View/Copy before generating images)
+  const hasAutoPrompted = useRef(false);
+  useEffect(() => {
+    if (!selectedHook || hasAutoPrompted.current || generating || slides.length === 0) return;
+    // Any non-copy_source slide without a prompt needs one (including framework FORE/CTA)
+    const needsPrompt = slides.some(s => !s.prompt && s.generationMethod !== 'copy_source');
+    if (needsPrompt) {
+      hasAutoPrompted.current = true;
+      handleGeneratePrompts();
+    }
+  }, [selectedHook, slides]);
 
   const handleRegenerateSlide = async (slideId: string) => {
     setRegeneratingSlide(slideId);
@@ -412,11 +469,10 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
   const handleApplyConfig = async (slideId: string, config: {
     additionalNote?: string;
     referenceImageUrl?: string | null;
+    referenceImageUrls?: string[];
     creatorFace?: boolean;
   }) => {
     if (slideId.startsWith('framework-')) {
-      // For framework slides, just update local state
-      // They'll be persisted when user hits Generate
       setConfigModal(null);
       return;
     }
@@ -431,6 +487,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
       ...s,
       ...(config.additionalNote !== undefined && { additionalNote: config.additionalNote }),
       ...(config.referenceImageUrl !== undefined && { referenceImageUrl: config.referenceImageUrl }),
+      ...(config.referenceImageUrls !== undefined && { referenceImageUrls: config.referenceImageUrls }),
       ...(config.creatorFace !== undefined && { creatorFace: config.creatorFace }),
     } : s));
     setConfigModal(null);
@@ -456,6 +513,32 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
     ));
   };
 
+  // Copy source image as generated (no AI generation needed)
+  const handleCopySource = async (slideId: string, sourceUrl: string | null) => {
+    if (!sourceUrl || slideId.startsWith('framework-')) return;
+
+    await supabase.from('carousel_slides')
+      .update({ image_url: sourceUrl, generation_method: 'copy_source' })
+      .eq('id', slideId);
+
+    setSlides(prev => prev.map(s =>
+      s.id === slideId ? { ...s, imageUrl: sourceUrl, generationMethod: 'copy_source' as const } : s
+    ));
+  };
+
+  // Reverse copy — remove copied image, revert to "not generated" state
+  const handleReverseCopy = async (slideId: string) => {
+    if (slideId.startsWith('framework-')) return;
+
+    await supabase.from('carousel_slides')
+      .update({ image_url: null, generation_method: 'ai' })
+      .eq('id', slideId);
+
+    setSlides(prev => prev.map(s =>
+      s.id === slideId ? { ...s, imageUrl: null, generationMethod: 'ai' as const } : s
+    ));
+  };
+
   const copyAllPrompts = () => {
     const all = frameworkSlides
       .filter(f => f.slide.prompt)
@@ -467,7 +550,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
   const handleProceed = async () => {
     await supabase.from('carousel_projects').update({ status: 'generated' }).eq('id', project.id);
     onProjectUpdate();
-    navigate(`/carousel-images/${project.projectId}/edit`);
+    navigate(`/carousel-images/${project.projectId}/video`);
   };
 
   const allSlidesHaveImages = activeFramework.length > 0 && activeFramework.every(f => f.slide.imageUrl);
@@ -553,25 +636,6 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
           </div>
         )}
 
-        {/* Subject Reference Alerts */}
-        {subjectRefs.length > 0 && (
-          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg mb-4">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-xs font-medium text-amber-300 mb-1">Reference images recommended for accuracy:</p>
-                <ul className="text-xs text-amber-400/80 space-y-0.5">
-                  {subjectRefs.map((ref, i) => (
-                    <li key={i}>
-                      {ref.name} ({ref.type.replace('_', ' ')}) — AI may generate inaccurate design
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-[11px] text-amber-400/50 mt-1">Use per-slide config to upload reference images, or skip for AI's best guess.</p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Hook Selection (user confirms before generation) */}
         {hookOptions.length > 0 && !loading && frameworkSlides.length > 0 && (
@@ -655,8 +719,14 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
               const isRegenerating = regeneratingSlide === slide.id;
               const isSkipped = skippedSlides.has(slide.id);
               const isCreator = isCreatorSlide(slide.slideType);
-              const hasConfig = !!slide.additionalNote || !!slide.referenceImageUrl;
-              const isFrameworkOnly = isFrameworkGenerated || !sourceUrl;
+              const hasConfig = !!slide.additionalNote || (slide.referenceImageUrls?.length > 0);
+              const isFrameworkType = slide.slideType === 'FORE' || slide.slideType === 'CTA';
+              const isFrameworkOnly = isFrameworkGenerated || !sourceUrl || isFrameworkType;
+              // Hide source image when: FORE/CTA framework type, OR already copied to generated
+              const isCopied = slide.generationMethod === 'copy_source';
+              const showSource = sourceUrl && !isFrameworkType && !isCopied;
+              // Show arrow button when source exists and not framework type (Copy or Reverse)
+              const showArrow = sourceUrl && !isFrameworkType && !isSkipped;
 
               return (
                 <div
@@ -665,22 +735,13 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                     isSkipped ? 'opacity-40' : ''
                   }`}
                 >
-                  {/* Source Image */}
+                  {/* Source Image — hidden for FORE/CTA (framework segments) */}
                   <div className="relative bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-                    {sourceUrl ? (
+                    {showSource ? (
                       <img src={sourceUrl} alt={`Source ${i + 1}`} className="w-full aspect-square object-cover cursor-pointer" loading="lazy"
                             onClick={() => setPreviewModal({ url: sourceUrl!, title: `Source ${i + 1}` })}
                           />
-                    ) : (
-                      <div className="w-full aspect-square flex flex-col items-center justify-center bg-neutral-900/50 border border-dashed border-neutral-700 rounded-xl">
-                        <ImageIcon className="w-5 h-5 text-neutral-700 mb-1" />
-                        <p className="text-[10px] text-neutral-600 text-center px-4">
-                          {isFrameworkGenerated
-                            ? `No ${slide.slideType} in source — AI will generate from scratch`
-                            : 'No source image'}
-                        </p>
-                      </div>
-                    )}
+                    ) : null}
                     <div className="absolute top-2 left-2 flex items-center gap-1">
                       <span className="bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
                         {i + 1}
@@ -693,9 +754,29 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                     </div>
                   </div>
 
-                  {/* Arrow */}
-                  <div className="flex items-center justify-center h-full">
-                    <ArrowRight className="w-4 h-4 text-neutral-700" />
+                  {/* Arrow — Copy source / Reverse */}
+                  <div className="flex flex-col items-center justify-center h-full gap-1">
+                    {showArrow ? (
+                      isCopied ? (
+                        <button
+                          onClick={() => handleReverseCopy(slide.id)}
+                          className="flex flex-col items-center gap-0.5 px-2 py-2 rounded-xl transition-all bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 hover:border-amber-500/40"
+                          title="Reverse — remove copied image"
+                        >
+                          <ArrowLeft className="w-5 h-5" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider whitespace-nowrap">Reverse</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleCopySource(slide.id, sourceUrl)}
+                          className="flex flex-col items-center gap-0.5 px-2 py-2 rounded-xl transition-all bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/10"
+                          title="Copy source image as-is (for screenshots, conversations)"
+                        >
+                          <ArrowRight className="w-5 h-5" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider whitespace-nowrap">Copy</span>
+                        </button>
+                      )
+                    ) : null}
                   </div>
 
                   {/* Generated Image */}
@@ -732,6 +813,24 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                         <span className="bg-emerald-500/20 text-emerald-400 text-[9px] px-1.5 py-0.5 rounded-full">
                           Configured
                         </span>
+                      </div>
+                    )}
+
+                    {/* Subject Reference Badges (per-slide) — green if reference attached, amber if not */}
+                    {slide.analysisData?.subjectReferences?.length > 0 && !slide.imageUrl && (
+                      <div className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-1">
+                        {slide.analysisData.subjectReferences.filter((r: SubjectReference) => r.needsReference).map((ref: SubjectReference, ri: number) => {
+                          const hasRef = (slide.referenceImageUrls?.length || 0) > 0;
+                          return (
+                            <span key={ri} className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
+                              hasRef
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            }`}>
+                              {ref.name}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -779,7 +878,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                   <div className="flex flex-col gap-1.5 pt-1">
                     {/* Configure */}
                     <button
-                      onClick={() => setConfigModal({ slide, index: i })}
+                      onClick={() => setConfigModal({ slide, index: i, subjectRefs: slide.analysisData?.subjectReferences || [] })}
                       disabled={isSkipped}
                       className="flex items-center gap-1.5 w-full bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 text-neutral-300 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-colors"
                     >
@@ -826,6 +925,17 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                       {isSkipped ? 'Skipped' : 'Skip'}
                     </button>
 
+                    {/* Edit in Canvas — opens canvas editor in new tab (visible after Copy Source via arrow) */}
+                    {slide.generationMethod === 'copy_source' && slide.imageUrl && (
+                      <button
+                        onClick={() => window.open(`/carousel-images/${project.projectId}/edit-slide/${slide.id}`, '_blank')}
+                        className="flex items-center gap-1.5 w-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        Edit in Canvas
+                      </button>
+                    )}
+
                     {/* Per-slide actions: Generate/Regen, Copy Prompt, Upload, Delete */}
                     <div className="flex gap-1 flex-wrap">
                       <button
@@ -845,15 +955,6 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                         ) : (
                           <Wand2 className="w-3 h-3" />
                         )}
-                      </button>
-
-                      <button
-                        onClick={() => slide.prompt && navigator.clipboard.writeText(slide.prompt)}
-                        disabled={!slide.prompt}
-                        className="flex-1 flex items-center justify-center gap-1 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 text-neutral-400 rounded-lg px-2 py-1.5 text-[10px] transition-colors"
-                        title={slide.prompt ? 'Copy Prompt' : 'No prompt yet'}
-                      >
-                        <Copy className="w-3 h-3" />
                       </button>
 
                       {!slide.id.startsWith('framework-') && (
@@ -880,8 +981,23 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
                       )}
                     </div>
 
-                    {/* View prompt toggle */}
-                    {slide.prompt && (
+                    {/* Selected reference thumbnails */}
+                    {slide.referenceImageUrls?.length > 0 && (
+                      <div>
+                        <p className="text-[9px] text-neutral-500 font-medium mb-1">Image Reference:</p>
+                        <div className="flex gap-1 flex-wrap">
+                          {slide.referenceImageUrls.map((url, ri) => (
+                            <img key={ri} src={url} alt={`Ref ${ri + 1}`}
+                              className="w-8 h-8 object-cover rounded border border-neutral-700"
+                              loading="lazy"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* View prompt toggle — hide for copy_source slides (manual edit, no AI prompt) */}
+                    {slide.prompt && slide.generationMethod !== 'copy_source' && (
                       <button
                         onClick={() => setExpandedPrompt(expandedPrompt === slide.id ? null : slide.id)}
                         className="flex items-center gap-1.5 w-full bg-neutral-800/50 hover:bg-neutral-800 text-neutral-500 rounded-lg px-2.5 py-1 text-[10px] transition-colors"
@@ -970,6 +1086,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
           <CreatorConfigModal
             slide={configModal.slide}
             slideIndex={configModal.index}
+            subjectRefs={configModal.subjectRefs}
             onApply={(config) => handleApplyConfig(configModal.slide.id, config)}
             onClose={() => setConfigModal(null)}
           />
@@ -977,6 +1094,7 @@ export const GenerateStep: React.FC<GenerateStepProps> = ({ project, onProjectUp
           <BRollConfigModal
             slide={configModal.slide}
             slideIndex={configModal.index}
+            subjectRefs={configModal.subjectRefs}
             onApply={(config) => handleApplyConfig(configModal.slide.id, config)}
             onClose={() => setConfigModal(null)}
           />

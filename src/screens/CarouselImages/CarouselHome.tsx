@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Instagram, Upload, Search, Trash2, ExternalLink, ImageIcon } from 'lucide-react';
+import { Plus, Instagram, Upload, Search, Trash2, ExternalLink, ImageIcon, Palette, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useBrandingKit } from '../../hooks/useBrandingKit';
 import { supabase } from '../../lib/supabase';
 import type { CarouselProject, CarouselProjectRow } from '../../types/carousel';
 import { mapCarouselProjectRow } from '../../types/carousel';
@@ -28,10 +29,21 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }>
 export const CarouselHome: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { kit: brandingKit, loading: brandingLoading } = useBrandingKit();
   const [projects, setProjects] = useState<CarouselProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  const [showBrandingModal, setShowBrandingModal] = useState(false);
+
+  // Check branding kit on mount — show modal EVERY TIME if brand kit is still empty
+  // No permanent skip — modal appears each visit until user sets up logo + handle
+  React.useEffect(() => {
+    if (brandingLoading) return;
+    if (!brandingKit?.logoUrl || !brandingKit?.handleText) {
+      setShowBrandingModal(true);
+    }
+  }, [brandingLoading, brandingKit]);
 
   // Fetch projects on mount
   const fetchProjects = useCallback(async () => {
@@ -87,8 +99,21 @@ export const CarouselHome: React.FC = () => {
     fetchProjects();
   }, [fetchProjects]);
 
-  // Create new project
+  // Create new project (with branding kit check)
   const handleNewProject = async () => {
+    if (!user) return;
+
+    // Check if branding kit has logo + handle (skip if user already dismissed)
+    const skipBranding = localStorage.getItem('sparkfluence_carousel_branding_skip');
+    if (!skipBranding && !brandingLoading && (!brandingKit?.logoUrl || !brandingKit?.handleText)) {
+      setShowBrandingModal(true);
+      return;
+    }
+
+    await createProject();
+  };
+
+  const createProject = async () => {
     if (!user) return;
     const projectId = generateProjectId();
     const { error } = await supabase.from('carousel_projects').insert({
@@ -294,6 +319,54 @@ export const CarouselHome: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Branding Kit Setup Modal */}
+      {showBrandingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setShowBrandingModal(false)}>
+          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                  <Palette className="w-5 h-5 text-emerald-400" />
+                </div>
+                <h3 className="text-sm font-semibold text-neutral-200">Setup Branding Kit</h3>
+              </div>
+              <button onClick={() => setShowBrandingModal(false)} className="p-1 rounded-md text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-5">
+              <p className="text-sm text-neutral-300 mb-2">
+                Brand logo dan handle akan digunakan sebagai watermark di carousel images (opacity 30%).
+              </p>
+              <p className="text-xs text-neutral-500">
+                Setup branding kit dulu supaya generated images punya identity brand kamu. Bisa di-skip kalau belum siap.
+              </p>
+            </div>
+
+            <div className="px-5 pb-5 flex gap-2">
+              <button
+                onClick={() => {
+                  setShowBrandingModal(false);
+                }}
+                className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg px-4 py-2.5 text-xs font-medium transition-colors"
+              >
+                Skip untuk sekarang
+              </button>
+              <button
+                onClick={() => {
+                  setShowBrandingModal(false);
+                  window.open('/settings/branding', '_blank');
+                }}
+                className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg px-4 py-2.5 text-xs font-medium transition-colors"
+              >
+                Setup Branding Kit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -7,7 +7,7 @@ export type CarouselSlideType = 'HOOK' | 'FORE' | 'BODY' | 'PEAK' | 'CTA';
 
 export type GenerationMode = 'ai' | 'manual';
 
-export type GenerationMethod = 'ai' | 'manual';
+export type GenerationMethod = 'ai' | 'manual' | 'copy_source';
 
 export type CarouselProjectStatus =
   | 'draft'
@@ -128,7 +128,8 @@ export interface CarouselSlide {
   imageUrl: string | null;
   imageModel: string | null;
   sourceImageUrl: string | null;
-  referenceImageUrl: string | null;
+  referenceImageUrl: string | null; // Legacy single URL — use referenceImageUrls for multi
+  referenceImageUrls: string[]; // Parsed from reference_image_url (JSON array or single URL)
   creatorFace: boolean;
   additionalNote: string | null;
   editorState: Record<string, unknown> | null; // fabric.js JSON
@@ -245,6 +246,25 @@ export function mapCarouselProjectRow(row: CarouselProjectRow): CarouselProject 
   };
 }
 
+// Parse reference_image_url: supports JSON array string or single URL (backward compat)
+export const parseReferenceUrls = (val: string | null): string[] => {
+  if (!val) return [];
+  try {
+    const parsed = JSON.parse(val);
+    if (Array.isArray(parsed)) return parsed.filter((u: any) => typeof u === 'string' && u);
+  } catch {
+    // Not JSON — treat as single URL
+  }
+  return [val];
+};
+
+// Serialize reference URLs array to string for DB storage
+export const serializeReferenceUrls = (urls: string[]): string | null => {
+  if (!urls.length) return null;
+  if (urls.length === 1) return urls[0]; // Single URL stays as plain string
+  return JSON.stringify(urls);
+};
+
 export function mapCarouselSlideRow(row: CarouselSlideRow): CarouselSlide {
   return {
     id: row.id,
@@ -258,6 +278,7 @@ export function mapCarouselSlideRow(row: CarouselSlideRow): CarouselSlide {
     imageModel: row.image_model,
     sourceImageUrl: row.source_image_url,
     referenceImageUrl: row.reference_image_url,
+    referenceImageUrls: parseReferenceUrls(row.reference_image_url),
     creatorFace: row.creator_face,
     additionalNote: row.additional_note,
     editorState: row.editor_state,

@@ -220,6 +220,7 @@ Per slide, extract:
 {
   "slideIndex": <0-based>,
   "topic": "<detailed topic/message of this slide — be specific, not generic>",
+  "headline": "<ONLY the main bold headline text visible in the image — the large prominent text that serves as the visual hook. Exclude subtitles, captions, chat messages, comments, source attributions, watermarks, and any small/secondary text. If multiple lines of headline, join them with spaces.>",
   "textContent": ["<line 1>", "<line 2>", ...],
   "layout": "<full|split-left|split-right|text-overlay|minimal|graphic>",
   "visualStyle": {
@@ -243,6 +244,12 @@ Per slide, extract:
   "ctaType": "<polarize|question|identity_tag|engagement_reward|null>"
 }
 
+HEADLINE vs TEXT CONTENT — CRITICAL DISTINCTION:
+- "headline" = ONLY the large, bold, prominent text that serves as the visual hook/title.
+  Example: "TEKNOLOGI INTERNET TERPECAH SETELAH PRIA MENGKLAIM..." — this is the headline.
+- "textContent" = ALL visible text including headline, subtitles, chat messages, comments, attributions, etc.
+  The headline is a SUBSET of textContent. Chat bubbles, @mentions, conversation snippets, source credits, etc. go in textContent ONLY, never in headline.
+
 SUBJECT REFERENCE DETECTION (subjectReferences array):
 Flag items where AI image generation would produce INACCURATE results without a reference image:
 - Specific product models (e.g. "iPhone 16 Pro" — AI may generate wrong design)
@@ -259,7 +266,7 @@ ADDITIONAL FIELDS (fill based on slide type):
 - For BODY slides: set hookCategory, foreshadowType, ctaType to null
 
 ${aiTextMode
-  ? 'AI TEXT MODE: ON — Extract ALL visible text verbatim for AI to re-render.'
+  ? 'AI TEXT MODE: ON — Extract ALL visible text verbatim in textContent for reference. Extract ONLY the main headline in the headline field for AI to re-render.'
   : 'AI TEXT MODE: OFF — Extract text but it will be added via editor layers.'}`;
 }
 
@@ -278,6 +285,7 @@ Per slide, extract:
 {
   "slideIndex": <0-based>,
   "topic": "<detailed topic/message of this slide — be specific, not generic>",
+  "headline": "<ONLY the main bold headline text — the large prominent text that serves as the visual hook. Exclude subtitles, captions, chat messages, comments, source attributions, watermarks, and any small/secondary text.>",
   "textContent": ["<line 1>", "<line 2>", ...],
   "layout": "<full|split-left|split-right|text-overlay|minimal|graphic>",
   "visualStyle": {
@@ -299,6 +307,10 @@ Per slide, extract:
   "subjectReferences": [<objects needing reference images, or empty array>]
 }
 
+HEADLINE vs TEXT CONTENT — CRITICAL DISTINCTION:
+- "headline" = ONLY the large, bold, prominent text (visual hook/title). Chat bubbles, @mentions, conversation snippets, source credits NEVER go in headline.
+- "textContent" = ALL visible text including headline + everything else.
+
 SUBJECT REFERENCE DETECTION (subjectReferences array):
 Flag items where AI image generation would produce INACCURATE results without a reference image:
 - Specific product models: { "type": "product", "name": "<model>", "needsReference": true }
@@ -315,6 +327,6 @@ SEGMENT TYPE RULES:
 - If unsure → BODY
 
 ${aiTextMode
-  ? 'AI TEXT MODE: ON — Extract all visible text for AI to re-render in-image.'
+  ? 'AI TEXT MODE: ON — Extract all visible text in textContent for reference. Extract ONLY the main headline in the headline field for AI to re-render in-image.'
   : 'AI TEXT MODE: OFF — Extract text but it will be added via editor layers, not in-image.'}`;
 }

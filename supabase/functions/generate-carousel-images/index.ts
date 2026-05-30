@@ -53,6 +53,7 @@ serve(async (req) => {
       hook_category,
       visual_action,
       language_settings,
+      prompt_only = false,
     } = body;
 
     if (!project_id) {
@@ -140,21 +141,38 @@ serve(async (req) => {
       }
     }
 
-    const totalSlides = slides.length;
+    // Get true total slide count for the entire project (not just batch being generated)
+    // Used for emotional arc mapping and visual rules — page numbers are rendered as frontend overlays
+    const { count: totalSlideCount } = await supabase
+      .from('carousel_slides')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', project_id);
+    const totalSlides = totalSlideCount || slides.length;
     const results: Array<{ slideId: string; success: boolean; imageUrl?: string; prompt?: string; error?: string; wowScore?: number }> = [];
 
     console.log(`[generate-carousel-images] Processing ${slides.length} slides, creator avatar: ${creatorAvatarUrl || 'NONE'}, brand handle: ${branding_kit?.handleText || 'NONE'}`);
 
     for (const slide of slides) {
-      if (slide.generation_method === 'manual') {
-        results.push({ slideId: slide.id, success: true, prompt: 'Manual upload — skipped' });
+      if (slide.generation_method === 'manual' || slide.generation_method === 'copy_source') {
+        results.push({ slideId: slide.id, success: true, prompt: `${slide.generation_method} — skipped` });
         continue;
       }
 
-      const analysis = slide.analysis_data;
+      let analysis = slide.analysis_data;
       if (!analysis) {
-        results.push({ slideId: slide.id, success: false, error: 'No analysis data — run analyze first' });
-        continue;
+        if (prompt_only) {
+          // For prompt_only mode, borrow analysis from first slide with data (e.g., HOOK)
+          const donor = slides.find(s => s.analysis_data);
+          if (donor?.analysis_data) {
+            analysis = { ...donor.analysis_data, segmentType: slide.slide_type };
+          } else {
+            results.push({ slideId: slide.id, success: false, error: 'No analysis data available' });
+            continue;
+          }
+        } else {
+          results.push({ slideId: slide.id, success: false, error: 'No analysis data — run analyze first' });
+          continue;
+        }
       }
 
       // Determine shot type + model (use spread to avoid mutating shared config)
@@ -175,13 +193,16 @@ serve(async (req) => {
       // Brand context for text overlay — use color NAME not hex code (hex renders as literal text in image)
       const accentHex = branding_kit?.colors?.primary || '#F5A623';
       const accentColorName = hexToColorName(accentHex);
-      const handleText = branding_kit?.handleText || '@brand';
+      const handleText = branding_kit?.handleText || null;
       const logoUrl = branding_kit?.logoUrl || null;
 
-      // Extract the EXACT headline from source image (OCR text) — this is the ground truth
-      const sourceHeadline = analysis.textContent?.length > 0
-        ? analysis.textContent.join(' ')
-        : analysis.topic || 'Untitled';
+      // Extract the EXACT headline from source image — use dedicated headline field (excludes chat/comments/attributions)
+      // Fallback chain: headline (new) → first few textContent lines → topic
+      const sourceHeadline = analysis.headline
+        ? analysis.headline
+        : analysis.textContent?.length > 0
+          ? analysis.textContent.slice(0, 4).join(' ')  // max 4 lines as fallback (skip chat/comment tails)
+          : analysis.topic || 'Untitled';
 
       // Pick 2-4 power words from the headline to highlight in accent color
       const headlineWords = sourceHeadline.split(/\s+/);
@@ -232,16 +253,15 @@ ${ai_text_mode ? `P4 — TEXT OVERLAY (USE EXACTLY THIS TEXT — DO NOT CHANGE T
 LANGUAGE RULE: The headline text MUST be written in ${primaryLang}. ${subtitleLang ? `Below the main headline, add a ${subtitleLang} subtitle translation in ${accentColorName} at slightly smaller size — the subtitle must not be white like the main headline.` : 'No subtitle language — monolingual mode.'}
 Bottom half of the image has a smooth dark gradient zone. Extremely large, bold, impactful condensed uppercase text reading "${sourceHeadline}" with the words ${accentWordsList} in ${accentColorName}. Remaining text in white. The text uses the largest possible font size that fills the width, extra bold weight, positioned starting from the vertical center of the image extending downward, not crammed at the very bottom.${subtitleLang ? ` Below the main headline, a ${subtitleLang} translation subtitle in ${accentColorName} at slightly smaller size, creating clear visual hierarchy.` : ''}
 ${logoUrl ? `Render the creator's brand icon centered in the middle of the image as a small circular badge at thirty percent opacity, positioned directly above the @handle watermark.` : ''}
-"${handleText}" as a watermark in white, centered in the middle of the image directly below the brand icon, thirty percent opacity, subtle background mark only.
-${slide.slide_type !== 'CTA' ? '"SWIPE (GESER) >" in small white text positioned directly beneath the headline text with minimal gap.' : ''}
-"${slide.slide_index + 1}/${totalSlides}" as a small white page number in the top-left corner of the image.` : `P4 — BRAND ELEMENTS:
+${handleText ? `"${handleText}" as a watermark in white, centered in the middle of the image directly below the brand icon, thirty percent opacity, subtle background mark only.` : ''}
+${slide.slide_type !== 'CTA' ? 'EXACT text "SWIPE (GESER) >" in small white text positioned directly beneath the headline text with minimal gap. Render these exact three words plus arrow — never rephrase, never translate differently, never add other words.' : ''}` : `P4 — BRAND ELEMENTS:
 ${logoUrl ? `Brand icon centered at thirty percent opacity.` : ''}
-"${handleText}" watermark in white, thirty percent opacity, centered.
-"${slide.slide_index + 1}/${totalSlides}" page number top-left.`}
+${handleText ? `"${handleText}" watermark in white, thirty percent opacity, centered.` : ''}`}
 
 P5 — ASPECT RATIO + CONSTRAINTS:
-4:5 aspect ratio. No competitor branding. Hyper-realistic photographic style — must look indistinguishable from a real DSLR photograph.
+4:5 aspect ratio. Hyper-realistic photographic style — must look indistinguishable from a real DSLR photograph.
 All people must have imperfect real-world details: asymmetric features, uneven skin tones, stray hairs, micro-wrinkles.
+REMOVE ALL competitor elements from the image: category badges (TECHNOLOGY, LIFESTYLE, ENTERTAINMENT, HEALTH, FINANCE, etc.), source creator handles, watermarks, logos, channel names. These must NOT appear anywhere in the generated image. Only keep subject brand logos (e.g., Apple logo, Google logo) if they provide essential context for the topic.
 
 ${ragContext}
 
@@ -340,11 +360,23 @@ Write continuous flowing text, no labels, no bullet points.`;
       if (isCreator && useModelConfig.supportsReference) {
         const refImages: string[] = [];
         if (creatorAvatarUrl && slide.creator_face) refImages.push(creatorAvatarUrl);
-        if (slide.reference_image_url) refImages.push(slide.reference_image_url);
+        // Support multi-reference: reference_image_url can be JSON array or single URL
+        if (slide.reference_image_url) {
+          try {
+            const parsed = JSON.parse(slide.reference_image_url);
+            if (Array.isArray(parsed)) refImages.push(...parsed);
+            else refImages.push(slide.reference_image_url);
+          } catch {
+            refImages.push(slide.reference_image_url);
+          }
+        }
 
-        if (refImages.length > 0) {
+        // Filter out invalid URLs (must start with http:// or https://)
+        const validRefImages = refImages.filter(u => u && (u.startsWith('http://') || u.startsWith('https://')));
+
+        if (validRefImages.length > 0) {
           // nano-banana-2/edit requires `image_urls` (array), not `image_url` (singular)
-          falInput.image_urls = refImages;
+          falInput.image_urls = validRefImages;
         } else {
           // No creator avatar + no reference → fall back to text-to-image model
           // nano-banana-edit REQUIRES image_urls, so switch to b-roll model
@@ -353,8 +385,28 @@ Write continuous flowing text, no labels, no bullet points.`;
           useModelConfig.endpoint = fallbackConfig.endpoint;
         }
       } else if (!isCreator && slide.reference_image_url && useModelConfig.supportsReference) {
-        // B-ROLL with user-provided reference — also use array format
-        falInput.image_urls = [slide.reference_image_url];
+        // B-ROLL with user-provided reference — support multi-reference
+        let brollRefs: string[];
+        try {
+          const parsed = JSON.parse(slide.reference_image_url);
+          brollRefs = Array.isArray(parsed) ? parsed : [slide.reference_image_url];
+        } catch {
+          brollRefs = [slide.reference_image_url];
+        }
+        // Filter out invalid URLs
+        const validBrollRefs = brollRefs.filter(u => u && (u.startsWith('http://') || u.startsWith('https://')));
+        if (validBrollRefs.length > 0) {
+          falInput.image_urls = validBrollRefs;
+        }
+      }
+
+      // Prompt-only mode: save prompt to DB, skip fal.ai image generation
+      if (prompt_only) {
+        await supabase.from('carousel_slides')
+          .update({ prompt: imagePrompt })
+          .eq('id', slide.id);
+        results.push({ slideId: slide.id, success: true, prompt: imagePrompt });
+        continue;
       }
 
       // Call fal.ai
@@ -370,8 +422,14 @@ Write continuous flowing text, no labels, no bullet points.`;
 
       if (!falResponse.ok) {
         const errText = await falResponse.text();
-        console.error(`[generate-carousel-images] fal.ai error: ${falResponse.status} — ${errText.slice(0, 200)}`);
-        results.push({ slideId: slide.id, success: false, prompt: imagePrompt, error: `fal.ai error: ${falResponse.status}` });
+        console.error(`[generate-carousel-images] fal.ai error: ${falResponse.status} — ${errText.slice(0, 500)}`);
+        // Extract readable error message from fal.ai response
+        let falErrMsg = `fal.ai error ${falResponse.status}`;
+        try {
+          const errJson = JSON.parse(errText);
+          falErrMsg = errJson.detail || errJson.message || errJson.error?.message || falErrMsg;
+        } catch { falErrMsg = errText.slice(0, 200) || falErrMsg; }
+        results.push({ slideId: slide.id, success: false, prompt: imagePrompt, error: falErrMsg });
         continue;
       }
 

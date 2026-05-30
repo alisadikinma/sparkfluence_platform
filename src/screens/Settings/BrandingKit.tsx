@@ -45,7 +45,7 @@ export const BrandingKit: React.FC = () => {
   const [wizardStep, setWizardStep] = useState<WizardStep>('niche');
   const [wizardInputs, setWizardInputs] = useState<WizardInputs>({
     niche: '',
-    audience: { ageGroup: 'millennial', gender: 'all', income: 'mid' },
+    audience: { ageGroup: ['millennial'], gender: 'all', income: ['mid'] },
     vibe: [],
     colorPreference: null,
   });
@@ -173,7 +173,7 @@ export const BrandingKit: React.FC = () => {
   if (view === 'picker') {
     return (
       <div className="min-h-full bg-[#0B0E14]">
-        <div className="max-w-2xl mx-auto px-6 py-8">
+        <div className="pb-8 px-4 sm:px-6 pt-8">
           <button
             onClick={() => navigate('/settings')}
             className="flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-300 mb-8 transition-colors"
@@ -232,7 +232,7 @@ export const BrandingKit: React.FC = () => {
 
     return (
       <div className="min-h-full bg-[#0B0E14]">
-        <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="pb-8 px-4 sm:px-6 pt-8">
           <button
             onClick={() => setView(kit ? 'editor' : 'picker')}
             className="flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-300 mb-6 transition-colors"
@@ -282,7 +282,7 @@ export const BrandingKit: React.FC = () => {
     if (generatedOptions.length > 0) {
       return (
         <div className="min-h-full bg-[#0B0E14]">
-          <div className="max-w-4xl mx-auto px-6 py-8">
+          <div className="pb-8 px-4 sm:px-6 pt-8">
             <button
               onClick={() => setGeneratedOptions([])}
               className="flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-300 mb-6 transition-colors"
@@ -362,7 +362,7 @@ export const BrandingKit: React.FC = () => {
 
     return (
       <div className="min-h-full bg-[#0B0E14]">
-        <div className="max-w-2xl mx-auto px-6 py-8">
+        <div className="pb-8 px-4 sm:px-6 pt-8">
           <button
             onClick={() => setView(kit ? 'editor' : 'picker')}
             className="flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-300 mb-6 transition-colors"
@@ -434,9 +434,15 @@ export const BrandingKit: React.FC = () => {
                   <label className="text-xs text-neutral-400 uppercase tracking-wider mb-2 block">Age Group</label>
                   <div className="flex flex-wrap gap-2">
                     {AGE_GROUP_OPTIONS.map(o => (
-                      <button key={o.value} onClick={() => setWizardInputs(p => ({ ...p, audience: { ...p.audience, ageGroup: o.value } }))}
+                      <button key={o.value} onClick={() => setWizardInputs(p => {
+                        const current = p.audience.ageGroup;
+                        const next = current.includes(o.value)
+                          ? current.filter(v => v !== o.value)
+                          : [...current, o.value];
+                        return { ...p, audience: { ...p.audience, ageGroup: next.length > 0 ? next : [o.value] } };
+                      })}
                         className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                          wizardInputs.audience.ageGroup === o.value
+                          wizardInputs.audience.ageGroup.includes(o.value)
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                             : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-700'
                         }`}>
@@ -466,9 +472,15 @@ export const BrandingKit: React.FC = () => {
                   <label className="text-xs text-neutral-400 uppercase tracking-wider mb-2 block">Income Level</label>
                   <div className="flex flex-wrap gap-2">
                     {INCOME_OPTIONS.map(o => (
-                      <button key={o.value} onClick={() => setWizardInputs(p => ({ ...p, audience: { ...p.audience, income: o.value } }))}
+                      <button key={o.value} onClick={() => setWizardInputs(p => {
+                        const current = p.audience.income;
+                        const next = current.includes(o.value)
+                          ? current.filter(v => v !== o.value)
+                          : [...current, o.value];
+                        return { ...p, audience: { ...p.audience, income: next.length > 0 ? next : [o.value] } };
+                      })}
                         className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                          wizardInputs.audience.income === o.value
+                          wizardInputs.audience.income.includes(o.value)
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                             : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-700'
                         }`}>

@@ -328,7 +328,13 @@ export const SourceStep: React.FC<SourceStepProps> = ({ project, onProjectUpdate
           if (backendResp.ok) {
             const backendData = await backendResp.json();
             if (backendData?.data?.media_urls?.length > 0) {
-              mediaUrls = backendData.data.media_urls;
+              // Deduplicate by URL — IG carousels sometimes have duplicate media
+              const seen = new Set<string>();
+              mediaUrls = backendData.data.media_urls.filter((m: any) => {
+                if (seen.has(m.url)) return false;
+                seen.add(m.url);
+                return true;
+              });
               // Show placeholders immediately once we know how many slides
               setImportPlaceholders(mediaUrls.length);
               setImportProgress(`Found ${mediaUrls.length} slides. Saving...`);

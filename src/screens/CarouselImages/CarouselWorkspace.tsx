@@ -9,15 +9,12 @@ import { SourceStep } from './steps/SourceStep';
 import { GenerateStep } from './steps/GenerateStep';
 import { VideoStep } from './steps/VideoStep';
 import { PublishStep } from './steps/PublishStep';
-const EditStep = React.lazy(() => import('./steps/EditStep').then(m => ({ default: m.EditStep })));
-
-// Step definitions
+// Step definitions — Edit step removed (editing now done in Generate page via Photopea)
 const STEPS = [
   { id: 'source', label: 'Source', number: 1 },
   { id: 'generate', label: 'Generate', number: 2 },
-  { id: 'edit', label: 'Edit', number: 3 },
-  { id: 'video', label: 'Video', number: 4 },
-  { id: 'publish', label: 'Publish', number: 5 },
+  { id: 'video', label: 'Video', number: 3 },
+  { id: 'publish', label: 'Publish', number: 4 },
 ] as const;
 
 type StepId = typeof STEPS[number]['id'];
@@ -28,17 +25,15 @@ function getStepStatus(stepId: StepId, projectStatus: string): 'completed' | 'ac
     draft: 0,
     source_ready: 1,
     generated: 2,
-    edited: 3,
-    video_ready: 4,
-    published: 5,
-    complete: 5,
+    video_ready: 3,
+    published: 4,
+    complete: 4,
   };
   const stepOrder: Record<StepId, number> = {
     source: 0,
     generate: 1,
-    edit: 2,
-    video: 3,
-    publish: 4,
+    video: 2,
+    publish: 3,
   };
   const currentOrder = statusOrder[projectStatus] ?? 0;
   const thisOrder = stepOrder[stepId];
@@ -60,7 +55,9 @@ export const CarouselWorkspace: React.FC = () => {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [redetectingTitle, setRedetectingTitle] = useState(false);
 
-  const currentStep = (step as StepId) || 'source';
+  // Redirect legacy 'edit' step to 'generate' (editing now done in Generate via Photopea)
+  const rawStep = step as string;
+  const currentStep = (rawStep === 'edit' ? 'generate' : rawStep as StepId) || 'source';
 
   // Fetch project — only shows full-page loading on initial load (project === null)
   // Subsequent refreshes (from onProjectUpdate) silently update data without unmounting children
@@ -277,15 +274,6 @@ export const CarouselWorkspace: React.FC = () => {
         )}
         {currentStep === 'generate' && (
           <GenerateStep project={project} onProjectUpdate={fetchProject} />
-        )}
-        {currentStep === 'edit' && (
-          <React.Suspense fallback={
-            <div className="flex items-center justify-center h-full">
-              <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-            </div>
-          }>
-            <EditStep project={project} onProjectUpdate={fetchProject} />
-          </React.Suspense>
         )}
         {currentStep === 'video' && (
           <VideoStep project={project} onProjectUpdate={fetchProject} />

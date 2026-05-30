@@ -85,9 +85,9 @@ export interface BrandingKitRow {
 export interface WizardInputs {
   niche: string;
   audience: {
-    ageGroup: string;   // 'gen_z' | 'millennial' | 'gen_x' | 'boomer'
-    gender: string;     // 'all' | 'male' | 'female'
-    income: string;     // 'budget' | 'mid' | 'premium' | 'luxury'
+    ageGroup: string[];  // ['gen_z', 'millennial', 'gen_x', 'boomer'] — multi-select
+    gender: string;      // 'all' | 'male' | 'female'
+    income: string[];    // ['budget', 'mid', 'premium', 'luxury'] — multi-select
   };
   vibe: string[];       // 1-2 from: professional, playful, luxury, bold, minimalist, warm, futuristic, vintage, organic
   colorPreference: string | null; // hex color or null if skipped

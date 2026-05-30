@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { X, Search, Loader2, Upload, ExternalLink } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
-import type { CarouselSlide } from '../../../types/carousel';
+import type { CarouselSlide, SubjectReference } from '../../../types/carousel';
+import { serializeReferenceUrls } from '../../../types/carousel';
 
 interface StockResult {
   url: string;
@@ -13,9 +14,11 @@ interface StockResult {
 interface BRollConfigModalProps {
   slide: CarouselSlide;
   slideIndex: number;
+  subjectRefs?: SubjectReference[];
   onApply: (config: {
     additionalNote: string;
     referenceImageUrl: string | null;
+    referenceImageUrls?: string[];
     creatorFace: boolean;
   }) => void;
   onClose: () => void;
@@ -24,12 +27,13 @@ interface BRollConfigModalProps {
 export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
   slide,
   slideIndex,
+  subjectRefs = [],
   onApply,
   onClose,
 }) => {
   const [notes, setNotes] = useState(slide.additionalNote || '');
   const [creatorFace, setCreatorFace] = useState(slide.creatorFace);
-  const [referenceUrl, setReferenceUrl] = useState(slide.referenceImageUrl || '');
+  const [referenceUrls, setReferenceUrls] = useState<string[]>(slide.referenceImageUrls || []);
   const [pasteUrl, setPasteUrl] = useState('');
 
   // Stock image search
@@ -43,10 +47,26 @@ export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
   const hasAutoSearched = useRef(false);
 
   // Generate keyword suggestions + auto-search on mount
+  // Priority: subjectRefs names (e.g., "Apple AirPod") > generic slide text keywords
   useEffect(() => {
-    if (!slideText || hasAutoSearched.current) return;
+    if (hasAutoSearched.current) return;
     hasAutoSearched.current = true;
 
+    // Use subject reference names as priority keywords
+    const refKeywords = subjectRefs
+      .filter(r => r.needsReference)
+      .map(r => r.name);
+
+    if (refKeywords.length > 0) {
+      setSuggestedKeywords(refKeywords.slice(0, 3));
+      const firstKw = refKeywords[0];
+      setSearchQuery(firstKw);
+      setTimeout(() => handleSearch(firstKw), 100);
+      return;
+    }
+
+    // Fallback: extract keywords from slide text
+    if (!slideText) return;
     const words = slideText.toLowerCase()
       .replace(/[^a-z0-9\s]/g, '')
       .split(/\s+/)
@@ -55,13 +75,11 @@ export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
     setSuggestedKeywords(unique);
 
     if (unique.length > 0) {
-      // Auto-search the first keyword
       const firstKw = unique[0];
       setSearchQuery(firstKw);
-      // Trigger search after state update
       setTimeout(() => handleSearch(firstKw), 100);
     }
-  }, [slideText]);
+  }, [slideText, subjectRefs]);
 
   const handleSearch = useCallback(async (query?: string) => {
     const q = query || searchQuery;
@@ -90,12 +108,12 @@ export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
   }, [searchQuery]);
 
   const handleSelectStock = (result: StockResult) => {
-    setReferenceUrl(result.url);
+    setReferenceUrls(prev => prev.includes(result.url) ? prev.filter(u => u !== result.url) : [...prev, result.url]);
   };
 
   const handlePasteUrl = () => {
-    if (pasteUrl.trim()) {
-      setReferenceUrl(pasteUrl.trim());
+    if (pasteUrl.trim() && !referenceUrls.includes(pasteUrl.trim())) {
+      setReferenceUrls(prev => [...prev, pasteUrl.trim()]);
       setPasteUrl('');
     }
   };
@@ -154,18 +172,22 @@ export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
                 </label>
               </div>
 
-              {/* Selected reference preview */}
-              {referenceUrl && (
-                <div className="relative">
-                  <label className="block text-xs font-medium text-neutral-400 mb-2">Referensi Terpilih</label>
-                  <div className="relative w-full aspect-video bg-neutral-800 rounded-lg overflow-hidden">
-                    <img src={referenceUrl} alt="Reference" className="w-full h-full object-cover" />
-                    <button
-                      onClick={() => setReferenceUrl('')}
-                      className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-neutral-300 hover:text-white"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+              {/* Selected reference previews (multi) */}
+              {referenceUrls.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-neutral-400 mb-2">Referensi Terpilih ({referenceUrls.length})</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {referenceUrls.map((url, idx) => (
+                      <div key={idx} className="relative">
+                        <img src={url} alt={`Reference ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg border border-neutral-700" />
+                        <button
+                          onClick={() => setReferenceUrls(prev => prev.filter((_, i) => i !== idx))}
+                          className="absolute -top-1 -right-1 p-0.5 rounded-full bg-black/70 text-white hover:bg-red-500/80"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -223,7 +245,7 @@ export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
                       key={i}
                       onClick={() => handleSelectStock(result)}
                       className={`relative aspect-square rounded-md overflow-hidden border-2 transition-colors ${
-                        referenceUrl === result.url
+                        referenceUrls.includes(result.url)
                           ? 'border-emerald-500'
                           : 'border-transparent hover:border-neutral-600'
                       }`}
@@ -279,7 +301,8 @@ export const BRollConfigModal: React.FC<BRollConfigModalProps> = ({
           <button
             onClick={() => onApply({
               additionalNote: notes,
-              referenceImageUrl: referenceUrl || null,
+              referenceImageUrl: serializeReferenceUrls(referenceUrls),
+              referenceImageUrls: referenceUrls,
               creatorFace,
             })}
             className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg px-4 py-2.5 text-xs font-medium transition-colors"

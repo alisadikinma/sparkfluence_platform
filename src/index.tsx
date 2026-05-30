@@ -37,6 +37,7 @@ import { Workspace } from "./screens/Workspace";
 import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 import { StudioEditor } from "./screens/Workspace/steps/StudioEditor";
 import { CarouselHome, CarouselWorkspace } from "./screens/CarouselImages";
+import { SlideCanvasEditor } from "./screens/CarouselImages/components/SlideCanvasEditor";
 
 // Wrapper component for smooth scroll
 const SmoothScrollWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -154,6 +155,7 @@ createRoot(document.getElementById("app") as HTMLElement).render(
                     <Route path="/carousel-images" element={<ChatLayout><CarouselHome /></ChatLayout>} />
                     <Route path="/carousel-images/:projectId" element={<ChatLayout><CarouselWorkspace /></ChatLayout>} />
                     <Route path="/carousel-images/:projectId/:step" element={<ChatLayout><CarouselWorkspace /></ChatLayout>} />
+                    <Route path="/carousel-images/:projectId/edit-slide/:slideId" element={<SlideCanvasEditor />} />
 
                       {/* Admin only - Engine Test Dashboard */}
                       <Route path="/sparkfluence-engine-test" element={<SparkfluenceEngineTest />} />
