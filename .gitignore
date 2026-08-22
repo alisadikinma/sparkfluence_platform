@@ -25,3 +25,6 @@ docs/mockups/
 
 # Claude local settings
 .claude/settings.local.json
+
+# Graphify code-structure brain (regenerable: graphify update .)
+graphify-out/
